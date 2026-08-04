@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.5-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-supplier_risk}
+      POSTGRES_USER: ${POSTGRES_USER:-supplier_risk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_mvp_change_me}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-supplier_risk} -d ${POSTGRES_DB:-supplier_risk}",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://supplier_risk:local_mvp_change_me@postgres:5432/supplier_risk}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/v1/system/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - evidence_data:/app/data/evidence
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  evidence_data:

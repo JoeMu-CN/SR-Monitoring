@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.database import engine
+from app.suppliers.router import router as suppliers_router
 
 app = FastAPI(
     title="供应商风险监控平台",
@@ -13,6 +14,7 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
 )
+app.include_router(suppliers_router)
 
 
 def check_database() -> None:

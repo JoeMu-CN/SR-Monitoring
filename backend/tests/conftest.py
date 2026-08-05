@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from app.ai.models import AIAnalysisRecord
 from app.database import engine, get_session
 from app.main import app
 from app.signals.models import CollectionRun, RawSignal
@@ -24,6 +25,7 @@ def db_session() -> Generator[Session]:
     connection = engine.connect()
     outer_transaction = connection.begin()
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    session.execute(delete(AIAnalysisRecord))
     session.execute(delete(RawSignal))
     session.execute(delete(CollectionRun))
     session.execute(delete(Supplier))

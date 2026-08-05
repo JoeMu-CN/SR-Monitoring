@@ -2,7 +2,7 @@
 
 本项目用于在本机收集外部供应风险信息，匹配重点供应商、生产地点和供应产品，并通过 localhost 网页显示分级风险提醒。
 
-当前已完成两周 MVP 的 D1 基础骨架、D2 供应商主数据和 D3 手工风险信号采集。
+当前已完成两周 MVP 的 D1 基础骨架、D2 供应商主数据、D3 手工风险信号采集和 D4 AI 结构化解析。
 
 ## 当前能力
 
@@ -16,6 +16,8 @@
 - 供应商查询、新增、修改和启停接口。
 - 标准 JSON 风险信号导入、SHA-256 指纹去重和采集运行追踪。
 - 数据源和采集运行记录查询接口。
+- 可替换的 Fake/OpenAI 兼容 AI Provider、结构化输出校验和失败重试。
+- 原始信号 AI 分析接口及成功、失败、耗时记录。
 
 ## 本地启动
 
@@ -61,6 +63,24 @@
 文件必须是 UTF-8 编码的 `.json`，最大 5MB、最多 5000 条信号；`title` 和
 `content` 必填，`published_at` 填写时必须包含时区。重复上传不会重复创建信号。
 
+默认使用不访问网络的 `FakeAIProvider`。导入信号后，可在接口文档调用
+`POST /api/v1/signals/{signal_id}/analyze`。查看当前 AI 配置状态：
+
+    http://127.0.0.1:8080/api/v1/ai/status
+
+切换到支持 OpenAI Chat Completions 协议的模型厂商时，在本地 `.env` 中设置：
+
+```dotenv
+AI_PROVIDER=openai-compatible
+AI_BASE_URL=https://模型厂商的兼容接口地址/v1
+AI_MODEL=模型名称
+AI_API_KEY=本地密钥
+AI_TIMEOUT_SECONDS=30
+AI_MAX_RETRIES=2
+```
+
+`AI_API_KEY` 只通过环境变量传入容器，禁止写入代码、文档或提交到 Git。
+
 停止：
 
     docker compose down
@@ -84,7 +104,7 @@
 ## 当前限制
 
 - 只绑定 127.0.0.1，不允许局域网或公网访问。
-- 当前仅有手工 JSON 数据源，尚未接入真实外部源、AI 或风险评分。
+- 当前仅有手工 JSON 数据源；AI 默认使用 Fake，尚未接入真实外部源、风险事件归并或风险评分。
 - 电脑关机、休眠或 Docker 停止后不会执行监控。
 
 ## 已验证的候选数据源

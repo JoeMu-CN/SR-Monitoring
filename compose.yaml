@@ -25,6 +25,12 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://supplier_risk:local_mvp_change_me@postgres:5432/supplier_risk}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AI_PROVIDER: ${AI_PROVIDER:-fake}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
     healthcheck:

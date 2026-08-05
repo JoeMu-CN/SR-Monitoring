@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import DATABASE_URL
 from app.database import Base
+from app.signals import models as signal_models  # noqa: F401
 from app.suppliers import models as supplier_models  # noqa: F401
 
 config = context.config

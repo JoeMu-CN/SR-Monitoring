@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.database import engine
+from app.signals.router import router as signals_router
 from app.suppliers.router import router as suppliers_router
 
 app = FastAPI(
@@ -15,6 +16,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json",
 )
 app.include_router(suppliers_router)
+app.include_router(signals_router)
 
 
 def check_database() -> None:

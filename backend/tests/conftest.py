@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database import engine, get_session
 from app.main import app
+from app.signals.models import CollectionRun, RawSignal
 from app.suppliers.importer import (
     SHEET_PRODUCTS,
     SHEET_SITES,
@@ -23,6 +24,8 @@ def db_session() -> Generator[Session]:
     connection = engine.connect()
     outer_transaction = connection.begin()
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    session.execute(delete(RawSignal))
+    session.execute(delete(CollectionRun))
     session.execute(delete(Supplier))
     session.flush()
     try:

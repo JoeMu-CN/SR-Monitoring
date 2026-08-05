@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.ai.router import router as ai_router
 from app.database import engine
+from app.risks.router import router as risks_router
 from app.signals.router import router as signals_router
 from app.suppliers.router import router as suppliers_router
 
@@ -19,6 +20,7 @@ app = FastAPI(
 app.include_router(suppliers_router)
 app.include_router(signals_router)
 app.include_router(ai_router)
+app.include_router(risks_router)
 
 
 def check_database() -> None:

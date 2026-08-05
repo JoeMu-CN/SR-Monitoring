@@ -1,5 +1,3 @@
-from datetime import UTC, datetime
-from time import perf_counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,18 +5,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
-from app.ai.providers import (
-    PROMPT_VERSION,
-    AIConfigurationError,
-    AIProviderError,
-    get_ai_provider,
-)
+from app.ai.providers import AIConfigurationError, AIProviderError
 from app.ai.schemas import (
     AIAnalysisRecordListResponse,
     AIAnalysisRecordRead,
     AIStatusRead,
-    SignalAnalysisInput,
 )
+from app.ai.service import analyze_raw_signal
 from app.config import get_ai_settings
 from app.database import get_session
 from app.signals.models import RawSignal
@@ -82,53 +75,15 @@ async def analyze_signal(signal_id: int, session: SessionDependency) -> AIAnalys
     signal = session.get(RawSignal, signal_id)
     if signal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险信号不存在")
-    settings = get_ai_settings()
     try:
-        provider = get_ai_provider(settings)
+        return await analyze_raw_signal(session, signal)
     except AIConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
 
-    record = AIAnalysisRecord(
-        signal_id=signal.id,
-        provider=provider.provider_name,
-        model=provider.model,
-        prompt_version=PROMPT_VERSION,
-        status="running",
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    started = perf_counter()
-    try:
-        result = await provider.analyze_signal(
-            SignalAnalysisInput(
-                signal_id=signal.id,
-                title=signal.title,
-                content=signal.content,
-                url=signal.url,
-                published_at=signal.published_at,
-            )
-        )
-        stored_record = session.get(AIAnalysisRecord, record.id)
-        assert stored_record is not None
-        stored_record.status = "succeeded"
-        stored_record.finished_at = datetime.now(UTC)
-        stored_record.duration_ms = round((perf_counter() - started) * 1000)
-        stored_record.result = result.model_dump(mode="json")
-        session.commit()
-        return stored_record
     except AIProviderError as exc:
-        session.rollback()
-        stored_record = session.get(AIAnalysisRecord, record.id)
-        if stored_record is not None:
-            stored_record.status = "failed"
-            stored_record.finished_at = datetime.now(UTC)
-            stored_record.duration_ms = round((perf_counter() - started) * 1000)
-            stored_record.error = str(exc)[:2000]
-            session.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI 分析失败，信号保持未解析状态",

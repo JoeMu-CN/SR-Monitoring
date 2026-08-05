@@ -7,7 +7,7 @@ from pytest import MonkeyPatch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai import router as ai_router
+from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
 from app.ai.providers import AIProviderError, FakeAIProvider, OpenAICompatibleProvider
 from app.ai.schemas import SignalAnalysisInput
@@ -141,7 +141,7 @@ def test_provider_failure_is_recorded(
     import_signal(client)
     signal = db_session.scalar(select(RawSignal))
     assert signal is not None
-    monkeypatch.setattr(ai_router, "get_ai_provider", lambda _settings: FailingProvider())
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: FailingProvider())
 
     response = client.post(f"/api/v1/signals/{signal.id}/analyze")
 

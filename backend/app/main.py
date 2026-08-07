@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from app.agent.router import router as agent_router
 from app.ai.router import router as ai_router
 from app.database import engine
 from app.risks.router import router as risks_router
@@ -21,6 +22,7 @@ app.include_router(suppliers_router)
 app.include_router(signals_router)
 app.include_router(ai_router)
 app.include_router(risks_router)
+app.include_router(agent_router)
 
 
 def check_database() -> None:

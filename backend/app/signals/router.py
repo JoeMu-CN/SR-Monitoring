@@ -21,10 +21,19 @@ from app.signals.schemas import (
     DataSourceRead,
     SignalImportSummary,
 )
+from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
+from app.signals.sources import NmcWeatherAdapter, PullSourceAdapter
 
 router = APIRouter(prefix="/api/v1", tags=["风险信号"])
 SessionDependency = Annotated[Session, Depends(get_session)]
 adapter: SourceAdapter = ManualJsonAdapter()
+
+
+def build_pull_adapter(source_code: str) -> PullSourceAdapter:
+    """按数据源编码构建拉取式适配器；不支持时抛 SourceNotCollectable。"""
+    if source_code == NmcWeatherAdapter.source_code:
+        return NmcWeatherAdapter()
+    raise SourceNotCollectable(f"数据源 {source_code} 不支持手动拉取采集")
 
 
 def get_manual_source(session: Session) -> DataSource:
@@ -163,3 +172,31 @@ async def import_signals(
         created_signals=created,
         duplicate_signals=len(signals) - created,
     )
+
+
+@router.post("/sources/{source_id}/run", response_model=CollectionRunRead)
+def run_source_collection(
+    source_id: int, session: SessionDependency
+) -> CollectionRun:
+    """手动触发一次数据源采集（仅支持 HTTP 拉取式数据源）。"""
+    source = session.get(DataSource, source_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+    if not source.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="数据源已停用"
+        )
+    try:
+        pull_adapter = build_pull_adapter(source.code)
+    except SourceNotCollectable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    try:
+        run = collect_source(session, source, pull_adapter)
+    except CollectionFailed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"采集失败: {exc}",
+        ) from exc
+    return run

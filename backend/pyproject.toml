@@ -9,6 +9,7 @@ description = "供应商风险监控平台 MVP"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14,<2",
+    "apscheduler>=3.10,<4",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "openpyxl>=3.1,<4",
@@ -44,3 +45,6 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.12"
 strict = true
 plugins = ["sqlalchemy.ext.mypy.plugin"]
+[[tool.mypy.overrides]]
+module = ["apscheduler.*"]
+ignore_missing_imports = true

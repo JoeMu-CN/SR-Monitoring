@@ -10,7 +10,14 @@ from sqlalchemy.orm import Session
 from app.ai.models import AIAnalysisRecord
 from app.database import engine, get_session
 from app.main import app
-from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
+from app.risks.models import (
+    EventEntity,
+    EventLocation,
+    RiskAlert,
+    RiskEvent,
+    RiskEventSignal,
+    SupplierEventMatch,
+)
 from app.signals.models import CollectionRun, RawSignal
 from app.suppliers.importer import (
     SHEET_PRODUCTS,
@@ -29,6 +36,8 @@ def db_session() -> Generator[Session]:
     session.execute(delete(RiskAlert))
     session.execute(delete(SupplierEventMatch))
     session.execute(delete(RiskEventSignal))
+    session.execute(delete(EventLocation))
+    session.execute(delete(EventEntity))
     session.execute(delete(RiskEvent))
     session.execute(delete(AIAnalysisRecord))
     session.execute(delete(RawSignal))

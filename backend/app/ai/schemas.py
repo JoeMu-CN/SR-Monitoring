@@ -46,6 +46,17 @@ class LocationReference(BaseModel):
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     region: str | None = None
     city: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    radius_km: float | None = Field(default=None, gt=0, le=5000)
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> Self:
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude 和 longitude 必须同时提供或同时为空")
+        if self.radius_km is not None and self.latitude is None:
+            raise ValueError("radius_km 只能与坐标同时提供")
+        return self
 
 
 class SignalAnalysisResult(BaseModel):

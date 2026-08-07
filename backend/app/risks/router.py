@@ -10,7 +10,7 @@ from app.ai.service import analyze_raw_signal
 from app.database import get_session
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
 from app.risks.schemas import RiskAlertListResponse, RiskAlertRead, RiskProcessResult
-from app.risks.service import process_analysis
+from app.risks.service import expire_alerts, process_analysis
 from app.signals.models import RawSignal
 from app.suppliers.models import Supplier
 
@@ -68,15 +68,24 @@ def list_risk_alerts(
         .limit(limit)
         .offset(offset)
     ).all()
+    event_ids = [event.id for _, _, event, _ in rows]
+    signal_rows = session.execute(
+        select(RiskEventSignal.event_id, RawSignal)
+        .join(RawSignal, RiskEventSignal.signal_id == RawSignal.id)
+        .where(RiskEventSignal.event_id.in_(event_ids))
+        .order_by(
+            RiskEventSignal.event_id,
+            RawSignal.published_at.desc().nullslast(),
+            RawSignal.id.desc(),
+        )
+    ).all()
+    signals_by_event: dict[int, RawSignal] = {}
+    for event_id, signal in signal_rows:
+        signals_by_event.setdefault(event_id, signal)
+
     items: list[RiskAlertRead] = []
     for alert, match, event, supplier in rows:
-        signal = session.scalar(
-            select(RawSignal)
-            .join(RiskEventSignal, RiskEventSignal.signal_id == RawSignal.id)
-            .where(RiskEventSignal.event_id == event.id)
-            .order_by(RawSignal.published_at.desc().nullslast(), RawSignal.id.desc())
-        )
-        assert signal is not None
+        signal = signals_by_event[event.id]
         items.append(
             RiskAlertRead(
                 id=alert.id,
@@ -94,6 +103,7 @@ def list_risk_alerts(
                 confidence=event.confidence,
                 match_type=match.match_type,
                 match_reasons=match.reasons,
+                match_evidence=match.evidence,
                 source_title=signal.title,
                 source_url=signal.url,
                 published_at=signal.published_at,
@@ -101,3 +111,10 @@ def list_risk_alerts(
             )
         )
     return RiskAlertListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.post("/risk-alerts/expire")
+def trigger_expire_alerts(session: SessionDependency) -> dict[str, int]:
+    expired_count = expire_alerts(session)
+    session.commit()
+    return {"expired_count": expired_count}

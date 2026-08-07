@@ -19,9 +19,12 @@ services:
     restart: unless-stopped
 
   app:
+    image: supplierriskmonitoring-app
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://supplier_risk:local_mvp_change_me@postgres:5432/supplier_risk}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -49,6 +52,34 @@ services:
         condition: service_healthy
     volumes:
       - evidence_data:/app/data/evidence
+    restart: unless-stopped
+
+  scheduler:
+    image: supplierriskmonitoring-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler.main"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://supplier_risk:local_mvp_change_me@postgres:5432/supplier_risk}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AI_PROVIDER: ${AI_PROVIDER:-fake}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+      AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
+      SCHEDULER_COLLECT_CRON: ${SCHEDULER_COLLECT_CRON:-*/30 * * * *}
+      SCHEDULER_EXPIRE_CRON: ${SCHEDULER_EXPIRE_CRON:-0 * * * *}
+      SCHEDULER_CLEANUP_CRON: ${SCHEDULER_CLEANUP_CRON:-0 3 * * *}
+      RETENTION_SIGNAL_DAYS: ${RETENTION_SIGNAL_DAYS:-90}
+      RETENTION_EVENT_DAYS: ${RETENTION_EVENT_DAYS:-90}
+      RETENTION_RUN_DAYS: ${RETENTION_RUN_DAYS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

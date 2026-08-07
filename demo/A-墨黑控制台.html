@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方向 A · 墨黑控制台 — 供应风险监控</title>
+<style>
+  :root {
+    --sidebar-bg: #1a1d23;
+    --sidebar-text: #9ca3af;
+    --sidebar-active: #f3f4f6;
+    --sidebar-active-bg: #2d3139;
+    --main-bg: #f5f6f8;
+    --card-bg: #ffffff;
+    --border: #e2e4e9;
+    --text-primary: #111827;
+    --text-secondary: #6b7280;
+    --text-muted: #9ca3af;
+    --p1: #dc2626; --p1-bg: #fef2f2;
+    --p2: #ea580c; --p2-bg: #fff7ed;
+    --p3: #2563eb; --p3-bg: #eff6ff;
+    --p4: #6b7280; --p4-bg: #f9fafb;
+    --up: #dc2626;
+    --down: #16a34a;
+    --mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif; background: var(--main-bg); color: var(--text-primary); display: flex; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  .sidebar { width: 220px; background: var(--sidebar-bg); color: var(--sidebar-text); display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 10; }
+  .sidebar-brand { padding: 20px 16px; border-bottom: 1px solid #2d3139; }
+  .sidebar-brand h1 { font-size: 15px; font-weight: 600; color: #f3f4f6; letter-spacing: 0.5px; }
+  .sidebar-brand span { font-size: 11px; color: #6b7280; font-family: var(--mono); }
+  .nav-section { padding: 16px 8px 8px; }
+  .nav-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: #4b5563; padding: 0 8px 8px; font-family: var(--mono); }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: all 0.15s; margin-bottom: 2px; }
+  .nav-item:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active); }
+  .nav-item.active { background: var(--sidebar-active-bg); color: var(--sidebar-active); }
+  .nav-item .icon { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .nav-item .badge { margin-left: auto; font-size: 10px; font-family: var(--mono); background: #dc2626; color: #fff; padding: 1px 6px; border-radius: 10px; }
+  .sidebar-footer { margin-top: auto; padding: 16px; border-top: 1px solid #2d3139; font-size: 11px; color: #4b5563; font-family: var(--mono); }
+
+  /* ── Main ── */
+  .main { flex: 1; margin-left: 220px; padding: 24px 32px; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }
+  .page-header h2 { font-size: 22px; font-weight: 700; }
+  .page-header .subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+  .header-actions { display: flex; gap: 8px; }
+  .btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; border: 1px solid var(--border); background: var(--card-bg); cursor: pointer; color: var(--text-primary); }
+  .btn.primary { background: var(--text-primary); color: #fff; border-color: var(--text-primary); }
+
+  /* ── Metric Row ── */
+  .metric-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+  .metric { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; position: relative; overflow: hidden; }
+  .metric::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .metric.p1::before { background: var(--p1); }
+  .metric.p2::before { background: var(--p2); }
+  .metric.p3::before { background: var(--p3); }
+  .metric.p4::before { background: var(--p4); }
+  .metric.total::before { background: var(--text-primary); }
+  .metric .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-family: var(--mono); }
+  .metric .value { font-size: 32px; font-weight: 700; font-family: var(--mono); margin-top: 4px; }
+  .metric.p1 .value { color: var(--p1); }
+  .metric.p2 .value { color: var(--p2); }
+  .metric.p3 .value { color: var(--p3); }
+  .metric.p4 .value { color: var(--p4); }
+  .metric .delta { font-size: 11px; font-family: var(--mono); margin-top: 4px; }
+  .metric .delta.up { color: var(--up); }
+  .metric .delta.down { color: var(--down); }
+
+  /* ── Grid ── */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; }
+  .card-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .card-header h3 { font-size: 13px; font-weight: 600; }
+  .card-header .more { font-size: 12px; color: var(--text-muted); cursor: pointer; }
+  .card-body { padding: 16px; }
+
+  /* ── Chart placeholder ── */
+  .chart-area { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 0 8px; }
+  .chart-bar { flex: 1; border-radius: 3px 3px 0 0; position: relative; }
+  .chart-bar .bar-label { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-muted); white-space: nowrap; font-family: var(--mono); }
+  .chart-bar .bar-value { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 11px; font-weight: 600; font-family: var(--mono); }
+
+  /* ── Table ── */
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; padding: 8px 12px; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--mono); border-bottom: 1px solid var(--border); }
+  .table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; }
+  .table tr:hover td { background: #f9fafb; }
+  .level-tag { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 20px; border-radius: 4px; font-size: 11px; font-weight: 700; font-family: var(--mono); }
+  .level-tag.p1 { background: var(--p1-bg); color: var(--p1); }
+  .level-tag.p2 { background: var(--p2-bg); color: var(--p2); }
+  .level-tag.p3 { background: var(--p3-bg); color: var(--p3); }
+  .level-tag.p4 { background: var(--p4-bg); color: var(--p4); }
+  .supplier-name { font-weight: 500; }
+  .event-type { font-size: 12px; color: var(--text-secondary); }
+  .score { font-family: var(--mono); font-weight: 600; }
+  .time { font-size: 12px; color: var(--text-muted); font-family: var(--mono); }
+
+  /* ── Source status ── */
+  .source-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+  .source-item:last-child { border-bottom: none; }
+  .source-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .source-dot.ok { background: var(--down); }
+  .source-dot.warn { background: #eab308; }
+  .source-dot.err { background: var(--up); }
+  .source-name { font-size: 13px; font-weight: 500; }
+  .source-time { font-size: 11px; color: var(--text-muted); font-family: var(--mono); margin-left: auto; }
+
+  /* ── Donut ── */
+  .donut-wrap { display: flex; align-items: center; gap: 20px; }
+  .donut { width: 100px; height: 100px; border-radius: 50%; position: relative; }
+  .donut-center { position: absolute; inset: 20px; background: var(--card-bg); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-weight: 700; font-size: 18px; }
+  .donut-legend { display: flex; flex-direction: column; gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+  .legend-value { font-family: var(--mono); margin-left: auto; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <h1>供应风险监控</h1>
+    <span>SRMP v0.1 · localhost</span>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">监控</div>
+    <div class="nav-item active"><span class="icon">◉</span>风险总览</div>
+    <div class="nav-item"><span class="icon">⚠</span>当前风险<span class="badge">7</span></div>
+    <div class="nav-item"><span class="icon">◈</span>风险详情</div>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">管理</div>
+    <div class="nav-item"><span class="icon">▣</span>供应商</div>
+    <div class="nav-item"><span class="icon">⊞</span>数据源</div>
+  </div>
+  <div class="sidebar-footer">
+    <div>最后采集 14:32</div>
+    <div style="margin-top:4px">AI: Fake Provider</div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="page-header">
+    <div>
+      <h2>风险总览</h2>
+      <div class="subtitle">2026-08-07 · 今日新增 3 条风险提醒</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn">导出</button>
+      <button class="btn primary">手动采集</button>
+    </div>
+  </div>
+
+  <!-- P1-P4 Metrics -->
+  <div class="metric-row">
+    <div class="metric total">
+      <div class="label">当前风险</div>
+      <div class="value">7</div>
+      <div class="delta up">↑ 3 今日新增</div>
+    </div>
+    <div class="metric p1">
+      <div class="label">P1 重大</div>
+      <div class="value">1</div>
+      <div class="delta up">↑ 1</div>
+    </div>
+    <div class="metric p2">
+      <div class="label">P2 高</div>
+      <div class="value">2</div>
+      <div class="delta up">↑ 1</div>
+    </div>
+    <div class="metric p3">
+      <div class="label">P3 中</div>
+      <div class="value">3</div>
+      <div class="delta up">↑ 1</div>
+    </div>
+    <div class="metric p4">
+      <div class="label">P4 低</div>
+      <div class="value">1</div>
+      <div class="delta down">− 持平</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- 风险类型分布 -->
+    <div class="card">
+      <div class="card-header"><h3>风险类型分布</h3><span class="more">近 7 天</span></div>
+      <div class="card-body">
+        <div class="chart-area">
+          <div class="chart-bar" style="height:85%;background:var(--p1)"><span class="bar-value">3</span><span class="bar-label">天气</span></div>
+          <div class="chart-bar" style="height:55%;background:var(--p2)"><span class="bar-value">2</span><span class="bar-label">物流</span></div>
+          <div class="chart-bar" style="height:28%;background:var(--p3)"><span class="bar-value">1</span><span class="bar-label">合规</span></div>
+          <div class="chart-bar" style="height:28%;background:var(--p4)"><span class="bar-value">1</span><span class="bar-label">经营</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 地区分布 -->
+    <div class="card">
+      <div class="card-header"><h3>地区分布</h3><span class="more">当前</span></div>
+      <div class="card-body">
+        <div class="donut-wrap">
+          <div class="donut" style="background:conic-gradient(var(--p1) 0 43%, var(--p2) 43% 71%, var(--p3) 71% 100%)">
+            <div class="donut-center">7</div>
+          </div>
+          <div class="donut-legend">
+            <div class="legend-item"><span class="legend-dot" style="background:var(--p1)"></span>华东<span class="legend-value">3</span></div>
+            <div class="legend-item"><span class="legend-dot" style="background:var(--p2)"></span>华南<span class="legend-value">2</span></div>
+            <div class="legend-item"><span class="legend-dot" style="background:var(--p3)"></span>华北<span class="legend-value">2</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <!-- 最近风险 -->
+    <div class="card">
+      <div class="card-header"><h3>最近风险</h3><span class="more">查看全部 →</span></div>
+      <div class="card-body" style="padding:0">
+        <table class="table">
+          <thead><tr><th>等级</th><th>供应商</th><th>事件类型</th><th>评分</th><th>时间</th></tr></thead>
+          <tbody>
+            <tr><td><span class="level-tag p1">P1</span></td><td class="supplier-name">德六精密制造</td><td class="event-type">合规 · 制裁名单</td><td class="score">100</td><td class="time">14:20</td></tr>
+            <tr><td><span class="level-tag p2">P2</span></td><td class="supplier-name">上海电子科技</td><td class="event-type">天气 · 台风</td><td class="score">85</td><td class="time">11:45</td></tr>
+            <tr><td><span class="level-tag p2">P2</span></td><td class="supplier-name">深圳华盛物流</td><td class="event-type">物流 · 港口管制</td><td class="score">72</td><td class="time">09:30</td></tr>
+            <tr><td><span class="level-tag p3">P3</span></td><td class="supplier-name">苏州精密部件</td><td class="event-type">经营 · 产能调整</td><td class="score">58</td><td class="time">昨天</td></tr>
+            <tr><td><span class="level-tag p3">P3</span></td><td class="supplier-name">广州新材料</td><td class="event-type">天气 · 暴雨</td><td class="score">52</td><td class="time">昨天</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 数据源状态 -->
+    <div class="card">
+      <div class="card-header"><h3>数据源状态</h3><span class="more">管理 →</span></div>
+      <div class="card-body">
+        <div class="source-item"><span class="source-dot ok"></span><span class="source-name">手工 JSON 导入</span><span class="source-time">14:32</span></div>
+        <div class="source-item"><span class="source-dot ok"></span><span class="source-name">USGS 地震监测</span><span class="source-time">14:00</span></div>
+        <div class="source-item"><span class="source-dot warn"></span><span class="source-name">OFAC 制裁名单</span><span class="source-time">昨天</span></div>
+        <div class="source-item"><span class="source-dot err"></span><span class="source-name">天眼查（未配置）</span><span class="source-time">—</span></div>
+        <div style="margin-top:16px;padding:12px;background:#f9fafb;border-radius:6px;font-size:12px;color:var(--text-secondary)">
+          <strong style="color:var(--text-primary)">AI 服务</strong><br>
+          Fake Provider · 无需外部调用<br>
+          <span style="font-family:var(--mono);font-size:11px">切换至 OpenAI 兼容协议即可接入真实模型</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

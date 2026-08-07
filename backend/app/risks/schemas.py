@@ -27,6 +27,7 @@ class RiskAlertRead(BaseModel):
     confidence: float
     match_type: str
     match_reasons: list[str]
+    match_evidence: list[dict[str, object]]
     source_title: str
     source_url: str | None
     published_at: datetime | None

@@ -42,3 +42,42 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     except ValueError:
         return default
     return value if minimum <= value <= maximum else default
+
+
+# Agent 编排
+AGENT_MAX_STEPS = _int_env("AGENT_MAX_STEPS", 6, minimum=1, maximum=20)
+AGENT_TYC_ENABLED = os.getenv("AGENT_TYC_ENABLED", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+AGENT_TYC_DAILY_LIMIT = _int_env("AGENT_TYC_DAILY_LIMIT", 80, minimum=1, maximum=1000)
+AGENT_TYC_MONTHLY_LIMIT = _int_env(
+    "AGENT_TYC_MONTHLY_LIMIT", 900, minimum=1, maximum=10000
+)
+# 天眼查 MCP 网关（与 AI 平台控制台 API Key 相同，tyc_ 开头）
+TYC_API_KEY = os.getenv("TYC_API_KEY", "").strip()
+TYC_MCP_ENDPOINT = os.getenv(
+    "TYC_MCP_ENDPOINT", "https://mcp.tianyancha.com/v1"
+).strip()
+
+
+# Scheduler 定时任务配置（cron 表达式，5 段：分 时 日 月 周）
+SCHEDULER_COLLECT_CRON = os.getenv("SCHEDULER_COLLECT_CRON", "*/30 * * * *").strip()
+SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()
+SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip()
+
+
+@dataclass(frozen=True)
+class RetentionSettings:
+    signal_days: int = 90
+    event_days: int = 90
+    run_days: int = 30
+
+
+def get_retention_settings() -> RetentionSettings:
+    return RetentionSettings(
+        signal_days=_int_env("RETENTION_SIGNAL_DAYS", 90, minimum=1, maximum=3650),
+        event_days=_int_env("RETENTION_EVENT_DAYS", 90, minimum=1, maximum=3650),
+        run_days=_int_env("RETENTION_RUN_DAYS", 30, minimum=1, maximum=3650),
+    )

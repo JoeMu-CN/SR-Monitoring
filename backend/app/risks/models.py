@@ -59,6 +59,52 @@ class RiskEventSignal(Base):
     )
 
 
+class EventEntity(Base):
+    __tablename__ = "event_entities"
+    __table_args__ = (
+        UniqueConstraint("event_id", "normalized_name", name="uq_event_entities_name"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("risk_events.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(Text)
+    normalized_name: Mapped[str] = mapped_column(Text)
+    registry_no: Mapped[str | None] = mapped_column(Text)
+
+
+class EventLocation(Base):
+    __tablename__ = "event_locations"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "normalized_name", name="uq_event_locations_name"
+        ),
+        CheckConstraint(
+            "(latitude IS NULL AND longitude IS NULL) OR "
+            "(latitude IS NOT NULL AND longitude IS NOT NULL)",
+            name="ck_event_locations_coordinate_pair",
+        ),
+        CheckConstraint(
+            "radius_km IS NULL OR (latitude IS NOT NULL AND radius_km > 0)",
+            name="ck_event_locations_radius",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        ForeignKey("risk_events.id", ondelete="CASCADE")
+    )
+    name: Mapped[str] = mapped_column(Text)
+    normalized_name: Mapped[str] = mapped_column(Text)
+    country_code: Mapped[str | None] = mapped_column(Text)
+    region: Mapped[str | None] = mapped_column(Text)
+    city: Mapped[str | None] = mapped_column(Text)
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    radius_km: Mapped[float | None] = mapped_column(Float)
+
+
 class SupplierEventMatch(Base):
     __tablename__ = "supplier_event_matches"
     __table_args__ = (
@@ -76,6 +122,7 @@ class SupplierEventMatch(Base):
     match_type: Mapped[str] = mapped_column(Text)
     score: Mapped[int] = mapped_column(Integer)
     reasons: Mapped[list[str]] = mapped_column(JSONB)
+    evidence: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -3,6 +3,7 @@ import json
 
 import httpx
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from pytest import MonkeyPatch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
 from app.ai.providers import AIProviderError, FakeAIProvider, OpenAICompatibleProvider
-from app.ai.schemas import SignalAnalysisInput
+from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.config import AISettings
 from app.signals.models import RawSignal
 
@@ -27,17 +28,31 @@ def analysis_input() -> SignalAnalysisInput:
 def valid_result() -> dict[str, object]:
     return {
         "event_type": "logistics",
+        "event_subtype": "transport_disruption",
         "suggested_severity": "high",
         "organizations": [],
         "locations": [{"name": "上海港", "country_code": "CN"}],
         "affected_activities": ["logistics"],
         "affected_products": [],
+        "affected_industries": [],
         "start_at": "2026-08-05T09:00:00+08:00",
         "end_at": None,
         "summary_zh": "上海港部分作业受大风影响。",
         "evidence_sentences": ["受大风影响，部分港区临时停止装卸作业。"],
         "confidence": 0.9,
     }
+
+
+def test_event_subtype_must_belong_to_event_type() -> None:
+    payload = valid_result()
+    payload["event_subtype"] = "sanctions"
+
+    try:
+        SignalAnalysisResult.model_validate(payload)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("logistics 不得使用 sanctions 细类")
 
 
 def import_signal(client: TestClient) -> None:

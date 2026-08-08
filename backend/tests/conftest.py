@@ -16,6 +16,7 @@ from app.risks.models import (
     RiskAlert,
     RiskEvent,
     RiskEventSignal,
+    RuleDimensionConfig,
     SupplierEventMatch,
 )
 from app.signals.models import CollectionRun, RawSignal
@@ -43,6 +44,7 @@ def db_session() -> Generator[Session]:
     session.execute(delete(RawSignal))
     session.execute(delete(CollectionRun))
     session.execute(delete(Supplier))
+    session.execute(delete(RuleDimensionConfig))
     session.flush()
     try:
         yield session
@@ -72,6 +74,8 @@ def workbook_factory() -> Callable[..., bytes]:
         enabled: bool = True,
         latitude: object = 31.2304,
         longitude: object = 121.4737,
+        industry: str | None = None,
+        raw_materials: str | None = None,
     ) -> bytes:
         workbook = load_workbook(BytesIO(create_template()))
         workbook[SHEET_SUPPLIERS].append(
@@ -80,6 +84,8 @@ def workbook_factory() -> Callable[..., bytes]:
                 legal_name,
                 "CN",
                 "91310000TEST00001",
+                industry,
+                raw_materials,
                 "测试供应商;Test Supplier",
                 enabled,
             ]

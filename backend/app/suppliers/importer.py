@@ -36,6 +36,13 @@ SUPPLIER_COLUMNS = [
     ("法人主体", "legal_name", True, "供应商法人主体全称"),
     ("国家代码", "country_code", True, "ISO 两位国家代码，例如 CN、US"),
     ("注册编号", "registry_no", False, "统一社会信用代码或境外注册编号"),
+    ("行业", "industry", False, "行业标签，例如 电梯配件、钣金加工；用于宏观行业匹配"),
+    (
+        "关键原材料",
+        "raw_materials",
+        False,
+        "多个关键原材料或上游依赖使用英文分号分隔；用于行业/原材料匹配",
+    ),
     ("别名", "aliases", False, "多个中文名、英文名或简称使用英文分号分隔"),
     ("启用监控", "enabled", False, "TRUE 或 FALSE，留空时默认为 TRUE"),
 ]
@@ -72,7 +79,9 @@ def create_template() -> bytes:
     active_sheet = workbook.active
     if active_sheet is not None:
         workbook.remove(active_sheet)
-    _add_template_sheet(workbook, SHEET_SUPPLIERS, SUPPLIER_COLUMNS, [20, 34, 14, 24, 36, 14])
+    _add_template_sheet(
+        workbook, SHEET_SUPPLIERS, SUPPLIER_COLUMNS, [20, 34, 14, 24, 20, 26, 36, 14]
+    )
     _add_template_sheet(workbook, SHEET_SITES, SITE_COLUMNS, [20, 24, 14, 20, 18, 42, 14, 14])
     _add_template_sheet(workbook, SHEET_PRODUCTS, PRODUCT_COLUMNS, [20, 28, 42])
 
@@ -172,6 +181,8 @@ def parse_workbook(data: bytes) -> ImportPlan:
             "legal_name": row.get("legal_name"),
             "country_code": row.get("country_code"),
             "registry_no": row.get("registry_no"),
+            "industry": clean_optional_text(row.get("industry")),
+            "raw_materials": _split_values(clean_optional_text(row.get("raw_materials"))),
             "enabled": _parse_bool(
                 row.get("enabled"), SHEET_SUPPLIERS, row_number, "启用监控", issues
             ),

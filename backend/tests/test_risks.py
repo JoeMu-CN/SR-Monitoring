@@ -159,7 +159,7 @@ def test_complete_risk_pipeline_merges_and_scores_idempotently(
     assert alert["score"] == 73
     assert alert["supplier_name"] == "测试供应商有限公司"
     assert alert["match_type"] == "legal_name"
-    assert alert["score_detail"]["rule_version"] == "risk-score-v1"
+    assert alert["score_detail"]["rule_version"].startswith("risk-score-v1-")
 
 
 def test_process_without_matching_supplier_creates_event_without_alert(
@@ -297,3 +297,88 @@ def test_product_keyword_match_sets_product_relevance(
     assert alert.score == 57
     assert alert.level == "P3"
     assert alert.score_detail["product_relevance"] == 5
+
+
+def test_dashboard_summary_reflects_current_alerts(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """验收场景支持：风险总览汇总 P1-P4、今日新增、类型分布与数据源状态。"""
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_supplier(client)
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+    assert response.status_code == 200
+
+    summary = client.get("/api/v1/dashboard/summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["total_current"] >= 1
+    assert payload["level_counts"][0]["level"] == "P1"
+    assert sum(item["count"] for item in payload["level_counts"]) == payload["total_current"]
+    assert payload["today_new"] >= 1
+    assert any(item["event_type"] == "weather" for item in payload["type_distribution"])
+    assert len(payload["recent_alerts"]) >= 1
+    codes = {source["code"] for source in payload["sources"]}
+    assert "manual-json" in codes
+
+
+def test_risk_alert_detail_contains_evidence_and_score(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """验收场景 8：风险详情能够查看评分明细、匹配理由与原始来源。"""
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_supplier(client)
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+    assert client.post(f"/api/v1/signals/{signal_id}/process").status_code == 200
+
+    alert_id = db_session.scalar(select(RiskAlert.id))
+    assert alert_id is not None
+    response = client.get(f"/api/v1/risk-alerts/{alert_id}")
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["score_detail"]["rule_version"].startswith("risk-score-v1-")
+    assert detail["match_reasons"]
+    assert detail["match_evidence"]
+    assert detail["source_url"] == "https://example.com/d5/001"
+    assert detail["supplier_name"] == "测试供应商有限公司"
+
+    missing = client.get("/api/v1/risk-alerts/999999")
+    assert missing.status_code == 404
+
+
+def test_event_detail_contains_signals_entities_locations(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """事件详情：全部信号证据、涉及主体与地点。"""
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_supplier(client)
+    import_signals(client)
+    signal_ids = list(db_session.scalars(select(RawSignal.id).order_by(RawSignal.id)))
+    assert client.post(f"/api/v1/signals/{signal_ids[0]}/process").status_code == 200
+    assert client.post(f"/api/v1/signals/{signal_ids[1]}/process").status_code == 200
+
+    event_id = db_session.scalar(select(RiskEvent.id))
+    assert event_id is not None
+    response = client.get(f"/api/v1/events/{event_id}")
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["event_type"] == "weather"
+    assert len(detail["signals"]) == 2
+    assert any(entity["name"] == "测试供应商有限公司" for entity in detail["entities"])
+    assert any("上海" in str(location["city"]) for location in detail["locations"])
+
+    missing = client.get("/api/v1/events/999999")
+    assert missing.status_code == 404

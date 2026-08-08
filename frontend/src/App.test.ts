@@ -3,53 +3,94 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
 
-describe('App', () => {
-  afterEach(() => vi.unstubAllGlobals())
+function mockFetch(payload: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => payload,
+    }),
+  )
+}
 
-  it('显示当前风险提醒', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          total: 1,
-          items: [
-            {
-              id: 1,
-              level: 'P2',
-              score: 73,
-              supplier_name: '测试供应商有限公司',
-              event_type: 'weather',
-              event_summary: '台风影响生产和物流',
-              confidence: 0.9,
-              match_reasons: ['法人全称精确匹配'],
-              source_title: '台风公告',
-              source_url: 'https://example.com/risk',
-              published_at: '2026-08-11T08:00:00+08:00',
-              updated_at: '2026-08-11T08:01:00+08:00',
-            },
-          ],
-        }),
-      }),
-    )
+describe('App', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.location.hash = ''
+  })
+
+  it('默认显示风险总览页与顶部导航', async () => {
+    mockFetch({
+      level_counts: [
+        { level: 'P1', count: 1 },
+        { level: 'P2', count: 0 },
+        { level: 'P3', count: 0 },
+        { level: 'P4', count: 0 },
+      ],
+      total_current: 1,
+      today_new: 1,
+      type_distribution: [{ event_type: 'weather', count: 1 }],
+      recent_alerts: [
+        {
+          id: 1,
+          level: 'P1',
+          score: 100,
+          status: 'current',
+          supplier_name: '测试供应商有限公司',
+          event_type: 'compliance',
+          event_summary: '制裁名单命中',
+          confidence: 0.95,
+          match_type: 'registry_no',
+          match_reasons: [],
+          match_evidence: [],
+          source_title: '公告',
+          source_url: null,
+          published_at: null,
+          updated_at: '2026-08-08T08:00:00Z',
+        },
+      ],
+      sources: [],
+    })
     const wrapper = mount(App)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('当前供应风险')
+    expect(wrapper.text()).toContain('供应风险监控')
+    expect(wrapper.text()).toContain('总览')
+    expect(wrapper.text()).toContain('风险总览')
     expect(wrapper.text()).toContain('测试供应商有限公司')
-    expect(wrapper.text()).toContain('P2')
-    expect(wrapper.text()).toContain('73 分')
+    expect(wrapper.text()).toContain('P1')
   })
 
-  it('无提醒时给出下一步指引', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ total: 0, items: [] }) }),
-    )
+  it('导航到当前风险页', async () => {
+    mockFetch({ items: [], total: 0, limit: 50, offset: 0 })
+    const wrapper = mount(App)
+    await flushPromises()
+
+    const navLink = wrapper.findAll('nav a').find((link) => link.text() === '当前风险')
+    expect(navLink).toBeDefined()
+    await navLink!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前风险')
+  })
+
+  it('无数据时总览给出空状态', async () => {
+    mockFetch({
+      level_counts: [
+        { level: 'P1', count: 0 },
+        { level: 'P2', count: 0 },
+        { level: 'P3', count: 0 },
+        { level: 'P4', count: 0 },
+      ],
+      total_current: 0,
+      today_new: 0,
+      type_distribution: [],
+      recent_alerts: [],
+      sources: [],
+    })
     const wrapper = mount(App)
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无当前风险提醒')
-    expect(wrapper.text()).toContain('前往接口文档测试链路')
   })
 })

@@ -199,6 +199,32 @@ class TestApplyForcedRules:
         assert score == 55
         assert "forced_rule" not in detail
 
+    def test_non_matching_event_subtype_passes_through(self) -> None:
+        rule = ForcedRule(
+            name="sanctions_only",
+            description="仅制裁事件",
+            event_types=("trade_policy",),
+            match_types=("product",),
+            forced_level="P1",
+            reason="测试",
+            event_subtypes=("sanctions", "export_control"),
+        )
+        settings = ScoringSettings(forced_rules=(rule,))
+        detail: dict[str, object] = {}
+
+        level, score = apply_forced_rules(
+            settings,
+            "trade_policy",
+            "product",
+            "P3",
+            55,
+            detail,
+            event_subtype="trade_tariff",
+        )
+
+        assert (level, score) == ("P3", 55)
+        assert "forced_rule" not in detail
+
     def test_judicial_event_also_triggers(self) -> None:
         settings = ScoringSettings()
         detail: dict[str, object] = {}
@@ -353,7 +379,7 @@ def test_scoring_uses_v1_rule_version(
     assert response.status_code == 200
     alert = db_session.scalar(select(RiskAlert))
     assert alert is not None
-    assert alert.score_detail["rule_version"] == "risk-score-v1"
+    assert str(alert.score_detail["rule_version"]).startswith("risk-score-v1-")
 
 
 def test_alert_has_expires_at(

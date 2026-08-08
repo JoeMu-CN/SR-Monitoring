@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -33,6 +34,7 @@ class RiskEvent(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     dedup_key: Mapped[str] = mapped_column(Text)
     event_type: Mapped[str] = mapped_column(Text)
+    event_subtype: Mapped[str | None] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(Text)
     summary: Mapped[str] = mapped_column(Text)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -131,7 +133,12 @@ class SupplierEventMatch(Base):
 class RiskAlert(Base):
     __tablename__ = "risk_alerts"
     __table_args__ = (
-        UniqueConstraint("match_id", name="uq_risk_alerts_match_id"),
+        Index(
+            "uq_risk_alerts_current_match_id",
+            "match_id",
+            unique=True,
+            postgresql_where=text("status = 'current'"),
+        ),
         CheckConstraint("level IN ('P1', 'P2', 'P3', 'P4')", name="ck_risk_alerts_level"),
         CheckConstraint("score BETWEEN 0 AND 100", name="ck_risk_alerts_score"),
         CheckConstraint(
@@ -151,6 +158,27 @@ class RiskAlert(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class RuleDimensionConfig(Base):
+    """监控维度的运行时配置覆盖（可视化工作台编辑）。
+
+    只存覆盖项；未覆盖的键沿用维度模块默认。引擎每次处理事件时重新合并，
+    因此启停与参数修改即时生效（热更新）。
+    """
+
+    __tablename__ = "rule_dimension_configs"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    key: Mapped[str] = mapped_column(Text, unique=True)
+    label: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    config: Mapped[dict[str, object]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

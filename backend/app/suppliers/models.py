@@ -40,6 +40,10 @@ class Supplier(Base):
     legal_name: Mapped[str] = mapped_column(Text)
     country_code: Mapped[str] = mapped_column(Text)
     registry_no: Mapped[str | None] = mapped_column(Text)
+    industry: Mapped[str | None] = mapped_column(Text)
+    raw_materials: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

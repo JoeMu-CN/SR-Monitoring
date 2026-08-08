@@ -20,6 +20,7 @@ class ForcedRule:
     match_types: tuple[str, ...]  # 空元组表示匹配所有匹配类型
     forced_level: str
     reason: str
+    event_subtypes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ def load_scoring_settings() -> ScoringSettings:
                         match_types=tuple(item.get("match_types", [])),
                         forced_level=str(item.get("forced_level", "P1")),
                         reason=str(item.get("reason", "")),
+                        event_subtypes=tuple(item.get("event_subtypes", [])),
                     )
                 )
         kwargs["forced_rules"] = tuple(rules)
@@ -186,6 +188,9 @@ def apply_level_cap(
 ) -> str:
     """对弱关联（无主体精确匹配）设置等级上限。"""
     types = set(match_type.split("+"))
+    if types == {"country"} and level != "P4":
+        detail["level_cap"] = "country_only_max_p4"
+        return "P4"
     if level == "P1" and types.isdisjoint(settings.strong_match_types):
         detail["level_cap"] = "weak_association_max_p2"
         return "P2"
@@ -199,11 +204,14 @@ def apply_forced_rules(
     level: str,
     score: int,
     detail: dict[str, object],
+    event_subtype: str | None = None,
 ) -> tuple[str, int]:
     """检查强制规则，命中时直接返回指定等级和满分。"""
     match_types = set(match_type.split("+"))
     for rule in settings.forced_rules:
         if rule.event_types and event_type not in rule.event_types:
+            continue
+        if rule.event_subtypes and event_subtype not in rule.event_subtypes:
             continue
         if rule.match_types and match_types.isdisjoint(set(rule.match_types)):
             continue

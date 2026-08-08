@@ -15,6 +15,23 @@ EventType = Literal[
     "compliance",
     "other",
 ]
+EventSubtype = Literal[
+    "weather_alert",
+    "geological_hazard",
+    "armed_conflict",
+    "sanctions",
+    "export_control",
+    "political_instability",
+    "public_security",
+    "trade_tariff",
+    "regulatory_change",
+    "raw_material_shortage",
+    "transport_disruption",
+    "corporate_distress",
+    "judicial_case",
+    "compliance_violation",
+    "other",
+]
 Severity = Literal["critical", "high", "medium", "low"]
 AffectedActivity = Literal[
     "production", "logistics", "trade", "operations", "judicial", "compliance"
@@ -63,11 +80,13 @@ class SignalAnalysisResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_type: EventType
+    event_subtype: EventSubtype | None = None
     suggested_severity: Severity
     organizations: list[OrganizationReference] = Field(default_factory=list)
     locations: list[LocationReference] = Field(default_factory=list)
     affected_activities: list[AffectedActivity] = Field(default_factory=list)
     affected_products: list[str] = Field(default_factory=list)
+    affected_industries: list[str] = Field(default_factory=list)
     start_at: datetime | None = None
     end_at: datetime | None = None
     summary_zh: NonEmptyText
@@ -81,6 +100,29 @@ class SignalAnalysisResult(BaseModel):
                 raise ValueError(f"{field_name} 必须包含时区")
         if self.start_at and self.end_at and self.end_at < self.start_at:
             raise ValueError("end_at 不能早于 start_at")
+        allowed_subtypes: dict[str, set[str]] = {
+            "weather": {"weather_alert"},
+            "geological": {"geological_hazard"},
+            "geopolitical": {
+                "armed_conflict",
+                "sanctions",
+                "political_instability",
+                "public_security",
+            },
+            "trade_policy": {
+                "sanctions",
+                "export_control",
+                "trade_tariff",
+                "regulatory_change",
+            },
+            "logistics": {"raw_material_shortage", "transport_disruption"},
+            "corporate": {"corporate_distress"},
+            "judicial": {"judicial_case"},
+            "compliance": {"compliance_violation", "sanctions"},
+            "other": {"other"},
+        }
+        if self.event_subtype and self.event_subtype not in allowed_subtypes[self.event_type]:
+            raise ValueError("event_subtype 与 event_type 不兼容")
         return self
 
 

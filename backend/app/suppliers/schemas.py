@@ -90,6 +90,8 @@ class SupplierBase(BaseModel):
     legal_name: NonEmptyText
     country_code: str
     registry_no: str | None = None
+    industry: str | None = None
+    raw_materials: list[str] = Field(default_factory=list)
     enabled: bool = True
     aliases: list[AliasInput] = Field(default_factory=list)
     sites: list[SiteInput] = Field(default_factory=list)
@@ -107,6 +109,24 @@ class SupplierBase(BaseModel):
     @classmethod
     def clean_registry_no(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+    @field_validator("industry", mode="before")
+    @classmethod
+    def clean_industry(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("raw_materials", mode="before")
+    @classmethod
+    def clean_raw_materials(cls, value: object) -> list[str]:
+        if isinstance(value, list):
+            return list(dict.fromkeys(item.strip() for item in value if str(item).strip()))
+        if isinstance(value, str):
+            return [
+                item.strip()
+                for item in value.replace("；", ";").split(";")
+                if item.strip()
+            ]
+        return []
 
     @model_validator(mode="after")
     def remove_duplicate_children(self) -> Self:
@@ -165,6 +185,8 @@ class SupplierRead(BaseModel):
     legal_name: str
     country_code: str
     registry_no: str | None
+    industry: str | None
+    raw_materials: list[str]
     enabled: bool
     aliases: list[AliasRead]
     sites: list[SiteRead]

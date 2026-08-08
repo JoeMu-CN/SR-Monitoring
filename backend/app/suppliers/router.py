@@ -63,6 +63,8 @@ def replace_supplier_details(
     supplier.legal_name = payload.legal_name
     supplier.country_code = payload.country_code
     supplier.registry_no = payload.registry_no
+    supplier.industry = payload.industry
+    supplier.raw_materials = list(payload.raw_materials)
     supplier.enabled = payload.enabled
     supplier.updated_at = datetime.now(UTC)
     supplier.aliases = [

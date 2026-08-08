@@ -1,0 +1,6 @@
+{
+  "name": "SR 供应商风险监控",
+  "description": "企业级供应商风险智能监控与预警平台 (Enterprise Risk Intelligence)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

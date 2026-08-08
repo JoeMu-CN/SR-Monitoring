@@ -7,6 +7,7 @@ interface SuppliersViewProps {
   onSelectSupplier: (supplier: Supplier) => void;
   onToggleStatus: (supplierId: string) => void;
   onDeleteSupplier: (supplierId: string) => void;
+  onAskAssistant: (query: string) => void;
 }
 
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
@@ -15,6 +16,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   onSelectSupplier,
   onToggleStatus,
   onDeleteSupplier,
+  onAskAssistant,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'high_risk' | 'paused'>('all');
@@ -150,6 +152,18 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       </td>
                       <td className="p-3.5 pr-4 text-center">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAskAssistant(`请查询供应商【${sup.legalName}】（编码 ${sup.code}）的完整工商风险、司法记录与供应链合规评级。`);
+                            }}
+                            className="p-1.5 text-[#004782] dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 text-[12px] font-bold"
+                            title="询问风险助手"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+                            <span className="hidden xl:inline">问助手</span>
+                          </button>
+
                           <button
                             onClick={(e) => {
                               e.stopPropagation();

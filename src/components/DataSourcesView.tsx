@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { DataSource } from '../types';
 
 interface DataSourcesViewProps {
@@ -74,17 +75,26 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                 </div>
 
                 <span
-                  className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
+                  className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${
                     isWarning
                       ? 'bg-red-100 text-[#ba1a1a]'
                       : 'bg-emerald-100 text-emerald-800'
                   }`}
                 >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      isWarning ? 'bg-[#ba1a1a]' : 'bg-emerald-600'
-                    }`}
-                  ></span>
+                  <div className="relative flex items-center justify-center w-2 h-2">
+                    <motion.span
+                      className={`absolute inline-flex h-full w-full rounded-full ${
+                        isWarning ? 'bg-red-500/60' : 'bg-emerald-500/60'
+                      }`}
+                      animate={{ scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8] }}
+                      transition={{ duration: isWarning ? 1.2 : 2.0, repeat: Infinity, ease: 'easeInOut' }}
+                    />
+                    <span
+                      className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
+                        isWarning ? 'bg-[#ba1a1a]' : 'bg-emerald-600'
+                      }`}
+                    />
+                  </div>
                   {ds.latency}
                 </span>
               </div>

@@ -1,27 +1,43 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { RiskItem } from '../types';
 
 interface RiskDetailModalProps {
   risk: RiskItem | null;
   onClose: () => void;
   onExportReport: (item: RiskItem) => void;
+  onAskAssistant: (query: string) => void;
 }
 
 export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
   risk,
   onClose,
   onExportReport,
+  onAskAssistant,
 }) => {
   const [isMonitored, setIsMonitored] = useState(true);
-
-  if (!risk) return null;
-
-  const score = risk.overallScore || 85;
+  const score = risk?.overallScore || 92.5;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="bg-[#f7f9ff] dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto">
-        {/* Top Sticky Bar */}
+    <AnimatePresence>
+      {risk && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+            className="bg-[#f7f9ff] dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top Sticky Bar */}
         <div className="bg-white dark:bg-slate-950 px-6 py-4 border-b border-[#c2c6d2] dark:border-slate-800 flex justify-between items-center sticky top-0 z-10">
           <button
             onClick={onClose}
@@ -32,6 +48,18 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
           </button>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                onClose();
+                onAskAssistant(`请深度分析【${risk.companyName}】的核心风险事件、影响程度及采购规避建议。`);
+              }}
+              className="px-3.5 py-1.5 bg-[#ecf4ff] dark:bg-blue-950/80 hover:bg-[#d6e4f3] dark:hover:bg-blue-900 border border-[#004782]/30 dark:border-blue-700/50 text-[#004782] dark:text-blue-300 rounded-lg text-[13px] font-bold flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs"
+              title="跳转至 AI 风险助手进行深入研判"
+            >
+              <span className="material-symbols-outlined text-[18px] text-[#004782] dark:text-blue-400">smart_toy</span>
+              <span>询问风险助手</span>
+            </button>
+
             <button
               onClick={() => onExportReport(risk)}
               className="px-3.5 py-1.5 border border-[#004782] text-[#004782] dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg text-[13px] font-bold flex items-center gap-1.5 transition-colors"
@@ -116,6 +144,26 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
                     P1 (严重)
                   </div>
                 </div>
+              </div>
+
+              {/* Ask Assistant Prompt Banner */}
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    onClose();
+                    onAskAssistant(`请分析【${risk.companyName}】的核心风险，并提供同类型备选供应商和规避方案。`);
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#ecf4ff]/80 dark:bg-slate-800 hover:bg-[#d6e4f3] dark:hover:bg-slate-700 transition-all text-[12px] font-bold text-[#004782] dark:text-blue-300 border border-[#004782]/20"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px]">psychology</span>
+                    <span>需要备选供应商预案或更深度的合规问答？</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] font-bold">
+                    <span>询问助手</span>
+                    <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+                  </div>
+                </button>
               </div>
             </div>
 
@@ -319,7 +367,9 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
             </div>
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
+  )}
+</AnimatePresence>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { RiskItem, DataSource } from '../types';
 
 interface OverviewViewProps {
@@ -83,7 +84,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
       {/* Stat Cards Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs">
+        <motion.div
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs cursor-default"
+        >
           <div className="text-[12px] font-medium text-[#424751] dark:text-slate-400">活跃供应商</div>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl lg:text-3xl font-extrabold font-mono text-[#101d28] dark:text-white">
@@ -93,21 +97,27 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               +12
             </span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 border-l-4 border-l-[#C92A2A] rounded-xl p-4 shadow-2xs">
+        <motion.div
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 border-l-4 border-l-[#C92A2A] rounded-xl p-4 shadow-2xs cursor-default"
+        >
           <div className="text-[12px] font-medium text-[#424751] dark:text-slate-400">高危预警 (P1)</div>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl lg:text-3xl font-extrabold font-mono text-[#C92A2A]">
               14
             </span>
-            <span className="text-xs font-bold text-[#C92A2A] bg-red-50 px-1.5 py-0.5 rounded">
+            <span className="text-xs font-bold text-[#C92A2A] bg-red-50 px-1.5 py-0.5 rounded animate-pulse">
               +3
             </span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 border-l-4 border-l-[#D97706] rounded-xl p-4 shadow-2xs">
+        <motion.div
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 border-l-4 border-l-[#D97706] rounded-xl p-4 shadow-2xs cursor-default"
+        >
           <div className="text-[12px] font-medium text-[#424751] dark:text-slate-400">中度风险 (P2)</div>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl lg:text-3xl font-extrabold font-mono text-[#D97706]">
@@ -117,9 +127,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               -5
             </span>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs">
+        <motion.div
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs cursor-default"
+        >
           <div className="text-[12px] font-medium text-[#424751] dark:text-slate-400">自动缓解率</div>
           <div className="flex items-baseline gap-2 mt-1">
             <span className="text-2xl lg:text-3xl font-extrabold font-mono text-[#004782] dark:text-blue-400">
@@ -127,7 +140,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             </span>
             <span className="text-xs font-medium text-slate-500">模型评估</span>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* 全网风险刻度带 */}

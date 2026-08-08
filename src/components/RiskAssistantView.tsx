@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota } from '../types';
 
 interface RiskAssistantViewProps {
@@ -6,6 +7,8 @@ interface RiskAssistantViewProps {
   suppliers: Supplier[];
   onSelectRisk: (risk: RiskItem) => void;
   onSelectSupplier: (supplier: Supplier) => void;
+  pendingQuery?: string | null;
+  onClearPendingQuery?: () => void;
 }
 
 export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
@@ -13,6 +16,8 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   suppliers,
   onSelectRisk,
   onSelectSupplier,
+  pendingQuery,
+  onClearPendingQuery,
 }) => {
   // TianYanCha Quota state
   const [quota, setQuota] = useState<TianYanChaQuota>({
@@ -51,6 +56,16 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping]);
+
+  // Handle pre-filled contextual query from Risk Detail or Supplier views
+  useEffect(() => {
+    if (pendingQuery && pendingQuery.trim().length > 0) {
+      handleSend(pendingQuery);
+      if (onClearPendingQuery) {
+        onClearPendingQuery();
+      }
+    }
+  }, [pendingQuery]);
 
   const toggleToolExpand = (msgId: string) => {
     setExpandedTools((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
@@ -95,6 +110,51 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     const toolCalls: ToolCall[] = [];
 
     const lower = query.toLowerCase();
+
+    // Check if query is targeting a specific company in system or brackets
+    const companyMatchInBrackets = query.match(/【(.*?)】/)?.[1];
+    const matchedRiskItem = riskItems.find((r) =>
+      companyMatchInBrackets
+        ? r.companyName.includes(companyMatchInBrackets) || companyMatchInBrackets.includes(r.companyName)
+        : (r.companyName && query.includes(r.companyName))
+    );
+    const matchedSupplierItem = suppliers.find((s) =>
+      companyMatchInBrackets
+        ? s.legalName.includes(companyMatchInBrackets) || companyMatchInBrackets.includes(s.legalName)
+        : (s.legalName && query.includes(s.legalName))
+    );
+
+    if (matchedRiskItem || matchedSupplierItem) {
+      const companyName = matchedRiskItem?.companyName || matchedSupplierItem?.legalName || companyMatchInBrackets || '';
+      toolCalls.push({
+        id: `tool-${Date.now()}-dossier`,
+        toolName: 'get_company_risk_dossier',
+        description: `多源深度检索【${companyName}】的舆情、工商、司法及供应链风险图谱`,
+        params: { companyName, includeSubTiers: true },
+        durationMs: 140,
+        status: 'success',
+        resultCount: 1,
+      });
+
+      const riskLevelText = matchedRiskItem
+        ? `${matchedRiskItem.level} (${matchedRiskItem.levelName})`
+        : matchedSupplierItem?.riskLevel || 'P3';
+
+      return {
+        id: msgId,
+        sender: 'assistant',
+        timestamp,
+        content: `已为您调取 **【${companyName}】** 的智能风险全景分析档案：\n\n` +
+          `• **风险等级**：${riskLevelText}\n` +
+          `• **事件摘要**：${matchedRiskItem?.summary || `已对 ${companyName} 建立实时监控，生产地位于 ${matchedSupplierItem?.productionLocation || '国内'}，主要供应 ${matchedSupplierItem?.suppliedProduct || '核心部件'}。`}\n` +
+          `• **采购避险与合规建议**：针对该企业，建议持续跟进监管信息，并准备跨区域备选供应商预案，以应对可能的供应波动。`,
+        toolCalls,
+        data: {
+          riskCards: matchedRiskItem ? [matchedRiskItem] : [],
+          supplierCards: matchedSupplierItem ? [matchedSupplierItem] : [],
+        },
+      };
+    }
 
     // 1. Quota Check Query
     if (lower.includes('额度') || lower.includes('调用') || lower.includes('天眼查额度')) {
@@ -349,10 +409,32 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              数据直连 ｜ 实时只读
+            {/* AI Model Status Light */}
+            <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 font-medium bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800">
+              <div className="relative flex items-center justify-center w-2 h-2">
+                <motion.span
+                  className="absolute inline-flex h-full w-full rounded-full bg-emerald-500/60"
+                  animate={{ scale: [1, 2.4, 1], opacity: [0.85, 0, 0.85] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+              </div>
+              <span className="text-slate-500 dark:text-slate-400">模型状态:</span> Gemini 在线
             </span>
+
+            {/* External Check TianYanCha Status Light */}
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-blue-700 dark:text-blue-300 font-medium bg-blue-50 dark:bg-blue-950/40 px-2.5 py-1 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="relative flex items-center justify-center w-2 h-2">
+                <motion.span
+                  className="absolute inline-flex h-full w-full rounded-full bg-blue-500/60"
+                  animate={{ scale: [1, 2.4, 1], opacity: [0.85, 0, 0.85] }}
+                  transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.8)]" />
+              </div>
+              <span className="text-slate-500 dark:text-slate-400">外部核查:</span> 天眼查 API 直连
+            </span>
+
             <button
               onClick={() => setMessages([initialMessage])}
               className="text-[#424751] dark:text-slate-300 hover:text-[#004782] p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-[12px] flex items-center gap-1"
@@ -366,91 +448,104 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
         {/* Chat Messages Scroll Container */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 bg-[#f7f9ff]/50 dark:bg-[#101d28]/30">
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${
-                msg.sender === 'user' ? 'items-end' : 'items-start'
-              } space-y-2 max-w-full`}
-            >
-              {/* Message Header */}
-              <div className="flex items-center gap-2 px-1 text-[11px] text-[#727782] dark:text-slate-400">
-                <span className="font-semibold">
-                  {msg.sender === 'user' ? '采购决策员' : 'SR 风险查询助手'}
-                </span>
-                <span>•</span>
-                <span>{msg.timestamp}</span>
-              </div>
-
-              {/* Message Bubble */}
-              <div
-                className={`p-4 rounded-2xl text-[14px] leading-relaxed shadow-xs max-w-[92%] sm:max-w-[85%] ${
-                  msg.sender === 'user'
-                    ? 'bg-[#185fa5] text-white rounded-tr-none'
-                    : 'bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 text-[#101d28] dark:text-slate-100 rounded-tl-none'
-                }`}
+          <AnimatePresence initial={false}>
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 14, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className={`flex flex-col ${
+                  msg.sender === 'user' ? 'items-end' : 'items-start'
+                } space-y-2 max-w-full`}
               >
-                {/* Formatted Text Content */}
-                <div className="whitespace-pre-wrap space-y-2">
-                  {msg.content.split('\n\n').map((paragraph, pIdx) => (
-                    <p key={pIdx}>
-                      {paragraph.split('**').map((part, bIdx) =>
-                        bIdx % 2 === 1 ? (
-                          <strong key={bIdx} className="font-bold text-[#004782] dark:text-blue-300">
-                            {part}
-                          </strong>
-                        ) : (
-                          part
-                        )
-                      )}
-                    </p>
-                  ))}
+                {/* Message Header */}
+                <div className="flex items-center gap-2 px-1 text-[11px] text-[#727782] dark:text-slate-400">
+                  <span className="font-semibold">
+                    {msg.sender === 'user' ? '采购决策员' : 'SR 风险查询助手'}
+                  </span>
+                  <span>•</span>
+                  <span>{msg.timestamp}</span>
                 </div>
 
-                {/* Collapsible Tool Call / Query Evidence Accordion */}
-                {msg.toolCalls && msg.toolCalls.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-[#c2c6d2]/50 dark:border-slate-800">
-                    <button
-                      onClick={() => toggleToolExpand(msg.id)}
-                      className="w-full flex items-center justify-between p-2 rounded-lg bg-[#ecf4ff]/80 dark:bg-slate-800/80 hover:bg-[#d6e4f3] dark:hover:bg-slate-800 transition-all text-[12px] font-medium text-[#004782] dark:text-blue-300"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[16px]">build_circle</span>
-                        <span>查询依据与工具调用 ({msg.toolCalls.length} 项)</span>
-                      </div>
-                      <span className="material-symbols-outlined text-[18px]">
-                        {expandedTools[msg.id] ? 'expand_less' : 'expand_more'}
-                      </span>
-                    </button>
-
-                    {expandedTools[msg.id] && (
-                      <div className="mt-2 space-y-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono">
-                        {msg.toolCalls.map((tool) => (
-                          <div
-                            key={tool.id}
-                            className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1"
-                          >
-                            <div className="flex justify-between items-center font-bold text-[#004782] dark:text-blue-400">
-                              <span className="flex items-center gap-1">
-                                <span className="material-symbols-outlined text-[14px]">terminal</span>
-                                {tool.toolName}
-                              </span>
-                              <span className="text-emerald-600 dark:text-emerald-400 text-[10px]">
-                                {tool.durationMs}ms | 状态 200 OK
-                              </span>
-                            </div>
-                            <div className="text-slate-600 dark:text-slate-300">
-                              描述: {tool.description}
-                            </div>
-                            <div className="text-slate-400 dark:text-slate-500 truncate">
-                              参数: {JSON.stringify(tool.params)}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                {/* Message Bubble */}
+                <div
+                  className={`p-4 rounded-2xl text-[14px] leading-relaxed shadow-xs max-w-[92%] sm:max-w-[85%] ${
+                    msg.sender === 'user'
+                      ? 'bg-[#185fa5] text-white rounded-tr-none'
+                      : 'bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 text-[#101d28] dark:text-slate-100 rounded-tl-none'
+                  }`}
+                >
+                  {/* Formatted Text Content */}
+                  <div className="whitespace-pre-wrap space-y-2">
+                    {msg.content.split('\n\n').map((paragraph, pIdx) => (
+                      <p key={pIdx}>
+                        {paragraph.split('**').map((part, bIdx) =>
+                          bIdx % 2 === 1 ? (
+                            <strong key={bIdx} className="font-bold text-[#004782] dark:text-blue-300">
+                              {part}
+                            </strong>
+                          ) : (
+                            part
+                          )
+                        )}
+                      </p>
+                    ))}
                   </div>
-                )}
+
+                  {/* Collapsible Tool Call / Query Evidence Accordion */}
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#c2c6d2]/50 dark:border-slate-800">
+                      <button
+                        onClick={() => toggleToolExpand(msg.id)}
+                        className="w-full flex items-center justify-between p-2 rounded-lg bg-[#ecf4ff]/80 dark:bg-slate-800/80 hover:bg-[#d6e4f3] dark:hover:bg-slate-800 transition-all text-[12px] font-medium text-[#004782] dark:text-blue-300"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[16px]">build_circle</span>
+                          <span>查询依据与工具调用 ({msg.toolCalls.length} 项)</span>
+                        </div>
+                        <span className="material-symbols-outlined text-[18px]">
+                          {expandedTools[msg.id] ? 'expand_less' : 'expand_more'}
+                        </span>
+                      </button>
+
+                      <AnimatePresence>
+                        {expandedTools[msg.id] && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="mt-2 space-y-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono overflow-hidden"
+                          >
+                            {msg.toolCalls.map((tool) => (
+                              <div
+                                key={tool.id}
+                                className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1"
+                              >
+                                <div className="flex justify-between items-center font-bold text-[#004782] dark:text-blue-400">
+                                  <span className="flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-[14px]">terminal</span>
+                                    {tool.toolName}
+                                  </span>
+                                  <span className="text-emerald-600 dark:text-emerald-400 text-[10px]">
+                                    {tool.durationMs}ms | 状态 200 OK
+                                  </span>
+                                </div>
+                                <div className="text-slate-600 dark:text-slate-300">
+                                  描述: {tool.description}
+                                </div>
+                                <div className="text-slate-400 dark:text-slate-500 truncate">
+                                  参数: {JSON.stringify(tool.params)}
+                                </div>
+                              </div>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
 
                 {/* Structured Cards Render Engine */}
                 {msg.data && (
@@ -742,8 +837,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                   </div>
                 )}
               </div>
-            </div>
+            </motion.div>
           ))}
+        </AnimatePresence>
 
           {/* Typing Indicator */}
           {isTyping && (

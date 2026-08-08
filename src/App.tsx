@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { ActiveTab, RiskItem, Supplier, DataSource, MonitoringDimension } from './types';
 import {
   mockRiskItems,
@@ -35,6 +36,9 @@ export function App() {
   // Selected Risk Modal State
   const [selectedRisk, setSelectedRisk] = useState<RiskItem | null>(null);
 
+  // Pending Assistant Query State
+  const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
+
   // Other Modals State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
@@ -46,6 +50,12 @@ export function App() {
   // Handlers
   const handleSelectRisk = (risk: RiskItem) => {
     setSelectedRisk(risk);
+  };
+
+  const handleAskAssistant = (query: string) => {
+    setSelectedRisk(null);
+    setPendingAssistantQuery(query);
+    setActiveTab('risk-assistant');
   };
 
   const handleSelectSupplier = (supplier: Supplier) => {
@@ -143,57 +153,71 @@ export function App() {
 
         {/* View Content Frame */}
         <main className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto flex-1">
-          {activeTab === 'overview' && (
-            <OverviewView
-              riskItems={riskItems}
-              dataSources={dataSources}
-              onSelectRisk={handleSelectRisk}
-              onViewAllRisks={() => setActiveTab('current-risks')}
-              isSimulatedEmpty={isSimulatedEmpty}
-              setIsSimulatedEmpty={setIsSimulatedEmpty}
-            />
-          )}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="w-full h-full"
+            >
+              {activeTab === 'overview' && (
+                <OverviewView
+                  riskItems={riskItems}
+                  dataSources={dataSources}
+                  onSelectRisk={handleSelectRisk}
+                  onViewAllRisks={() => setActiveTab('current-risks')}
+                  isSimulatedEmpty={isSimulatedEmpty}
+                  setIsSimulatedEmpty={setIsSimulatedEmpty}
+                />
+              )}
 
-          {activeTab === 'current-risks' && (
-            <CurrentRisksView
-              riskItems={isSimulatedEmpty ? [] : riskItems}
-              onSelectRisk={handleSelectRisk}
-            />
-          )}
+              {activeTab === 'current-risks' && (
+                <CurrentRisksView
+                  riskItems={isSimulatedEmpty ? [] : riskItems}
+                  onSelectRisk={handleSelectRisk}
+                />
+              )}
 
-          {activeTab === 'risk-assistant' && (
-            <RiskAssistantView
-              riskItems={isSimulatedEmpty ? [] : riskItems}
-              suppliers={suppliers}
-              onSelectRisk={handleSelectRisk}
-              onSelectSupplier={handleSelectSupplier}
-            />
-          )}
+              {activeTab === 'risk-assistant' && (
+                <RiskAssistantView
+                  riskItems={isSimulatedEmpty ? [] : riskItems}
+                  suppliers={suppliers}
+                  onSelectRisk={handleSelectRisk}
+                  onSelectSupplier={handleSelectSupplier}
+                  pendingQuery={pendingAssistantQuery}
+                  onClearPendingQuery={() => setPendingAssistantQuery(null)}
+                />
+              )}
 
-          {activeTab === 'suppliers' && (
-            <SuppliersView
-              suppliers={suppliers}
-              onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
-              onSelectSupplier={handleSelectSupplier}
-              onToggleStatus={handleToggleSupplierStatus}
-              onDeleteSupplier={handleDeleteSupplier}
-            />
-          )}
+              {activeTab === 'suppliers' && (
+                <SuppliersView
+                  suppliers={suppliers}
+                  onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
+                  onSelectSupplier={handleSelectSupplier}
+                  onToggleStatus={handleToggleSupplierStatus}
+                  onDeleteSupplier={handleDeleteSupplier}
+                  onAskAssistant={handleAskAssistant}
+                />
+              )}
 
-          {activeTab === 'data-sources' && (
-            <DataSourcesView
-              dataSources={dataSources}
-              onTriggerSync={handleTriggerDataSync}
-            />
-          )}
+              {activeTab === 'data-sources' && (
+                <DataSourcesView
+                  dataSources={dataSources}
+                  onTriggerSync={handleTriggerDataSync}
+                />
+              )}
 
-          {activeTab === 'rules' && (
-            <RuleEngineView
-              dimensions={dimensions}
-              onToggleDimension={handleToggleDimension}
-              onUpdateDimension={handleUpdateDimension}
-            />
-          )}
+              {activeTab === 'rules' && (
+                <RuleEngineView
+                  dimensions={dimensions}
+                  onToggleDimension={handleToggleDimension}
+                  onUpdateDimension={handleUpdateDimension}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 
@@ -212,6 +236,7 @@ export function App() {
           setSelectedRisk(null);
           setIsExportModalOpen(true);
         }}
+        onAskAssistant={handleAskAssistant}
       />
 
       {/* Export Report Modal */}

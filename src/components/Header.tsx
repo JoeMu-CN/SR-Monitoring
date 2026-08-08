@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { ActiveTab } from '../types';
 
 interface HeaderProps {
@@ -66,6 +67,57 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
+        {/* Middle System Status Indicators (Pulse Lights) */}
+        <div className="hidden xl:flex items-center gap-3 bg-[#f7f9ff] dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl px-3 py-1.5 text-[11px] shadow-2xs">
+          {/* Model Status Indicator */}
+          <div className="flex items-center gap-2 pr-2.5 border-r border-[#c2c6d2]/60 dark:border-slate-800">
+            <div className="relative flex items-center justify-center w-2.5 h-2.5">
+              <motion.span
+                className="absolute inline-flex h-full w-full rounded-full bg-emerald-500/60"
+                animate={{ scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]" />
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="font-bold text-[#101d28] dark:text-slate-200">模型状态</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Gemini 在线</span>
+            </div>
+          </div>
+
+          {/* External Check Status Indicator (TianYanCha) */}
+          <div className="flex items-center gap-2 pr-2.5 border-r border-[#c2c6d2]/60 dark:border-slate-800">
+            <div className="relative flex items-center justify-center w-2.5 h-2.5">
+              <motion.span
+                className="absolute inline-flex h-full w-full rounded-full bg-blue-500/60"
+                animate={{ scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8] }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.8)]" />
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="font-bold text-[#101d28] dark:text-slate-200">外部核查状态</span>
+              <span className="text-blue-600 dark:text-blue-400 font-medium">天眼查 API 直连</span>
+            </div>
+          </div>
+
+          {/* Data Flow Pulse Indicator */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex items-center justify-center w-2.5 h-2.5">
+              <motion.span
+                className="absolute inline-flex h-full w-full rounded-full bg-cyan-500/60"
+                animate={{ scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.8)]" />
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="font-bold text-[#101d28] dark:text-slate-200">数据流与监控</span>
+              <span className="text-cyan-600 dark:text-cyan-400 font-medium">全网实时</span>
+            </div>
+          </div>
+        </div>
+
         {/* Right Search & Controls */}
         <div className="flex items-center gap-3">
           {/* Quick Search */}
@@ -86,15 +138,26 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setIsSimulatedEmpty(!isSimulatedEmpty)}
             title="切换空状态与真实数据预览"
-            className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition-all ${
+            className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium border transition-all ${
               isSimulatedEmpty
                 ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950 dark:text-amber-200'
                 : 'bg-[#ecf4ff] text-[#004782] border-[#c2c6d2] dark:bg-slate-800 dark:text-blue-300'
             }`}
           >
-            <span className="material-symbols-outlined text-[16px]">
-              {isSimulatedEmpty ? 'hourglass_empty' : 'graphic_eq'}
-            </span>
+            <div className="relative flex items-center justify-center w-2 h-2">
+              <motion.span
+                className={`absolute inline-flex h-full w-full rounded-full ${
+                  isSimulatedEmpty ? 'bg-amber-500/60' : 'bg-emerald-500/60'
+                }`}
+                animate={{ scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <span
+                className={`relative inline-flex rounded-full h-1.5 w-1.5 ${
+                  isSimulatedEmpty ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+              />
+            </div>
             <span>{isSimulatedEmpty ? '空状态模式' : '实时监控模式'}</span>
           </button>
 

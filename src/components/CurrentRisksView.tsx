@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { RiskItem, RiskLevel } from '../types';
 
 interface CurrentRisksViewProps {
@@ -178,28 +179,39 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
 
       {/* Risk Cards List */}
       <div className="space-y-4">
-        {filteredRisks.length === 0 ? (
-          <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-12 text-center">
-            <span className="material-symbols-outlined text-[48px] text-slate-300">search_off</span>
-            <h3 className="font-bold text-[16px] text-slate-700 dark:text-slate-300 mt-2">
-              未找到匹配的风险预警记录
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">请尝试调整搜索关键词或重置筛选条件。</p>
-          </div>
-        ) : (
-          filteredRisks.map((item) => {
-            let badgeBg = 'bg-[#64748B]';
-            if (item.level === 'P1') badgeBg = 'bg-[#C92A2A]';
-            if (item.level === 'P2') badgeBg = 'bg-[#D97706]';
-            if (item.level === 'P3') badgeBg = 'bg-[#2563EB]';
+        <AnimatePresence mode="popLayout">
+          {filteredRisks.length === 0 ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-12 text-center"
+            >
+              <span className="material-symbols-outlined text-[48px] text-slate-300">search_off</span>
+              <h3 className="font-bold text-[16px] text-slate-700 dark:text-slate-300 mt-2">
+                未找到匹配的风险预警记录
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">请尝试调整搜索关键词或重置筛选条件。</p>
+            </motion.div>
+          ) : (
+            filteredRisks.map((item) => {
+              let badgeBg = 'bg-[#64748B]';
+              if (item.level === 'P1') badgeBg = 'bg-[#C92A2A]';
+              if (item.level === 'P2') badgeBg = 'bg-[#D97706]';
+              if (item.level === 'P3') badgeBg = 'bg-[#2563EB]';
 
-            return (
-              <div
-                key={item.id}
-                onClick={() => onSelectRisk(item)}
-                className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs hover:border-[#004782] dark:hover:border-blue-500 transition-all cursor-pointer group"
-              >
-                <div className="flex justify-between items-start gap-2">
+              return (
+                <motion.div
+                  key={item.id}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  whileHover={{ y: -3, transition: { duration: 0.15 } }}
+                  onClick={() => onSelectRisk(item)}
+                  className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs hover:border-[#004782] dark:hover:border-blue-500 hover:shadow-md transition-colors cursor-pointer group"
+                >
+                  <div className="flex justify-between items-start gap-2">
                   <div className="flex items-center gap-2">
                     <span className={`${badgeBg} text-white font-bold text-[11px] px-2 py-0.5 rounded shadow-2xs`}>
                       {item.level} {item.levelName}
@@ -244,10 +256,11 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
                     <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
                   </button>
                 </div>
-              </div>
+              </motion.div>
             );
           })
         )}
+        </AnimatePresence>
       </div>
 
       {/* Pagination Footer */}

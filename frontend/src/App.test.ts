@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App.vue'
 
@@ -14,9 +15,17 @@ function mockFetch(payload: unknown) {
 }
 
 describe('App', () => {
+  let wrapper: VueWrapper | undefined
+
+  beforeEach(() => {
+    window.history.replaceState(null, '', '#/overview')
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  })
+
   afterEach(() => {
+    wrapper?.unmount()
+    wrapper = undefined
     vi.unstubAllGlobals()
-    window.location.hash = ''
   })
 
   it('默认显示风险总览页与顶部导航', async () => {
@@ -51,7 +60,7 @@ describe('App', () => {
       ],
       sources: [],
     })
-    const wrapper = mount(App)
+    wrapper = mount(App)
     await flushPromises()
 
     expect(wrapper.text()).toContain('供应风险监控')
@@ -62,8 +71,26 @@ describe('App', () => {
   })
 
   it('导航到当前风险页', async () => {
-    mockFetch({ items: [], total: 0, limit: 50, offset: 0 })
-    const wrapper = mount(App)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((path: string) =>
+        Promise.resolve({
+          ok: true,
+          json: async () =>
+            path.startsWith('/api/v1/risk-alerts')
+              ? { items: [], total: 0, limit: 50, offset: 0 }
+              : {
+                  level_counts: [],
+                  total_current: 0,
+                  today_new: 0,
+                  type_distribution: [],
+                  recent_alerts: [],
+                  sources: [],
+                },
+        }),
+      ),
+    )
+    wrapper = mount(App)
     await flushPromises()
 
     const navLink = wrapper.findAll('nav a').find((link) => link.text() === '当前风险')
@@ -88,7 +115,7 @@ describe('App', () => {
       recent_alerts: [],
       sources: [],
     })
-    const wrapper = mount(App)
+    wrapper = mount(App)
     await flushPromises()
 
     expect(wrapper.text()).toContain('暂无当前风险提醒')

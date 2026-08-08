@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-08T17:27:29.4327652+08:00",
+  "title": "Design System: SR Supplier Risk Monitoring",
+  "extensions": {
+    "colorMeta": {
+      "primary-deep": {"role": "primary", "displayName": "控制台深蓝", "canonical": "#004782", "tonalRamp": ["#e6f2ff", "#cfe6fb", "#9fc9eb", "#62a4d3", "#2e77ae", "#185fa5", "#004782", "#00345f"]},
+      "primary-soft": {"role": "neutral", "displayName": "信息冰蓝", "canonical": "#ecf4ff", "tonalRamp": ["#ffffff", "#f7f9ff", "#ecf4ff", "#dceaf9", "#d6e4f3", "#a9bfd5", "#718aa3", "#424751"]},
+      "ink": {"role": "neutral", "displayName": "深海墨色", "canonical": "#101d28", "tonalRamp": ["#f7f9ff", "#e2e8f0", "#c2c6d2", "#727782", "#424751", "#1e293b", "#101d28", "#081019"]},
+      "critical": {"role": "critical", "displayName": "P1 警报红", "canonical": "#C92A2A", "tonalRamp": ["#fff1f0", "#ffdad6", "#f5a6a0", "#e16d66", "#C92A2A", "#ba1a1a", "#93000a", "#5f0005"]},
+      "warning": {"role": "warning", "displayName": "P2 警戒橙", "canonical": "#D97706", "tonalRamp": ["#fff7e6", "#ffedbf", "#fbd38d", "#f6ad55", "#D97706", "#b45309", "#7c2d12", "#431407"]},
+      "success": {"role": "success", "displayName": "运行绿", "canonical": "#10B981", "tonalRamp": ["#ecfdf5", "#d1fae5", "#a7f3d0", "#6ee7b7", "#10B981", "#059669", "#047857", "#064e3b"]}
+    },
+    "typographyMeta": {
+      "headline": {"displayName": "页面标题", "purpose": "页面与风险详情的最高层级标题。"},
+      "title": {"displayName": "组件标题", "purpose": "顶栏、弹窗和重点卡片标题。"},
+      "body": {"displayName": "业务正文", "purpose": "风险摘要、说明与 Agent 回答。"},
+      "label": {"displayName": "状态标签", "purpose": "字段、按钮、导航与辅助信息。"},
+      "data": {"displayName": "风险数据", "purpose": "分数、等级、数量、时间与代码。"}
+    },
+    "shadows": [
+      {"name": "surface-low", "value": "0 1px 2px rgba(15, 23, 42, 0.05)", "purpose": "普通卡片、按钮和表格容器。"},
+      {"name": "floating-panel", "value": "0 10px 15px -3px rgba(15, 23, 42, 0.12)", "purpose": "下拉、粘性顶栏与移动导航。"},
+      {"name": "modal", "value": "0 25px 50px -12px rgba(15, 23, 42, 0.35)", "purpose": "弹窗与风险详情。"}
+    ],
+    "motion": [
+      {"name": "state-fast", "value": "150ms ease-out", "purpose": "悬停、焦点和紧凑状态反馈。"},
+      {"name": "page-transition", "value": "200ms ease-out", "purpose": "主页面内容淡入与垂直位移。"},
+      {"name": "message-enter", "value": "250ms ease-out", "purpose": "Agent 消息和结构化卡片进入。"},
+      {"name": "status-pulse", "value": "1800ms ease-in-out infinite", "purpose": "仅用于真实在线服务的状态脉冲。"}
+    ],
+    "breakpoints": [
+      {"name": "sm", "value": "640px"},
+      {"name": "md", "value": "768px"},
+      {"name": "lg", "value": "1024px"},
+      {"name": "xl", "value": "1280px"}
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "每屏最重要的真实操作。",
+      "html": "<button class=\"ds-btn-primary\">保存设置</button>",
+      "css": ".ds-btn-primary{background:#004782;color:#fff;border:0;border-radius:12px;padding:10px 20px;font:700 14px 'Noto Sans SC',sans-serif;transition:background .15s ease-out,transform .15s ease-out}.ds-btn-primary:hover{background:#185fa5}.ds-btn-primary:active{transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid #004782;outline-offset:2px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "次要、取消或查看类操作。",
+      "html": "<button class=\"ds-btn-secondary\">查看详情</button>",
+      "css": ".ds-btn-secondary{background:#fff;color:#004782;border:1px solid #c2c6d2;border-radius:12px;padding:8px 16px;font:700 13px 'Noto Sans SC',sans-serif;transition:background .15s ease-out,border-color .15s ease-out}.ds-btn-secondary:hover{background:#ecf4ff;border-color:#004782}.ds-btn-secondary:focus-visible{outline:2px solid #004782;outline-offset:2px}"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "搜索、筛选和短文本录入。",
+      "html": "<input class=\"ds-input\" placeholder=\"搜索当前风险或供应商…\" />",
+      "css": ".ds-input{width:280px;background:#f7f9ff;color:#101d28;border:1px solid #c2c6d2;border-radius:8px;padding:10px 12px;font:400 13px 'Noto Sans SC',sans-serif;transition:border-color .15s ease-out,box-shadow .15s ease-out}.ds-input::placeholder{color:#727782}.ds-input:focus{outline:0;border-color:#004782;box-shadow:0 0 0 2px rgba(0,71,130,.2)}"
+    },
+    {
+      "name": "Risk Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "同时表达 P 级、名称和风险色。",
+      "html": "<span class=\"ds-risk-chip\">P1 重大风险</span>",
+      "css": ".ds-risk-chip{display:inline-flex;align-items:center;background:#ffdad6;color:#93000a;border:1px solid #C92A2A;border-radius:9999px;padding:4px 8px;font:700 12px 'Noto Sans SC',sans-serif}"
+    },
+    {
+      "name": "Risk Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "供应商、风险摘要、等级、置信度和更新时间的标准容器。",
+      "html": "<article class=\"ds-risk-card\"><div class=\"ds-risk-card__top\"><strong>宁波鸿腾精密制造股份有限公司</strong><span>P1</span></div><p>风险事件摘要与证据说明。</p><small>置信度 95% · 当前有效</small></article>",
+      "css": ".ds-risk-card{background:#fff;color:#101d28;border:1px solid #c2c6d2;border-radius:12px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.05);font-family:'Noto Sans SC',sans-serif}.ds-risk-card__top{display:flex;justify-content:space-between;gap:12px}.ds-risk-card__top span{color:#C92A2A;font-weight:700}.ds-risk-card p{margin:10px 0;color:#424751;font-size:13px;line-height:1.6}.ds-risk-card small{color:#727782}"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "description": "桌面侧栏和移动底栏的当前页面状态。",
+      "html": "<button class=\"ds-nav-active\"><span aria-hidden=\"true\">◆</span><span>当前风险</span><b>1</b></button>",
+      "css": ".ds-nav-active{width:210px;display:flex;align-items:center;gap:12px;background:#185fa5;color:#fff;border:0;border-radius:12px;padding:12px;font:700 14px 'Noto Sans SC',sans-serif;text-align:left;transition:transform .15s ease-out}.ds-nav-active b{margin-left:auto;background:#fff;color:#004782;border-radius:9999px;padding:2px 8px}.ds-nav-active:hover{transform:translateX(3px)}.ds-nav-active:focus-visible{outline:2px solid #004782;outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "可追溯的风险控制台",
+    "overview": "Google AI Studio 已确认版本是唯一视觉权威。蓝灰 App Shell 承载真实、高密度业务数据，风险色只表达 P1-P4 或对应状态；新增功能必须自然复用现有组件语言。",
+    "keyCharacteristics": ["证据链优先", "当前状态优先", "真实能力可见", "桌面与移动结构适配", "动效服务状态"],
+    "rules": [
+      {"name": "风险色专用规则", "body": "红、橙、P3 蓝和 P4 灰只表达风险等级或对应系统状态。", "section": "colors"},
+      {"name": "数据才用等宽规则", "body": "等宽字体仅用于分数、ID、时间、配额和技术状态。", "section": "typography"},
+      {"name": "默认平面规则", "body": "先用表面色与描边表达结构，仅悬浮、粘性或模态层增加阴影。", "section": "elevation"}
+    ],
+    "dos": ["复用现有 Google React 组件和 Tailwind 色值。", "让风险结论与来源、匹配和评分证据共同出现。", "覆盖加载、空数据、错误、禁用和减少动效状态。"],
+    "donts": ["不要另起配色、字体、圆角或组件体系。", "不要使用霓虹紫、装饰渐变、玻璃拟态或营销式 Hero。", "不要用虚构数据或不存在的后端能力填充 UI。", "不要引入库存、替代供应商、历史趋势、处置或知识图谱界面。"]
+  }
+}

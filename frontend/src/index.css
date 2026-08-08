@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  min-width: 320px;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-print-report],
+  [data-print-report] * {
+    visibility: visible !important;
+  }
+
+  [data-print-report] {
+    position: fixed;
+    inset: 0;
+    max-width: none;
+    overflow: visible;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}

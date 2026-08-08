@@ -3,14 +3,21 @@
     "target": "ES2022",
     "useDefineForClassFields": true,
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
     "strict": true,
-    "jsx": "preserve",
-    "resolveJsonModule": true,
+    "moduleResolution": "bundler",
     "isolatedModules": true,
-    "esModuleInterop": true,
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "types": ["node", "vitest/globals"]
+    "moduleDetection": "force",
+    "allowJs": false,
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["vitest/globals"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"]
 }

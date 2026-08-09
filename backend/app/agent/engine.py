@@ -242,7 +242,11 @@ async def run_agent(
                     except Exception as exc:  # noqa: BLE001
                         result = {"status": "error", "message": str(exc)[:500]}
                 executed.append(
-                    ToolCallInfo(name=call.name, arguments=call.arguments, result=result)
+                    ToolCallInfo(
+                        name=call.name,
+                        arguments=_redact_arguments(call.arguments),
+                        result=result,
+                    )
                 )
                 messages.append(
                     {
@@ -263,6 +267,24 @@ def _truncate_json(result: dict[str, object]) -> str:
     if len(text) <= MAX_TOOL_RESULT_CHARS:
         return text
     return text[:MAX_TOOL_RESULT_CHARS] + "...（结果已截断）"
+
+
+def _redact_arguments(arguments: dict[str, object]) -> dict[str, object]:
+    sensitive = {"password", "secret", "token", "api_key", "authorization", "client_secret"}
+
+    def clean(value: object, key: str | None = None) -> object:
+        if key and key.lower() in sensitive:
+            return "***"
+        if isinstance(value, dict):
+            return {
+                str(child_key): clean(child, str(child_key))
+                for child_key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
+    return clean(arguments)  # type: ignore[return-value]
 
 
 def get_agent_llm(settings: AISettings | None = None) -> AgentLLM:

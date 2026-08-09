@@ -1,6 +1,7 @@
 """仅管理员会话可用的数据源接入工具。"""
 
 from datetime import UTC, datetime
+import re
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -11,6 +12,8 @@ from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.router import build_pull_adapter
 from app.signals.service import collect_source_async
 from app.signals.sources import SourceFetchError
+
+_ENV_REF = re.compile(r"env:[A-Z][A-Z0-9_]{0,127}\Z")
 
 
 class PreviewSourceAdapterTool:
@@ -39,9 +42,9 @@ class PreviewSourceAdapterTool:
                 spec,
                 auth_type=str(arguments.get("auth_type") or "none"),
                 credential_ref=_optional_text(arguments.get("credential_ref")),
-                login_config=_dict(arguments.get("login_config")),
+                login_config=_login_config(arguments.get("login_config")),
             )
-        except (ValidationError, SourceFetchError) as exc:
+        except (ValueError, SourceFetchError) as exc:
             return {"status": "error", "message": str(exc)[:500]}
         return {
             "status": "success",
@@ -96,6 +99,13 @@ class CreateSourceAdapterDraftTool:
         auth_type = str(arguments.get("auth_type") or "none")
         if auth_type not in {"none", "api_key", "bearer"}:
             return {"status": "error", "message": "声明式适配器认证方式无效"}
+        credential_ref = _optional_text(arguments.get("credential_ref"))
+        if auth_type != "none" and not _valid_credential_ref(credential_ref):
+            return {"status": "error", "message": "认证来源必须使用 env:VARIABLE_NAME 凭据引用"}
+        try:
+            login_config = _login_config(arguments.get("login_config"))
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         source = DataSource(
             code=code,
             name=name,
@@ -104,8 +114,8 @@ class CreateSourceAdapterDraftTool:
             schedule=schedule,
             endpoint_url=spec.request.url,
             auth_type=auth_type,
-            login_config=_dict(arguments.get("login_config")),
-            credential_ref=_optional_text(arguments.get("credential_ref")),
+            login_config=login_config,
+            credential_ref=credential_ref,
             description=_optional_text(arguments.get("description")),
             adapter_config=spec.model_dump(mode="json"),
             adapter_status="draft",
@@ -260,6 +270,18 @@ def _optional_text(value: object) -> str | None:
 
 def _dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
+
+
+def _login_config(value: object) -> dict[str, object]:
+    config = _dict(value)
+    unknown = set(config) - {"header_name"}
+    if unknown:
+        raise ValueError("login_config 只允许配置 header_name，不得包含密钥")
+    return config
+
+
+def _valid_credential_ref(value: str | None) -> bool:
+    return bool(value and _ENV_REF.fullmatch(value))
 
 
 def _int_value(value: object) -> int:

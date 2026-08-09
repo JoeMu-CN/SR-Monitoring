@@ -239,7 +239,11 @@ def create_source(
         source_type=payload.source_type,
         credibility=payload.credibility,
         schedule=payload.schedule,
-        endpoint_url=str(payload.endpoint_url) if payload.endpoint_url else None,
+        endpoint_url=(
+            spec.request.url
+            if spec
+            else str(payload.endpoint_url) if payload.endpoint_url else None
+        ),
         auth_type=payload.auth_type,
         login_config=_sanitize_login_config(payload.login_config),
         credential_ref=payload.credential_ref,
@@ -281,6 +285,7 @@ def update_source(
         spec = _adapter_spec(update_values["adapter_config"])
         assert spec is not None
         update_values["adapter_config"] = spec.model_dump(mode="json")
+        update_values["endpoint_url"] = spec.request.url
         update_values["adapter_status"] = "draft"
         update_values["adapter_published_at"] = None
         update_values["enabled"] = False

@@ -1,19 +1,40 @@
 """仅管理员会话可用的数据源接入工具。"""
 
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.signals.declarative import AdapterSpec, preview_adapter
+from app.signals.declarative import AdapterSpec, inspect_source_url, preview_adapter
 from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.router import build_pull_adapter
 from app.signals.service import collect_source_async
 from app.signals.sources import SourceFetchError
 
 _ENV_REF = re.compile(r"env:[A-Z][A-Z0-9_]{0,127}\Z")
+
+
+class InspectSourceUrlTool:
+    name = "inspect_source_url"
+    description = (
+        "受控探测官方 HTTPS 数据源地址，识别 JSON、CSV 或静态 HTML 并返回结构摘要，不落库。"
+    )
+    parameters: dict[str, object] = {
+        "type": "object",
+        "properties": {"url": {"type": "string", "minLength": 1}},
+        "required": ["url"],
+    }
+
+    async def execute(
+        self, arguments: dict[str, object], session: Session
+    ) -> dict[str, object]:
+        del session
+        try:
+            return await inspect_source_url(str(arguments.get("url") or "").strip())
+        except (ValueError, SourceFetchError) as exc:
+            return _source_error(exc)
 
 
 class PreviewSourceAdapterTool:
@@ -45,7 +66,7 @@ class PreviewSourceAdapterTool:
                 login_config=_login_config(arguments.get("login_config")),
             )
         except (ValueError, SourceFetchError) as exc:
-            return {"status": "error", "message": str(exc)[:500]}
+            return _source_error(exc)
         return {
             "status": "success",
             "fetched_count": result.fetched_count,
@@ -166,6 +187,16 @@ class PublishSourceAdapterTool:
                 login_config=source.login_config,
             )
         except (ValidationError, SourceFetchError) as exc:
+            if isinstance(exc, SourceFetchError) and exc.error_kind:
+                _audit(
+                    session,
+                    source,
+                    "adapter_access_blocked",
+                    self.actor_id,
+                    {"message": str(exc)[:500], "error_kind": exc.error_kind},
+                )
+                session.commit()
+                return _source_error(exc)
             source.adapter_status = "invalid"
             source.enabled = False
             _audit(
@@ -224,7 +255,7 @@ class RunSourceNowTool:
             adapter = build_pull_adapter(source)
             run = await collect_source_async(session, source, adapter)
         except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "message": str(exc)[:500]}
+            return {"status": "error", "message": str(exc)[:500], "retryable": False}
         return {
             "status": "success",
             "run_id": run.id,
@@ -237,7 +268,11 @@ class RunSourceNowTool:
 def build_source_onboarding_tools(
     *, actor_id: str | None, allow_publish: bool, allow_run: bool
 ) -> list[object]:
-    tools: list[object] = [PreviewSourceAdapterTool(), CreateSourceAdapterDraftTool(actor_id)]
+    tools: list[object] = [
+        InspectSourceUrlTool(),
+        PreviewSourceAdapterTool(),
+        CreateSourceAdapterDraftTool(actor_id),
+    ]
     if allow_publish:
         tools.append(PublishSourceAdapterTool(actor_id))
     if allow_run:
@@ -290,3 +325,15 @@ def _int_value(value: object) -> int:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value)
     return 0
+
+
+def _source_error(exc: ValueError | SourceFetchError) -> dict[str, object]:
+    result: dict[str, object] = {
+        "status": "blocked" if isinstance(exc, SourceFetchError) and exc.error_kind else "error",
+        "message": str(exc)[:500],
+        "retryable": False,
+    }
+    if isinstance(exc, SourceFetchError):
+        result["error_kind"] = exc.error_kind
+        result["http_status"] = exc.http_status
+    return result

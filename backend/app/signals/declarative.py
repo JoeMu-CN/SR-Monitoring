@@ -11,19 +11,23 @@ import json
 import os
 import re
 import socket
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from typing import Literal, cast
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.signals.request_control import SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError, SourceHealth
 
 MAX_PREVIEW_ITEMS = 10
 MAX_FETCH_ITEMS = 1000
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_INSPECTION_BYTES = 512 * 1024
 _SENSITIVE_HEADER = re.compile(r"authorization|cookie|token|secret|api[-_]?key", re.I)
 _ENV_REF = re.compile(r"env:([A-Z][A-Z0-9_]{0,127})\Z")
 FingerprintField = Literal["external_id", "title", "content", "url", "published_at"]
@@ -75,9 +79,10 @@ class SignalMapping(BaseModel):
 class AdapterSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    format: Literal["json", "csv"]
+    format: Literal["json", "csv", "html"]
     request: DeclarativeRequest
     items_path: str | None = None
+    items_selector: str | None = None
     mapping: SignalMapping
     fingerprint_fields: list[FingerprintField] = Field(
         default_factory=_default_fingerprint_fields,
@@ -89,6 +94,8 @@ class AdapterSpec(BaseModel):
     def validate_format_options(self) -> AdapterSpec:
         if self.format == "json" and not self.items_path:
             raise ValueError("JSON 数据源必须配置 items_path")
+        if self.format == "html" and not self.items_selector:
+            raise ValueError("HTML 数据源必须配置 items_selector")
         if len(set(self.fingerprint_fields)) != len(self.fingerprint_fields):
             raise ValueError("fingerprint_fields 不得重复")
         return self
@@ -128,40 +135,45 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
         headers = dict(self.spec.request.headers)
         headers.update(_credential_headers(self.auth_type, self.credential_ref, self.login_config))
         try:
-            async with httpx.AsyncClient(
+            response = await controlled_get(
+                self.spec.request.url,
+                params=self.spec.request.params,
+                headers=headers,
                 timeout=self.spec.request.timeout_seconds,
+                maximum_bytes=self.spec.request.max_response_bytes,
                 transport=self._transport,
                 follow_redirects=False,
-                trust_env=False,
-            ) as client:
-                async with client.stream(
-                    "GET",
-                    self.spec.request.url,
-                    params=self.spec.request.params,
-                    headers=headers,
-                ) as response:
-                    if 300 <= response.status_code < 400:
-                        raise SourceFetchError("数据源返回重定向；请配置最终官方 HTTPS 地址")
-                    response.raise_for_status()
-                    body = await _read_limited(response, self.spec.request.max_response_bytes)
+            )
+            body = response.content
         except SourceFetchError:
             raise
-        except httpx.HTTPError as exc:
-            raise SourceFetchError(f"声明式数据源请求失败: {exc}") from exc
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"声明式数据源请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
         rows = _parse_rows(self.spec, body)
         return [self._map_row(row) for row in rows[: self._item_limit]]
 
     def _map_row(self, row: dict[str, object]) -> RawSourceItem:
         mapping = self.spec.mapping
-        title = _as_text(_read_path(row, mapping.title))
-        content = _as_text(_read_path(row, mapping.content))
-        external_id = _optional_text(
-            _read_path(row, mapping.external_id) if mapping.external_id else None
-        )
-        raw_url = _optional_text(_read_path(row, mapping.url) if mapping.url else None)
-        published = _optional_text(
-            _read_path(row, mapping.published_at) if mapping.published_at else None
-        )
+        html_node = row.get("__html_node__")
+        if self.spec.format == "html":
+            if not isinstance(html_node, _HtmlNode):
+                raise SourceFetchError("HTML 列表项解析失败")
+
+            def read(selector: str) -> object:
+                return _read_html_value(html_node, selector)
+
+        else:
+            def read(selector: str) -> object:
+                return _read_path(row, selector)
+        title = _as_text(read(mapping.title))
+        content = _as_text(read(mapping.content))
+        external_id = _optional_text(read(mapping.external_id) if mapping.external_id else None)
+        raw_url = _optional_text(read(mapping.url) if mapping.url else None)
+        published = _optional_text(read(mapping.published_at) if mapping.published_at else None)
         if not title or not content:
             raise SourceFetchError("字段映射后 title 或 content 为空")
         return RawSourceItem(
@@ -229,6 +241,180 @@ async def preview_adapter(
     return AdapterPreview(fetched_count=len(items), items=items)
 
 
+@dataclass
+class _HtmlNode:
+    tag: str
+    attrs: dict[str, str]
+    children: list[_HtmlNode | str] = field(default_factory=list)
+
+    def text_content(self) -> str:
+        if self.tag in {"script", "style", "noscript"}:
+            return ""
+        return " ".join(
+            part
+            for child in self.children
+            for part in (
+                [child.text_content()] if isinstance(child, _HtmlNode) else [child]
+            )
+            if part.strip()
+        )
+
+
+class _HtmlTreeParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = _HtmlNode("__root__", {})
+        self._stack = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        node = _HtmlNode(tag.lower(), {key.lower(): value or "" for key, value in attrs})
+        self._stack[-1].children.append(node)
+        self._stack.append(node)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        self._stack.pop()
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        for index in range(len(self._stack) - 1, 0, -1):
+            if self._stack[index].tag == tag:
+                del self._stack[index:]
+                break
+
+    def handle_data(self, data: str) -> None:
+        if data.strip() and not any(
+            node.tag in {"script", "style", "noscript"} for node in self._stack
+        ):
+            self._stack[-1].children.append(data)
+
+
+_SELECTOR_TOKEN = re.compile(
+    r"^(?P<tag>\*|[A-Za-z][\w:-]*)?(?P<id>#[\w:-]+)?"
+    r"(?P<classes>(?:\.[\w:-]+)*)(?P<attrs>(?:\[[^\]]+\])*)$"
+)
+_ATTRIBUTE_TOKEN = re.compile(r"\[\s*([\w:-]+)(?:\s*=\s*['\"]?([^'\"]*)['\"]?)?\s*\]")
+
+
+def _descendants(node: _HtmlNode) -> list[_HtmlNode]:
+    result = [node]
+    for child in node.children:
+        if isinstance(child, _HtmlNode):
+            result.extend(_descendants(child))
+    return result
+
+
+def _matches_selector(node: _HtmlNode, token: str) -> bool:
+    match = _SELECTOR_TOKEN.fullmatch(token)
+    if match is None:
+        raise SourceFetchError(f"不支持的 HTML 选择器：{token}")
+    tag = match.group("tag")
+    if tag and tag != "*" and node.tag != tag.lower():
+        return False
+    selector_id = match.group("id")
+    if selector_id and node.attrs.get("id") != selector_id[1:]:
+        return False
+    classes = [part[1:] for part in re.findall(r"\.[\w:-]+", match.group("classes"))]
+    node_classes = set(node.attrs.get("class", "").split())
+    if any(class_name not in node_classes for class_name in classes):
+        return False
+    for attr_match in _ATTRIBUTE_TOKEN.finditer(match.group("attrs")):
+        name, expected = attr_match.groups()
+        if name not in node.attrs:
+            return False
+        if expected is not None and node.attrs[name] != expected:
+            return False
+    return True
+
+
+def _select_nodes(root: _HtmlNode, selector: str) -> list[_HtmlNode]:
+    if not selector.strip():
+        raise SourceFetchError("HTML 选择器不能为空")
+    current = [root]
+    for token in selector.split():
+        candidates = [item for node in current for item in _descendants(node)]
+        current = [item for item in candidates if _matches_selector(item, token)]
+        if not current:
+            return []
+    return current
+
+
+def _read_html_value(node: _HtmlNode, selector: str) -> str | None:
+    selector_text = selector
+    attribute: str | None = None
+    if "@" in selector:
+        selector_text, attribute = selector.rsplit("@", 1)
+    selected = _select_nodes(node, selector_text)
+    if not selected:
+        return None
+    if attribute:
+        return selected[0].attrs.get(attribute.lower())
+    return " ".join(selected[0].text_content().split())
+
+
+async def inspect_source_url(
+    url: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, object]:
+    await validate_public_https_url(url, resolve_dns=transport is None)
+    try:
+        response = await controlled_get(
+            url,
+            timeout=15,
+            maximum_bytes=MAX_INSPECTION_BYTES,
+            transport=transport,
+            follow_redirects=False,
+        )
+        body = response.content
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+    except SourceFetchError:
+        raise
+    except SourceRequestFailed as exc:
+        raise SourceFetchError(
+            f"数据源探测请求失败: {exc}",
+            error_kind=exc.error_kind,
+            http_status=exc.status_code,
+        ) from exc
+    text = body.decode("utf-8-sig", errors="replace")
+    stripped = text.lstrip()
+    if "html" in content_type or stripped.startswith("<"):
+        parser = _HtmlTreeParser()
+        parser.feed(text)
+        title_nodes = _select_nodes(parser.root, "title")
+        candidates = _html_candidate_selectors(parser.root)
+        return {
+            "status": "success",
+            "detected_format": "html",
+            "content_type": content_type or "text/html",
+            "title": " ".join(title_nodes[0].text_content().split()) if title_nodes else None,
+            "text_excerpt": " ".join(parser.root.text_content().split())[:4000],
+            "candidate_selectors": candidates,
+            "message": "这是服务端渲染 HTML；可生成选择器适配器。",
+        }
+    detected = "json" if stripped.startswith(("{", "[")) else "csv"
+    return {
+        "status": "success",
+        "detected_format": detected,
+        "content_type": content_type or "application/octet-stream",
+        "text_excerpt": text[:4000],
+        "candidate_selectors": [],
+        "message": "可继续使用 JSON/CSV 声明式适配器。",
+    }
+
+
+def _html_candidate_selectors(root: _HtmlNode) -> list[str]:
+    nodes = _descendants(root)
+    candidates = [tag for tag in ("article", "li", "tr") if any(node.tag == tag for node in nodes)]
+    class_counts: dict[str, int] = {}
+    for node in nodes:
+        for class_name in node.attrs.get("class", "").split():
+            if re.fullmatch(r"[\w:-]+", class_name):
+                class_counts[class_name] = class_counts.get(class_name, 0) + 1
+    candidates.extend(f".{name}" for name, count in class_counts.items() if count >= 2)
+    return candidates[:20]
+
+
 async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> None:
     parsed = urlparse(url)
     host = (parsed.hostname or "").rstrip(".").lower()
@@ -253,25 +439,18 @@ async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> No
         raise SourceFetchError("数据源域名解析到非公网地址")
 
 
-async def _read_limited(response: httpx.Response, maximum: int) -> bytes:
-    length = response.headers.get("content-length")
-    if length and length.isdigit() and int(length) > maximum:
-        raise SourceFetchError(f"数据源响应超过 {maximum} 字节限制")
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in response.aiter_bytes():
-        total += len(chunk)
-        if total > maximum:
-            raise SourceFetchError(f"数据源响应超过 {maximum} 字节限制")
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
 def _parse_rows(spec: AdapterSpec, body: bytes) -> list[dict[str, object]]:
     try:
         text = body.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise SourceFetchError("数据源响应不是 UTF-8 编码") from exc
+    if spec.format == "html":
+        parser = _HtmlTreeParser()
+        parser.feed(text)
+        html_items = _select_nodes(parser.root, spec.items_selector or "")
+        if not html_items:
+            raise SourceFetchError("items_selector 未匹配到 HTML 列表项")
+        return [{"__html_node__": item} for item in html_items]
     if spec.format == "csv":
         try:
             return [dict(row) for row in csv.DictReader(io.StringIO(text))]
@@ -281,10 +460,10 @@ def _parse_rows(spec: AdapterSpec, body: bytes) -> list[dict[str, object]]:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
         raise SourceFetchError("数据源响应不是有效 JSON") from exc
-    items = _read_path(payload, spec.items_path)
-    if not isinstance(items, list):
+    json_items = _read_path(payload, spec.items_path)
+    if not isinstance(json_items, list):
         raise SourceFetchError("items_path 未指向 JSON 数组")
-    return [item for item in items if isinstance(item, dict)]
+    return [item for item in json_items if isinstance(item, dict)]
 
 
 def _read_path(value: object, path: str | None) -> object:

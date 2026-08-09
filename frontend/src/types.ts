@@ -95,6 +95,10 @@ export interface DataSource {
   adapterStatus: 'builtin' | 'unconfigured' | 'draft' | 'published' | 'invalid';
   adapterVersion: number;
   adapterPublishedAt: string | null;
+  accessStatus: 'ready' | 'throttled' | 'busy' | 'cooldown';
+  accessCooldownUntil: string | null;
+  accessLastHttpStatus: number | null;
+  accessLastErrorKind: string | null;
   enabled: boolean;
   status: 'normal' | 'warning' | 'error';
   latency: string; // e.g. "正常运行", "延迟 2h"
@@ -133,6 +137,7 @@ export type ActiveTab =
   | 'overview'
   | 'current-risks'
   | 'risk-assistant'
+  | 'source-agent'
   | 'suppliers'
   | 'data-sources'
   | 'rules';

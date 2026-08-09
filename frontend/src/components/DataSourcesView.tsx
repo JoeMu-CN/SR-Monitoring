@@ -12,6 +12,7 @@ interface DataSourcesViewProps {
   onUpdateSource: (id: string, payload: Partial<DataSourceWritePayload>) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
   onRefreshSources: () => Promise<void>;
+  onOpenSourceAgent: () => void;
 }
 
 const adapterTemplate = {
@@ -38,9 +39,10 @@ const emptyForm: DataSourceWritePayload = {
 
 export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   dataSources, onTriggerSync, role, onRoleChange, onCreateSource, onUpdateSource,
-  onDeleteSource, onRefreshSources,
+  onDeleteSource, onRefreshSources, onOpenSourceAgent,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [form, setForm] = useState<DataSourceWritePayload>(emptyForm);
   const [adapterText, setAdapterText] = useState(JSON.stringify(adapterTemplate, null, 2));
@@ -147,12 +149,28 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       await onRefreshSources();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '适配器发布失败');
+      await onRefreshSources().catch(() => undefined);
     }
   };
 
   const handleSyncClick = async () => {
     setIsSyncing(true);
     try { await onTriggerSync(); } finally { setIsSyncing(false); }
+  };
+
+  const handleTestConnection = async (source: DataSource) => {
+    if (role !== 'admin' || !source.endpointUrl || source.type === 'external_tool' || testingId || source.accessStatus !== 'ready') return;
+    setTestingId(source.id);
+    setError(null);
+    try {
+      await api.runSource(Number(source.id));
+      await onRefreshSources();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '数据源连通性测试失败');
+      await onRefreshSources().catch(() => undefined);
+    } finally {
+      setTestingId(null);
+    }
   };
 
   const loadAudit = async () => {
@@ -172,47 +190,58 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
 
   return (
     <div className="space-y-6 pb-20 lg:pb-8">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-[#101d28] dark:text-white tracking-tight">数据源控制台</h1>
-          <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">管理员可创建声明式适配器、实时联网预览并发布；新来源发布后仍默认停用。</p>
+          <h1 className="text-2xl font-bold text-[#101d28] dark:text-white tracking-tight">数据源与同步状态</h1>
+          <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">监控多维数据 API 接口连通度、网络延迟、已拉取监管日志及全网缓存节点状态。</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500">当前角色：{role === 'admin' ? '管理员' : '只读用户'}</span>
-          <button onClick={() => onRoleChange(role === 'admin' ? 'viewer' : 'admin')} className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-bold">切换为{role === 'admin' ? '只读' : '管理员'}模式</button>
-          <button onClick={() => void loadAudit()} className="border border-slate-300 rounded-lg px-3 py-2 text-xs font-bold">修改日志</button>
-          <button onClick={() => void handleSyncClick()} disabled={isSyncing || role !== 'admin'} className="bg-[#004782] text-white font-bold text-[13px] px-4 py-2 rounded-lg disabled:opacity-50">{isSyncing ? '数据同步中...' : '立即同步'}</button>
-          <button onClick={openCreate} disabled={role !== 'admin'} className="bg-emerald-700 text-white font-bold text-[13px] px-4 py-2 rounded-lg disabled:opacity-40">新增数据源</button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-slate-500 mr-1">当前角色：{role === 'admin' ? '管理员' : '只读用户'}</span>
+          <button onClick={() => onRoleChange(role === 'admin' ? 'viewer' : 'admin')} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800">切换为{role === 'admin' ? '只读' : '管理员'}模式</button>
+          <button onClick={onOpenSourceAgent} className="border border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 rounded-lg px-3 py-2 text-xs font-bold hover:bg-emerald-100 dark:hover:bg-emerald-950/50 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">add_link</span>数据源接入助手</button>
+          <button onClick={() => void loadAudit()} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800">修改日志</button>
+          <button onClick={() => void handleSyncClick()} disabled={isSyncing || role !== 'admin'} className="bg-[#004782] hover:bg-[#185fa5] text-white font-bold text-[13px] px-4 py-2 rounded-lg shadow-2xs transition-all flex items-center gap-2 disabled:opacity-50"><span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>{isSyncing ? '全量数据同步中...' : '立即全量数据同步'}</button>
+          <button onClick={openCreate} disabled={role !== 'admin'} className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[13px] px-4 py-2 rounded-lg disabled:opacity-40">新增数据源</button>
         </div>
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      <div className="border border-[#c2c6d2] dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900" role="list" aria-label="数据源列表">
-        {dataSources.map((source) => {
-          const isWarning = source.status === 'warning';
-          const isExternalTool = source.type === 'external_tool';
-          const canPublish = !isExternalTool && (source.adapterStatus === 'draft' || source.adapterStatus === 'invalid');
-          return (
-            <div key={source.id} role="listitem" className={`grid grid-cols-1 md:grid-cols-[minmax(220px,1.1fr)_minmax(0,2fr)_auto] gap-4 md:gap-6 items-center p-4 md:px-5 ${isWarning ? 'bg-red-50/40 dark:bg-red-950/20' : 'bg-white dark:bg-slate-900'} ${source.id !== dataSources[0]?.id ? 'border-t border-[#c2c6d2] dark:border-slate-800' : ''}`}>
-              <div className="flex justify-between md:block items-start gap-3 min-w-0">
-                <div className="min-w-0"><span className="text-[11px] font-bold text-[#727782]">{isExternalTool ? '按需外部核查' : source.type}</span><h3 className="font-bold text-[16px] truncate text-[#101d28] dark:text-white">{source.name}</h3><p className="text-[11px] text-slate-500 font-mono truncate">{source.code}</p></div>
-                <span className={`shrink-0 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/60 dark:text-red-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'}`}><motion.span className={`inline-flex h-1.5 w-1.5 rounded-full ${isWarning ? 'bg-red-500' : 'bg-emerald-600'}`} animate={{opacity: [1, .4, 1]}} transition={{duration: 2, repeat: Infinity}} />{source.latency}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[12px] min-w-0">
-                <div className="flex justify-between gap-3 text-slate-500"><span>{isExternalTool ? '调用方式:' : '适配器:'}</span><span className="font-mono font-bold text-right text-[#101d28] dark:text-slate-200">{isExternalTool ? '按需调用' : `${source.adapterStatus} v${source.adapterVersion}`}</span></div>
-                <div className="flex justify-between gap-3 text-slate-500"><span>{isExternalTool ? '运行模式:' : '调度周期:'}</span><span className="font-mono font-bold text-right text-[#101d28] dark:text-slate-200">{isExternalTool ? '用户触发' : source.schedule || '未设置'}</span></div>
-                <div className="flex justify-between gap-3 text-slate-500"><span>凭据引用:</span><span className="font-mono text-right truncate text-[#101d28] dark:text-slate-200">{source.credentialRef || '无需凭据'}</span></div>
-                <div className="flex justify-between gap-3 text-slate-500"><span>{isExternalTool ? '最近调用:' : '最近同步:'}</span><span className="font-mono text-right truncate text-[#101d28] dark:text-slate-200">{source.lastSyncTime}</span></div>
-              </div>
-              <div className="flex flex-wrap md:flex-col lg:flex-row gap-2 md:justify-self-end">
-                <button onClick={() => openEdit(source)} disabled={role !== 'admin'} className="flex-1 border border-slate-300 rounded-lg py-2 text-xs font-bold disabled:opacity-40">编辑配置</button>
-                {canPublish && <button onClick={() => void publish(source)} disabled={role !== 'admin'} className="border border-emerald-300 text-emerald-800 rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-40">实时验证并发布</button>}
-                <button onClick={() => { if (role === 'admin' && window.confirm(`确认删除“${source.name}”？`)) void onDeleteSource(source.id); }} disabled={role !== 'admin'} className="border border-red-200 text-red-700 rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-40">删除</button>
-              </div>
-            </div>
-          );
-        })}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs" aria-label="数据源概览">
+        <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">数据源接入数</div><div className="text-xl font-bold font-mono text-[#101d28] dark:text-white">{dataSources.length} <span className="text-xs font-normal text-slate-500">个管道</span></div></div>
+        <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">正常运行 (Normal)</div><div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">{dataSources.filter((source) => source.status === 'normal').length} <span className="text-xs font-normal text-slate-500">个</span></div></div>
+        <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">异常/延迟节点</div><div className="text-xl font-bold font-mono text-[#ba1a1a] dark:text-red-400">{dataSources.filter((source) => source.status === 'warning' || source.status === 'error').length} <span className="text-xs font-normal text-slate-500">个</span></div></div>
+        <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">全网拉取监管记录</div><div className="text-xl font-bold font-mono text-[#004782] dark:text-blue-400">{dataSources.reduce((total, source) => total + source.itemCount, 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">条</span></div></div>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl shadow-2xs overflow-hidden" role="list" aria-label="数据源列表">
+        <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-3 bg-[#f7f9ff] dark:bg-slate-800/60 border-b border-[#c2c6d2] dark:border-slate-800 text-[12px] font-bold text-[#424751] dark:text-slate-300">
+          <div className="col-span-4">数据源名称与类型</div><div className="col-span-2">连通状态 / 延迟</div><div className="col-span-2">最近同步时间</div><div className="col-span-2">已拉取监管记录</div><div className="col-span-2 text-right">节点与操作</div>
+        </div>
+        <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
+          {dataSources.length === 0 && <div className="p-10 text-center text-sm text-slate-500">暂无数据源配置</div>}
+          {dataSources.map((source) => {
+            const isWarning = source.status === 'warning' || source.status === 'error';
+            const isExternalTool = source.type === 'external_tool';
+            const canPublish = !isExternalTool && (source.adapterStatus === 'draft' || source.adapterStatus === 'invalid');
+            const isTesting = testingId === source.id;
+            const typeLabel = isExternalTool ? '按需外部核查' : source.type === 'official_api' ? '官方 API' : source.type.replaceAll('_', ' ');
+            return (
+              <motion.div key={source.id} role="listitem" className={`p-4 sm:px-5 transition-colors hover:bg-[#f7f9ff]/70 dark:hover:bg-slate-800/50 ${isWarning ? 'bg-red-50/20 dark:bg-red-950/10' : ''}`}>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 items-center">
+                  <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
+                    <div className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300' : 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300'}`}><span className="material-symbols-outlined text-[20px]">{source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}</span></div>
+                    <div className="min-w-0"><div className="flex items-center gap-2 min-w-0"><h3 className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{source.name}</h3><span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{typeLabel}</span></div><p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">标识 ID: <span className="font-mono">{source.code}</span></p></div>
+                  </div>
+                  <div className="col-span-6 md:col-span-2 flex items-center gap-2"><span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'}`}><span className="relative flex items-center justify-center w-2 h-2"><motion.span className={`absolute inline-flex h-full w-full rounded-full ${isWarning ? 'bg-red-500/60' : 'bg-emerald-500/60'}`} animate={{scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8]}} transition={{duration: isWarning ? 1.2 : 2, repeat: Infinity, ease: 'easeInOut'}} /><span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isWarning ? 'bg-[#ba1a1a]' : 'bg-emerald-600'}`} /></span>{source.latency}</span></div>
+                  <div className="col-span-6 md:col-span-2 text-[12px] font-mono text-slate-700 dark:text-slate-300"><span className="md:hidden text-slate-400 text-[11px] font-sans mr-1">同步:</span>{source.lastSyncTime}</div>
+                  <div className="col-span-6 md:col-span-2 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400"><span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">记录:</span>{source.itemCount.toLocaleString()} <span className="text-[11px] font-normal text-slate-500">条</span></div>
+                  <div className="col-span-6 md:col-span-2 flex flex-wrap items-center justify-end gap-2 text-right"><span className="text-[11px] font-mono text-slate-500 hidden xl:inline-block">{isExternalTool ? '按需外部工具' : source.code === 'manual-json' ? '非联网数据源' : !source.endpointUrl ? '等待配置地址' : source.accessLastHttpStatus ? `HTTP ${source.accessLastHttpStatus}` : '域名保护已启用'}</span><button onClick={() => void handleTestConnection(source)} disabled={role !== 'admin' || !source.endpointUrl || isExternalTool || isTesting || source.accessStatus !== 'ready'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 text-[#004782] dark:text-blue-300 transition-colors flex items-center gap-1 disabled:opacity-40" title={source.accessStatus === 'ready' ? '触发一次采集并刷新状态' : source.latency}><span className={`material-symbols-outlined text-[14px] ${isTesting ? 'animate-spin' : ''}`}>{isTesting ? 'sync' : 'network_check'}</span><span>{isTesting ? '测速中...' : '测试连通'}</span></button><button onClick={() => openEdit(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 disabled:opacity-40">编辑</button>{canPublish && <button onClick={() => void publish(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-800 dark:text-emerald-300 disabled:opacity-40">发布</button>}<button onClick={() => { if (role === 'admin' && window.confirm(`确认删除“${source.name}”？`)) void onDeleteSource(source.id); }} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-red-200 text-red-700 dark:text-red-300 disabled:opacity-40">删除</button></div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
 
       {showForm && (

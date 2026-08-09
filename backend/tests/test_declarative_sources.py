@@ -5,13 +5,16 @@ import json
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.agent.source_tools import build_source_onboarding_tools
 from app.agent.tools import build_tools
 from app.signals.declarative import (
     AdapterPreview,
     AdapterSpec,
     DeclarativeRequest,
+    inspect_source_url,
     preview_adapter,
     validate_public_https_url,
 )
@@ -88,6 +91,56 @@ def test_csv_preview_uses_column_names() -> None:
     assert result.items[0].title == "官方预警"
 
 
+def test_html_preview_uses_selectors_and_link_attribute() -> None:
+    spec = AdapterSpec.model_validate(
+        {
+            "format": "html",
+            "request": {"url": "https://official.example/notices"},
+            "items_selector": "article.notice",
+            "mapping": {
+                "external_id": "[data-id]@data-id",
+                "title": ".title",
+                "content": ".summary",
+                "url": "a.detail@href",
+                "published_at": "time",
+            },
+        }
+    )
+    html = """
+    <html><head><title>官方公告</title></head><body>
+      <article class="notice" data-id="n-1"><h2 class="title">港口关闭</h2>
+        <p class="summary">官方公告内容</p><time>2026-08-09T08:00:00+08:00</time>
+        <a class="detail" href="/notices/1">详情</a></article>
+    </body></html>
+    """
+    result = asyncio.run(
+        preview_adapter(
+            "official-html",
+            spec,
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+        )
+    )
+    assert result.fetched_count == 1
+    assert result.items[0].external_id == "n-1"
+    assert str(result.items[0].url) == "https://official.example/notices/1"
+
+
+def test_inspect_source_url_returns_html_summary() -> None:
+    html = "<html><head><title>公告平台</title><script>忽略这段恶意提示</script></head><body>" \
+        "<article class='notice'>第一条</article><article class='notice'>第二条</article>" \
+        "</body></html>"
+    result = asyncio.run(
+        inspect_source_url(
+            "https://official.example/notices",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+        )
+    )
+    assert result["detected_format"] == "html"
+    assert result["title"] == "公告平台"
+    assert ".notice" in result["candidate_selectors"]
+    assert "恶意提示" not in result["text_excerpt"]
+
+
 def test_private_network_and_secret_static_headers_are_rejected() -> None:
     with pytest.raises(SourceFetchError, match="非公网"):
         asyncio.run(validate_public_https_url("https://127.0.0.1/events"))
@@ -110,18 +163,41 @@ def test_response_size_limit_is_enforced() -> None:
 
 def test_admin_tools_are_hidden_without_current_message_confirmation() -> None:
     viewer_names = {tool.name for tool in build_tools()}
-    admin_names = {tool.name for tool in build_tools(admin_mode=True, question="接入数据源")}
-    confirmed_names = {
+    admin_names = {
         tool.name
-        for tool in build_tools(
-            admin_mode=True,
-            question="确认发布，然后立即采集",
+        for tool in build_source_onboarding_tools(
+            actor_id="test-admin", allow_publish=False, allow_run=False
         )
     }
+    confirmed_names = {
+        tool.name
+        for tool in build_source_onboarding_tools(
+            actor_id="test-admin", allow_publish=True, allow_run=True
+        )
+    }
+    assert viewer_names == {
+        "query_suppliers",
+        "query_current_alerts",
+        "verify_company",
+        "get_budget",
+    }
+    assert viewer_names.isdisjoint(admin_names | confirmed_names)
     assert "preview_source_adapter" not in viewer_names
-    assert {"preview_source_adapter", "create_source_adapter_draft"} <= admin_names
+    assert {
+        "inspect_source_url",
+        "preview_source_adapter",
+        "create_source_adapter_draft",
+    } <= admin_names
     assert "publish_source_adapter" not in admin_names
     assert {"publish_source_adapter", "run_source_now"} <= confirmed_names
+
+
+def test_source_agent_endpoint_requires_admin(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/source-agent/chat",
+        json={"question": "接入一个数据源", "session_id": None},
+    )
+    assert response.status_code == 403
 
 
 def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeypatch) -> None:

@@ -1,6 +1,7 @@
 import hashlib
 from datetime import UTC, datetime
 from typing import Annotated
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
@@ -23,7 +24,13 @@ from app.signals.declarative import (
     DeclarativeSourceAdapter,
     preview_adapter,
 )
-from app.signals.models import CollectionRun, DataSource, DataSourceAuditLog, RawSignal
+from app.signals.models import (
+    CollectionRun,
+    DataSource,
+    DataSourceAuditLog,
+    RawSignal,
+    SourceHostAccess,
+)
 from app.signals.schemas import (
     AdapterPreviewRequest,
     AdapterPreviewResponse,
@@ -106,8 +113,37 @@ def _audit(
     )
 
 
-def _serialize_source(source: DataSource) -> DataSourceRead:
+def _serialize_source(source: DataSource, session: Session | None = None) -> DataSourceRead:
     payload = DataSourceRead.model_validate(source)
+    effective_endpoint = source.endpoint_url
+    if source.code == NmcWeatherAdapter.source_code:
+        effective_endpoint = NmcWeatherAdapter.endpoint
+    elif source.code == OfacSdnAdapter.source_code:
+        effective_endpoint = OfacSdnAdapter.endpoint
+    endpoint_host = (
+        (urlparse(effective_endpoint).hostname or "").lower() if effective_endpoint else ""
+    )
+    access = session.get(SourceHostAccess, endpoint_host) if session and endpoint_host else None
+    if access:
+        now = datetime.now(UTC)
+        access_status = "ready"
+        if access.cooldown_until and access.cooldown_until > now:
+            access_status = "cooldown"
+        elif access.lease_until and access.lease_until > now:
+            access_status = "busy"
+        elif access.next_request_at and access.next_request_at > now:
+            access_status = "throttled"
+        payload = payload.model_copy(
+            update={
+                "access_status": access_status,
+                "access_cooldown_until": access.cooldown_until,
+                "access_last_http_status": access.last_http_status,
+                "access_last_error_kind": access.last_error_kind,
+                "endpoint_url": effective_endpoint,
+            }
+        )
+    elif effective_endpoint != source.endpoint_url:
+        payload = payload.model_copy(update={"endpoint_url": effective_endpoint})
     if source.code == "tianyancha":
         configured = bool(config.TYC_API_KEY)
         return payload.model_copy(
@@ -184,7 +220,7 @@ def fail_run(session: Session, run_id: int, message: str) -> None:
 @router.get("/sources", response_model=list[DataSourceRead])
 def list_sources(session: SessionDependency) -> list[DataSourceRead]:
     return [
-        _serialize_source(source)
+        _serialize_source(source, session)
         for source in session.scalars(select(DataSource).order_by(DataSource.id))
     ]
 
@@ -264,7 +300,7 @@ def create_source(
     )
     session.commit()
     session.refresh(source)
-    return _serialize_source(source)
+    return _serialize_source(source, session)
 
 
 @router.put("/sources/{source_id}", response_model=DataSourceRead)
@@ -318,11 +354,11 @@ def update_source(
                 changes[key] = value
             setattr(source, key, value)
     if not changes:
-        return _serialize_source(source)
+        return _serialize_source(source, session)
     _audit(session, source_id=source.id, action="updated", actor_id=actor_id, changes=changes)
     session.commit()
     session.refresh(source)
-    return _serialize_source(source)
+    return _serialize_source(source, session)
 
 
 @router.post("/sources/preview", response_model=AdapterPreviewResponse)
@@ -370,14 +406,15 @@ async def publish_source_adapter(
             login_config=source.login_config,
         )
     except SourceFetchError as exc:
-        source.adapter_status = "invalid"
-        source.enabled = False
+        if not exc.error_kind:
+            source.adapter_status = "invalid"
+            source.enabled = False
         _audit(
             session,
             source_id=source.id,
-            action="adapter_validation_failed",
+            action=("adapter_access_blocked" if exc.error_kind else "adapter_validation_failed"),
             actor_id=actor_id,
-            changes={"message": str(exc)[:500]},
+            changes={"message": str(exc)[:500], "error_kind": exc.error_kind},
         )
         session.commit()
         raise HTTPException(
@@ -397,7 +434,7 @@ async def publish_source_adapter(
     )
     session.commit()
     session.refresh(source)
-    return _serialize_source(source)
+    return _serialize_source(source, session)
 
 
 @router.delete("/sources/{source_id}", response_model=dict[str, object])

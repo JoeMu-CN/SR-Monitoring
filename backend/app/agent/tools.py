@@ -4,7 +4,7 @@
 写操作（加入监控、启停供应商等）必须由用户在前端确认后走既有 API。
 """
 
-from typing import Protocol, cast
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -253,32 +253,14 @@ def _products(session: Session, supplier_id: int) -> list[SupplierProduct]:
     )
 
 
-def build_tools(
-    *,
-    admin_mode: bool = False,
-    actor_id: str | None = None,
-    question: str = "",
-) -> list[Tool]:
-    tools: list[Tool] = [
+def build_tools() -> list[Tool]:
+    """风险查询 Agent 的永久只读工具白名单。"""
+    return [
         QuerySuppliersTool(),
         QueryCurrentAlertsTool(),
         VerifyCompanyTool(),
         GetBudgetTool(),
     ]
-    if admin_mode:
-        from app.agent.source_tools import build_source_onboarding_tools
-
-        tools.extend(
-            cast(
-                list[Tool],
-                build_source_onboarding_tools(
-                    actor_id=actor_id,
-                    allow_publish="确认发布" in question,
-                    allow_run="立即采集" in question,
-                ),
-            )
-        )
-    return tools
 
 
 def build_tool_specs(tools: list[Tool]) -> list[dict[str, object]]:

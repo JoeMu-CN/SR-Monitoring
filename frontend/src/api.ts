@@ -69,6 +69,10 @@ export interface DataSourceRead {
   adapter_status?: 'builtin' | 'unconfigured' | 'draft' | 'published' | 'invalid';
   adapter_version?: number;
   adapter_published_at?: string | null;
+  access_status?: 'ready' | 'throttled' | 'busy' | 'cooldown';
+  access_cooldown_until?: string | null;
+  access_last_http_status?: number | null;
+  access_last_error_kind?: string | null;
   enabled: boolean;
   created_at?: string;
   updated_at?: string;
@@ -288,6 +292,10 @@ export const api = {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({question, session_id: sessionId}),
   }),
+  sourceAgentChat: (question: string, sessionId: number | null) => request<ChatResponse>('/api/v1/source-agent/chat', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question, session_id: sessionId}),
+  }),
   createSupplier: (payload: SupplierCreatePayload) => request<SupplierRead>('/api/v1/suppliers', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),
@@ -376,13 +384,20 @@ export function mapSupplier(supplier: SupplierRead, riskLevel?: RiskLevel, riskS
 export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[]): DataSource {
   const lastRun = runs.filter((run) => run.source_id === source.id).sort((a, b) => b.id - a.id)[0];
   const isExternalTool = source.source_type === 'external_tool';
-  const status = isExternalTool
+  const accessStatus = source.access_status ?? 'ready';
+  const status = accessStatus !== 'ready'
+    ? 'warning'
+    : isExternalTool
     ? source.enabled && source.api_key_configured ? 'normal' : 'warning'
     : !source.enabled || !lastRun ? 'warning'
     : lastRun.status === 'failed' ? 'error' : lastRun.status === 'succeeded' ? 'normal' : 'warning';
   return {
     id: String(source.id), name: source.name, type: source.source_type, status,
-    latency: !source.enabled ? '已停用' : isExternalTool
+    latency: accessStatus === 'cooldown'
+      ? `访问冷却至 ${source.access_cooldown_until ? formatDateTime(source.access_cooldown_until) : '稍后'}`
+      : accessStatus === 'busy' ? '同域名请求执行中'
+      : accessStatus === 'throttled' ? '域名请求间隔保护中'
+      : !source.enabled ? '已停用' : isExternalTool
       ? source.api_key_configured ? '按需核查可用' : '运行密钥未配置'
       : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : '运行中',
     lastSyncTime: isExternalTool ? '按需调用' : lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
@@ -394,6 +409,9 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
     description: source.description ?? null,
     adapterConfig: source.adapter_config ?? {}, adapterStatus: source.adapter_status ?? 'unconfigured',
     adapterVersion: source.adapter_version ?? 0, adapterPublishedAt: source.adapter_published_at ?? null,
+    accessStatus, accessCooldownUntil: source.access_cooldown_until ?? null,
+    accessLastHttpStatus: source.access_last_http_status ?? null,
+    accessLastErrorKind: source.access_last_error_kind ?? null,
     enabled: source.enabled,
   };
 }

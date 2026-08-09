@@ -15,7 +15,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   const tabs: { id: ActiveTab; label: string; icon: string; badge?: number }[] = [
     { id: 'overview', label: '总览', icon: 'dashboard' },
     { id: 'current-risks', label: '风险', icon: 'warning', badge: p1RiskCount },
-    { id: 'risk-assistant', label: '助手', icon: 'smart_toy' },
+    { id: 'risk-assistant', label: '查询AI', icon: 'manage_search' },
     { id: 'suppliers', label: '供应商', icon: 'factory' },
     { id: 'data-sources', label: '数据', icon: 'database' },
     { id: 'rules', label: '规则', icon: 'rule' },
@@ -29,7 +29,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`relative flex flex-col items-center justify-center px-3 py-1 rounded-full transition-all duration-150 active:scale-95 ${
+            className={`relative flex flex-1 min-w-0 flex-col items-center justify-center px-1 py-1 rounded-full transition-all duration-150 active:scale-95 ${
               isActive
                 ? 'bg-[#185fa5] text-white font-bold'
                 : 'text-[#424751] dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'

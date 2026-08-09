@@ -77,6 +77,25 @@ class DataSource(Base):
         return f"••••{self.api_key_last4}" if self.api_key_last4 else None
 
 
+class SourceHostAccess(Base):
+    """跨 Web 与 Scheduler 共享的外部域名访问状态。"""
+
+    __tablename__ = "source_host_access"
+
+    hostname: Mapped[str] = mapped_column(Text, primary_key=True)
+    next_request_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_id: Mapped[str | None] = mapped_column(Text)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    last_http_status: Mapped[int | None] = mapped_column(Integer)
+    last_error_kind: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DataSourceAuditLog(Base):
     __tablename__ = "data_source_audit_logs"
     __table_args__ = (Index("ix_data_source_audit_logs_created_at", "created_at"),)

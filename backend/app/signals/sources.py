@@ -22,15 +22,28 @@ from typing import Protocol
 import httpx
 from pydantic import HttpUrl, ValidationError
 
+from app.signals.request_control import SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
 MAX_ITEMS_PER_FETCH = 100
+MAX_NMC_BYTES = 2 * 1024 * 1024
 MAX_OFAC_BYTES = 20 * 1024 * 1024
 
 
 class SourceFetchError(RuntimeError):
     """拉取数据源在请求或解析阶段失败。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_kind: str | None = None,
+        http_status: int | None = None,
+    ) -> None:
+        self.error_kind = error_kind
+        self.http_status = http_status
+        super().__init__(message)
 
 
 class SourceHealth:
@@ -86,7 +99,7 @@ class NmcWeatherAdapter(PullSourceAdapter):
     """
 
     source_code = "nmc-weather"
-    _endpoint = "http://www.nmc.cn/rest/findAlarm"
+    endpoint = "http://www.nmc.cn/rest/findAlarm"
 
     def __init__(
         self,
@@ -97,9 +110,6 @@ class NmcWeatherAdapter(PullSourceAdapter):
         self._transport = transport
         self._timeout_seconds = timeout_seconds
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=self._timeout_seconds, transport=self._transport)
-
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         params = {
             "pageNo": cursor or "1",
@@ -108,16 +118,24 @@ class NmcWeatherAdapter(PullSourceAdapter):
             "signallevel": "",
             "province": "",
         }
-        async with self._client() as client:
-            try:
-                response = await client.get(self._endpoint, params=params)
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                raise SourceFetchError(f"中央气象台接口请求失败: {exc}") from exc
-            try:
-                payload = response.json()
-            except json.JSONDecodeError as exc:
-                raise SourceFetchError("中央气象台接口返回不是有效 JSON") from exc
+        try:
+            response = await controlled_get(
+                self.endpoint,
+                params=params,
+                timeout=self._timeout_seconds,
+                maximum_bytes=MAX_NMC_BYTES,
+                transport=self._transport,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"中央气象台接口请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        try:
+            payload = json.loads(response.content)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise SourceFetchError("中央气象台接口返回不是有效 JSON") from exc
 
         if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
             raise SourceFetchError(f"中央气象台接口业务错误: {payload.get('msg')}")
@@ -186,7 +204,7 @@ class OfacSdnAdapter(PullSourceAdapter):
     """美国财政部 OFAC SDN 官方公开 CSV 制裁名单。"""
 
     source_code = "ofac-sdn"
-    _endpoint = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
+    endpoint = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
 
     def __init__(
         self,
@@ -197,23 +215,22 @@ class OfacSdnAdapter(PullSourceAdapter):
         self._transport = transport
         self._timeout_seconds = timeout_seconds
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            timeout=self._timeout_seconds,
-            transport=self._transport,
-            follow_redirects=True,
-        )
-
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         del cursor
-        async with self._client() as client:
-            try:
-                response = await client.get(self._endpoint)
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                raise SourceFetchError(f"OFAC SDN 接口请求失败: {exc}") from exc
-        if len(response.content) > MAX_OFAC_BYTES:
-            raise SourceFetchError("OFAC SDN 文件超过 20 MB 限制")
+        try:
+            response = await controlled_get(
+                self.endpoint,
+                timeout=self._timeout_seconds,
+                maximum_bytes=MAX_OFAC_BYTES,
+                follow_redirects=True,
+                transport=self._transport,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"OFAC SDN 接口请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
         try:
             text = response.content.decode("utf-8-sig")
             rows = csv.reader(io.StringIO(text))
@@ -242,7 +259,7 @@ class OfacSdnAdapter(PullSourceAdapter):
                         external_id=f"ofac-sdn-{entity_number}",
                         title=f"OFAC SDN 制裁名单：{name}",
                         content="；".join(details),
-                        url=self._endpoint,
+                        url=self.endpoint,
                         extra={"entity_number": entity_number, "country": country},
                     )
                 )

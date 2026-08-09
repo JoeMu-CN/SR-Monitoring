@@ -14,7 +14,12 @@ from app.agent import budget as budget_module
 from app.agent.budget import get_tyc_usage, record_tyc_usage
 from app.agent.engine import AgentError, FakeAgentLLM, LLMResponse, ToolCallSpec, run_agent
 from app.agent.models import AgentMessage, AgentSession, TycUsageRecord
-from app.agent.service import chat
+from app.agent.service import (
+    RISK_QUERY,
+    SOURCE_ONBOARDING,
+    chat,
+    chat_source_onboarding,
+)
 from app.agent.tools import (
     GetBudgetTool,
     QueryCurrentAlertsTool,
@@ -111,6 +116,7 @@ def test_chat_creates_session_and_persists_messages(
     assistant = messages[1]
     assert assistant.tool_calls[0]["name"] == "query_current_alerts"
     assert assistant.tool_calls[0]["result"]["total"] == 0
+    assert clean_agent_tables.get(AgentSession, response.session_id).agent_kind == RISK_QUERY
 
 
 def test_chat_continues_existing_session(clean_agent_tables: Session) -> None:
@@ -137,6 +143,80 @@ def test_chat_without_risk_keyword_calls_no_tool(
 ) -> None:
     response = asyncio.run(chat(clean_agent_tables, "你好", llm=FakeAgentLLM()))
     assert response.tool_calls == []
+
+
+def test_two_agents_use_disjoint_tools_and_sessions(
+    clean_agent_tables: Session,
+) -> None:
+    class CapturingLLM(FakeAgentLLM):
+        def __init__(self) -> None:
+            self.tool_names: set[str] = set()
+
+        async def respond(
+            self,
+            messages: list[dict[str, object]],
+            tools: list[dict[str, object]],
+        ) -> LLMResponse:
+            del messages
+            self.tool_names = {
+                str(tool["function"]["name"])
+                for tool in tools
+                if isinstance(tool.get("function"), dict)
+            }
+            return LLMResponse(content="隔离测试完成")
+
+    risk_llm = CapturingLLM()
+    risk = asyncio.run(
+        chat(clean_agent_tables, "接入数据源并确认发布立即采集", llm=risk_llm)
+    )
+    source_llm = CapturingLLM()
+    source = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            "查询风险并确认发布立即采集",
+            llm=source_llm,
+            actor_id="test-admin",
+        )
+    )
+
+    assert risk_llm.tool_names == {
+        "query_suppliers",
+        "query_current_alerts",
+        "verify_company",
+        "get_budget",
+    }
+    assert source_llm.tool_names == {
+        "inspect_source_url",
+        "preview_source_adapter",
+        "create_source_adapter_draft",
+        "publish_source_adapter",
+        "run_source_now",
+    }
+    assert risk_llm.tool_names.isdisjoint(source_llm.tool_names)
+    assert clean_agent_tables.get(AgentSession, risk.session_id).agent_kind == RISK_QUERY
+    assert (
+        clean_agent_tables.get(AgentSession, source.session_id).agent_kind
+        == SOURCE_ONBOARDING
+    )
+
+    with pytest.raises(AgentError, match="不能跨类型复用"):
+        asyncio.run(
+            chat_source_onboarding(
+                clean_agent_tables,
+                "继续",
+                session_id=risk.session_id,
+                llm=source_llm,
+            )
+        )
+    with pytest.raises(AgentError, match="不能跨类型复用"):
+        asyncio.run(
+            chat(
+                clean_agent_tables,
+                "继续",
+                session_id=source.session_id,
+                llm=risk_llm,
+            )
+        )
 
 
 def test_run_agent_max_steps_guard(clean_agent_tables: Session) -> None:
@@ -432,6 +512,12 @@ def test_chat_endpoint(
 def test_chat_endpoint_validation(client: TestClient) -> None:
     response = client.post("/api/v1/chat", json={"question": ""})
     assert response.status_code == 422
+
+
+def test_agent_endpoints_have_separate_openapi_groups(client: TestClient) -> None:
+    paths = client.get("/api/openapi.json").json()["paths"]
+    assert paths["/api/v1/chat"]["post"]["tags"] == ["风险查询助手"]
+    assert paths["/api/v1/source-agent/chat"]["post"]["tags"] == ["数据源接入助手"]
 
 
 def test_agent_status_endpoint(

@@ -58,6 +58,10 @@ class DataSourceRead(BaseModel):
     adapter_status: str
     adapter_version: int
     adapter_published_at: datetime | None
+    access_status: Literal["ready", "throttled", "busy", "cooldown"] = "ready"
+    access_cooldown_until: datetime | None = None
+    access_last_http_status: int | None = None
+    access_last_error_kind: str | None = None
     enabled: bool
     created_at: datetime
     updated_at: datetime

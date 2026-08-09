@@ -20,6 +20,7 @@ import {MobileNav} from './components/MobileNav';
 import {NewSupplierModal} from './components/NewSupplierModal';
 import {OverviewView} from './components/OverviewView';
 import {RiskAssistantView} from './components/RiskAssistantView';
+import {SourceOnboardingAgentView} from './components/SourceOnboardingAgentView';
 import {RiskDetailModal} from './components/RiskDetailModal';
 import {RuleEngineView} from './components/RuleEngineView';
 import {SettingsModal} from './components/SettingsModal';
@@ -249,6 +250,10 @@ export function App() {
                     onSelectRisk={setSelectedRisk} onSelectSupplier={handleSelectSupplier}
                     pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />
                 )}
+                {activeTab === 'source-agent' && (
+                  <SourceOnboardingAgentView agentStatus={agentStatus} role={consoleRole}
+                    onRoleChange={setConsoleRole} />
+                )}
                 {activeTab === 'suppliers' && (
                   <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
                     onSelectSupplier={handleSelectSupplier} onToggleStatus={(id) => void handleToggleSupplierStatus(id)}
@@ -258,7 +263,8 @@ export function App() {
                   <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync}
                     role={consoleRole} onRoleChange={setConsoleRole}
                     onCreateSource={handleCreateSource} onUpdateSource={handleUpdateSource}
-                    onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources} />
+                    onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources}
+                    onOpenSourceAgent={() => setActiveTab('source-agent')} />
                 )}
                 {activeTab === 'rules' && (
                   <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}

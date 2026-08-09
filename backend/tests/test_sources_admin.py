@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
 from app.signals.models import DataSource, DataSourceAuditLog
+from app.signals.sources import NmcWeatherAdapter, OfacSdnAdapter
 
 
 def test_source_console_requires_admin_and_audits_changes(client, db_session):
@@ -86,3 +87,14 @@ def test_tianyancha_source_reports_runtime_key_without_exposing_it(
     assert tianyancha["api_key_configured"] is True
     assert tianyancha["api_key_hint"] == "环境变量已配置"
     assert "tyc_runtime_secret" not in response.text
+
+
+def test_builtin_http_sources_report_effective_endpoint_and_access_state(client):
+    response = client.get("/api/v1/sources")
+
+    assert response.status_code == 200
+    by_code = {item["code"]: item for item in response.json()}
+    assert by_code["nmc-weather"]["endpoint_url"] == NmcWeatherAdapter.endpoint
+    assert by_code["ofac-sdn"]["endpoint_url"] == OfacSdnAdapter.endpoint
+    assert by_code["nmc-weather"]["access_status"] == "ready"
+    assert by_code["ofac-sdn"]["access_status"] == "ready"

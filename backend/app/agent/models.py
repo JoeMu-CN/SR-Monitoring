@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
@@ -20,8 +21,17 @@ class AgentSession(Base):
     """一次多轮对话的会话容器。"""
 
     __tablename__ = "agent_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "agent_kind IN ('risk_query', 'source_onboarding')",
+            name="ck_agent_sessions_agent_kind",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    agent_kind: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'risk_query'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

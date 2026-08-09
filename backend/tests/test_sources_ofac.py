@@ -60,7 +60,7 @@ def test_fetch_follows_ofac_redirect() -> None:
     items = asyncio.run(adapter.fetch())
     assert len(items) == 2
     assert requests == [
-        OfacSdnAdapter._endpoint,
+        OfacSdnAdapter.endpoint,
         "https://cdn.example/sdn.csv",
     ]
 

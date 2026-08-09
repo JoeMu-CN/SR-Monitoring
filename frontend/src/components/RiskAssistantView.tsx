@@ -177,7 +177,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
         id: `asst-error-${Date.now()}`,
         sender: 'assistant',
         timestamp: new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'}),
-        content: `查询失败：${caught instanceof Error ? caught.message : 'Agent 服务暂时不可用'}。请检查服务状态后重试。`,
+        content: `查询失败：${caught instanceof Error ? caught.message : '助手服务暂时不可用'}。请检查服务状态后重试。`,
       }]);
     } finally {
       setIsTyping(false);
@@ -649,7 +649,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           {isTyping && (
             <div className="flex items-center gap-2 text-slate-400 text-[12px] italic p-2">
               <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
-              <span>Agent 正在执行只读查询...</span>
+              <span>助手正在执行只读查询...</span>
             </div>
           )}
 

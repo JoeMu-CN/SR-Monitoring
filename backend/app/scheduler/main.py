@@ -41,26 +41,39 @@ def _trigger(expr: str) -> CronTrigger:
 
 
 def _register_source_jobs(scheduler: BlockingScheduler) -> None:
-    """将数据源控制台中的独立 cron 注册为 APScheduler 任务。"""
+    """刷新数据源控制台中的独立 cron 任务。"""
     with SessionLocal() as session:
         sources = list(
             session.scalars(
                 select(DataSource)
-                .where(DataSource.enabled.is_(True), DataSource.schedule.is_not(None))
+                .where(
+                    DataSource.enabled.is_(True),
+                    DataSource.schedule.is_not(None),
+                    DataSource.adapter_status.in_(("builtin", "published")),
+                )
                 .order_by(DataSource.id)
             )
         )
+    desired_job_ids = {f"source-{source.id}" for source in sources}
+    for job in scheduler.get_jobs():
+        if job.id.startswith("source-") and job.id not in desired_job_ids:
+            scheduler.remove_job(job.id)
     for source in sources:
         assert source.schedule is not None
         try:
-            scheduler.add_job(
-                collect_source_job,
-                _trigger(source.schedule),
-                args=[source.id],
-                id=f"source-{source.id}",
-                name=f"采集数据源 {source.code}",
-                replace_existing=True,
-            )
+            job_id = f"source-{source.id}"
+            trigger = _trigger(source.schedule)
+            existing = scheduler.get_job(job_id)
+            if existing is None:
+                scheduler.add_job(
+                    collect_source_job,
+                    trigger,
+                    args=[source.id],
+                    id=job_id,
+                    name=f"采集数据源 {source.code}",
+                )
+            elif str(existing.trigger) != str(trigger):
+                scheduler.reschedule_job(job_id, trigger=trigger)
         except ValueError as exc:
             logger.error("跳过非法数据源调度周期 %s=%s: %s", source.code, source.schedule, exc)
 
@@ -71,6 +84,14 @@ def main() -> None:
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
     _register_source_jobs(scheduler)
+    scheduler.add_job(
+        _register_source_jobs,
+        "interval",
+        minutes=1,
+        args=[scheduler],
+        id="registry-refresh",
+        name="刷新数据源调度注册表",
+    )
     scheduler.add_job(
         expire_job, _trigger(SCHEDULER_EXPIRE_CRON), id="expire", name="提醒失效"
     )

@@ -6,6 +6,7 @@ import {
   mapDimension,
   mapRiskAlert,
   mapSupplier,
+  setApiRole,
   updateDimensionConfig,
   type AgentStatusRead,
   type SystemHealth,
@@ -43,6 +44,9 @@ export function App() {
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [consoleRole, setConsoleRole] = useState<'viewer' | 'admin'>('viewer');
+
+  useEffect(() => { setApiRole(consoleRole); }, [consoleRole]);
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -164,13 +168,33 @@ export function App() {
   };
 
   const handleTriggerDataSync = async () => {
-    const runnable = dataSources.filter((source) => !source.type.toLowerCase().includes('file'));
+    const runnable = dataSources.filter((source) => source.type !== 'external_tool' && !source.type.toLowerCase().includes('file'));
     const results = await Promise.allSettled(runnable.map((source) => api.runSource(Number(source.id))));
     if (results.some((result) => result.status === 'rejected')) {
       setError('部分数据源采集失败，请查看数据源运行状态。');
     }
     const [sourcesResponse, runsResponse] = await Promise.all([api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
+  };
+
+  const refreshSources = async () => {
+    const [sourcesResponse, runsResponse] = await Promise.all([api.sources(), api.collectionRuns()]);
+    setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
+  };
+
+  const handleCreateSource = async (payload: Parameters<typeof api.createSource>[0]) => {
+    await api.createSource(payload);
+    await refreshSources();
+  };
+
+  const handleUpdateSource = async (id: string, payload: Partial<Parameters<typeof api.createSource>[0]>) => {
+    await api.updateSource(Number(id), payload);
+    await refreshSources();
+  };
+
+  const handleDeleteSource = async (id: string) => {
+    await api.deleteSource(Number(id));
+    await refreshSources();
   };
 
   return (
@@ -231,11 +255,14 @@ export function App() {
                     onAskAssistant={handleAskAssistant} />
                 )}
                 {activeTab === 'data-sources' && (
-                  <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync} />
+                  <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync}
+                    role={consoleRole} onRoleChange={setConsoleRole}
+                    onCreateSource={handleCreateSource} onUpdateSource={handleUpdateSource}
+                    onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources} />
                 )}
                 {activeTab === 'rules' && (
                   <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}
-                    onUpdateDimension={handleUpdateDimension} />
+                    onUpdateDimension={handleUpdateDimension} role={consoleRole} onRoleChange={setConsoleRole} />
                 )}
               </motion.div>
             </AnimatePresence>

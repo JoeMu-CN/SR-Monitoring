@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.agent.budget import get_tyc_usage
 from app.agent.engine import AgentConfigurationError, AgentError, get_agent_llm
 from app.agent.schemas import AgentStatusRead, ChatRequest, ChatResponse
 from app.agent.service import chat
-from app.config import AGENT_MAX_STEPS, AGENT_TYC_ENABLED, get_ai_settings
+from app.config import AGENT_MAX_STEPS, get_ai_settings
 from app.database import get_session
 
 router = APIRouter(prefix="/api/v1", tags=["风险查询助手"])
@@ -15,10 +16,19 @@ SessionDependency = Annotated[Session, Depends(get_session)]
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(
-    payload: ChatRequest, session: SessionDependency
+    payload: ChatRequest,
+    session: SessionDependency,
+    role: Annotated[str | None, Header(alias="X-User-Role")] = None,
+    actor_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
 ) -> ChatResponse:
     try:
-        return await chat(session, payload.question, session_id=payload.session_id)
+        return await chat(
+            session,
+            payload.question,
+            session_id=payload.session_id,
+            admin_mode=role == "admin",
+            actor_id=actor_id,
+        )
     except AgentConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -32,13 +42,13 @@ async def chat_endpoint(
 
 
 @router.get("/agent/status", response_model=AgentStatusRead)
-def agent_status() -> AgentStatusRead:
+def agent_status(session: SessionDependency) -> AgentStatusRead:
     settings = get_ai_settings()
     llm = get_agent_llm(settings)
     configured = settings.provider != "fake"
     return AgentStatusRead(
         llm_configured=configured,
         model=llm.model,
-        tyc_enabled=AGENT_TYC_ENABLED,
+        tyc_enabled=get_tyc_usage(session).enabled,
         max_steps=AGENT_MAX_STEPS,
     )

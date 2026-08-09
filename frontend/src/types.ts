@@ -79,8 +79,23 @@ export interface Supplier {
 
 export interface DataSource {
   id: string;
+  code: string;
   name: string; // e.g. 工商数据接口, 司法诉讼爬虫
   type: string;
+  credibility: number;
+  schedule: string | null;
+  endpointUrl: string | null;
+  authType: 'none' | 'api_key' | 'bearer' | 'basic' | 'oauth2' | 'custom';
+  loginConfig: Record<string, unknown>;
+  credentialRef: string | null;
+  apiKeyConfigured: boolean;
+  apiKeyHint: string | null;
+  description: string | null;
+  adapterConfig: Record<string, unknown>;
+  adapterStatus: 'builtin' | 'unconfigured' | 'draft' | 'published' | 'invalid';
+  adapterVersion: number;
+  adapterPublishedAt: string | null;
+  enabled: boolean;
   status: 'normal' | 'warning' | 'error';
   latency: string; // e.g. "正常运行", "延迟 2h"
   lastSyncTime: string;
@@ -101,6 +116,12 @@ export interface MonitoringDimension {
     p3: number; // >= 40
   };
   ttlHours: number; // e.g. 72
+  contentItems: string[];
+  dataSources: Array<{
+    code: string;
+    name: string;
+    status: 'connected' | 'planned' | 'external_tool';
+  }>;
   source?: import('./api').DimensionRead;
 }
 

@@ -387,7 +387,9 @@ def test_dimensions_list_api(client: TestClient, db_session: Session) -> None:
 
 def test_dimension_toggle_api(client: TestClient, db_session: Session) -> None:
     response = client.post(
-        "/api/v1/rule-engine/dimensions/natural/toggle", json={"enabled": False}
+        "/api/v1/rule-engine/dimensions/natural/toggle",
+        json={"enabled": False},
+        headers={"X-User-Role": "admin"},
     )
     assert response.status_code == 200
     assert response.json()["enabled"] is False
@@ -398,6 +400,7 @@ def test_dimension_update_rejects_invalid_thresholds(client: TestClient) -> None
     response = client.put(
         "/api/v1/rule-engine/dimensions/natural",
         json={"config": {"p1_min": 40, "p2_min": 65, "p3_min": 85}},
+        headers={"X-User-Role": "admin"},
     )
 
     assert response.status_code == 422
@@ -422,6 +425,7 @@ def test_rule_change_preserves_previous_alert_revision(
     update = client.put(
         "/api/v1/rule-engine/dimensions/natural",
         json={"config": {"severity_scores": {"high": 1}}},
+        headers={"X-User-Role": "admin"},
     )
     assert update.status_code == 200
     signal_id = db_session.scalar(select(RawSignal.id))
@@ -456,6 +460,35 @@ def test_sandbox_test_api(client: TestClient, db_session: Session) -> None:
     assert payload["candidates"]
     assert payload["candidates"][0]["supplier_name"] == "沙箱供应商"
     assert payload["candidates"][0]["level"] == "P1"
+
+
+def test_dimension_api_exposes_content_and_source_status(client: TestClient) -> None:
+    response = client.get("/api/v1/rule-engine/dimensions")
+    assert response.status_code == 200
+    dimensions = {item["key"]: item for item in response.json()}
+    assert "天气与气象预警" in dimensions["natural"]["content_items"]
+    assert {
+        "code": "nmc-weather",
+        "name": "中央气象台",
+        "status": "connected",
+    } in dimensions["natural"]["data_sources"]
+    assert {
+        "code": "tianyancha",
+        "name": "天眼查",
+        "status": "external_tool",
+    } in dimensions["corporate"]["data_sources"]
+    assert all(source["status"] == "planned" for source in dimensions["policy"]["data_sources"])
+
+
+def test_dimension_metadata_survives_database_override(
+    client: TestClient, db_session: Session
+) -> None:
+    db_session.add(RuleDimensionConfig(key="policy", label="政策与法规", enabled=True))
+    db_session.flush()
+    response = client.get("/api/v1/rule-engine/dimensions/policy")
+    assert response.status_code == 200
+    assert "行业监管" in response.json()["content_items"]
+    assert response.json()["data_sources"]
 
 
 def test_sandbox_geopolitical_country_weak(

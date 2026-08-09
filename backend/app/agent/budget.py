@@ -11,10 +11,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import config
 from app.agent.models import TycUsageRecord
-from app.config import AGENT_TYC_DAILY_LIMIT, AGENT_TYC_ENABLED, AGENT_TYC_MONTHLY_LIMIT
+from app.config import AGENT_TYC_DAILY_LIMIT, AGENT_TYC_MONTHLY_LIMIT
+from app.signals.models import DataSource
 
 BEIJING_OFFSET = timedelta(hours=8)
+TYC_SOURCE_CODE = "tianyancha"
 
 
 @dataclass(frozen=True)
@@ -60,8 +63,11 @@ def get_tyc_usage(session: Session) -> TycUsageSnapshot:
 
     daily_used = _count_success(session, since=day_start_utc)
     monthly_used = _count_success(session, since=month_start_utc)
+    source_enabled = session.scalar(
+        select(DataSource.enabled).where(DataSource.code == TYC_SOURCE_CODE)
+    )
     return TycUsageSnapshot(
-        enabled=AGENT_TYC_ENABLED,
+        enabled=bool(source_enabled and config.TYC_API_KEY),
         daily_used=daily_used,
         daily_limit=AGENT_TYC_DAILY_LIMIT,
         monthly_used=monthly_used,

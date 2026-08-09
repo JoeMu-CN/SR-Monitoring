@@ -267,5 +267,5 @@ class UnconfiguredTycGateway:
     async def verify(self, company_name: str) -> dict[str, object]:
         return {
             "status": "not_configured",
-            "message": "天眼查网关未配置：设置 TYC_API_KEY 并开启 AGENT_TYC_ENABLED=true",
+            "message": "天眼查网关未配置：请通过 TYC_API_KEY 注入运行密钥",
         }

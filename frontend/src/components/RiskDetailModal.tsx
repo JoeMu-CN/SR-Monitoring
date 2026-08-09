@@ -84,7 +84,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1.5">
               <span className="bg-[#C92A2A] text-white text-[12px] font-bold px-2.5 py-0.5 rounded shadow-2xs">
-                {risk.level} {risk.levelName}风险
+                {risk.level} {risk.levelName}
               </span>
               <span className="text-[12px] font-mono text-slate-500 font-bold">
                 供应商 ID: {risk.vendorId ?? '未披露'}
@@ -262,7 +262,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
                     <span>{risk.companyName}</span>
                   </div>
                   <div className="p-2 bg-blue-50/60 dark:bg-slate-900 border border-blue-100 dark:border-slate-800 rounded-lg">
-                    <span className="font-bold text-[#004782]">事发地点匹配: </span>
+                    <span className="font-bold text-[#004782]">结构化匹配证据: </span>
                     <span>{risk.matchReasons?.locationMatch ?? risk.location ?? '未披露地点匹配证据'}</span>
                   </div>
                   <div className="p-2 bg-blue-50/60 dark:bg-slate-900 border border-blue-100 dark:border-slate-800 rounded-lg">

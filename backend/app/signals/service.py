@@ -18,6 +18,7 @@ from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.sources import PullSourceAdapter, SourceFetchError
 
 _T = TypeVar("_T")
+_INSERT_BATCH_SIZE = 1000
 
 
 def asyncio_run[T](coro: Coroutine[object, object, T]) -> T:
@@ -36,6 +37,12 @@ class CollectionFailed(RuntimeError):
 def collect_source(
     session: Session, source: DataSource, adapter: PullSourceAdapter
 ) -> CollectionRun:
+    return asyncio_run(collect_source_async(session, source, adapter))
+
+
+async def collect_source_async(
+    session: Session, source: DataSource, adapter: PullSourceAdapter
+) -> CollectionRun:
     """执行一次拉取式采集，写入新信号并返回本次运行记录。
 
     指纹相同的信号通过唯一约束去重（on_conflict_do_nothing）。
@@ -47,7 +54,7 @@ def collect_source(
     try:
         items = None
         try:
-            items = asyncio_run(adapter.fetch())
+            items = await adapter.fetch()
         except SourceFetchError as exc:
             _fail_run(session, run.id, str(exc))
             raise CollectionFailed(str(exc)) from exc
@@ -71,15 +78,17 @@ def collect_source(
             )
         created = 0
         if rows:
-            result = session.execute(
-                insert(RawSignal)
-                .values(rows)
-                .on_conflict_do_nothing(
-                    index_elements=[RawSignal.source_id, RawSignal.fingerprint]
+            for start in range(0, len(rows), _INSERT_BATCH_SIZE):
+                batch = rows[start : start + _INSERT_BATCH_SIZE]
+                result = session.execute(
+                    insert(RawSignal)
+                    .values(batch)
+                    .on_conflict_do_nothing(
+                        index_elements=[RawSignal.source_id, RawSignal.fingerprint]
+                    )
+                    .returning(RawSignal.id)
                 )
-                .returning(RawSignal.id)
-            )
-            created = len(result.scalars().all())
+                created += len(result.scalars().all())
         stored_run = session.get(CollectionRun, run.id)
         assert stored_run is not None
         stored_run.status = "succeeded"

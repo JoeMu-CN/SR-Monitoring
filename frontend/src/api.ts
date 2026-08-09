@@ -58,7 +58,57 @@ export interface DataSourceRead {
   source_type: string;
   credibility: number;
   schedule: string | null;
+  endpoint_url?: string | null;
+  auth_type?: 'none' | 'api_key' | 'bearer' | 'basic' | 'oauth2' | 'custom';
+  login_config?: Record<string, unknown>;
+  credential_ref?: string | null;
+  api_key_configured?: boolean;
+  api_key_hint?: string | null;
+  description?: string | null;
+  adapter_config?: Record<string, unknown>;
+  adapter_status?: 'builtin' | 'unconfigured' | 'draft' | 'published' | 'invalid';
+  adapter_version?: number;
+  adapter_published_at?: string | null;
   enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DataSourceAuditLogRead {
+  id: number;
+  source_id: number | null;
+  action: string;
+  actor_role: string;
+  actor_id: string | null;
+  changes: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DataSourceWritePayload {
+  code: string;
+  name: string;
+  source_type: string;
+  credibility: number;
+  schedule: string | null;
+  endpoint_url: string | null;
+  auth_type: DataSourceRead['auth_type'];
+  login_config: Record<string, unknown>;
+  credential_ref: string | null;
+  api_key?: string | null;
+  description: string | null;
+  adapter_config?: Record<string, unknown> | null;
+  enabled: boolean;
+}
+
+export interface AdapterPreviewResponse {
+  fetched_count: number;
+  items: Array<{
+    external_id: string | null;
+    title: string;
+    content: string;
+    url: string | null;
+    published_at: string | null;
+  }>;
 }
 
 export interface CollectionRunRead {
@@ -77,6 +127,12 @@ export interface DimensionRead {
   key: string;
   label: string;
   description: string;
+  content_items: string[];
+  data_sources: Array<{
+    code: string;
+    name: string;
+    status: 'connected' | 'planned' | 'external_tool';
+  }>;
   event_types: string[];
   match_columns: string[];
   enabled: boolean;
@@ -93,6 +149,47 @@ export interface DimensionRead {
     alert_expiry_days?: number;
     [key: string]: unknown;
   };
+}
+
+export interface RuleEngineOptions {
+  match_columns: string[];
+  event_types: Array<{value: string; label: string}>;
+  event_subtypes: Array<{value: string; label: string}>;
+}
+
+export interface SandboxRequest {
+  event_type: string;
+  event_subtype?: string | null;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  organizations: Array<{name: string; aliases: string[]; registry_no: string | null}>;
+  locations: Array<{
+    name: string;
+    country_code?: string | null;
+    region?: string | null;
+    city?: string | null;
+  }>;
+  affected_products: string[];
+  affected_industries: string[];
+  summary: string;
+  credibility: number;
+  has_published_at: boolean;
+}
+
+export interface SandboxCandidate {
+  supplier_id: number;
+  supplier_name: string;
+  match_type: string;
+  association_score: number;
+  reasons: string[];
+  score: number;
+  level: 'P1' | 'P2' | 'P3' | 'P4';
+  score_detail: Record<string, unknown>;
+}
+
+export interface SandboxResult {
+  dimension: {key: string; label: string; match_columns: string[]} | null;
+  message?: string;
+  candidates: SandboxCandidate[];
 }
 
 export interface ToolCallRead {
@@ -138,7 +235,10 @@ export interface SupplierCreatePayload {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, options);
+  const headers = new Headers(options.headers);
+  if (currentRole) headers.set('X-User-Role', currentRole);
+  headers.set('X-User-Id', 'console-user');
+  const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as {detail?: unknown} | null;
     throw new Error(payload?.detail ? String(payload.detail) : `HTTP ${response.status}`);
@@ -146,12 +246,42 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let currentRole: 'viewer' | 'admin' = 'viewer';
+
+export function setApiRole(role: 'viewer' | 'admin'): void {
+  currentRole = role;
+}
+
 export const api = {
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
+  createSource: (payload: DataSourceWritePayload) => request<DataSourceRead>('/api/v1/sources', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+  }),
+  updateSource: (id: number, payload: Partial<DataSourceWritePayload>) => request<DataSourceRead>(`/api/v1/sources/${id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+  }),
+  deleteSource: (id: number) => request<{deleted: boolean; id: number; code: string}>(`/api/v1/sources/${id}`, {method: 'DELETE'}),
+  sourceAuditLogs: (sourceId?: number) => request<{items: DataSourceAuditLogRead[]; total: number}>(
+    `/api/v1/sources/audit-logs?limit=100${sourceId ? `&source_id=${sourceId}` : ''}`,
+  ),
+  previewSource: (payload: {
+    source_code: string;
+    adapter_config: Record<string, unknown>;
+    auth_type: 'none' | 'api_key' | 'bearer';
+    credential_ref: string | null;
+    login_config: Record<string, unknown>;
+  }) => request<AdapterPreviewResponse>('/api/v1/sources/preview', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+  }),
+  publishSource: (id: number) => request<DataSourceRead>(`/api/v1/sources/${id}/publish`, {method: 'POST'}),
   collectionRuns: () => request<{items: CollectionRunRead[]; total: number}>('/api/v1/collection-runs?limit=100'),
   dimensions: () => request<DimensionRead[]>('/api/v1/rule-engine/dimensions'),
+  ruleEngineOptions: () => request<RuleEngineOptions>('/api/v1/rule-engine/match-columns'),
+  testRuleEngine: (payload: SandboxRequest) => request<SandboxResult>('/api/v1/rule-engine/test', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+  }),
   health: () => request<SystemHealth>('/api/v1/system/health'),
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
   chat: (question: string, sessionId: number | null) => request<ChatResponse>('/api/v1/chat', {
@@ -245,13 +375,26 @@ export function mapSupplier(supplier: SupplierRead, riskLevel?: RiskLevel, riskS
 
 export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[]): DataSource {
   const lastRun = runs.filter((run) => run.source_id === source.id).sort((a, b) => b.id - a.id)[0];
-  const status = !source.enabled || !lastRun ? 'warning'
+  const isExternalTool = source.source_type === 'external_tool';
+  const status = isExternalTool
+    ? source.enabled && source.api_key_configured ? 'normal' : 'warning'
+    : !source.enabled || !lastRun ? 'warning'
     : lastRun.status === 'failed' ? 'error' : lastRun.status === 'succeeded' ? 'normal' : 'warning';
   return {
     id: String(source.id), name: source.name, type: source.source_type, status,
-    latency: !source.enabled ? '已停用' : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : '运行中',
-    lastSyncTime: lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
+    latency: !source.enabled ? '已停用' : isExternalTool
+      ? source.api_key_configured ? '按需核查可用' : '运行密钥未配置'
+      : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : '运行中',
+    lastSyncTime: isExternalTool ? '按需调用' : lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
     itemCount: lastRun?.created_count ?? 0,
+    code: source.code, credibility: source.credibility, schedule: source.schedule,
+    endpointUrl: source.endpoint_url ?? null, authType: source.auth_type ?? 'none',
+    loginConfig: source.login_config ?? {}, credentialRef: source.credential_ref ?? null,
+    apiKeyConfigured: source.api_key_configured ?? false, apiKeyHint: source.api_key_hint ?? null,
+    description: source.description ?? null,
+    adapterConfig: source.adapter_config ?? {}, adapterStatus: source.adapter_status ?? 'unconfigured',
+    adapterVersion: source.adapter_version ?? 0, adapterPublishedAt: source.adapter_published_at ?? null,
+    enabled: source.enabled,
   };
 }
 
@@ -264,7 +407,10 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
     severityWeight: Math.round((severityMax / 35) * 100) / 100,
     relevanceWeight: Math.round((associationMax / 30) * 100) / 100,
     thresholds: {p1: Number(dimension.scoring.p1_min ?? 85), p2: Number(dimension.scoring.p2_min ?? 65), p3: Number(dimension.scoring.p3_min ?? 40)},
-    ttlHours: Number(dimension.scoring.alert_expiry_days ?? 14) * 24, source: dimension,
+    ttlHours: Number(dimension.scoring.alert_expiry_days ?? 14) * 24,
+    contentItems: dimension.content_items,
+    dataSources: dimension.data_sources,
+    source: dimension,
   };
 }
 

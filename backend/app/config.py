@@ -46,11 +46,6 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
 
 # Agent 编排
 AGENT_MAX_STEPS = _int_env("AGENT_MAX_STEPS", 6, minimum=1, maximum=20)
-AGENT_TYC_ENABLED = os.getenv("AGENT_TYC_ENABLED", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
 AGENT_TYC_DAILY_LIMIT = _int_env("AGENT_TYC_DAILY_LIMIT", 80, minimum=1, maximum=1000)
 AGENT_TYC_MONTHLY_LIMIT = _int_env(
     "AGENT_TYC_MONTHLY_LIMIT", 900, minimum=1, maximum=10000

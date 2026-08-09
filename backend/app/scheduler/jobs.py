@@ -29,20 +29,21 @@ from app.signals.service import CollectionFailed, collect_source
 logger = logging.getLogger("scheduler")
 
 
-def _collect_enabled_sources() -> dict[str, int]:
-    """采集所有启用的拉取式数据源，返回 {source_code: created_count}。"""
+def _collect_enabled_sources(
+    *, source_ids: list[int] | None = None, only_without_schedule: bool = False
+) -> dict[str, int]:
+    """采集启用的拉取式数据源，返回 ``{source_code: created_count}``。"""
     summary: dict[str, int] = {}
     with SessionLocal() as session:
-        sources = list(
-            session.scalars(
-                select(DataSource)
-                .where(DataSource.enabled.is_(True))
-                .order_by(DataSource.id)
-            )
-        )
+        filters = [DataSource.enabled.is_(True)]
+        if source_ids is not None:
+            filters.append(DataSource.id.in_(source_ids))
+        if only_without_schedule:
+            filters.append(DataSource.schedule.is_(None))
+        sources = list(session.scalars(select(DataSource).where(*filters).order_by(DataSource.id)))
         for source in sources:
             try:
-                pull_adapter = build_pull_adapter(source.code)
+                pull_adapter = build_pull_adapter(source)
             except Exception as exc:  # 非拉取式（manual-json）或未实现
                 logger.info("跳过数据源 %s（非拉取式）: %s", source.code, exc)
                 continue
@@ -61,6 +62,17 @@ def _collect_enabled_sources() -> dict[str, int]:
                 run.duplicate_count,
             )
     return summary
+
+
+def collect_source_job(source_id: int) -> None:
+    """按数据源自己的 cron 触发一次采集，并处理本次新增信号。"""
+    try:
+        summary = _collect_enabled_sources(source_ids=[source_id])
+        if summary:
+            _process_pending_signals()
+            logger.info("数据源独立调度完成: %s", summary)
+    except Exception as exc:
+        logger.exception("数据源 %s 独立调度异常: %s", source_id, exc)
 
 
 def _process_pending_signals(limit: int = 20) -> int:
@@ -103,7 +115,7 @@ def _succeeded_signal_ids(session: Session) -> Select[tuple[int]]:
 def collect_job() -> None:
     logger.info("定时采集开始: %s", datetime.now(UTC).isoformat())
     try:
-        summary = _collect_enabled_sources()
+        summary = _collect_enabled_sources(only_without_schedule=True)
         logger.info("采集汇总: %s", summary)
         processed = _process_pending_signals()
         logger.info("本次处理新信号 %d 条", processed)

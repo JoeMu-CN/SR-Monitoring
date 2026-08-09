@@ -1,10 +1,10 @@
-"""Agent 工具白名单（只读）。
+"""Agent 工具白名单。
 
 所有工具只能读取业务库或调用外部核查网关，禁止任何写操作。
 写操作（加入监控、启停供应商等）必须由用户在前端确认后走既有 API。
 """
 
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -172,7 +172,7 @@ class VerifyCompanyTool:
         if not usage.enabled:
             return {
                 "status": "not_configured",
-                "message": "天眼查网关未启用：设置 AGENT_TYC_ENABLED=true 并注入 Token 后启用",
+                "message": "天眼查未启用：请在数据源控制台启用，并通过 TYC_API_KEY 注入运行密钥",
                 "usage": usage.to_dict(),
             }
         if not usage.allowed:
@@ -253,13 +253,32 @@ def _products(session: Session, supplier_id: int) -> list[SupplierProduct]:
     )
 
 
-def build_tools() -> list[Tool]:
-    return [
+def build_tools(
+    *,
+    admin_mode: bool = False,
+    actor_id: str | None = None,
+    question: str = "",
+) -> list[Tool]:
+    tools: list[Tool] = [
         QuerySuppliersTool(),
         QueryCurrentAlertsTool(),
         VerifyCompanyTool(),
         GetBudgetTool(),
     ]
+    if admin_mode:
+        from app.agent.source_tools import build_source_onboarding_tools
+
+        tools.extend(
+            cast(
+                list[Tool],
+                build_source_onboarding_tools(
+                    actor_id=actor_id,
+                    allow_publish="确认发布" in question,
+                    allow_run="立即采集" in question,
+                ),
+            )
+        )
+    return tools
 
 
 def build_tool_specs(tools: list[Tool]) -> list[dict[str, object]]:

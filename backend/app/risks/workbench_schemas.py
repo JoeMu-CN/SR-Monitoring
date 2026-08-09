@@ -73,6 +73,8 @@ class DimensionRead(BaseModel):
     key: str
     label: str
     description: str
+    content_items: list[str]
+    data_sources: list[dict[str, str]]
     event_types: list[str]
     match_columns: list[str]
     enabled: bool

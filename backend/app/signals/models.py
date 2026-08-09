@@ -35,6 +35,21 @@ class DataSource(Base):
     source_type: Mapped[str] = mapped_column(Text)
     credibility: Mapped[int] = mapped_column(SmallInteger)
     schedule: Mapped[str | None] = mapped_column(Text)
+    endpoint_url: Mapped[str | None] = mapped_column(Text)
+    auth_type: Mapped[str] = mapped_column(Text, server_default=text("'none'"))
+    login_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    credential_ref: Mapped[str | None] = mapped_column(Text)
+    api_key_hash: Mapped[str | None] = mapped_column(Text)
+    api_key_last4: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
+    adapter_config: Mapped[dict[str, object]] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb")
+    )
+    adapter_status: Mapped[str] = mapped_column(Text, server_default=text("'unconfigured'"))
+    adapter_version: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    adapter_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -49,6 +64,36 @@ class DataSource(Base):
     signals: Mapped[list["RawSignal"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", passive_deletes=True
     )
+    audit_logs: Mapped[list["DataSourceAuditLog"]] = relationship(
+        back_populates="source", passive_deletes=True
+    )
+
+    @property
+    def api_key_configured(self) -> bool:
+        return bool(self.api_key_hash)
+
+    @property
+    def api_key_hint(self) -> str | None:
+        return f"••••{self.api_key_last4}" if self.api_key_last4 else None
+
+
+class DataSourceAuditLog(Base):
+    __tablename__ = "data_source_audit_logs"
+    __table_args__ = (Index("ix_data_source_audit_logs_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_sources.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(Text)
+    actor_role: Mapped[str] = mapped_column(Text)
+    actor_id: Mapped[str | None] = mapped_column(Text)
+    changes: Mapped[dict[str, object]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    source: Mapped[DataSource | None] = relationship(back_populates="audit_logs")
 
 
 class CollectionRun(Base):

@@ -155,6 +155,8 @@ def merge_dimension(base: DimensionConfig, row: RuleDimensionConfig) -> RuntimeD
         label=base.label,
         description=base.description,
         event_types=event_types,
+        content_items=base.content_items,
+        data_sources=base.data_sources,
         match_columns=match_columns,
         enabled=row.enabled,
         scoring_overrides=base.scoring_overrides,

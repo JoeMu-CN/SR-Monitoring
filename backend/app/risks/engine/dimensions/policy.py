@@ -14,6 +14,7 @@ from app.risks.engine.config import (
     COLUMN_INDUSTRY,
     COLUMN_PRODUCT,
     DimensionConfig,
+    DimensionDataSource,
 )
 from app.risks.scoring import ForcedRule
 
@@ -22,6 +23,13 @@ DIMENSION = DimensionConfig(
     label="政策与法规",
     description="行业监管、进出口政策、供应链合规法规、劳动与税收法规（预留维度）。",
     event_types=(),
+    content_items=("行业监管", "进出口政策", "供应链合规法规", "劳动法规", "税收法规"),
+    data_sources=(
+        DimensionDataSource("eu-official-journal", "欧盟官方公报 EUR-Lex", "planned"),
+        DimensionDataSource("gacc-public-info", "海关总署", "planned"),
+        DimensionDataSource("mofcom-public-info", "商务部", "planned"),
+        DimensionDataSource("gov-regulation", "财政部 / 税务总局 / 人社部", "planned"),
+    ),
     match_columns=(COLUMN_INDUSTRY, COLUMN_PRODUCT, COLUMN_COUNTRY),
     enabled=False,
     scoring_overrides={"association_scores": {"country": 8, "industry": 12}},

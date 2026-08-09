@@ -28,6 +28,7 @@ from app.agent.tyc_gateway import (
     UnconfiguredTycGateway,
     build_tyc_gateway,
 )
+from app.signals.models import DataSource
 from app.suppliers.models import Supplier
 
 
@@ -64,8 +65,27 @@ class FakeTycGateway:
 
 
 @pytest.fixture
-def enable_tyc(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr(budget_module, "AGENT_TYC_ENABLED", True)
+def enable_tyc(db_session: Session, monkeypatch: MonkeyPatch) -> None:
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    if source is None:
+        source = DataSource(
+            code="tianyancha",
+            name="天眼查企业核查",
+            source_type="external_tool",
+            credibility=90,
+            schedule=None,
+            endpoint_url="https://mcp.tianyancha.com/v1",
+            auth_type="api_key",
+            login_config={},
+            credential_ref="env:TYC_API_KEY",
+            description="测试数据源",
+            enabled=True,
+        )
+        db_session.add(source)
+    else:
+        source.enabled = True
+    db_session.flush()
+    monkeypatch.setattr(budget_module.config, "TYC_API_KEY", "tyc_test_key")
     monkeypatch.setattr(budget_module, "AGENT_TYC_DAILY_LIMIT", 5)
     monkeypatch.setattr(budget_module, "AGENT_TYC_MONTHLY_LIMIT", 50)
 
@@ -432,8 +452,10 @@ def test_agent_status_endpoint(
             max_retries=2,
         ),
     )
+    monkeypatch.setattr(budget_module.config, "TYC_API_KEY", "")
     response = client.get("/api/v1/agent/status")
     assert response.status_code == 200
     body = response.json()
     assert body["llm_configured"] is False  # Fake 引擎视为未配置真实模型
+    assert body["tyc_enabled"] is False
     assert body["max_steps"] >= 1

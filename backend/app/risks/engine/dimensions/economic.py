@@ -12,6 +12,7 @@ from app.risks.engine.config import (
     COLUMN_LOCATION,
     COLUMN_PRODUCT,
     DimensionConfig,
+    DimensionDataSource,
 )
 from app.risks.scoring import ForcedRule
 
@@ -20,6 +21,14 @@ DIMENSION = DimensionConfig(
     label="经济与金融",
     description="宏观经济、汇率、大宗商品、货币政策、贸易摩擦与关税。",
     event_types=("trade_policy",),
+    content_items=("宏观经济", "汇率与外汇管制", "大宗商品与原材料", "货币政策", "贸易摩擦与关税"),
+    data_sources=(
+        DimensionDataSource("gacc-public-info", "海关总署", "planned"),
+        DimensionDataSource("mofcom-public-info", "商务部", "planned"),
+        DimensionDataSource("wto-trade-monitoring", "世界贸易组织 WTO", "planned"),
+        DimensionDataSource("pboc-safe", "中国人民银行 / 国家外汇管理局", "planned"),
+        DimensionDataSource("world-bank", "世界银行", "planned"),
+    ),
     match_columns=(
         COLUMN_ENTITY,
         COLUMN_LOCATION,

@@ -23,9 +23,11 @@ from app.risks.workbench_schemas import (
     DimensionUpdate,
     SandboxRequest,
 )
+from app.security import require_admin
 
 router = APIRouter(prefix="/api/v1/rule-engine", tags=["规则引擎工作台"])
 SessionDependency = Annotated[Session, Depends(get_session)]
+AdminDependency = Annotated[str, Depends(require_admin)]
 
 _EVENT_TYPE_LABELS = {
     "weather": "天气",
@@ -104,6 +106,11 @@ def _to_read(
         key=dim.key,
         label=dim.config.label,
         description=dim.config.description,
+        content_items=list(dim.config.content_items),
+        data_sources=[
+            {"code": source.code, "name": source.name, "status": source.status}
+            for source in dim.config.data_sources
+        ],
         event_types=list(dim.config.event_types),
         match_columns=list(dim.config.match_columns),
         enabled=dim.enabled,
@@ -139,7 +146,7 @@ def get_dimension(key: str, session: SessionDependency) -> DimensionRead:
 
 @router.put("/dimensions/{key}", response_model=DimensionRead)
 def update_dimension(
-    key: str, payload: DimensionUpdate, session: SessionDependency
+    key: str, payload: DimensionUpdate, session: SessionDependency, _admin: AdminDependency
 ) -> DimensionRead:
     dimensions, _, _ = _load_state(session)
     base = next((d for d in dimensions if d.key == key), None)
@@ -180,9 +187,9 @@ def update_dimension(
 
 @router.post("/dimensions/{key}/toggle", response_model=DimensionRead)
 def toggle_dimension(
-    key: str, payload: DimensionToggle, session: SessionDependency
+    key: str, payload: DimensionToggle, session: SessionDependency, _admin: AdminDependency
 ) -> DimensionRead:
-    return update_dimension(key, DimensionUpdate(enabled=payload.enabled), session)
+    return update_dimension(key, DimensionUpdate(enabled=payload.enabled), session, _admin)
 
 
 @router.get("/match-columns")

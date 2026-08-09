@@ -3,9 +3,10 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent.engine import AgentLLM, get_agent_llm, run_agent
+from app.agent.engine import AGENT_SYSTEM_PROMPT, AgentLLM, get_agent_llm, run_agent
 from app.agent.models import AgentMessage, AgentSession
 from app.agent.schemas import ChatResponse
+from app.agent.source_skill import SOURCE_ONBOARDING_SKILL
 from app.agent.tools import build_tools
 
 HISTORY_WINDOW = 8
@@ -17,6 +18,8 @@ async def chat(
     *,
     session_id: int | None = None,
     llm: AgentLLM | None = None,
+    admin_mode: bool = False,
+    actor_id: str | None = None,
 ) -> ChatResponse:
     active_session = _load_or_create_session(session, session_id)
     session.add(
@@ -31,7 +34,16 @@ async def chat(
         question,
         history,
         llm=active_llm,
-        tools=build_tools(),
+        tools=build_tools(
+            admin_mode=admin_mode,
+            actor_id=actor_id,
+            question=question,
+        ),
+        system_prompt=(
+            f"{AGENT_SYSTEM_PROMPT}{SOURCE_ONBOARDING_SKILL}"
+            if admin_mode
+            else AGENT_SYSTEM_PROMPT
+        ),
     )
 
     tool_records = [

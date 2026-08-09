@@ -11,7 +11,9 @@ manual-json 是文件上传式（见 adapter.py），本模块实现 HTTP 拉取
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
@@ -24,6 +26,7 @@ from app.signals.schemas import ManualSignalInput
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
 MAX_ITEMS_PER_FETCH = 100
+MAX_OFAC_BYTES = 20 * 1024 * 1024
 
 
 class SourceFetchError(RuntimeError):
@@ -177,6 +180,107 @@ class NmcWeatherAdapter(PullSourceAdapter):
         if not items:
             return SourceHealth(ok=False, message="中央气象台接口无返回数据")
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条预警")
+
+
+class OfacSdnAdapter(PullSourceAdapter):
+    """美国财政部 OFAC SDN 官方公开 CSV 制裁名单。"""
+
+    source_code = "ofac-sdn"
+    _endpoint = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            transport=self._transport,
+            follow_redirects=True,
+        )
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        async with self._client() as client:
+            try:
+                response = await client.get(self._endpoint)
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise SourceFetchError(f"OFAC SDN 接口请求失败: {exc}") from exc
+        if len(response.content) > MAX_OFAC_BYTES:
+            raise SourceFetchError("OFAC SDN 文件超过 20 MB 限制")
+        try:
+            text = response.content.decode("utf-8-sig")
+            rows = csv.reader(io.StringIO(text))
+            items: list[RawSourceItem] = []
+            for line_number, row in enumerate(rows, start=1):
+                if not row or not any(cell.strip() for cell in row):
+                    continue
+                if len(row) < 4:
+                    # OFAC 当前 CSV 末尾带 DOS EOF 标记（Ctrl-Z）尾行，不是实体记录。
+                    if len(row) == 1 and row[0] == "\x1a":
+                        continue
+                    raise SourceFetchError(f"OFAC SDN 第 {line_number} 行字段不足")
+                entity_number = row[0].strip()
+                name = row[1].strip()
+                country = row[3].strip()
+                remarks = row[11].strip() if len(row) > 11 else ""
+                if not entity_number or not name:
+                    continue
+                details = [f"名称：{name}"]
+                if country and country != "-0-":
+                    details.append(f"国家/地区：{country}")
+                if remarks and remarks != "-0-":
+                    details.append(f"备注：{remarks}")
+                items.append(
+                    RawSourceItem(
+                        external_id=f"ofac-sdn-{entity_number}",
+                        title=f"OFAC SDN 制裁名单：{name}",
+                        content="；".join(details),
+                        url=self._endpoint,
+                        extra={"entity_number": entity_number, "country": country},
+                    )
+                )
+        except UnicodeDecodeError as exc:
+            raise SourceFetchError("OFAC SDN 文件不是 UTF-8 编码") from exc
+        except csv.Error as exc:
+            raise SourceFetchError("OFAC SDN 文件不是有效 CSV") from exc
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="OFAC SDN 接口无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条制裁条目")
 
 
 def _parse_nmc_time(value: object) -> datetime | None:

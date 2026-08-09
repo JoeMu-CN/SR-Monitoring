@@ -4,7 +4,7 @@
 
 当前已完成两周 MVP 的 D1 基础骨架、D2 供应商主数据、D3 手工风险信号采集、
 D4 AI 结构化解析、D5 风险纵向链路、D6 确定性供应商匹配、D7 可配置评分、
-D8 前端页面和 D9 真实数据源与独立调度器，形成发布候选版本。
+D8 前端页面、D9 真实数据源与独立调度器，以及 D10 验收收口，当前正在完成第二个真实来源的现场采集验证。
 
 ## 当前能力
 
@@ -38,6 +38,7 @@ D8 前端页面和 D9 真实数据源与独立调度器，形成发布候选版�
 - `GET /api/v1/risk-alerts` 当前提醒查询接口。
 - `POST /api/v1/risk-alerts/expire` 手动触发提醒失效检查。
 - 中央气象台天气预警数据源（`nmc-weather`），HTTP 拉取、官方公开数据、指纹去重。
+- OFAC SDN 制裁名单数据源（`ofac-sdn`），官方公开 CSV 拉取、实体编号去重和原始来源留存。
 - `POST /api/v1/sources/{id}/run` 手动触发拉取式数据源采集。
 - 独立 Scheduler 进程（APScheduler）：定时采集、AI 解析、事件归并、评分、提醒失效和数据保留清理。
 - 数据保留清理：原始信号/AI 分析 90 天、事件与提醒失效后 90 天、采集运行 30 天（均可配置）。
@@ -116,6 +117,45 @@ D5 完整处理接口会优先复用该信号最近一次成功的 AI 分析；�
 
 默认配置足以在 localhost 开发。需要修改配置时，将 .env.example 复制为 .env；.env 已被 Git 忽略，禁止提交真实密钥。
 
+## 备份与恢复
+
+备份前保持 PostgreSQL 容器运行。以下命令在容器内生成 PostgreSQL 自定义格式备份，
+再复制到项目的 `backups` 目录，不会把 `.env` 或密钥写入备份文件：
+
+```powershell
+$backupDir = Join-Path $PWD 'backups'
+New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
+$backupPath = Join-Path $backupDir ("supplier-risk-{0}.backup" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/supplier_risk.backup'
+docker compose cp postgres:/tmp/supplier_risk.backup $backupPath
+Write-Output $backupPath
+```
+
+恢复演练默认写入新数据库 `supplier_risk_restore`，不会覆盖当前业务库：
+
+```powershell
+$backupPath = 'D:\path\to\supplier-risk-yyyyMMdd-HHmmss.backup'
+docker compose cp $backupPath postgres:/tmp/supplier_risk_restore.backup
+docker compose exec -T postgres sh -c 'createdb -U "$POSTGRES_USER" supplier_risk_restore'
+docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d supplier_risk_restore --no-owner /tmp/supplier_risk_restore.backup'
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d supplier_risk_restore -c "SELECT count(*) AS suppliers FROM suppliers"'
+```
+
+如果 `supplier_risk_restore` 已存在，`createdb` 会失败并停止；先确认数据库用途，禁止直接覆盖
+当前 `supplier_risk` 数据库。
+
+## 演示流程
+
+1. 执行 `docker compose up -d --build`，等待 `docker compose ps` 中 app、postgres、scheduler 正常运行。
+2. 打开 http://127.0.0.1:8080 ，确认总览页显示本机服务正常。
+3. 从 http://127.0.0.1:8080/api/v1/suppliers/import-template 下载模板，填写供应商、生产地点和供应产品三张工作表。
+4. 在 http://127.0.0.1:8080/api/docs 调用 `POST /api/v1/suppliers/import` 导入模板。
+5. 调用 `POST /api/v1/signals/import` 导入标准 JSON 风险信号，再调用 `POST /api/v1/signals/{signal_id}/process` 完成分析、归并、匹配、评分和提醒。
+6. 回到网页检查总览、当前风险、风险详情、供应商、数据源和规则引擎页面；风险详情应能看到原始来源、匹配理由和评分明细。
+7. 可调用 `POST /api/v1/sources/{id}/run` 手动触发中央气象台或 OFAC SDN 采集，并在数据源页面确认运行结果。
+
+D10 的逐项证据和未通过项见 [D10验收记录.md](D10验收记录.md)。
+
 ## Scheduler 定时任务
 
 Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动执行数据库迁移：
@@ -124,7 +164,8 @@ Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动�
 
 默认任务（可通过 .env 的 `SCHEDULER_*_CRON` 调整）：
 
-- 每 30 分钟：采集所有启用的拉取式数据源（`nmc-weather`），并处理待解析信号（AI 解析 → 事件归并 → 匹配 → 评分 → 提醒）。
+- 每 30 分钟：兜底采集未单独配置周期的数据源，并处理待解析信号（AI 解析 → 事件归并 → 匹配 → 评分 → 提醒）。
+- 数据源控制台中填写 `schedule` 后，Scheduler 启动时会为该数据源注册独立 cron；修改周期或启停状态后重启 scheduler 容器使注册表刷新。
 - 每小时：将超过 `expires_at` 的提醒标记为已失效。
 - 每天 03:00：数据保留清理（信号/AI 分析 90 天、事件与提醒失效后 90 天、采集运行 30 天）。
 
@@ -149,7 +190,7 @@ Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动�
 ## 当前限制
 
 - 只绑定 127.0.0.1，不允许局域网或公网访问。
-- 已接入两个真实来源：中央气象台天气预警（拉取式）与天眼查 MCP（Agent 核查工具）；手工 JSON 导入作为合规补充。
+- 已接入中央气象台与 OFAC 拉取式数据源；天眼查 MCP 作为统一数据源目录中的按需外部核查工具，运行密钥仅通过 `TYC_API_KEY` 环境变量注入；手工 JSON 导入作为合规补充。
 - 当前只做确定性匹配；AI 模糊匹配不会直接生成提醒。
 - 单独同国家不视为地点匹配；事件未明确披露坐标和影响半径时不会推测空间范围。
 - 当前页面只查询风险提醒，不提供历史分析和风险处置动作。
@@ -157,13 +198,17 @@ Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动�
 
 ## 已验证的候选数据源
 
-2026-08-04 仅完成连通性和响应格式验证，尚未开发数据源适配器：
+2026-08-04 完成连通性和响应格式验证；OFAC SDN 已在 D10 中实现适配器，USGS 仍未接入：
 
 - USGS Significant Earthquakes GeoJSON：HTTP 200，响应类型为 JSON。
   https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_month.geojson
-- OFAC SDN List CSV：HTTP 200，响应类型为 CSV。
-  https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV
 
 正式接入前仍需确认字段、更新频率、使用条款和异常策略。
 
 完整范围、架构和开发计划见 技术方案.md。
+
+## 数据源控制台（0013）
+
+数据源页面现已支持管理员配置数据源编码、官方入口、可信度、5 段 cron 调度周期、认证方式、登录配置、密钥引用和启停状态，并提供新增、编辑、删除及修改日志查询。写接口必须携带 `X-User-Role: admin`，只读请求不需要角色头；当前该请求头是统一身份系统接入前的最小角色边界，生产环境应由网关/SSO 注入，不能把前端“管理员模式”当作身份认证。
+
+API Key 不以明文写入数据库，仅保存 SHA-256 指纹和末四位；实际连接器应通过 `credential_ref` 对接部署环境的密钥管理服务。新增的商务部清单、BIS Entity List、联合国综合制裁清单、EUR-Lex、应急管理部通报均默认停用，需完成适配器、授权与格式验收后再启用；它们的官方入口和覆盖维度见《风险监控维度扩展规划.md》及迁移 `0013`。

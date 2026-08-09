@@ -28,10 +28,9 @@ export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, 
     rules: '规则引擎与沙箱',
   };
 
-  const statusLight = (active: boolean, color: 'emerald' | 'blue' | 'cyan') => {
+  const statusLight = (active: boolean, color: 'emerald' | 'cyan') => {
     const activeClasses = {
       emerald: ['bg-emerald-500/60', 'bg-emerald-500'],
-      blue: ['bg-blue-500/60', 'bg-blue-500'],
       cyan: ['bg-cyan-500/60', 'bg-cyan-500'],
     }[color];
     return <div className="relative flex items-center justify-center w-2.5 h-2.5">
@@ -63,13 +62,6 @@ export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, 
             <div className="flex flex-col leading-tight">
               <span className="font-bold text-[#101d28] dark:text-slate-200">模型状态</span>
               <span className="text-emerald-600 dark:text-emerald-400 font-medium">{agentStatus?.llm_configured ? agentStatus.model : '演示模型'}</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 pr-2.5 border-r border-[#c2c6d2]/60 dark:border-slate-800">
-            {statusLight(Boolean(agentStatus?.tyc_enabled), 'blue')}
-            <div className="flex flex-col leading-tight">
-              <span className="font-bold text-[#101d28] dark:text-slate-200">外部核查状态</span>
-              <span className="text-blue-600 dark:text-blue-400 font-medium">{agentStatus?.tyc_enabled ? '天眼查已启用' : '天眼查未启用'}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">

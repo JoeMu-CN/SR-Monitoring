@@ -81,6 +81,31 @@ def test_collect_source_is_idempotent(db_session: Session) -> None:
     assert count == 2
 
 
+def test_collect_source_batches_large_fetch(db_session: Session) -> None:
+    source = _get_nmc_source(db_session)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        rows = [
+            {
+                "alertid": f"large-{index}",
+                "issuetime": "2026/08/07 18:18",
+                "title": f"批量测试预警 {index}",
+                "url": f"/publish/alarm/large-{index}.html",
+            }
+            for index in range(9000)
+        ]
+        payload = {"msg": "success", "code": 0, "data": {"page": {"list": rows}}}
+        return httpx.Response(200, text=json.dumps(payload))
+
+    run = collect_source(
+        db_session,
+        source,
+        NmcWeatherAdapter(transport=httpx.MockTransport(handler)),
+    )
+    assert run.created_count == 9000
+    assert run.duplicate_count == 0
+
+
 def test_collect_source_failure_records_failed_run(db_session: Session) -> None:
     source = _get_nmc_source(db_session)
 
@@ -102,7 +127,10 @@ def test_manual_trigger_endpoint(client: TestClient, db_session: Session) -> Non
     source = _get_nmc_source(db_session)
 
     # 用依赖注入的 adapter 不可行（router 构建真实适配器），改为检查失败路径
-    response = client.post(f"/api/v1/sources/{source.id}/run")
+    response = client.post(
+        f"/api/v1/sources/{source.id}/run",
+        headers={"X-User-Role": "admin"},
+    )
     # 真实网络不可用时返回 502；若网络可用则成功。两种都可接受，但必须有运行记录
     assert response.status_code in {200, 502}
     run = db_session.scalar(
@@ -120,12 +148,18 @@ def test_manual_trigger_rejects_manual_json(
         select(DataSource).where(DataSource.code == "manual-json")
     )
     assert manual is not None
-    response = client.post(f"/api/v1/sources/{manual.id}/run")
+    response = client.post(
+        f"/api/v1/sources/{manual.id}/run",
+        headers={"X-User-Role": "admin"},
+    )
     assert response.status_code == 422
 
 
 def test_manual_trigger_404(client: TestClient) -> None:
-    response = client.post("/api/v1/sources/999999/run")
+    response = client.post(
+        "/api/v1/sources/999999/run",
+        headers={"X-User-Role": "admin"},
+    )
     assert response.status_code == 404
 
 

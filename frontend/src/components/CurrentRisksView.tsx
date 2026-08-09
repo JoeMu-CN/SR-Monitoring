@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RiskItem, RiskLevel } from '../types';
+import { RiskItem } from '../types';
 
 interface CurrentRisksViewProps {
   riskItems: RiskItem[];
@@ -13,9 +13,12 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
-  const [selectedCountry, setSelectedCountry] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<'valid' | 'invalid'>('valid');
-  const [currentPage, setCurrentPage] = useState(1);
+  const levelCounts = Object.fromEntries(
+    ['P1', 'P2', 'P3', 'P4'].map((level) => [
+      level,
+      riskItems.filter((item) => item.level === level).length,
+    ]),
+  );
 
   // Filter items
   const filteredRisks = riskItems.filter((item) => {
@@ -25,10 +28,7 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
       item.summary.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesLevel = selectedLevel === 'all' || item.level === selectedLevel;
-    const matchesCountry = selectedCountry === 'all' || item.country === selectedCountry;
-    const matchesStatus = item.status === statusFilter;
-
-    return matchesSearch && matchesLevel && matchesCountry && matchesStatus;
+    return matchesSearch && matchesLevel;
   });
 
   return (
@@ -65,7 +65,6 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
               onClick={() => {
                 setSearchTerm('');
                 setSelectedLevel('all');
-                setSelectedCountry('all');
               }}
               className="px-3 py-2 border border-[#c2c6d2] dark:border-slate-700 rounded-lg text-[13px] font-medium text-[#424751] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-1"
             >
@@ -75,7 +74,7 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
           </div>
         </div>
 
-        {/* Dropdowns & Status Toggle */}
+        {/* Risk level filter */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
           <div className="flex flex-wrap items-center gap-3 text-[12px]">
             {/* Risk Level */}
@@ -94,85 +93,37 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
               </select>
             </div>
 
-            {/* Country / Region */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[#727782]">国家/地区:</span>
-              <select
-                value={selectedCountry}
-                onChange={(e) => setSelectedCountry(e.target.value)}
-                className="bg-[#f7f9ff] dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 rounded-lg px-2.5 py-1 font-medium focus:outline-none"
-              >
-                <option value="all">全部</option>
-                <option value="中国">中国</option>
-                <option value="中国台湾">中国台湾</option>
-                <option value="德国">德国</option>
-                <option value="埃及">埃及</option>
-                <option value="美国">美国</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Status Segmented Toggle: 有效 vs 失效 */}
-          <div className="flex bg-[#f7f9ff] dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 rounded-lg p-0.5 text-[12px] font-bold">
-            <button
-              onClick={() => setStatusFilter('valid')}
-              className={`px-3 py-1 rounded-md transition-all ${
-                statusFilter === 'valid'
-                  ? 'bg-[#004782] text-white shadow-2xs'
-                  : 'text-[#727782] hover:text-[#101d28]'
-              }`}
-            >
-              有效预警
-            </button>
-            <button
-              onClick={() => setStatusFilter('invalid')}
-              className={`px-3 py-1 rounded-md transition-all ${
-                statusFilter === 'invalid'
-                  ? 'bg-[#004782] text-white shadow-2xs'
-                  : 'text-[#727782] hover:text-[#101d28]'
-              }`}
-            >
-              已归档/失效
-            </button>
           </div>
         </div>
       </div>
 
-      {/* Global Risk Index Summary Box */}
+      {/* Current risk summary */}
       <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="text-[13px] font-medium text-[#424751] dark:text-slate-400">
-            全球供应链网络风险指数
+            当前风险概览
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-bold text-red-600 uppercase text-[13px]">
-              Critical High
-            </span>
-            <span className="bg-red-100 text-red-700 font-bold font-mono text-[14px] px-2 py-0.5 rounded-md">
-              87/100
-            </span>
+          <div className="font-mono font-bold text-[#004782] text-[13px]">
+            共 {riskItems.length} 条
           </div>
         </div>
 
-        {/* Risk Index Multi-Segment Bar */}
-        <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden my-3 flex">
-          <div className="bg-[#C92A2A] h-full" style={{ width: '35%' }}></div>
-          <div className="bg-[#D97706] h-full" style={{ width: '40%' }}></div>
-          <div className="bg-[#2563EB] h-full" style={{ width: '25%' }}></div>
-        </div>
-
-        <div className="grid grid-cols-3 text-center divide-x divide-slate-100 dark:divide-slate-800 pt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 text-center divide-x divide-slate-100 dark:divide-slate-800 pt-3">
           <div>
-            <div className="text-xl font-bold font-mono text-[#C92A2A]">12</div>
+            <div className="text-xl font-bold font-mono text-[#C92A2A]">{levelCounts.P1}</div>
             <div className="text-[11px] text-slate-500">P1 严重</div>
           </div>
           <div>
-            <div className="text-xl font-bold font-mono text-[#D97706]">34</div>
+            <div className="text-xl font-bold font-mono text-[#D97706]">{levelCounts.P2}</div>
             <div className="text-[11px] text-slate-500">P2 高危</div>
           </div>
           <div>
-            <div className="text-xl font-bold font-mono text-[#2563EB]">128</div>
+            <div className="text-xl font-bold font-mono text-[#2563EB]">{levelCounts.P3}</div>
             <div className="text-[11px] text-slate-500">P3 警告</div>
+          </div>
+          <div>
+            <div className="text-xl font-bold font-mono text-[#64748B]">{levelCounts.P4}</div>
+            <div className="text-[11px] text-slate-500">P4 轻微</div>
           </div>
         </div>
       </div>
@@ -263,55 +214,9 @@ export const CurrentRisksView: React.FC<CurrentRisksViewProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Pagination Footer */}
+      {/* Loaded result count */}
       <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-4 border-t border-[#c2c6d2] text-[13px] text-[#424751] dark:text-slate-400">
-        <div>显示 1-{filteredRisks.length} 条，共 1,248 条结果</div>
-        <div className="flex items-center gap-1 font-mono">
-          <button
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage(currentPage - 1)}
-            className="px-2.5 py-1 border border-[#c2c6d2] rounded-lg disabled:opacity-40 hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            &lt;
-          </button>
-          <button
-            onClick={() => setCurrentPage(1)}
-            className={`px-3 py-1 rounded-lg font-bold ${
-              currentPage === 1 ? 'bg-[#004782] text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            1
-          </button>
-          <button
-            onClick={() => setCurrentPage(2)}
-            className={`px-3 py-1 rounded-lg font-bold ${
-              currentPage === 2 ? 'bg-[#004782] text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            2
-          </button>
-          <button
-            onClick={() => setCurrentPage(3)}
-            className={`px-3 py-1 rounded-lg font-bold ${
-              currentPage === 3 ? 'bg-[#004782] text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            3
-          </button>
-          <span>...</span>
-          <button
-            onClick={() => setCurrentPage(125)}
-            className="px-3 py-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            125
-          </button>
-          <button
-            onClick={() => setCurrentPage(currentPage + 1)}
-            className="px-2.5 py-1 border border-[#c2c6d2] rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-          >
-            &gt;
-          </button>
-        </div>
+        <div>显示 {filteredRisks.length} 条，共 {riskItems.length} 条已加载结果</div>
       </div>
     </div>
   );

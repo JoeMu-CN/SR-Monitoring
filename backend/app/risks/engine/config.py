@@ -19,6 +19,15 @@ from dataclasses import dataclass, field
 
 from app.risks.scoring import ForcedRule
 
+
+@dataclass(frozen=True)
+class DimensionDataSource:
+    """维度引用的数据源；状态用于区分已接入能力与后续规划。"""
+
+    code: str
+    name: str
+    status: str  # connected / planned / external_tool
+
 # 匹配柱标识
 COLUMN_ENTITY = "entity"        # 主体：注册号/法人全称/别名
 COLUMN_LOCATION = "location"    # 地点：文本 + PostGIS 空间半径
@@ -46,6 +55,8 @@ class DimensionConfig:
     label: str
     description: str
     event_types: tuple[str, ...]
+    content_items: tuple[str, ...] = ()
+    data_sources: tuple[DimensionDataSource, ...] = ()
     match_columns: tuple[str, ...] = DEFAULT_COLUMNS
     enabled: bool = True
     # 评分增量：dict 字段（severity_scores/association_scores）按键级合并到

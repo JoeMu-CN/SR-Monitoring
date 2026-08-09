@@ -1,5 +1,7 @@
 """数据源调度注册表动态刷新测试。"""
 
+from __future__ import annotations
+
 from types import SimpleNamespace
 
 from apscheduler.schedulers.blocking import BlockingScheduler

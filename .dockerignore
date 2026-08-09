@@ -9,5 +9,6 @@
 **/node_modules
 **/dist
 **/coverage
+backend/app/static
 data/*
 *.log

@@ -40,7 +40,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
             供应商管理
           </h1>
           <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
-            全网一级/二级供应商主表及实时风险监控状态
+            全网一级供应商主表及实时风险监控状态
           </p>
         </div>
 

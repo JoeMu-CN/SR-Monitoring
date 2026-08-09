@@ -26,6 +26,7 @@ import {RuleEngineView} from './components/RuleEngineView';
 import {SettingsModal} from './components/SettingsModal';
 import {Sidebar} from './components/Sidebar';
 import {SuppliersView} from './components/SuppliersView';
+import {SystemSplashScreen} from './components/SystemSplashScreen';
 
 const riskRank: Record<RiskLevel, number> = {P1: 4, P2: 3, P3: 2, P4: 1};
 
@@ -38,6 +39,7 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<AgentStatusRead | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
+  const [splashFinished, setSplashFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedRisk, setSelectedRisk] = useState<RiskItem | null>(null);
   const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
@@ -80,6 +82,8 @@ export function App() {
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
+
+  const completeSplash = useCallback(() => setSplashFinished(true), []);
 
   const p1RiskCount = useMemo(
     () => riskItems.filter((item) => item.level === 'P1').length,
@@ -283,6 +287,9 @@ export function App() {
       <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={() => setIsNewSupplierModalOpen(false)}
         onAddSupplier={handleAddSupplier} />
       <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} />
+      <AnimatePresence>
+        {(!splashFinished || loading) && <SystemSplashScreen onComplete={completeSplash} />}
+      </AnimatePresence>
     </div>
   );
 }

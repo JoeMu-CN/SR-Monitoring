@@ -35,7 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           whileTap={{ scale: 0.95 }}
           className="w-10 h-10 rounded-xl bg-[#004782] text-white flex items-center justify-center font-black shadow-md flex-shrink-0 cursor-pointer"
         >
-          <span className="material-symbols-outlined text-[24px]">shield_with_house</span>
+          <img src="/logo.svg" alt="SR Monitoring" className="w-10 h-10 rounded-xl" />
         </motion.div>
         <div>
           <div className="font-extrabold text-[18px] text-[#101d28] dark:text-white leading-tight">

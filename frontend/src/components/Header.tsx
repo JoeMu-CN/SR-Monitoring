@@ -19,16 +19,6 @@ export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, 
   const currentRisks = riskItems.filter((item) => item.level === 'P1' || item.level === 'P2').slice(0, 5);
   const systemHealthy = health?.status === 'ok' && health.database === 'ok';
 
-  const tabTitles: Record<ActiveTab, string> = {
-    overview: '风险总览',
-    'current-risks': '当前风险监控',
-    'risk-assistant': '风险查询助手',
-    'source-agent': '数据源接入助手',
-    suppliers: '供应商列表',
-    'data-sources': '数据源与同步状态',
-    rules: '规则引擎与沙箱',
-  };
-
   const statusLight = (active: boolean, color: 'emerald' | 'cyan') => {
     const activeClasses = {
       emerald: ['bg-emerald-500/60', 'bg-emerald-500'],
@@ -48,12 +38,11 @@ export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, 
         <div className="flex items-center gap-2">
           <div className="lg:hidden flex items-center gap-2 mr-2">
             <div className="w-8 h-8 rounded-lg bg-[#004782] text-white flex items-center justify-center font-black">
-              <span className="material-symbols-outlined text-[18px]">shield_with_house</span>
+              <img src="/logo.svg" alt="SR Monitoring" className="w-8 h-8 rounded-lg" />
             </div>
           </div>
           <div>
-            <div className="text-[12px] font-bold text-[#185fa5] dark:text-blue-400">SR / 供应商风险监控</div>
-            <h1 className="font-bold text-[18px] lg:text-[20px] text-[#101d28] dark:text-white leading-tight">{tabTitles[activeTab]}</h1>
+            <div className="font-bold text-[16px] lg:text-[18px] text-[#185fa5] dark:text-blue-400 leading-tight">供应商风险监控平台</div>
           </div>
         </div>
 

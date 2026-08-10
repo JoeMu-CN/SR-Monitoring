@@ -18,12 +18,14 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
+from app.ai.models import AIAnalysisRecord
 from app.ai.service import analyze_raw_signal
-from app.config import SIGNAL_ANALYZE_BATCH
+from app.config import SIGNAL_ANALYZE_BATCH, SIGNAL_RELEVANCE_FILTER_ENABLED
 from app.database import SessionLocal
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
+from app.signals.relevance import assess_signal_relevance
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 
@@ -80,9 +82,12 @@ def _process_pending_signals(limit: int | None = None) -> int:
     """对尚无成功 AI 解析的信号执行解析与全链路处理，返回处理条数。
 
     limit 为 None 时使用 SIGNAL_ANALYZE_BATCH 环境变量（默认 20）。
+    调用 LLM 前先做确定性相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED），
+    明确不相关的信号跳过 LLM 并写入 filtered 解析记录，避免重复取出。
     """
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
     processed = 0
+    filtered = 0
     with SessionLocal() as session:
         signal_ids = list(
             session.scalars(
@@ -96,6 +101,27 @@ def _process_pending_signals(limit: int | None = None) -> int:
             signal = session.get(RawSignal, signal_id)
             if signal is None:
                 continue
+            if SIGNAL_RELEVANCE_FILTER_ENABLED:
+                decision = assess_signal_relevance(
+                    session, signal.title, signal.content
+                )
+                if not decision.relevant:
+                    session.add(
+                        AIAnalysisRecord(
+                            signal_id=signal.id,
+                            provider="deterministic-filter",
+                            model="relevance-v1",
+                            prompt_version="relevance-v1",
+                            status="succeeded",
+                            finished_at=datetime.now(UTC),
+                            duration_ms=0,
+                            result=None,
+                            error=f"filtered: {decision.reason}",
+                        )
+                    )
+                    session.commit()
+                    filtered += 1
+                    continue
             try:
                 analysis = asyncio.run(analyze_raw_signal(session, signal))
                 if analysis.status != "succeeded" or analysis.result is None:
@@ -106,6 +132,8 @@ def _process_pending_signals(limit: int | None = None) -> int:
             except Exception as exc:
                 session.rollback()
                 logger.error("信号 %s 处理失败: %s", signal_id, exc)
+    if filtered:
+        logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
     return processed
 
 

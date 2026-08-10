@@ -65,6 +65,10 @@ SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip(
 SIGNAL_ANALYZE_BATCH = _int_env(
     "SIGNAL_ANALYZE_BATCH", 20, minimum=1, maximum=500
 )
+# LLM 解析前的确定性相关性预过滤开关（保守：拿不准一律放行）
+SIGNAL_RELEVANCE_FILTER_ENABLED = os.getenv(
+    "SIGNAL_RELEVANCE_FILTER_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)

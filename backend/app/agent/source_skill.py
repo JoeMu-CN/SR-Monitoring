@@ -30,6 +30,27 @@ STEP_QUESTIONS = {
     "generate_adapter": "第 5 步，共 5 步：信息已齐全，正在受控探测、生成适配器并实时预览。",
 }
 
+# 已验证可用的官方信源目录：用户提供的地址探测失败时，优先推荐同维度替代源。
+# 只收录经平台全链路验证的地址，避免模型幻觉出不存在的接口。
+VERIFIED_SOURCE_CATALOG: tuple[dict[str, str], ...] = (
+    {
+        "name": "USGS 全天地震速报",
+        "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson",
+        "format": "json",
+        "dimension": "自然灾害（地震）",
+        "notes": "官方 GeoJSON 免认证；items_path=features；published_at 为 epoch 毫秒，映射时省略",
+    },
+)
+
+
+def _catalog_text() -> str:
+    if not VERIFIED_SOURCE_CATALOG:
+        return "（暂无已验证目录）"
+    return "；".join(
+        f"{item['name']}（{item['dimension']}，{item['format']}，{item['url']}，{item['notes']}）"
+        for item in VERIFIED_SOURCE_CATALOG
+    )
+
 
 def build_source_onboarding_skill(
     *, current_step: str, answers: Mapping[str, str]
@@ -60,5 +81,9 @@ def build_source_onboarding_skill(
         "更换 IP 或建议绕过限制；应向管理员说明冷却截止时间或等待人工确认。"
         "遇到验证码、浏览器自动化、OAuth 交互、自定义签名、PDF/OCR 或无法确认授权时，"
         "停止接入并说明需要开发扩展。"
+        f"已验证信源目录：{_catalog_text()}。"
+        "当用户提供的地址探测失败、动态渲染或受限时，若目录中存在同风险维度的替代源，"
+        "主动向管理员推荐并说明推荐理由；推荐前必须先对推荐地址调用 inspect_source_url 验证，"
+        "不得凭记忆推荐目录之外的地址。"
         f"当前必须执行或提出的唯一下一步是：{next_question}"
     )

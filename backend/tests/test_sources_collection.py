@@ -125,6 +125,9 @@ def test_collect_source_failure_records_failed_run(db_session: Session) -> None:
 
 def test_manual_trigger_endpoint(client: TestClient, db_session: Session) -> None:
     source = _get_nmc_source(db_session)
+    # 测试与共享开发库状态解耦：先确保数据源处于启用状态
+    source.enabled = True
+    db_session.flush()
 
     # 用依赖注入的 adapter 不可行（router 构建真实适配器），改为检查失败路径
     response = client.post(

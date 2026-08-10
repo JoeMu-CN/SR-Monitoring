@@ -19,6 +19,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.ai.service import analyze_raw_signal
+from app.config import SIGNAL_ANALYZE_BATCH
 from app.database import SessionLocal
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
@@ -75,8 +76,12 @@ def collect_source_job(source_id: int) -> None:
         logger.exception("数据源 %s 独立调度异常: %s", source_id, exc)
 
 
-def _process_pending_signals(limit: int = 20) -> int:
-    """对尚无成功 AI 解析的信号执行解析与全链路处理，返回处理条数。"""
+def _process_pending_signals(limit: int | None = None) -> int:
+    """对尚无成功 AI 解析的信号执行解析与全链路处理，返回处理条数。
+
+    limit 为 None 时使用 SIGNAL_ANALYZE_BATCH 环境变量（默认 20）。
+    """
+    batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
     processed = 0
     with SessionLocal() as session:
         signal_ids = list(
@@ -84,7 +89,7 @@ def _process_pending_signals(limit: int = 20) -> int:
                 select(RawSignal.id)
                 .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
                 .order_by(RawSignal.collected_at)
-                .limit(limit)
+                .limit(batch)
             )
         )
         for signal_id in signal_ids:

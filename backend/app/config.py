@@ -61,6 +61,10 @@ TYC_MCP_ENDPOINT = os.getenv(
 SCHEDULER_COLLECT_CRON = os.getenv("SCHEDULER_COLLECT_CRON", "*/30 * * * *").strip()
 SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()
 SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip()
+# 每次定时任务对积压信号执行 AI 解析的批大小；每条信号一次独立 LLM 调用
+SIGNAL_ANALYZE_BATCH = _int_env(
+    "SIGNAL_ANALYZE_BATCH", 20, minimum=1, maximum=500
+)
 
 
 @dataclass(frozen=True)

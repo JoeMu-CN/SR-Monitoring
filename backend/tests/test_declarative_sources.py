@@ -145,6 +145,47 @@ def test_inspect_source_url_returns_html_summary() -> None:
     assert result["title"] == "公告平台"
     assert ".notice" in result["candidate_selectors"]
     assert "恶意提示" not in result["text_excerpt"]
+    assert result["rendering"] == "server_rendered"
+
+
+def test_inspect_dynamic_page_returns_endpoint_clues() -> None:
+    """JS 动态渲染页面：无数据行但应提取出接口线索供 Agent 继续探索。"""
+    html = (
+        "<html><head><title>速报平台</title>"
+        "<script src='/static/js/report.js'></script>"
+        "<script src='https://cdn.other.example/lib.js'></script>"
+        "</head><body><div id='app'></div>"
+        "<script>loadReport('/datashare/reportData.json?page=1');"
+        "fetch('https://official.example/api/v1/events');</script>"
+        "</body></html>"
+    )
+    result = asyncio.run(
+        inspect_source_url(
+            "https://official.example/report.shtml",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+        )
+    )
+    assert result["detected_format"] == "html"
+    assert result["rendering"] == "likely_dynamic"
+    assert "候选接口" in str(result["message"])
+    # 同域名 script 被提取，跨域 cdn 被排除
+    assert result["script_sources"] == ["https://official.example/static/js/report.js"]
+    hints = result["endpoint_hints"]
+    assert "https://official.example/datashare/reportData.json?page=1" in hints
+    assert "https://official.example/api/v1/events" in hints
+
+
+def test_inspect_dynamic_page_without_clues_falls_back() -> None:
+    """既无数据行也无线索时仍按服务端渲染处理（交给选择器适配器验证）。"""
+    html = "<html><body><div class='empty'></div></body></html>"
+    result = asyncio.run(
+        inspect_source_url(
+            "https://official.example/blank",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+        )
+    )
+    assert result["rendering"] == "server_rendered"
+    assert result["endpoint_hints"] == []
 
 
 def test_private_network_and_secret_static_headers_are_rejected() -> None:

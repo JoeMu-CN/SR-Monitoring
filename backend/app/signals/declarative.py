@@ -30,6 +30,13 @@ MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MAX_INSPECTION_BYTES = 512 * 1024
 _SENSITIVE_HEADER = re.compile(r"authorization|cookie|token|secret|api[-_]?key", re.I)
 _ENV_REF = re.compile(r"env:([A-Z][A-Z0-9_]{0,127})\Z")
+# 页面中疑似数据接口的线索：.json/.do/.action 路径，或含 ajax/api/query/getdata 的地址
+_ENDPOINT_HINT = re.compile(
+    r"[\"'](?P<url>(?:https?://|/|\./)[^\s\"'<>]*?"
+    r"(?:\.json|\.do|\.action|ajax|/api/|getdata|query|list)[^\s\"'<>]*)[\"']",
+    re.IGNORECASE,
+)
+_MAX_ENDPOINT_HINTS = 12
 FingerprintField = Literal["external_id", "title", "content", "url", "published_at"]
 
 
@@ -383,6 +390,21 @@ async def inspect_source_url(
         parser.feed(text)
         title_nodes = _select_nodes(parser.root, "title")
         candidates = _html_candidate_selectors(parser.root)
+        script_sources, endpoint_hints = _html_data_clues(parser.root, url, text)
+        has_data_rows = _html_has_data_rows(parser.root)
+        if has_data_rows:
+            rendering = "server_rendered"
+            message = "这是服务端渲染 HTML；可生成选择器适配器。"
+        elif script_sources or endpoint_hints:
+            rendering = "likely_dynamic"
+            message = (
+                "页面缺少服务端渲染的数据行，疑似 JavaScript 动态渲染。"
+                "可先对 endpoint_hints 中的候选接口逐个调用 inspect_source_url 验证，"
+                "找到返回 JSON 列表的接口后改用 JSON 适配器；全部不可用时再判定需要开发扩展。"
+            )
+        else:
+            rendering = "server_rendered"
+            message = "这是服务端渲染 HTML；可生成选择器适配器。"
         return {
             "status": "success",
             "detected_format": "html",
@@ -390,7 +412,10 @@ async def inspect_source_url(
             "title": " ".join(title_nodes[0].text_content().split()) if title_nodes else None,
             "text_excerpt": " ".join(parser.root.text_content().split())[:4000],
             "candidate_selectors": candidates,
-            "message": "这是服务端渲染 HTML；可生成选择器适配器。",
+            "rendering": rendering,
+            "script_sources": script_sources,
+            "endpoint_hints": endpoint_hints,
+            "message": message,
         }
     detected = "json" if stripped.startswith(("{", "[")) else "csv"
     return {
@@ -413,6 +438,57 @@ def _html_candidate_selectors(root: _HtmlNode) -> list[str]:
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
     candidates.extend(f".{name}" for name, count in class_counts.items() if count >= 2)
     return candidates[:20]
+
+
+def _html_has_data_rows(root: _HtmlNode) -> bool:
+    """判断页面是否存在带文本内容的列表/表格行（服务端渲染数据的信号）。"""
+    nodes = _descendants(root)
+    rows = [
+        node
+        for node in nodes
+        if node.tag in {"tr", "li", "article"} and node.text_content().strip()
+    ]
+    return len(rows) >= 2
+
+
+def _html_data_clues(
+    root: _HtmlNode, page_url: str, raw_text: str
+) -> tuple[list[str], list[str]]:
+    """提取动态页面的数据接口线索：script 引用与疑似数据端点地址。
+
+    只保留可解析为 HTTPS 的地址；不对跨域线索做 SSRF 放行判断
+    （后续探测会各自走 validate_public_https_url 校验）。
+    """
+    page_host = (urlparse(page_url).hostname or "").lower()
+    script_sources: list[str] = []
+    for node in _descendants(root):
+        if node.tag != "script":
+            continue
+        src = node.attrs.get("src", "").strip()
+        if not src:
+            continue
+        absolute = urljoin(page_url, src)
+        parsed = urlparse(absolute)
+        if parsed.scheme == "https" and (parsed.hostname or "").lower() == page_host:
+            script_sources.append(absolute)
+        if len(script_sources) >= _MAX_ENDPOINT_HINTS:
+            break
+
+    hints: list[str] = []
+    seen: set[str] = set()
+    for match in _ENDPOINT_HINT.finditer(raw_text):
+        candidate = match.group("url")
+        absolute = urljoin(page_url, candidate)
+        parsed = urlparse(absolute)
+        if parsed.scheme != "https" or not parsed.hostname:
+            continue
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        hints.append(absolute)
+        if len(hints) >= _MAX_ENDPOINT_HINTS:
+            break
+    return script_sources, hints
 
 
 async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> None:

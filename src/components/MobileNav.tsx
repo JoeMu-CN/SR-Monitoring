@@ -1,4 +1,6 @@
 import React from 'react';
+import { motion } from 'motion/react';
+import { LayoutDashboard, AlertTriangle, Bot, Building2, Database, Sliders } from 'lucide-react';
 import { ActiveTab } from '../types';
 
 interface MobileNavProps {
@@ -12,41 +14,50 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   setActiveTab,
   p1RiskCount,
 }) => {
-  const tabs: { id: ActiveTab; label: string; icon: string; badge?: number }[] = [
-    { id: 'overview', label: '总览', icon: 'dashboard' },
-    { id: 'current-risks', label: '风险', icon: 'warning', badge: p1RiskCount },
-    { id: 'risk-assistant', label: '助手', icon: 'smart_toy' },
-    { id: 'suppliers', label: '供应商', icon: 'factory' },
-    { id: 'data-sources', label: '数据', icon: 'database' },
-    { id: 'rules', label: '规则', icon: 'rule' },
+  const tabs: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+    { id: 'overview', label: '总览', icon: <LayoutDashboard className="w-5 h-5" /> },
+    { id: 'current-risks', label: '风险', icon: <AlertTriangle className="w-5 h-5" />, badge: p1RiskCount },
+    { id: 'risk-assistant', label: '助手', icon: <Bot className="w-5 h-5" /> },
+    { id: 'suppliers', label: '供应商', icon: <Building2 className="w-5 h-5" /> },
+    { id: 'data-sources', label: '数据', icon: <Database className="w-5 h-5" /> },
+    { id: 'rules', label: '规则', icon: <Sliders className="w-5 h-5" /> },
   ];
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 w-full bg-white dark:bg-[#101d28] border-t border-[#c2c6d2] dark:border-slate-800 z-50 flex justify-around items-center px-2 py-2 shadow-lg">
-      {tabs.map((tab) => {
-        const isActive = activeTab === tab.id;
-        return (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`relative flex flex-col items-center justify-center px-3 py-1 rounded-full transition-all duration-150 active:scale-95 ${
-              isActive
-                ? 'bg-[#185fa5] text-white font-bold'
-                : 'text-[#424751] dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <span className={`material-symbols-outlined text-[20px] ${isActive ? 'filled' : ''}`}>
+    <div className="lg:hidden fixed bottom-3 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md">
+      <nav className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl border border-white/50 dark:border-slate-800 rounded-2xl p-1.5 shadow-2xl flex justify-around items-center gap-1 select-none">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <motion.button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              whileTap={{ scale: 0.85 }}
+              className={`relative flex flex-col items-center justify-center p-2 rounded-xl transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-[#007aff] text-white shadow-xs font-bold'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800'
+              }`}
+            >
               {tab.icon}
-            </span>
-            <span className="text-[11px] font-medium leading-none mt-1">{tab.label}</span>
-            {tab.badge && tab.badge > 0 ? (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#C92A2A] text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-                {tab.badge}
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
-    </nav>
+              <span className="text-[10px] font-medium leading-none mt-1">{tab.label}</span>
+
+              {/* Active macOS Indicator Dot underneath icon */}
+              {isActive && (
+                <span className="w-1 h-1 bg-white rounded-full mt-0.5 shadow-xs" />
+              )}
+
+              {tab.badge && tab.badge > 0 ? (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#ff3b30] text-white text-[9px] font-bold rounded-full flex items-center justify-center shadow-xs">
+                  {tab.badge}
+                </span>
+              ) : null}
+            </motion.button>
+          );
+        })}
+      </nav>
+    </div>
   );
 };
+
+

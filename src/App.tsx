@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { CheckCircle2 } from 'lucide-react';
 import { ActiveTab, RiskItem, Supplier, DataSource, MonitoringDimension } from './types';
 import {
   mockRiskItems,
@@ -20,8 +21,10 @@ import { RuleEngineView } from './components/RuleEngineView';
 import { ExportReportModal } from './components/ExportReportModal';
 import { NewSupplierModal } from './components/NewSupplierModal';
 import { SettingsModal } from './components/SettingsModal';
+import { SystemSplashScreen } from './components/SystemSplashScreen';
 
 export function App() {
+  const [isInitializing, setIsInitializing] = useState(true);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isSimulatedEmpty, setIsSimulatedEmpty] = useState(false);
 
@@ -131,7 +134,14 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f9ff] dark:bg-[#101d28] text-[#101d28] dark:text-slate-100 flex flex-col font-sans antialiased">
+    <div className="min-h-screen bg-slate-100/90 dark:bg-[#0b131e] text-slate-900 dark:text-slate-100 flex flex-col font-sans antialiased selection:bg-[#007aff]/20 selection:text-[#007aff]">
+      {/* System Initialization Splash Screen */}
+      <AnimatePresence>
+        {isInitializing && (
+          <SystemSplashScreen onComplete={() => setIsInitializing(false)} />
+        )}
+      </AnimatePresence>
+
       {/* Desktop Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
@@ -152,13 +162,13 @@ export function App() {
         />
 
         {/* View Content Frame */}
-        <main className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto flex-1">
+        <main className="p-4 sm:p-6 lg:p-6 max-w-[1440px] w-full mx-auto flex-1 overflow-x-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
+              initial={{ opacity: 0, scale: 0.99, y: 6 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.99, y: -6 }}
               transition={{ duration: 0.2, ease: 'easeOut' }}
               className="w-full h-full"
             >
@@ -219,6 +229,28 @@ export function App() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {/* macOS Bottom System Status Bar */}
+        <footer className="hidden lg:flex items-center justify-between px-6 py-1.5 bg-slate-100/90 dark:bg-[#0c1420]/90 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400 font-mono select-none">
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 font-bold">
+              <span className="w-2 h-2 rounded-full bg-[#007aff]" />
+              SR Risk Studio v2.4 (macOS Sonoma Edition)
+            </span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span>活跃供应商: {suppliers.filter((s) => s.monitoringStatus === 'normal').length} / {suppliers.length}</span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span className="text-[#ff3b30] font-bold">P1 紧急风险: {p1RiskCount} 个</span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              全网安全防御中
+            </span>
+            <span>内存占用: 128 MB</span>
+          </div>
+        </footer>
       </div>
 
       {/* Mobile Navigation */}

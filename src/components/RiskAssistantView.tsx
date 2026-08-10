@@ -1,5 +1,26 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  Bot,
+  RotateCcw,
+  Wrench,
+  ChevronDown,
+  ChevronUp,
+  Terminal,
+  AlertTriangle,
+  ChevronRight,
+  Factory,
+  CheckCircle2,
+  Wallet,
+  RefreshCw,
+  Send,
+  BarChart2,
+  Building2,
+  Sliders,
+  ArrowRight,
+  ShieldCheck,
+  Info,
+} from 'lucide-react';
 import { RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota } from '../types';
 
 interface RiskAssistantViewProps {
@@ -373,11 +394,11 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   const getRiskBadgeColor = (level: string) => {
     switch (level) {
       case 'P1':
-        return 'bg-red-100 text-[#C92A2A] dark:bg-red-950/60 dark:text-red-300 border-red-200 dark:border-red-900';
+        return 'bg-red-100 text-[#ff3b30] dark:bg-red-950/60 dark:text-red-300 border-red-200 dark:border-red-900';
       case 'P2':
-        return 'bg-amber-100 text-[#D97706] dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900';
+        return 'bg-amber-100 text-[#ff9500] dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-900';
       case 'P3':
-        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/60 dark:text-yellow-300 border-yellow-200 dark:border-yellow-900';
+        return 'bg-blue-100 text-[#007aff] dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-900';
       default:
         return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700';
     }
@@ -386,23 +407,23 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   return (
     <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-120px)] min-h-[600px] w-full">
       {/* LEFT COLUMN: Main Chat Assistant (72% on desktop) */}
-      <div className="lg:w-[72%] flex flex-col bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden h-full">
+      <div className="lg:w-[72%] flex flex-col bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-2xl shadow-2xs overflow-hidden h-full">
         {/* Assistant Top Banner */}
-        <div className="bg-[#ecf4ff] dark:bg-slate-900/80 px-4 py-3 border-b border-[#c2c6d2] dark:border-slate-800 flex items-center justify-between gap-3 flex-shrink-0">
+        <div className="bg-slate-100/80 dark:bg-slate-900/80 px-4 py-3 border-b border-slate-200/80 dark:border-slate-700/60 flex items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#004782] text-white flex items-center justify-center font-bold shadow-xs">
-              <span className="material-symbols-outlined text-[20px]">smart_toy</span>
+            <div className="w-9 h-9 rounded-xl bg-[#007aff] text-white flex items-center justify-center font-bold shadow-xs">
+              <Bot className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="font-extrabold text-[15px] text-[#101d28] dark:text-white leading-none">
+                <h2 className="font-extrabold text-[15px] text-slate-900 dark:text-white leading-none">
                   风险查询助手
                 </h2>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-[#004782] dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-[#007aff] dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                   只读查询
                 </span>
               </div>
-              <p className="text-[11px] text-[#424751] dark:text-slate-400 mt-0.5">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                 支持检索重点供应商、风险提醒、生产地点、供应产品及清单外天眼查核查
               </p>
             </div>
@@ -437,17 +458,17 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
             <button
               onClick={() => setMessages([initialMessage])}
-              className="text-[#424751] dark:text-slate-300 hover:text-[#004782] p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-[12px] flex items-center gap-1"
+              className="text-slate-600 dark:text-slate-300 hover:text-[#007aff] p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-[12px] flex items-center gap-1 cursor-pointer"
               title="清空对话记录"
             >
-              <span className="material-symbols-outlined text-[18px]">refresh</span>
+              <RotateCcw className="w-4 h-4" />
               <span className="hidden md:inline">重置对话</span>
             </button>
           </div>
         </div>
 
         {/* Chat Messages Scroll Container */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 bg-[#f7f9ff]/50 dark:bg-[#101d28]/30">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5 bg-slate-50/50 dark:bg-slate-900/30">
           <AnimatePresence initial={false}>
             {messages.map((msg) => (
               <motion.div
@@ -461,7 +482,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                 } space-y-2 max-w-full`}
               >
                 {/* Message Header */}
-                <div className="flex items-center gap-2 px-1 text-[11px] text-[#727782] dark:text-slate-400">
+                <div className="flex items-center gap-2 px-1 text-[11px] text-slate-400">
                   <span className="font-semibold">
                     {msg.sender === 'user' ? '采购决策员' : 'SR 风险查询助手'}
                   </span>
@@ -473,8 +494,8 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                 <div
                   className={`p-4 rounded-2xl text-[14px] leading-relaxed shadow-xs max-w-[92%] sm:max-w-[85%] ${
                     msg.sender === 'user'
-                      ? 'bg-[#185fa5] text-white rounded-tr-none'
-                      : 'bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 text-[#101d28] dark:text-slate-100 rounded-tl-none'
+                      ? 'bg-[#007aff] text-white rounded-tr-none'
+                      : 'bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/60 text-slate-900 dark:text-slate-100 rounded-tl-none'
                   }`}
                 >
                   {/* Formatted Text Content */}
@@ -483,7 +504,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                       <p key={pIdx}>
                         {paragraph.split('**').map((part, bIdx) =>
                           bIdx % 2 === 1 ? (
-                            <strong key={bIdx} className="font-bold text-[#004782] dark:text-blue-300">
+                            <strong key={bIdx} className="font-bold text-[#007aff] dark:text-blue-300">
                               {part}
                             </strong>
                           ) : (
@@ -496,18 +517,20 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
                   {/* Collapsible Tool Call / Query Evidence Accordion */}
                   {msg.toolCalls && msg.toolCalls.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-[#c2c6d2]/50 dark:border-slate-800">
+                    <div className="mt-3 pt-3 border-t border-slate-200/60 dark:border-slate-700/40">
                       <button
                         onClick={() => toggleToolExpand(msg.id)}
-                        className="w-full flex items-center justify-between p-2 rounded-lg bg-[#ecf4ff]/80 dark:bg-slate-800/80 hover:bg-[#d6e4f3] dark:hover:bg-slate-800 transition-all text-[12px] font-medium text-[#004782] dark:text-blue-300"
+                        className="w-full flex items-center justify-between p-2 rounded-xl bg-blue-50/80 dark:bg-slate-700/80 hover:bg-blue-100/80 dark:hover:bg-slate-700 transition-all text-[12px] font-medium text-[#007aff] dark:text-blue-300 cursor-pointer"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="material-symbols-outlined text-[16px]">build_circle</span>
+                          <Wrench className="w-4 h-4" />
                           <span>查询依据与工具调用 ({msg.toolCalls.length} 项)</span>
                         </div>
-                        <span className="material-symbols-outlined text-[18px]">
-                          {expandedTools[msg.id] ? 'expand_less' : 'expand_more'}
-                        </span>
+                        {expandedTools[msg.id] ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
                       </button>
 
                       <AnimatePresence>
@@ -517,16 +540,16 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
                             transition={{ duration: 0.2 }}
-                            className="mt-2 space-y-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono overflow-hidden"
+                            className="mt-2 space-y-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono overflow-hidden"
                           >
                             {msg.toolCalls.map((tool) => (
                               <div
                                 key={tool.id}
-                                className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1"
+                                className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1"
                               >
-                                <div className="flex justify-between items-center font-bold text-[#004782] dark:text-blue-400">
+                                <div className="flex justify-between items-center font-bold text-[#007aff] dark:text-blue-400">
                                   <span className="flex items-center gap-1">
-                                    <span className="material-symbols-outlined text-[14px]">terminal</span>
+                                    <Terminal className="w-3.5 h-3.5" />
                                     {tool.toolName}
                                   </span>
                                   <span className="text-emerald-600 dark:text-emerald-400 text-[10px]">
@@ -553,17 +576,15 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                     {/* 1. Risk Cards */}
                     {msg.data.riskCards && msg.data.riskCards.length > 0 && (
                       <div className="space-y-2">
-                        <div className="text-[12px] font-bold text-[#424751] dark:text-slate-400 flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[16px] text-[#C92A2A]">
-                            warning
-                          </span>
+                        <div className="text-[12px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 text-[#ff3b30]" />
                           <span>核心风险提醒卡片 ({msg.data.riskCards.length} 条)</span>
                         </div>
                         <div className="grid grid-cols-1 gap-2.5">
                           {msg.data.riskCards.map((risk) => (
                             <div
                               key={risk.id}
-                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] transition-all"
+                              className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/60 shadow-2xs hover:border-[#007aff] transition-all"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex items-center gap-2">
@@ -574,11 +595,11 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                                   >
                                     {risk.level} {risk.levelName}
                                   </span>
-                                  <h4 className="font-bold text-[14px] text-[#101d28] dark:text-white">
+                                  <h4 className="font-bold text-[14px] text-slate-900 dark:text-white">
                                     {risk.companyName}
                                   </h4>
                                 </div>
-                                <span className="text-[11px] text-slate-400">{risk.updatedTime}</span>
+                                <span className="text-[11px] text-slate-400 font-mono">{risk.updatedTime}</span>
                               </div>
 
                               <p className="text-[12px] text-slate-600 dark:text-slate-300 mt-2 line-clamp-2">
@@ -592,12 +613,10 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                                 </div>
                                 <button
                                   onClick={() => onSelectRisk(risk)}
-                                  className="text-[#004782] dark:text-blue-400 font-bold hover:underline flex items-center gap-0.5"
+                                  className="text-[#007aff] dark:text-blue-400 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
                                 >
                                   <span>查看详情</span>
-                                  <span className="material-symbols-outlined text-[14px]">
-                                    chevron_right
-                                  </span>
+                                  <ChevronRight className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
@@ -609,17 +628,15 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                     {/* 2. Supplier Cards */}
                     {msg.data.supplierCards && msg.data.supplierCards.length > 0 && (
                       <div className="space-y-2">
-                        <div className="text-[12px] font-bold text-[#424751] dark:text-slate-400 flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[16px] text-[#004782]">
-                            factory
-                          </span>
+                        <div className="text-[12px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                          <Factory className="w-4 h-4 text-[#007aff]" />
                           <span>重点供应商台账 ({msg.data.supplierCards.length} 家)</span>
                         </div>
                         <div className="grid grid-cols-1 gap-2.5">
                           {msg.data.supplierCards.map((sup) => (
                             <div
                               key={sup.id}
-                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] transition-all"
+                              className="p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/60 shadow-2xs hover:border-[#007aff] transition-all"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div>
@@ -627,7 +644,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                                     <span className="text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-300">
                                       {sup.code}
                                     </span>
-                                    <h4 className="font-bold text-[14px] text-[#101d28] dark:text-white">
+                                    <h4 className="font-bold text-[14px] text-slate-900 dark:text-white">
                                       {sup.legalName}
                                     </h4>
                                   </div>
@@ -648,19 +665,17 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
                               <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
                                 <div className="flex items-center gap-2">
-                                  <span className="bg-blue-50 text-[#004782] dark:bg-blue-950/60 dark:text-blue-300 px-2 py-0.5 rounded font-medium">
+                                  <span className="bg-blue-50 text-[#007aff] dark:bg-blue-950/60 dark:text-blue-300 px-2 py-0.5 rounded font-medium">
                                     {sup.tier}
                                   </span>
                                   <span className="text-slate-500">{sup.category}</span>
                                 </div>
                                 <button
                                   onClick={() => onSelectSupplier(sup)}
-                                  className="text-[#004782] dark:text-blue-400 font-bold hover:underline flex items-center gap-0.5"
+                                  className="text-[#007aff] dark:text-blue-400 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
                                 >
                                   <span>查看供应商档案</span>
-                                  <span className="material-symbols-outlined text-[14px]">
-                                    chevron_right
-                                  </span>
+                                  <ChevronRight className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </div>
@@ -671,41 +686,39 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
                     {/* 3. External Company Verification Card (天眼查 API) */}
                     {msg.data.externalCheckCard && (
-                      <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/90 border-2 border-blue-200 dark:border-blue-900 shadow-sm space-y-3">
+                      <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/90 border-2 border-blue-200 dark:border-blue-900 shadow-2xs space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
                           <div className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-[20px] text-blue-600">
-                              verified
-                            </span>
-                            <span className="font-extrabold text-[15px] text-[#101d28] dark:text-white">
+                            <CheckCircle2 className="w-5 h-5 text-blue-600" />
+                            <span className="font-extrabold text-[15px] text-slate-900 dark:text-white">
                               {msg.data.externalCheckCard.companyName}
                             </span>
                           </div>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-[#004782] dark:text-blue-300">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-[#007aff] dark:text-blue-300">
                             {msg.data.externalCheckCard.source}
                           </span>
                         </div>
 
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                          <div className="bg-white dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700">
+                          <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                             <span className="text-slate-400 block">法定代表人</span>
                             <span className="font-bold text-slate-800 dark:text-slate-100">
                               {msg.data.externalCheckCard.legalPerson}
                             </span>
                           </div>
-                          <div className="bg-white dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700">
+                          <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                             <span className="text-slate-400 block">注册资本</span>
                             <span className="font-bold text-slate-800 dark:text-slate-100">
                               {msg.data.externalCheckCard.regCapital}
                             </span>
                           </div>
-                          <div className="bg-white dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700">
+                          <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                             <span className="text-slate-400 block">成立日期</span>
                             <span className="font-bold text-slate-800 dark:text-slate-100">
                               {msg.data.externalCheckCard.establishedDate}
                             </span>
                           </div>
-                          <div className="bg-white dark:bg-slate-800 p-2 rounded border border-slate-200 dark:border-slate-700">
+                          <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                             <span className="text-slate-400 block">经营状态</span>
                             <span className="font-bold text-emerald-600 dark:text-emerald-400">
                               {msg.data.externalCheckCard.operatingStatus}
@@ -714,30 +727,30 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                         </div>
 
                         {/* Risk Count Indicators */}
-                        <div className="p-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                        <div className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
                           <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
                             天眼查外部风险数据汇总：
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded">
+                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded-lg">
                               <span className="text-slate-500">司法诉讼</span>
                               <span className="font-bold text-amber-600">
                                 {msg.data.externalCheckCard.riskCount.judgements} 项
                               </span>
                             </div>
-                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded">
+                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded-lg">
                               <span className="text-slate-500">经营异常</span>
                               <span className="font-bold text-emerald-600">
                                 {msg.data.externalCheckCard.riskCount.abnormalOps} 项
                               </span>
                             </div>
-                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded">
+                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded-lg">
                               <span className="text-slate-500">行政处罚</span>
                               <span className="font-bold text-amber-600">
                                 {msg.data.externalCheckCard.riskCount.administrativePenalties} 项
                               </span>
                             </div>
-                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded">
+                            <div className="flex items-center justify-between px-2 py-1 bg-slate-50 dark:bg-slate-900 rounded-lg">
                               <span className="text-slate-500">失信记录</span>
                               <span className="font-bold text-emerald-600">
                                 {msg.data.externalCheckCard.riskCount.dishonest} 项
@@ -747,10 +760,8 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                         </div>
 
                         {/* Disclaimer */}
-                        <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
-                          <span className="material-symbols-outlined text-[16px] flex-shrink-0 mt-0.5">
-                            info
-                          </span>
+                        <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                          <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-600" />
                           <span>
                             此结果为清单外企业一次性核查快照，不自动加入内部常态监控，无对应内部供应商编码。
                           </span>
@@ -760,13 +771,11 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
                     {/* 4. TianYanCha Quota Card */}
                     {msg.data.quotaCard && (
-                      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
+                      <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                           <div className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-[18px] text-[#004782]">
-                              account_balance_wallet
-                            </span>
-                            <span className="font-bold text-[14px] text-[#101d28] dark:text-white">
+                            <Wallet className="w-4 h-4 text-[#007aff]" />
+                            <span className="font-bold text-[14px] text-slate-900 dark:text-white">
                               天眼查 API 接口调用配额
                             </span>
                           </div>
@@ -777,9 +786,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
                         <div className="space-y-2.5 text-[12px]">
                           <div>
-                            <div className="flex justify-between text-[#424751] dark:text-slate-400 mb-1">
+                            <div className="flex justify-between text-slate-500 mb-1">
                               <span>今日额度消耗</span>
-                              <span className="font-mono font-bold text-[#101d28] dark:text-white">
+                              <span className="font-mono font-bold text-slate-900 dark:text-white">
                                 {msg.data.quotaCard.dailyUsed} / {msg.data.quotaCard.dailyLimit} 次 (
                                 {Math.round(
                                   (msg.data.quotaCard.dailyUsed / msg.data.quotaCard.dailyLimit) * 100
@@ -789,7 +798,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                             </div>
                             <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-[#185fa5] rounded-full transition-all duration-300"
+                                className="h-full bg-[#007aff] rounded-full transition-all duration-300"
                                 style={{
                                   width: `${
                                     (msg.data.quotaCard.dailyUsed / msg.data.quotaCard.dailyLimit) *
@@ -801,9 +810,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                           </div>
 
                           <div>
-                            <div className="flex justify-between text-[#424751] dark:text-slate-400 mb-1">
+                            <div className="flex justify-between text-slate-500 mb-1">
                               <span>本月额度消耗</span>
-                              <span className="font-mono font-bold text-[#101d28] dark:text-white">
+                              <span className="font-mono font-bold text-slate-900 dark:text-white">
                                 {msg.data.quotaCard.monthlyUsed} / {msg.data.quotaCard.monthlyLimit} 次 (
                                 {Math.round(
                                   (msg.data.quotaCard.monthlyUsed /
@@ -844,7 +853,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           {/* Typing Indicator */}
           {isTyping && (
             <div className="flex items-center gap-2 text-slate-400 text-[12px] italic p-2">
-              <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
+              <RefreshCw className="w-4 h-4 animate-spin text-[#007aff]" />
               <span>正在检索重点供应商与天眼查数据...</span>
             </div>
           )}
@@ -853,15 +862,15 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
         </div>
 
         {/* Quick Presets Prompt Bar */}
-        <div className="p-2.5 bg-slate-50 dark:bg-slate-900 border-t border-[#c2c6d2]/50 dark:border-slate-800 flex items-center gap-2 overflow-x-auto no-scrollbar flex-shrink-0">
-          <span className="text-[11px] font-bold text-[#424751] dark:text-slate-400 whitespace-nowrap pl-2">
+        <div className="p-2.5 bg-slate-50 dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800 flex items-center gap-2 overflow-x-auto no-scrollbar flex-shrink-0">
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap pl-2">
             快捷提问:
           </span>
           {presetQueries.map((query, idx) => (
             <button
               key={idx}
               onClick={() => handleSend(query)}
-              className="px-3 py-1 bg-white dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 hover:border-[#004782] dark:hover:border-blue-400 hover:bg-[#ecf4ff] dark:hover:bg-slate-700 rounded-full text-[12px] text-[#101d28] dark:text-slate-200 transition-all whitespace-nowrap flex-shrink-0"
+              className="px-3 py-1 bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 hover:border-[#007aff] dark:hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-slate-700 rounded-full text-[12px] text-slate-800 dark:text-slate-200 transition-all whitespace-nowrap flex-shrink-0 cursor-pointer"
             >
               {query}
             </button>
@@ -869,7 +878,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
         </div>
 
         {/* Chat Input Bar */}
-        <div className="p-3 bg-white dark:bg-[#101d28] border-t border-[#c2c6d2] dark:border-slate-800 flex-shrink-0">
+        <div className="p-3 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-700/60 flex-shrink-0">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -883,9 +892,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="请输入自然语言查询，如：'查询深圳的高危供应商'，'核查【杭州智造】'..."
-                className="w-full bg-[#f7f9ff] dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 rounded-xl px-4 py-2.5 text-[14px] text-[#101d28] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#004782] transition-all pr-24"
+                className="w-full bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl px-4 py-2.5 text-[14px] text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#007aff]/30 transition-all pr-24"
               />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#004782] dark:text-blue-300 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#007aff] dark:text-blue-300 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
                 只读检索
               </span>
             </div>
@@ -893,10 +902,10 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
             <button
               type="submit"
               disabled={!input.trim() || isTyping}
-              className="bg-[#004782] hover:bg-[#185fa5] disabled:opacity-50 text-white font-bold px-5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 shadow-xs flex-shrink-0"
+              className="bg-[#007aff] hover:bg-[#0062cc] disabled:opacity-50 text-white font-bold px-5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 shadow-2xs flex-shrink-0 cursor-pointer"
             >
               <span>发送</span>
-              <span className="material-symbols-outlined text-[18px]">send</span>
+              <Send className="w-4 h-4" />
             </button>
           </form>
         </div>
@@ -905,22 +914,22 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
       {/* RIGHT COLUMN: Context Panel & Capabilities Scope (28% on desktop) */}
       <div className="lg:w-[28%] flex flex-col gap-4 h-full overflow-y-auto pr-1">
         {/* Quick System Status Card */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
-          <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-[#004782]">analytics</span>
+        <div className="p-4 rounded-2xl bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-3">
+          <h3 className="font-bold text-[14px] text-slate-900 dark:text-white flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-[#007aff]" />
             <span>核心监控数据概览</span>
           </h3>
 
           <div className="grid grid-cols-2 gap-2 text-[12px]">
-            <div className="p-2.5 rounded-xl bg-[#ecf4ff] dark:bg-slate-800 border border-[#c2c6d2]/50">
-              <span className="text-[#424751] dark:text-slate-400 block text-[11px]">重点供应商</span>
-              <span className="font-bold text-[18px] text-[#004782] dark:text-blue-300">
+            <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-slate-800 border border-slate-200/60">
+              <span className="text-slate-500 dark:text-slate-400 block text-[11px]">重点供应商</span>
+              <span className="font-extrabold text-[18px] text-[#007aff] dark:text-blue-300">
                 {suppliers.length} 家
               </span>
             </div>
-            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900">
+            <div className="p-2.5 rounded-xl bg-red-50/80 dark:bg-red-950/40 border border-red-200 dark:border-red-900">
               <span className="text-red-700 dark:text-red-300 block text-[11px]">P1 严重风险</span>
-              <span className="font-bold text-[18px] text-[#C92A2A] dark:text-red-400">
+              <span className="font-extrabold text-[18px] text-[#ff3b30] dark:text-red-400">
                 {riskItems.filter((r) => r.level === 'P1').length} 条
               </span>
             </div>
@@ -928,10 +937,10 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
         </div>
 
         {/* TianYanCha Quota Quick Widget */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
+        <div className="p-4 rounded-2xl bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-              <span className="material-symbols-outlined text-[18px] text-blue-600">domain</span>
+            <h3 className="font-bold text-[14px] text-slate-900 dark:text-white flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-blue-600" />
               <span>天眼查接口额度</span>
             </h3>
             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
@@ -949,7 +958,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
               </div>
               <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
                 <div
-                  className="h-full bg-[#185fa5] rounded-full"
+                  className="h-full bg-[#007aff] rounded-full"
                   style={{ width: `${(quota.dailyUsed / quota.dailyLimit) * 100}%` }}
                 ></div>
               </div>
@@ -973,60 +982,54 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
           <button
             onClick={() => handleSend('查询天眼查 API 调用额度')}
-            className="w-full py-1.5 bg-[#f7f9ff] dark:bg-slate-800 hover:bg-[#ecf4ff] border border-[#c2c6d2] dark:border-slate-700 rounded-xl text-[12px] text-[#004782] dark:text-blue-300 font-bold transition-all"
+            className="w-full py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 rounded-xl text-[12px] text-[#007aff] dark:text-blue-300 font-bold transition-all cursor-pointer"
           >
             刷新额度卡片
           </button>
         </div>
 
         {/* Quick Action Shortcuts */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-2.5">
-          <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-[#004782]">tune</span>
+        <div className="p-4 rounded-2xl bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 shadow-2xs space-y-2.5">
+          <h3 className="font-bold text-[14px] text-slate-900 dark:text-white flex items-center gap-2">
+            <Sliders className="w-4 h-4 text-[#007aff]" />
             <span>快捷风险指令</span>
           </h3>
 
           <div className="space-y-1.5 text-[12px]">
             <button
               onClick={() => handleSend('查询当前所有 P1 严重风险提醒')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
+              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/50 dark:hover:bg-slate-800 transition-all font-medium text-slate-800 dark:text-slate-200 flex items-center justify-between cursor-pointer"
             >
               <span>查看全部 P1 极高风险</span>
-              <span className="material-symbols-outlined text-[16px] text-[#C92A2A]">
-                arrow_forward
-              </span>
+              <ArrowRight className="w-4 h-4 text-[#ff3b30]" />
             </button>
 
             <button
               onClick={() => handleSend('查询供应【微电子元件】的重点供应商')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
+              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/50 dark:hover:bg-slate-800 transition-all font-medium text-slate-800 dark:text-slate-200 flex items-center justify-between cursor-pointer"
             >
               <span>按微电子品类检索供应商</span>
-              <span className="material-symbols-outlined text-[16px] text-[#004782]">
-                arrow_forward
-              </span>
+              <ArrowRight className="w-4 h-4 text-[#007aff]" />
             </button>
 
             <button
               onClick={() => handleSend('核查【杭州智造科技有限公司】的工商与司法风险（清单外）')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
+              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-blue-50/50 dark:hover:bg-slate-800 transition-all font-medium text-slate-800 dark:text-slate-200 flex items-center justify-between cursor-pointer"
             >
               <span>清单外企业一次性核查示例</span>
-              <span className="material-symbols-outlined text-[16px] text-blue-600">
-                arrow_forward
-              </span>
+              <ArrowRight className="w-4 h-4 text-blue-600" />
             </button>
           </div>
         </div>
 
         {/* Capability Boundaries Notice Card */}
-        <div className="p-4 rounded-2xl bg-[#ecf4ff]/70 dark:bg-slate-900 border border-blue-200 dark:border-blue-900 text-[12px] space-y-2">
-          <div className="flex items-center gap-1.5 font-bold text-[#004782] dark:text-blue-300">
-            <span className="material-symbols-outlined text-[18px]">verified_user</span>
+        <div className="p-4 rounded-2xl bg-blue-50/70 dark:bg-slate-900 border border-blue-200/80 dark:border-blue-900 text-[12px] space-y-2">
+          <div className="flex items-center gap-1.5 font-bold text-[#007aff] dark:text-blue-300">
+            <ShieldCheck className="w-4 h-4" />
             <span>能力与只读边界说明</span>
           </div>
 
-          <div className="space-y-1.5 text-[#424751] dark:text-slate-300 leading-relaxed text-[11px]">
+          <div className="space-y-1.5 text-slate-600 dark:text-slate-300 leading-relaxed text-[11px]">
             <div className="flex items-start gap-1">
               <span className="text-emerald-600 font-bold">✓ 支持：</span>
               <span>检索启用供应商、查询生产地点与产品、按风险等级与城市筛选提醒、清单外天眼查核查、额度查询。</span>
@@ -1041,3 +1044,4 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     </div>
   );
 };
+

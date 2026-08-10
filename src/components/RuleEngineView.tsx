@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Plus, Sliders, Play, Leaf, Globe, Scale, Building2, Sparkles, CheckCircle2 } from 'lucide-react';
 import { MonitoringDimension } from '../types';
 
 interface RuleEngineViewProps {
@@ -29,6 +30,22 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [sandboxImpact, setSandboxImpact] = useState<number>(80);
   const [sandboxDistance, setSandboxDistance] = useState<number>(15);
   const [sandboxResult, setSandboxResult] = useState<any>(null);
+
+  // Helper to map string icon name to lucide icon
+  const renderDimensionIcon = (iconName: string) => {
+    switch (iconName) {
+      case 'eco':
+        return <Leaf className="w-5 h-5 text-[#007aff]" />;
+      case 'public':
+        return <Globe className="w-5 h-5 text-[#007aff]" />;
+      case 'gavel':
+        return <Scale className="w-5 h-5 text-[#007aff]" />;
+      case 'account_balance':
+        return <Building2 className="w-5 h-5 text-[#007aff]" />;
+      default:
+        return <Sparkles className="w-5 h-5 text-[#007aff]" />;
+    }
+  };
 
   // Update editor values when active dimension changes
   React.useEffect(() => {
@@ -87,10 +104,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
     <div className="space-y-6 pb-20 lg:pb-8">
       {/* Title */}
       <div>
-        <h1 className="text-2xl font-bold text-[#101d28] dark:text-white tracking-tight">
+        <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight">
           规则引擎与权重配置
         </h1>
-        <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
           自定义监控维度、计算权重及沙箱仿真评估。
         </p>
       </div>
@@ -98,15 +115,15 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       {/* Main Grid Layout (Left: Dimensions List, Right: Rule Config + Sandbox) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Monitoring Dimensions List (4 cols) */}
-        <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs space-y-3 h-fit">
+        <div className="lg:col-span-4 bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-4 shadow-2xs space-y-3 h-fit">
           <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-            <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">监控维度</h2>
+            <h2 className="font-bold text-[15px] text-slate-900 dark:text-white">监控维度</h2>
             <button
               onClick={() => alert('新建自定义维度功能已就绪')}
-              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-[#004782]"
+              className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-[#007aff] cursor-pointer"
               title="添加新维度"
             >
-              <span className="material-symbols-outlined text-[20px]">add</span>
+              <Plus className="w-5 h-5" />
             </button>
           </div>
 
@@ -117,17 +134,15 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 <div
                   key={dim.id}
                   onClick={() => setActiveDimId(dim.id)}
-                  className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                  className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all ${
                     isSelected
-                      ? 'bg-[#ecf4ff] dark:bg-slate-800 border-[#004782] shadow-2xs'
-                      : 'border-[#c2c6d2]/60 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      ? 'bg-blue-50/80 dark:bg-slate-800 border-[#007aff] shadow-2xs'
+                      : 'border-slate-200/60 dark:border-slate-700/60 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-[#004782] text-[22px]">
-                      {dim.icon}
-                    </span>
-                    <span className="font-bold text-[14px] text-[#101d28] dark:text-white">
+                    {renderDimensionIcon(dim.icon)}
+                    <span className="font-bold text-[14px] text-slate-900 dark:text-white">
                       {dim.name}
                     </span>
                   </div>
@@ -143,7 +158,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       onChange={() => onToggleDimension(dim.id)}
                       className="sr-only peer"
                     />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#004782]"></div>
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#007aff]"></div>
                   </label>
                 </div>
               );
@@ -154,10 +169,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         {/* Right Column: Rule Editor & Sandbox Simulator (8 cols) */}
         <div className="lg:col-span-8 space-y-6">
           {/* Rule Configuration Card */}
-          <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs space-y-5">
+          <div className="bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-5 shadow-2xs space-y-5">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
-                <h2 className="font-bold text-[18px] text-[#101d28] dark:text-white">
+                <h2 className="font-bold text-[18px] text-slate-900 dark:text-white">
                   {selectedDim.name} 规则配置
                 </h2>
                 <span className="text-[11px] font-mono text-slate-400 font-bold">
@@ -171,13 +186,13 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     setSeverityWeight(selectedDim.severityWeight);
                     setRelevanceWeight(selectedDim.relevanceWeight);
                   }}
-                  className="px-3 py-1.5 border border-[#c2c6d2] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50"
+                  className="px-3 py-1.5 border border-slate-200/80 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-[13px] font-medium hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSaveConfig}
-                  className="px-4 py-1.5 bg-[#004782] text-white rounded-lg text-[13px] font-bold shadow-sm hover:bg-[#185fa5] transition-colors"
+                  className="px-4 py-1.5 bg-[#007aff] hover:bg-[#0062cc] text-white rounded-xl text-[13px] font-bold shadow-2xs transition-colors cursor-pointer"
                 >
                   保存配置
                 </button>
@@ -188,8 +203,8 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="font-bold text-[#424751]">严重性权重 (SEVERITY)</span>
-                  <span className="font-mono font-bold text-[#004782]">{severityWeight}</span>
+                  <span className="font-bold text-slate-700 dark:text-slate-300">严重性权重 (SEVERITY)</span>
+                  <span className="font-mono font-bold text-[#007aff] dark:text-blue-300">{severityWeight}</span>
                 </div>
                 <input
                   type="range"
@@ -198,14 +213,14 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   step="0.05"
                   value={severityWeight}
                   onChange={(e) => setSeverityWeight(parseFloat(e.target.value))}
-                  className="w-full accent-[#004782] cursor-pointer"
+                  className="w-full accent-[#007aff] cursor-pointer"
                 />
               </div>
 
               <div className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="font-bold text-[#424751]">业务关联度 (RELEVANCE)</span>
-                  <span className="font-mono font-bold text-[#004782]">{relevanceWeight}</span>
+                  <span className="font-bold text-slate-700 dark:text-slate-300">业务关联度 (RELEVANCE)</span>
+                  <span className="font-mono font-bold text-[#007aff] dark:text-blue-300">{relevanceWeight}</span>
                 </div>
                 <input
                   type="range"
@@ -214,53 +229,53 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   step="0.05"
                   value={relevanceWeight}
                   onChange={(e) => setRelevanceWeight(parseFloat(e.target.value))}
-                  className="w-full accent-[#004782] cursor-pointer"
+                  className="w-full accent-[#007aff] cursor-pointer"
                 />
               </div>
             </div>
 
             {/* Risk Level Trigger Thresholds */}
             <div className="space-y-2">
-              <label className="text-[13px] font-bold text-[#424751]">
+              <label className="text-[13px] font-bold text-slate-700 dark:text-slate-300">
                 风险等级触发 (P1-P3)
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3 border-2 border-red-200 bg-red-50/40 rounded-xl space-y-1">
-                  <div className="text-[11px] font-bold text-[#C92A2A]">P1 极高风险</div>
+                <div className="p-3 border-2 border-red-200 dark:border-red-900 bg-red-50/40 dark:bg-red-950/30 rounded-2xl space-y-1">
+                  <div className="text-[11px] font-bold text-[#ff3b30]">P1 极高风险</div>
                   <div className="flex items-center gap-1 font-mono font-bold text-[14px]">
                     <span>&ge;</span>
                     <input
                       type="number"
                       value={p1Threshold}
                       onChange={(e) => setP1Threshold(Number(e.target.value))}
-                      className="w-full bg-white border border-red-300 rounded px-2 py-0.5 text-center text-[#C92A2A]"
+                      className="w-full bg-white dark:bg-slate-900 border border-red-300 dark:border-red-800 rounded-lg px-2 py-0.5 text-center text-[#ff3b30]"
                     />
                   </div>
                 </div>
 
-                <div className="p-3 border-2 border-amber-200 bg-amber-50/40 rounded-xl space-y-1">
-                  <div className="text-[11px] font-bold text-[#D97706]">P2 高风险</div>
+                <div className="p-3 border-2 border-amber-200 dark:border-amber-900 bg-amber-50/40 dark:bg-amber-950/30 rounded-2xl space-y-1">
+                  <div className="text-[11px] font-bold text-[#ff9500]">P2 高风险</div>
                   <div className="flex items-center gap-1 font-mono font-bold text-[14px]">
                     <span>&ge;</span>
                     <input
                       type="number"
                       value={p2Threshold}
                       onChange={(e) => setP2Threshold(Number(e.target.value))}
-                      className="w-full bg-white border border-amber-300 rounded px-2 py-0.5 text-center text-[#D97706]"
+                      className="w-full bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-0.5 text-center text-[#ff9500]"
                     />
                   </div>
                 </div>
 
-                <div className="p-3 border-2 border-blue-200 bg-blue-50/40 rounded-xl space-y-1">
-                  <div className="text-[11px] font-bold text-[#2563EB]">P3 中等风险</div>
+                <div className="p-3 border-2 border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/30 rounded-2xl space-y-1">
+                  <div className="text-[11px] font-bold text-[#007aff]">P3 中等风险</div>
                   <div className="flex items-center gap-1 font-mono font-bold text-[14px]">
                     <span>&ge;</span>
                     <input
                       type="number"
                       value={p3Threshold}
                       onChange={(e) => setP3Threshold(Number(e.target.value))}
-                      className="w-full bg-white border border-blue-300 rounded px-2 py-0.5 text-center text-[#2563EB]"
+                      className="w-full bg-white dark:bg-slate-900 border border-blue-300 dark:border-blue-800 rounded-lg px-2 py-0.5 text-center text-[#007aff]"
                     />
                   </div>
                 </div>
@@ -269,15 +284,15 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
             {/* Event TTL */}
             <div className="space-y-1">
-              <label className="text-[13px] font-bold text-[#424751]">事件有效期 (TTL)</label>
+              <label className="text-[13px] font-bold text-slate-700 dark:text-slate-300">事件有效期 (TTL)</label>
               <div className="flex items-center max-w-xs">
                 <input
                   type="number"
                   value={ttlHours}
                   onChange={(e) => setTtlHours(Number(e.target.value))}
-                  className="bg-[#f7f9ff] border border-[#c2c6d2] rounded-l-lg p-2 font-mono font-bold text-[#101d28] w-24 text-center"
+                  className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-l-xl p-2 font-mono font-bold text-slate-900 dark:text-white w-24 text-center"
                 />
-                <span className="bg-[#dceaf9] border border-l-0 border-[#c2c6d2] rounded-r-lg px-3 py-2 text-[13px] font-medium text-[#004782]">
+                <span className="bg-blue-50 dark:bg-slate-800 border border-l-0 border-slate-200 dark:border-slate-700 rounded-r-xl px-3 py-2 text-[13px] font-medium text-[#007aff] dark:text-blue-300">
                   小时
                 </span>
               </div>
@@ -285,9 +300,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
           </div>
 
           {/* Sandbox Testing Box */}
-          <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex items-center gap-2 font-bold text-[16px] text-[#101d28] dark:text-white">
-              <span className="material-symbols-outlined text-[22px] text-[#004782]">grid_view</span>
+          <div className="bg-white/80 dark:bg-slate-800/60 backdrop-blur-md border border-slate-200/80 dark:border-slate-700/60 rounded-2xl p-5 shadow-2xs space-y-4">
+            <div className="flex items-center gap-2 font-bold text-[16px] text-slate-900 dark:text-white">
+              <Sliders className="w-5 h-5 text-[#007aff]" />
               <span>沙箱测试 (Sandbox Testing)</span>
             </div>
 
@@ -297,7 +312,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 <select
                   value={sandboxEventType}
                   onChange={(e) => setSandboxEventType(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] font-medium mt-1"
+                  className="w-full bg-slate-100/80 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 rounded-xl p-2 text-[13px] font-medium mt-1 text-slate-900 dark:text-white"
                 >
                   <option value="极端天气 (台风/洪水)">极端天气 (台风/洪水)</option>
                   <option value="劳工罢工/抗议">劳工罢工/抗议</option>
@@ -314,7 +329,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   max="100"
                   value={sandboxImpact}
                   onChange={(e) => setSandboxImpact(Number(e.target.value))}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] font-mono font-bold mt-1"
+                  className="w-full bg-slate-100/80 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 rounded-xl p-2 text-[13px] font-mono font-bold mt-1 text-slate-900 dark:text-white"
                 />
               </div>
 
@@ -325,7 +340,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   min="0"
                   value={sandboxDistance}
                   onChange={(e) => setSandboxDistance(Number(e.target.value))}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] font-mono font-bold mt-1"
+                  className="w-full bg-slate-100/80 dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 rounded-xl p-2 text-[13px] font-mono font-bold mt-1 text-slate-900 dark:text-white"
                 />
               </div>
             </div>
@@ -337,29 +352,29 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
               <button
                 onClick={handleRunSandboxTest}
-                className="px-4 py-2 border-2 border-[#004782] text-[#004782] dark:text-blue-400 hover:bg-blue-50 font-bold text-[13px] rounded-lg flex items-center gap-1.5 transition-colors"
+                className="px-4 py-2 border-2 border-[#007aff] text-[#007aff] dark:text-blue-400 hover:bg-blue-50/50 dark:hover:bg-slate-800 font-bold text-[13px] rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[18px]">play_arrow</span>
+                <Play className="w-4 h-4 fill-current" />
                 <span>评估 (不落库)</span>
               </button>
             </div>
 
             {/* Sandbox Evaluation Output Overlay */}
             {sandboxResult && (
-              <div className="p-4 bg-blue-50/80 border-2 border-blue-300 rounded-xl space-y-2 animate-in fade-in">
+              <div className="p-4 bg-blue-50/80 dark:bg-blue-950/40 border-2 border-blue-300 dark:border-blue-800 rounded-2xl space-y-2 animate-in fade-in">
                 <div className="flex justify-between items-center font-bold">
-                  <span className="text-[#004782] text-[14px]">仿真计算评估结果</span>
-                  <span className="bg-[#C92A2A] text-white px-2 py-0.5 rounded text-[12px]">
+                  <span className="text-[#007aff] dark:text-blue-300 text-[14px]">仿真计算评估结果</span>
+                  <span className="bg-[#ff3b30] text-white px-2 py-0.5 rounded-md text-[12px]">
                     {sandboxResult.level}
                   </span>
                 </div>
-                <div className="text-[13px] font-mono font-bold text-slate-800">
-                  预估风险得分: <span className="text-2xl text-[#C92A2A]">{sandboxResult.score}</span> / 100
+                <div className="text-[13px] font-mono font-bold text-slate-800 dark:text-slate-100">
+                  预估风险得分: <span className="text-2xl text-[#ff3b30]">{sandboxResult.score}</span> / 100
                 </div>
-                <div className="text-[11px] text-slate-600 font-mono">
-                  公式推导: {sandboxResult.formula}
+                <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono">
+                  公式推断: {sandboxResult.formula}
                 </div>
-                <div className="text-[12px] text-slate-700 bg-white p-2.5 rounded-lg border border-blue-200">
+                <div className="text-[12px] text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-blue-200 dark:border-blue-900">
                   <strong>推荐智能防范措施:</strong> {sandboxResult.recommendation}
                 </div>
               </div>
@@ -370,3 +385,4 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
     </div>
   );
 };
+

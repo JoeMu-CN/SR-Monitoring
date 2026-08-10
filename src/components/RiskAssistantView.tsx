@@ -22,6 +22,7 @@ import {
   Info,
 } from 'lucide-react';
 import { RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota } from '../types';
+import { UnifiedLoader } from './common/UnifiedLoader';
 
 interface RiskAssistantViewProps {
   riskItems: RiskItem[];
@@ -852,10 +853,14 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
           {/* Typing Indicator */}
           {isTyping && (
-            <div className="flex items-center gap-2 text-slate-400 text-[12px] italic p-2">
-              <RefreshCw className="w-4 h-4 animate-spin text-[#007aff]" />
-              <span>正在检索重点供应商与天眼查数据...</span>
-            </div>
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center gap-2.5 text-slate-500 dark:text-slate-400 text-[12px] p-3 bg-white dark:bg-slate-800/80 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 w-fit shadow-2xs"
+            >
+              <UnifiedLoader size="sm" variant="ring" />
+              <span className="font-medium">AI 正在检索重点供应商与天眼查全网实时数据...</span>
+            </motion.div>
           )}
 
           <div ref={chatEndRef} />

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Download, X, FileText, Table, Code, Loader2 } from 'lucide-react';
+import { Download, X, FileText, Table, Code } from 'lucide-react';
 import { RiskItem } from '../types';
+import { UnifiedLoader } from './common/UnifiedLoader';
 
 interface ExportReportModalProps {
   isOpen: boolean;
@@ -130,10 +131,10 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
           <button
             onClick={handleDownload}
             disabled={isExporting}
-            className="px-5 py-2 bg-[#007aff] hover:bg-[#0062cc] text-white font-bold text-[13px] rounded-xl shadow-2xs flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+            className="px-5 py-2 bg-[#007aff] hover:bg-[#0062cc] text-white font-bold text-[13px] rounded-xl shadow-2xs flex items-center gap-2 disabled:opacity-80 cursor-pointer"
           >
             {isExporting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <UnifiedLoader size="sm" variant="ring" className="text-white" />
             ) : (
               <Download className="w-4 h-4" />
             )}

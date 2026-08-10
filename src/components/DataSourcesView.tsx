@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { RefreshCw, Database, Network, Radio, Activity } from 'lucide-react';
 import { DataSource } from '../types';
+import { UnifiedLoader } from './common/UnifiedLoader';
 
 interface DataSourcesViewProps {
   dataSources: DataSource[];
@@ -50,9 +51,13 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         <button
           onClick={handleSyncClick}
           disabled={isSyncing}
-          className="bg-[#007aff] hover:bg-[#0062cc] text-white font-bold text-[13px] px-4 py-2 rounded-xl shadow-xs transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+          className="bg-[#007aff] hover:bg-[#0062cc] text-white font-bold text-[13px] px-4 py-2 rounded-xl shadow-xs transition-all flex items-center gap-2 disabled:opacity-80 cursor-pointer"
         >
-          <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+          {isSyncing ? (
+            <UnifiedLoader size="sm" variant="ring" className="text-white" />
+          ) : (
+            <RefreshCw className="w-4 h-4" />
+          )}
           <span>{isSyncing ? '全量数据同步中...' : '立即全量数据同步'}</span>
         </button>
       </div>

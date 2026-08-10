@@ -29,14 +29,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettingsModal,
   p1RiskCount,
 }) => {
-  const mainNavItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: '风险总览', icon: <LayoutDashboard className="w-[18px] h-[18px]" /> },
     { id: 'current-risks', label: '当前风险监控', icon: <ShieldAlert className="w-[18px] h-[18px]" />, badge: p1RiskCount },
     { id: 'risk-assistant', label: 'AI 风险助手', icon: <Bot className="w-[18px] h-[18px]" /> },
     { id: 'suppliers', label: '供应商名录', icon: <Building2 className="w-[18px] h-[18px]" /> },
-  ];
-
-  const systemNavItems: { id: ActiveTab; label: string; icon: React.ReactNode }[] = [
     { id: 'data-sources', label: '数据源同步', icon: <Database className="w-[18px] h-[18px]" /> },
     { id: 'rules', label: '规则引擎', icon: <SlidersHorizontal className="w-[18px] h-[18px]" /> },
   ];
@@ -89,93 +86,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Navigation Sections */}
-      <div className="flex flex-col gap-4 flex-1 overflow-y-auto pr-0.5">
-        {/* Section 1: Main */}
-        <div className="space-y-1">
-          <div className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            核心监控 MONITORS
-          </div>
+      {/* Navigation List */}
+      <div className="flex-1 overflow-y-auto pr-0.5 space-y-1">
+        {navItems.map((item) => {
+          const isActive = activeTab === item.id;
+          return (
+            <motion.button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              whileTap={{ scale: 0.98 }}
+              className={`relative w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[13px] font-semibold transition-all text-left cursor-pointer ${
+                isActive
+                  ? 'text-white'
+                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/60'
+              }`}
+            >
+              {/* macOS Active Blue Pill Background */}
+              {isActive && (
+                <motion.div
+                  layoutId="macOSSidebarHighlight"
+                  className="absolute inset-0 bg-[#007aff] rounded-lg shadow-xs z-0"
+                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                />
+              )}
 
-          {mainNavItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <motion.button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                whileTap={{ scale: 0.98 }}
-                className={`relative w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[13px] font-semibold transition-all text-left cursor-pointer ${
-                  isActive
-                    ? 'text-white'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/60'
-                }`}
-              >
-                {/* macOS Active Blue Pill Background */}
-                {isActive && (
-                  <motion.div
-                    layoutId="macOSSidebarHighlight"
-                    className="absolute inset-0 bg-[#007aff] rounded-lg shadow-xs z-0"
-                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  />
-                )}
+              <div className="relative z-10 flex items-center gap-2.5">
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
 
-                <div className="relative z-10 flex items-center gap-2.5">
-                  {item.icon}
-                  <span>{item.label}</span>
-                </div>
-
-                {item.badge && item.badge > 0 ? (
-                  <motion.span
-                    initial={{ scale: 0.9 }}
-                    animate={{ scale: [1, 1.1, 1] }}
-                    transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
-                    className={`relative z-10 text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-                      isActive ? 'bg-white text-[#ff3b30]' : 'bg-[#ff3b30] text-white shadow-2xs'
-                    }`}
-                  >
-                    {item.badge}
-                  </motion.span>
-                ) : null}
-              </motion.button>
-            );
-          })}
-        </div>
-
-        {/* Section 2: System */}
-        <div className="space-y-1">
-          <div className="px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
-            系统与服务 SYSTEM
-          </div>
-
-          {systemNavItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <motion.button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                whileTap={{ scale: 0.98 }}
-                className={`relative w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[13px] font-semibold transition-all text-left cursor-pointer ${
-                  isActive
-                    ? 'text-white'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800/60'
-                }`}
-              >
-                {isActive && (
-                  <motion.div
-                    layoutId="macOSSidebarHighlight"
-                    className="absolute inset-0 bg-[#007aff] rounded-lg shadow-xs z-0"
-                    transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-                  />
-                )}
-
-                <div className="relative z-10 flex items-center gap-2.5">
-                  {item.icon}
-                  <span>{item.label}</span>
-                </div>
-              </motion.button>
-            );
-          })}
-        </div>
+              {item.badge && item.badge > 0 ? (
+                <motion.span
+                  initial={{ scale: 0.9 }}
+                  animate={{ scale: [1, 1.1, 1] }}
+                  transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
+                  className={`relative z-10 text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                    isActive ? 'bg-white text-[#ff3b30]' : 'bg-[#ff3b30] text-white shadow-2xs'
+                  }`}
+                >
+                  {item.badge}
+                </motion.span>
+              ) : null}
+            </motion.button>
+          );
+        })}
       </div>
 
       {/* Bottom macOS Actions */}

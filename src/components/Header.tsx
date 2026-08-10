@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Bell, Zap, Bot, Globe, Shield } from 'lucide-react';
+import { Search, Bell, Zap, Bot, Globe, Shield, Sun, Moon } from 'lucide-react';
 import { ActiveTab } from '../types';
 
 interface HeaderProps {
@@ -8,6 +8,8 @@ interface HeaderProps {
   onSearch?: (term: string) => void;
   isSimulatedEmpty: boolean;
   setIsSimulatedEmpty: (val: boolean) => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +18,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSearch,
   isSimulatedEmpty,
   setIsSimulatedEmpty,
+  isDarkMode = true,
+  onToggleDarkMode,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
@@ -129,6 +133,21 @@ export const Header: React.FC<HeaderProps> = ({
             />
             <span>{isSimulatedEmpty ? '演示空状态' : '实时数据'}</span>
           </button>
+
+          {/* Theme Switcher Button (Light / Dark Mode) */}
+          {onToggleDarkMode && (
+            <button
+              onClick={onToggleDarkMode}
+              className="p-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              title={isDarkMode ? '切换至浅色模式 (Light Mode)' : '切换至深色模式 (Dark Mode)'}
+            >
+              {isDarkMode ? (
+                <Sun className="w-5 h-5 text-amber-400" />
+              ) : (
+                <Moon className="w-5 h-5 text-indigo-600" />
+              )}
+            </button>
+          )}
 
           {/* Notifications Dropdown */}
           <div className="relative">

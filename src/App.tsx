@@ -28,6 +28,23 @@ export function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isSimulatedEmpty, setIsSimulatedEmpty] = useState(false);
 
+  // Dark Mode Theme State
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved !== null) return saved === 'dark';
+    return true; // Default to dark mode
+  });
+
+  React.useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
+
   // Core App State
   const [riskItems, setRiskItems] = useState<RiskItem[]>(mockRiskItems);
   const [suppliers, setSuppliers] = useState<Supplier[]>(mockSuppliers);
@@ -159,6 +176,8 @@ export function App() {
           unreadCount={p1RiskCount}
           isSimulatedEmpty={isSimulatedEmpty}
           setIsSimulatedEmpty={setIsSimulatedEmpty}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
         />
 
         {/* View Content Frame */}
@@ -180,6 +199,7 @@ export function App() {
                   onViewAllRisks={() => setActiveTab('current-risks')}
                   isSimulatedEmpty={isSimulatedEmpty}
                   setIsSimulatedEmpty={setIsSimulatedEmpty}
+                  isDarkMode={isDarkMode}
                 />
               )}
 
@@ -289,6 +309,8 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsModalOpen}
         onClose={() => setIsSettingsModalOpen(false)}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
       />
     </div>
   );

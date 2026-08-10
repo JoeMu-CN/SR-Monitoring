@@ -4,9 +4,16 @@ import { Settings, X } from 'lucide-react';
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  isDarkMode?: boolean;
+  setIsDarkMode?: (val: boolean) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  isOpen,
+  onClose,
+  isDarkMode = true,
+  setIsDarkMode,
+}) => {
   const [email, setEmail] = useState('cro-alerts@company.com');
   const [sensitivity, setSensitivity] = useState('strict');
   const [autoMitigation, setAutoMitigation] = useState(true);
@@ -42,6 +49,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-slate-100/80 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 rounded-xl p-2.5 font-mono text-[12px] text-slate-900 dark:text-white"
             />
+          </div>
+
+          <div>
+            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+              界面外观与主题
+            </label>
+            <div className="grid grid-cols-2 gap-2 bg-slate-100/80 dark:bg-slate-800 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700">
+              <button
+                type="button"
+                onClick={() => setIsDarkMode && setIsDarkMode(false)}
+                className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  !isDarkMode
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                浅色模式 (Light)
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsDarkMode && setIsDarkMode(true)}
+                className={`py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-slate-700 text-white shadow-2xs'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                深色模式 (Dark)
+              </button>
+            </div>
           </div>
 
           <div>

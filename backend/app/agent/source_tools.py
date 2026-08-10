@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.models import SourceOnboardingDraft
 from app.signals.declarative import AdapterSpec, inspect_source_url, preview_adapter
 from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.router import build_pull_adapter
@@ -94,8 +95,9 @@ class CreateSourceAdapterDraftTool:
         "required": ["code", "name", "source_type", "credibility", "adapter_config"],
     }
 
-    def __init__(self, actor_id: str | None) -> None:
+    def __init__(self, actor_id: str | None, onboarding_draft_id: int | None = None) -> None:
         self.actor_id = actor_id
+        self.onboarding_draft_id = onboarding_draft_id
 
     async def execute(
         self, arguments: dict[str, object], session: Session
@@ -145,10 +147,20 @@ class CreateSourceAdapterDraftTool:
         )
         session.add(source)
         session.flush()
+        if self.onboarding_draft_id is not None:
+            onboarding_draft = session.get(SourceOnboardingDraft, self.onboarding_draft_id)
+            if onboarding_draft is not None and onboarding_draft.source_id is None:
+                onboarding_draft.source_id = source.id
+                onboarding_draft.current_step = "completed"
         _audit(session, source, "adapter_draft_created", self.actor_id, {"code": code})
         session.commit()
         session.refresh(source)
-        return {"status": "success", "source_id": source.id, "adapter_status": "draft"}
+        return {
+            "status": "success",
+            "source_id": source.id,
+            "code": source.code,
+            "adapter_status": "draft",
+        }
 
 
 class PublishSourceAdapterTool:
@@ -196,7 +208,7 @@ class PublishSourceAdapterTool:
                     {"message": str(exc)[:500], "error_kind": exc.error_kind},
                 )
                 session.commit()
-                return _source_error(exc)
+                return {**_source_error(exc), "source_id": source.id, "code": source.code}
             source.adapter_status = "invalid"
             source.enabled = False
             _audit(
@@ -207,7 +219,12 @@ class PublishSourceAdapterTool:
                 {"message": str(exc)[:500]},
             )
             session.commit()
-            return {"status": "error", "message": str(exc)[:500]}
+            return {
+                "status": "error",
+                "message": str(exc)[:500],
+                "source_id": source.id,
+                "code": source.code,
+            }
         source.adapter_status = "published"
         source.adapter_version += 1
         source.adapter_published_at = datetime.now(UTC)
@@ -223,6 +240,7 @@ class PublishSourceAdapterTool:
         return {
             "status": "success",
             "source_id": source.id,
+            "code": source.code,
             "adapter_version": source.adapter_version,
             "preview_count": preview.fetched_count,
             "enabled": False,
@@ -250,14 +268,27 @@ class RunSourceNowTool:
         if source is None:
             return {"status": "error", "message": "数据源不存在"}
         if not source.enabled:
-            return {"status": "error", "message": "数据源尚未启用"}
+            return {
+                "status": "error",
+                "message": "数据源尚未启用",
+                "source_id": source.id,
+                "code": source.code,
+            }
         try:
             adapter = build_pull_adapter(source)
             run = await collect_source_async(session, source, adapter)
         except Exception as exc:  # noqa: BLE001
-            return {"status": "error", "message": str(exc)[:500], "retryable": False}
+            return {
+                "status": "error",
+                "message": str(exc)[:500],
+                "retryable": False,
+                "source_id": source.id,
+                "code": source.code,
+            }
         return {
             "status": "success",
+            "source_id": source.id,
+            "code": source.code,
             "run_id": run.id,
             "fetched_count": run.fetched_count,
             "created_count": run.created_count,
@@ -266,13 +297,16 @@ class RunSourceNowTool:
 
 
 def build_source_onboarding_tools(
-    *, actor_id: str | None, allow_publish: bool, allow_run: bool
+    *,
+    actor_id: str | None,
+    allow_publish: bool,
+    allow_run: bool,
+    onboarding_draft_id: int | None = None,
+    allow_create: bool = True,
 ) -> list[object]:
-    tools: list[object] = [
-        InspectSourceUrlTool(),
-        PreviewSourceAdapterTool(),
-        CreateSourceAdapterDraftTool(actor_id),
-    ]
+    tools: list[object] = [InspectSourceUrlTool(), PreviewSourceAdapterTool()]
+    if allow_create:
+        tools.append(CreateSourceAdapterDraftTool(actor_id, onboarding_draft_id))
     if allow_publish:
         tools.append(PublishSourceAdapterTool(actor_id))
     if allow_run:

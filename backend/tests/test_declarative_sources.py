@@ -8,7 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.agent.source_tools import build_source_onboarding_tools
+from app.agent.models import AgentSession, SourceOnboardingDraft
+from app.agent.source_tools import (
+    CreateSourceAdapterDraftTool,
+    RunSourceNowTool,
+    build_source_onboarding_tools,
+)
 from app.agent.tools import build_tools
 from app.signals.declarative import (
     AdapterPreview,
@@ -18,6 +23,7 @@ from app.signals.declarative import (
     preview_adapter,
     validate_public_https_url,
 )
+from app.signals.models import DataSource
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import SourceFetchError
 
@@ -200,6 +206,46 @@ def test_source_agent_endpoint_requires_admin(client: TestClient) -> None:
     assert response.status_code == 403
 
 
+def test_source_agent_draft_box_requires_admin(client: TestClient) -> None:
+    response = client.get("/api/v1/source-agent/drafts")
+    assert response.status_code == 403
+
+
+def test_create_adapter_draft_links_onboarding_draft(db_session) -> None:
+    agent_session = AgentSession(agent_kind="source_onboarding")
+    db_session.add(agent_session)
+    db_session.flush()
+    onboarding = SourceOnboardingDraft(
+        agent_session_id=agent_session.id,
+        actor_id="test-admin",
+        current_step="generate_adapter",
+        answers={"source_url": "https://official.example/events"},
+    )
+    db_session.add(onboarding)
+    db_session.flush()
+    result = asyncio.run(
+        CreateSourceAdapterDraftTool("test-admin", onboarding.id).execute(
+            {
+                "code": "onboarding-linked-draft",
+                "name": "关联接入草稿",
+                "source_type": "official_api",
+                "credibility": 90,
+                "schedule": "*/30 * * * *",
+                "auth_type": "none",
+                "credential_ref": None,
+                "login_config": {},
+                "description": "测试关联",
+                "adapter_config": _spec().model_dump(mode="json"),
+            },
+            db_session,
+        )
+    )
+    db_session.refresh(onboarding)
+    assert result["status"] == "success"
+    assert onboarding.source_id == result["source_id"]
+    assert onboarding.current_step == "completed"
+
+
 def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeypatch) -> None:
     payload = {
         "code": "declarative-test",
@@ -231,8 +277,18 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
     )
     assert created.status_code == 201
     source_id = created.json()["id"]
+    assert source_id > 0
     assert created.json()["adapter_status"] == "draft"
     assert created.json()["enabled"] is False
+
+    draft_box = client.get(
+        "/api/v1/source-agent/drafts", headers={"X-User-Role": "admin"}
+    )
+    assert draft_box.status_code == 200
+    assert any(
+        item["kind"] == "adapter_draft" and item["source_id"] == source_id
+        for item in draft_box.json()["items"]
+    )
 
     blocked = client.put(
         f"/api/v1/sources/{source_id}",
@@ -259,6 +315,14 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
     assert published.json()["adapter_version"] == 1
     assert published.json()["enabled"] is False
 
+    pending_enable = client.get(
+        "/api/v1/source-agent/drafts", headers={"X-User-Role": "admin"}
+    )
+    assert any(
+        item["kind"] == "pending_enable" and item["source_id"] == source_id
+        for item in pending_enable.json()["items"]
+    )
+
     enabled = client.put(
         f"/api/v1/sources/{source_id}",
         json={"enabled": True},
@@ -266,3 +330,105 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
     )
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] is True
+
+    denied_disable = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"enabled": False},
+    )
+    assert denied_disable.status_code == 403
+
+    disabled = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"enabled": False},
+        headers={"X-User-Role": "admin"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+
+
+def test_run_source_now_rejects_disabled_source(db_session) -> None:
+    source = DataSource(
+        code="published-disabled",
+        name="已发布未启用数据源",
+        source_type="official_api",
+        credibility=90,
+        endpoint_url="https://official.example/events",
+        adapter_config=_spec().model_dump(mode="json"),
+        adapter_status="published",
+        adapter_version=1,
+        enabled=False,
+    )
+    db_session.add(source)
+    db_session.flush()
+    result = asyncio.run(
+        RunSourceNowTool().execute(
+            {"source_id": source.id, "confirmation": "立即采集"}, db_session
+        )
+    )
+    assert result["status"] == "error"
+    assert "尚未启用" in str(result["message"])
+
+
+def test_source_agent_delete_draft_flow(client, db_session) -> None:
+    agent_session = AgentSession(agent_kind="source_onboarding")
+    db_session.add(agent_session)
+    db_session.flush()
+    draft = SourceOnboardingDraft(
+        agent_session_id=agent_session.id,
+        actor_id="test-admin",
+        current_step="collection_goal",
+        answers={"source_url": "https://official.example/events"},
+    )
+    db_session.add(draft)
+    db_session.flush()
+    draft_id = draft.id
+
+    denied = client.delete(f"/api/v1/source-agent/drafts/{draft_id}")
+    assert denied.status_code == 403
+
+    box = client.get("/api/v1/source-agent/drafts", headers={"X-User-Role": "admin"})
+    assert box.status_code == 200
+    assert any(
+        item["kind"] == "in_progress" and item["draft_id"] == draft_id
+        for item in box.json()["items"]
+    )
+
+    deleted = client.delete(
+        f"/api/v1/source-agent/drafts/{draft_id}", headers={"X-User-Role": "admin"}
+    )
+    assert deleted.status_code == 204
+    assert db_session.get(SourceOnboardingDraft, draft_id) is None
+
+    missing = client.delete(
+        f"/api/v1/source-agent/drafts/{draft_id}", headers={"X-User-Role": "admin"}
+    )
+    assert missing.status_code == 404
+
+
+def test_source_agent_delete_completed_draft_rejected(client, db_session) -> None:
+    source = DataSource(
+        code="linked-source",
+        name="已关联数据源的草稿",
+        source_type="official_api",
+        credibility=90,
+        endpoint_url="https://official.example/events",
+        adapter_config=_spec().model_dump(mode="json"),
+        adapter_status="draft",
+        enabled=False,
+    )
+    db_session.add(source)
+    db_session.flush()
+    draft = SourceOnboardingDraft(
+        actor_id="test-admin",
+        current_step="completed",
+        answers={"source_url": "https://official.example/events"},
+        source_id=source.id,
+    )
+    db_session.add(draft)
+    db_session.flush()
+
+    response = client.delete(
+        f"/api/v1/source-agent/drafts/{draft.id}", headers={"X-User-Role": "admin"}
+    )
+    assert response.status_code == 409
+    assert db_session.get(SourceOnboardingDraft, draft.id) is not None

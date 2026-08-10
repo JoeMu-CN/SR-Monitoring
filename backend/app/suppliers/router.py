@@ -12,6 +12,7 @@ from sqlalchemy.orm.interfaces import ORMOption
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.database import get_session
+from app.security import require_admin
 from app.suppliers.importer import (
     MAX_FILE_BYTES,
     WorkbookValidationError,
@@ -242,7 +243,10 @@ def update_supplier(
 
 @router.patch("/{supplier_id}/enabled", response_model=SupplierRead)
 def update_supplier_enabled(
-    supplier_id: int, payload: EnabledUpdate, session: SessionDependency
+    supplier_id: int,
+    payload: EnabledUpdate,
+    session: SessionDependency,
+    _admin: Annotated[str, Depends(require_admin)],
 ) -> Supplier:
     supplier = get_supplier_or_404(session, supplier_id)
     supplier.enabled = payload.enabled

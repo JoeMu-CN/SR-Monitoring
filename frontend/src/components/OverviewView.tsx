@@ -324,7 +324,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                         ds.status !== 'normal' ? 'bg-[#ba1a1a]' : 'bg-[#10B981]'
                       }`}
                     ></div>
-                    <span>{ds.name}</span>
+                    <span><span className="font-mono font-bold">ID {ds.id}</span> · {ds.name}</span>
                   </div>
                   <span className={ds.status !== 'normal' ? 'font-bold' : 'text-slate-500'}>
                     {ds.latency}

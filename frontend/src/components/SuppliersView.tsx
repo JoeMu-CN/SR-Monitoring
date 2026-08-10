@@ -7,6 +7,7 @@ interface SuppliersViewProps {
   onSelectSupplier: (supplier: Supplier) => void;
   onToggleStatus: (supplierId: string) => void;
   onAskAssistant: (query: string) => void;
+  role: 'viewer' | 'admin';
 }
 
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
@@ -15,6 +16,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   onSelectSupplier,
   onToggleStatus,
   onAskAssistant,
+  role,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'high_risk' | 'paused'>('all');
@@ -167,8 +169,9 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                               e.stopPropagation();
                               onToggleStatus(sup.id);
                             }}
-                            className="p-1.5 text-slate-600 hover:text-[#004782] hover:bg-slate-100 rounded-lg transition-colors"
-                            title={sup.monitoringStatus === 'paused' ? '恢复监控' : '暂停监控'}
+                            disabled={role !== 'admin'}
+                            className="p-1.5 text-slate-600 hover:text-[#004782] hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={role === 'admin' ? (sup.monitoringStatus === 'paused' ? '恢复监控' : '暂停监控') : '仅管理员可操作监控启停'}
                           >
                             <span className="material-symbols-outlined text-[18px]">
                               {sup.monitoringStatus === 'paused' ? 'play_arrow' : 'pause'}

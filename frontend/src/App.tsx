@@ -43,6 +43,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedRisk, setSelectedRisk] = useState<RiskItem | null>(null);
   const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
+  const [sourceAgentDraftId, setSourceAgentDraftId] = useState<number | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
@@ -256,19 +257,19 @@ export function App() {
                 )}
                 {activeTab === 'source-agent' && (
                   <SourceOnboardingAgentView agentStatus={agentStatus} role={consoleRole}
-                    onRoleChange={setConsoleRole} />
+                    onRoleChange={setConsoleRole} initialDraftId={sourceAgentDraftId} />
                 )}
                 {activeTab === 'suppliers' && (
                   <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
                     onSelectSupplier={handleSelectSupplier} onToggleStatus={(id) => void handleToggleSupplierStatus(id)}
-                    onAskAssistant={handleAskAssistant} />
+                    onAskAssistant={handleAskAssistant} role={consoleRole} />
                 )}
                 {activeTab === 'data-sources' && (
                   <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync}
                     role={consoleRole} onRoleChange={setConsoleRole}
                     onCreateSource={handleCreateSource} onUpdateSource={handleUpdateSource}
                     onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources}
-                    onOpenSourceAgent={() => setActiveTab('source-agent')} />
+                    onOpenSourceAgent={(draftId) => { setSourceAgentDraftId(draftId ?? null); setActiveTab('source-agent'); }} />
                 )}
                 {activeTab === 'rules' && (
                   <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}

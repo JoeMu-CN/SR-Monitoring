@@ -202,10 +202,34 @@ export interface ToolCallRead {
   result: Record<string, unknown>;
 }
 
+export interface SourceOnboardingDraftRead {
+  id: number;
+  agent_session_id: number | null;
+  source_id: number | null;
+  actor_id: string | null;
+  current_step: string;
+  answers: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourceOnboardingDraftBoxItem {
+  kind: 'in_progress' | 'adapter_draft' | 'pending_enable';
+  title: string;
+  detail: string;
+  draft_id: number | null;
+  session_id: number | null;
+  source_id: number | null;
+  source_code: string | null;
+  current_step: string | null;
+  updated_at: string;
+}
+
 export interface ChatResponse {
   session_id: number;
   answer: string;
   tool_calls: ToolCallRead[];
+  onboarding_draft?: SourceOnboardingDraftRead | null;
 }
 
 export interface AgentStatusRead {
@@ -247,6 +271,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const payload = await response.json().catch(() => null) as {detail?: unknown} | null;
     throw new Error(payload?.detail ? String(payload.detail) : `HTTP ${response.status}`);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -292,10 +317,12 @@ export const api = {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({question, session_id: sessionId}),
   }),
-  sourceAgentChat: (question: string, sessionId: number | null) => request<ChatResponse>('/api/v1/source-agent/chat', {
+  sourceAgentChat: (question: string, sessionId: number | null, draftId: number | null) => request<ChatResponse>('/api/v1/source-agent/chat', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question, session_id: sessionId}),
+    body: JSON.stringify({question, session_id: sessionId, draft_id: draftId}),
   }),
+  sourceOnboardingDrafts: () => request<{items: SourceOnboardingDraftBoxItem[]}>('/api/v1/source-agent/drafts'),
+  deleteSourceOnboardingDraft: (draftId: number) => request<void>(`/api/v1/source-agent/drafts/${draftId}`, {method: 'DELETE'}),
   createSupplier: (payload: SupplierCreatePayload) => request<SupplierRead>('/api/v1/suppliers', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),

@@ -8,6 +8,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -67,6 +68,37 @@ class AgentMessage(Base):
     )
 
     session: Mapped[AgentSession] = relationship(back_populates="messages")
+
+
+class SourceOnboardingDraft(Base):
+    """数据源接入过程中的可恢复草稿，不保存明文凭据。"""
+
+    __tablename__ = "source_onboarding_drafts"
+    __table_args__ = (
+        UniqueConstraint("agent_session_id", name="uq_source_onboarding_drafts_session"),
+        Index("ix_source_onboarding_drafts_updated", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    agent_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_sessions.id", ondelete="SET NULL")
+    )
+    source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("data_sources.id", ondelete="SET NULL")
+    )
+    actor_id: Mapped[str | None] = mapped_column(Text)
+    current_step: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'source_url'")
+    )
+    answers: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class TycUsageRecord(Base):

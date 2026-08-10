@@ -13,10 +13,17 @@ from sqlalchemy.orm import Session
 from app.agent import budget as budget_module
 from app.agent.budget import get_tyc_usage, record_tyc_usage
 from app.agent.engine import AgentError, FakeAgentLLM, LLMResponse, ToolCallSpec, run_agent
-from app.agent.models import AgentMessage, AgentSession, TycUsageRecord
+from app.agent.models import (
+    AgentMessage,
+    AgentSession,
+    SourceOnboardingDraft,
+    TycUsageRecord,
+)
 from app.agent.service import (
+    RESUME_ONBOARDING,
     RISK_QUERY,
     SOURCE_ONBOARDING,
+    START_ONBOARDING,
     chat,
     chat_source_onboarding,
 )
@@ -39,6 +46,7 @@ from app.suppliers.models import Supplier
 
 @pytest.fixture
 def clean_agent_tables(db_session: Session) -> Session:
+    db_session.execute(delete(SourceOnboardingDraft))
     db_session.execute(delete(AgentMessage))
     db_session.execute(delete(AgentSession))
     db_session.execute(delete(TycUsageRecord))
@@ -170,10 +178,20 @@ def test_two_agents_use_disjoint_tools_and_sessions(
         chat(clean_agent_tables, "接入数据源并确认发布立即采集", llm=risk_llm)
     )
     source_llm = CapturingLLM()
+    started = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            START_ONBOARDING,
+            llm=source_llm,
+            actor_id="test-admin",
+        )
+    )
     source = asyncio.run(
         chat_source_onboarding(
             clean_agent_tables,
-            "查询风险并确认发布立即采集",
+            "https://official.example/notices",
+            session_id=started.session_id,
+            draft_id=started.onboarding_draft.id if started.onboarding_draft else None,
             llm=source_llm,
             actor_id="test-admin",
         )
@@ -188,9 +206,6 @@ def test_two_agents_use_disjoint_tools_and_sessions(
     assert source_llm.tool_names == {
         "inspect_source_url",
         "preview_source_adapter",
-        "create_source_adapter_draft",
-        "publish_source_adapter",
-        "run_source_now",
     }
     assert risk_llm.tool_names.isdisjoint(source_llm.tool_names)
     assert clean_agent_tables.get(AgentSession, risk.session_id).agent_kind == RISK_QUERY
@@ -215,6 +230,167 @@ def test_two_agents_use_disjoint_tools_and_sessions(
                 "继续",
                 session_id=source.session_id,
                 llm=risk_llm,
+            )
+        )
+
+
+def test_source_onboarding_saves_one_step_and_redacts_secret(
+    clean_agent_tables: Session,
+) -> None:
+    started = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            START_ONBOARDING,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert started.onboarding_draft is not None
+    assert started.onboarding_draft.current_step == "source_url"
+
+    url_step = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            "请接入 https://official.example/notices",
+            session_id=started.session_id,
+            draft_id=started.onboarding_draft.id,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    goal_step = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            "采集标题、正文、发布时间和详情链接，用于识别自然灾害风险",
+            session_id=url_step.session_id,
+            draft_id=url_step.onboarding_draft.id if url_step.onboarding_draft else None,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    auth_step = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            "Bearer token=super-secret-value，正式接入使用 env:OFFICIAL_TOKEN",
+            session_id=goal_step.session_id,
+            draft_id=goal_step.onboarding_draft.id if goal_step.onboarding_draft else None,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert auth_step.onboarding_draft is not None
+    assert auth_step.onboarding_draft.current_step == "source_identity_schedule"
+    assert "super-secret-value" not in auth_step.onboarding_draft.answers[
+        "access_authorization"
+    ]
+    assert "***" in auth_step.onboarding_draft.answers["access_authorization"]
+    contents = list(
+        clean_agent_tables.scalars(
+            select(AgentMessage.content).where(
+                AgentMessage.session_id == started.session_id
+            )
+        )
+    )
+    assert all("super-secret-value" not in content for content in contents)
+
+
+def test_source_onboarding_resume_restores_step_without_advancing(
+    clean_agent_tables: Session,
+) -> None:
+    started = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            START_ONBOARDING,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert started.onboarding_draft is not None
+    draft_id = started.onboarding_draft.id
+    answered = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            "https://official.example/notices",
+            session_id=started.session_id,
+            draft_id=draft_id,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert answered.onboarding_draft is not None
+    assert answered.onboarding_draft.current_step == "collection_goal"
+
+    # 中途退出后仅凭 draft_id 恢复：重新提出当前问题且不推进步骤
+    resumed = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            RESUME_ONBOARDING,
+            draft_id=draft_id,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert resumed.onboarding_draft is not None
+    assert resumed.onboarding_draft.current_step == "collection_goal"
+    assert "第 2 步" in resumed.answer
+
+    # 草稿与会话不匹配被拒绝
+    other = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            START_ONBOARDING,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    with pytest.raises(AgentError, match="草稿与会话不匹配"):
+        asyncio.run(
+            chat_source_onboarding(
+                clean_agent_tables,
+                RESUME_ONBOARDING,
+                session_id=started.session_id,
+                draft_id=other.onboarding_draft.id if other.onboarding_draft else None,
+                llm=FakeAgentLLM(),
+                actor_id="test-admin",
+            )
+        )
+
+
+def test_source_onboarding_completed_draft_cannot_resume(
+    clean_agent_tables: Session,
+) -> None:
+    started = asyncio.run(
+        chat_source_onboarding(
+            clean_agent_tables,
+            START_ONBOARDING,
+            llm=FakeAgentLLM(),
+            actor_id="test-admin",
+        )
+    )
+    assert started.onboarding_draft is not None
+    source = DataSource(
+        code="completed-draft-source",
+        name="已生成数据源的草稿",
+        source_type="official_api",
+        credibility=80,
+        endpoint_url="https://official.example/events",
+        enabled=False,
+    )
+    clean_agent_tables.add(source)
+    clean_agent_tables.flush()
+    draft = clean_agent_tables.get(SourceOnboardingDraft, started.onboarding_draft.id)
+    assert draft is not None
+    draft.source_id = source.id
+    clean_agent_tables.flush()
+
+    with pytest.raises(AgentError, match="已生成正式数据源"):
+        asyncio.run(
+            chat_source_onboarding(
+                clean_agent_tables,
+                RESUME_ONBOARDING,
+                draft_id=draft.id,
+                llm=FakeAgentLLM(),
+                actor_id="test-admin",
             )
         )
 

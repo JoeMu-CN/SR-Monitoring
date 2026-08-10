@@ -67,6 +67,20 @@ class DataSourceRead(BaseModel):
     updated_at: datetime
 
 
+class DataSourceSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    name: str
+    source_type: str
+    adapter_status: str
+    access_status: Literal["ready", "throttled", "busy", "cooldown"] = "ready"
+    access_cooldown_until: datetime | None = None
+    enabled: bool
+    updated_at: datetime
+
+
 class DataSourceWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

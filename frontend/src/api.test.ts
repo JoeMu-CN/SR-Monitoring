@@ -1,5 +1,6 @@
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {
+  api,
   mapDataSource,
   mapRiskAlert,
   mapSupplier,
@@ -66,5 +67,23 @@ describe('API 数据映射', () => {
     ]);
 
     expect(result).toMatchObject({id: '2', status: 'normal', latency: '运行正常', itemCount: 2});
+  });
+});
+
+describe('API 会话请求', () => {
+  it('携带 Cookie 会话与 CSRF，并不发送浏览器伪造角色 Header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({detail: '已退出登录'})});
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-test'});
+
+    await api.auth.logout();
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(options.headers);
+    expect(options.credentials).toBe('include');
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-test');
+    expect(headers.has('X-User-Role')).toBe(false);
+    expect(headers.has('X-User-Id')).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

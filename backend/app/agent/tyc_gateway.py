@@ -12,11 +12,13 @@ import json
 from typing import Protocol
 
 import httpx
+from sqlalchemy.orm import Session
 
 DEFAULT_ENDPOINT = "https://mcp.tianyancha.com/v1"
 MCP_PROTOCOL_VERSION = "2025-06-18"
 SEARCH_COMPANIES_TOOL = "search_companies"
 MAX_CANDIDATES = 5
+TYC_SOURCE_CODE = "tianyancha"
 
 
 class TycGateway(Protocol):
@@ -252,12 +254,34 @@ def build_tyc_gateway(
     api_key: str | None = None,
     endpoint: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    session: Session | None = None,
 ) -> TycGateway:
-    """按配置构建网关：无 Key 时返回占位实现（不调用、不计费）。"""
-    from app.config import TYC_API_KEY, TYC_MCP_ENDPOINT
+    """按配置构建网关：无可用密钥时返回占位实现（不调用、不计费）。
 
-    key = api_key if api_key is not None else TYC_API_KEY
-    active_endpoint = endpoint or TYC_MCP_ENDPOINT
+    密钥优先级：显式 ``api_key`` 参数 > 数据源控制台加密存库（传入 session 时）>
+    非生产环境的 TYC_API_KEY 兼容回退。生产环境不读取环境变量密钥；启用/停用状态
+    由控制台 enabled 字段控制，本函数只负责取到可用密钥。
+    """
+    from sqlalchemy import select
+
+    from app import config
+    from app.signals.models import DataSource
+    from app.signals.secret_store import decrypt_secret
+
+    key = api_key
+    active_endpoint = endpoint or config.get_tyc_endpoint_fallback() or DEFAULT_ENDPOINT
+    if not key and session is not None:
+        source = session.scalar(
+            select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
+        )
+        if source is not None and source.api_key_encrypted:
+            db_key = decrypt_secret(source.api_key_encrypted)
+            if db_key:
+                key = db_key
+                if source.endpoint_url:
+                    active_endpoint = source.endpoint_url
+    if not key:
+        key = config.get_tyc_env_fallback()
     if not key:
         return UnconfiguredTycGateway()
     return McpTycGateway(key, endpoint=active_endpoint, transport=transport)
@@ -267,5 +291,5 @@ class UnconfiguredTycGateway:
     async def verify(self, company_name: str) -> dict[str, object]:
         return {
             "status": "not_configured",
-            "message": "天眼查网关未配置：请通过 TYC_API_KEY 注入运行密钥",
+            "message": "天眼查网关未配置：请在数据源控制台配置运行密钥",
         }

@@ -11,8 +11,14 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.interfaces import ORMOption
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.auth.models import User
+from app.auth.security import (
+    PERM_SUPPLIER_MANAGE,
+    PERM_SUPPLIER_VIEW,
+    require_permission,
+    verify_csrf,
+)
 from app.database import get_session
-from app.security import require_admin
 from app.suppliers.importer import (
     MAX_FILE_BYTES,
     WorkbookValidationError,
@@ -33,6 +39,9 @@ from app.suppliers.schemas import (
 
 router = APIRouter(prefix="/api/v1/suppliers", tags=["供应商"])
 SessionDependency = Annotated[Session, Depends(get_session)]
+SupplierView = Annotated[User, Depends(require_permission(PERM_SUPPLIER_VIEW))]
+SupplierManage = Annotated[User, Depends(require_permission(PERM_SUPPLIER_MANAGE))]
+CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 
 def supplier_options() -> tuple[ORMOption, ORMOption, ORMOption]:
@@ -105,7 +114,7 @@ def commit_or_conflict(session: Session) -> None:
 
 
 @router.get("/import-template")
-def download_import_template() -> StreamingResponse:
+def download_import_template(_user: SupplierManage) -> StreamingResponse:
     filename = quote("供应商导入模板.xlsx")
     return StreamingResponse(
         BytesIO(create_template()),
@@ -118,6 +127,8 @@ def download_import_template() -> StreamingResponse:
 async def import_suppliers(
     session: SessionDependency,
     file: Annotated[UploadFile, File(description="标准供应商 .xlsx 文件")],
+    _user: SupplierManage,
+    _csrf: CsrfGuard,
 ) -> ImportSummary:
     filename = file.filename or ""
     if not filename.lower().endswith(".xlsx"):
@@ -170,6 +181,7 @@ async def import_suppliers(
 @router.get("", response_model=SupplierListResponse)
 def list_suppliers(
     session: SessionDependency,
+    _user: SupplierView,
     q: Annotated[str | None, Query(max_length=100)] = None,
     country_code: Annotated[str | None, Query(min_length=2, max_length=2)] = None,
     enabled: bool | None = None,
@@ -218,7 +230,12 @@ def list_suppliers(
 
 
 @router.post("", response_model=SupplierRead, status_code=status.HTTP_201_CREATED)
-def create_supplier(payload: SupplierCreate, session: SessionDependency) -> Supplier:
+def create_supplier(
+    payload: SupplierCreate,
+    session: SessionDependency,
+    _user: SupplierManage,
+    _csrf: CsrfGuard,
+) -> Supplier:
     supplier = Supplier(supplier_code=payload.supplier_code)
     replace_supplier_details(session, supplier, payload)
     session.add(supplier)
@@ -227,13 +244,19 @@ def create_supplier(payload: SupplierCreate, session: SessionDependency) -> Supp
 
 
 @router.get("/{supplier_id}", response_model=SupplierRead)
-def get_supplier(supplier_id: int, session: SessionDependency) -> Supplier:
+def get_supplier(
+    supplier_id: int, session: SessionDependency, _user: SupplierView
+) -> Supplier:
     return get_supplier_or_404(session, supplier_id)
 
 
 @router.put("/{supplier_id}", response_model=SupplierRead)
 def update_supplier(
-    supplier_id: int, payload: SupplierUpdate, session: SessionDependency
+    supplier_id: int,
+    payload: SupplierUpdate,
+    session: SessionDependency,
+    _user: SupplierManage,
+    _csrf: CsrfGuard,
 ) -> Supplier:
     supplier = get_supplier_or_404(session, supplier_id)
     replace_supplier_details(session, supplier, payload)
@@ -246,7 +269,8 @@ def update_supplier_enabled(
     supplier_id: int,
     payload: EnabledUpdate,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
+    _user: SupplierManage,
+    _csrf: CsrfGuard,
 ) -> Supplier:
     supplier = get_supplier_or_404(session, supplier_id)
     supplier.enabled = payload.enabled

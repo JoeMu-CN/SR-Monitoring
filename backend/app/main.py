@@ -8,7 +8,10 @@ from sqlalchemy import text
 from app.agent.router import router as agent_router
 from app.agent.router import source_agent_router
 from app.ai.router import router as ai_router
-from app.database import engine
+from app.auth.router import router as auth_router
+from app.auth.security import ensure_bootstrap_admin
+from app.config import validate_auth_config
+from app.database import SessionLocal, engine
 from app.risks.router import router as risks_router
 from app.risks.workbench_router import router as workbench_router
 from app.signals.router import router as signals_router
@@ -27,6 +30,15 @@ app.include_router(risks_router)
 app.include_router(agent_router)
 app.include_router(source_agent_router)
 app.include_router(workbench_router)
+app.include_router(auth_router)
+
+
+@app.on_event("startup")
+def _bootstrap_admin_on_startup() -> None:
+    # 仅当库内无用户且配置了引导变量时创建首位 platform_admin；否则为无操作。
+    validate_auth_config()
+    with SessionLocal() as session:
+        ensure_bootstrap_admin(session)
 
 
 def check_database() -> None:

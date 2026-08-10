@@ -1,0 +1,49 @@
+services:
+  postgres:
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    networks:
+      - internal
+
+  app:
+    image: ${APP_IMAGE:-supplierriskmonitoring-app}
+    env_file: !override
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      APP_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set}
+      DATA_SOURCE_SECRET_KEY: ${DATA_SOURCE_SECRET_KEY:?DATA_SOURCE_SECRET_KEY must be set}
+      SESSION_SECURE_COOKIE: "true"
+      ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN must be set to an https origin}
+    ports: !reset []
+    expose:
+      - "8080"
+    networks:
+      - internal
+
+  scheduler:
+    image: ${APP_IMAGE:-supplierriskmonitoring-app}
+    env_file: !override
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      APP_ENV: production
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_DIR:-./deploy/certs}:/etc/nginx/certs:ro
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge

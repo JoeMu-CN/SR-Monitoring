@@ -2,12 +2,13 @@ import {useCallback, useEffect, useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {
   api,
+  ApiError,
   mapDataSource,
   mapDimension,
   mapRiskAlert,
   mapSupplier,
-  setApiRole,
   updateDimensionConfig,
+  type AuthMeResponse,
   type AgentStatusRead,
   type SystemHealth,
 } from './api';
@@ -27,10 +28,14 @@ import {SettingsModal} from './components/SettingsModal';
 import {Sidebar} from './components/Sidebar';
 import {SuppliersView} from './components/SuppliersView';
 import {SystemSplashScreen} from './components/SystemSplashScreen';
+import {LoginView} from './components/LoginView';
 
 const riskRank: Record<RiskLevel, number> = {P1: 4, P2: 3, P3: 2, P4: 1};
 
 export function App() {
+  const [auth, setAuth] = useState<AuthMeResponse | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [riskItems, setRiskItems] = useState<RiskItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -48,15 +53,26 @@ export function App() {
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [consoleRole, setConsoleRole] = useState<'viewer' | 'admin'>('viewer');
+  const canManage = auth?.permissions.includes('source_manage') ?? false;
+  const consoleRole: 'viewer' | 'admin' = canManage ? 'admin' : 'viewer';
+  const canUseRiskAssistant = auth?.permissions.includes('risk_query_use') ?? false;
 
-  useEffect(() => { setApiRole(consoleRole); }, [consoleRole]);
+  useEffect(() => {
+    api.auth.me()
+      .then(setAuth)
+      .catch((caught) => {
+        if (!(caught instanceof ApiError && caught.status === 401)) {
+          setAuthError(caught instanceof Error ? caught.message : '登录状态检查失败');
+        }
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
 
   const loadData = useCallback(async () => {
     setError(null);
     try {
       const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
-        api.alerts(), api.suppliers(), api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
+        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
       ]);
       const mappedRisks = alertsResponse.items.map(mapRiskAlert);
       const strongestRisk = new Map<number, {level: RiskLevel; score: number}>();
@@ -76,13 +92,39 @@ export function App() {
       setHealth(healthResponse);
       setAgentStatus(agentResponse);
     } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) {
+        setAuth(null);
+        setAuthError('登录已失效，请重新登录');
+        return;
+      }
       setError(caught instanceof Error ? caught.message : '页面数据加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canManage]);
 
-  useEffect(() => { void loadData(); }, [loadData]);
+  useEffect(() => { if (auth) void loadData(); }, [auth, loadData]);
+
+  const handleLogin = async (username: string, password: string) => {
+    setAuthError(null);
+    try {
+      await api.auth.login(username, password);
+      setAuth(await api.auth.me());
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : '登录失败');
+      throw caught;
+    }
+  };
+
+  const handleLogout = async () => {
+    try { await api.auth.logout(); } catch { /* 会话已失效时仍清理前端状态 */ }
+    setAuth(null);
+    setAuthError(null);
+    setRiskItems([]);
+    setSuppliers([]);
+    setDataSources([]);
+    setDimensions([]);
+  };
 
   const completeSplash = useCallback(() => setSplashFinished(true), []);
 
@@ -92,6 +134,10 @@ export function App() {
   );
 
   const handleAskAssistant = (query: string) => {
+    if (!canUseRiskAssistant) {
+      setError('当前账号没有使用风险查询助手的权限');
+      return;
+    }
     setSelectedRisk(null);
     setPendingAssistantQuery(query);
     setActiveTab('risk-assistant');
@@ -179,12 +225,12 @@ export function App() {
     if (results.some((result) => result.status === 'rejected')) {
       setError('部分数据源采集失败，请查看数据源运行状态。');
     }
-    const [sourcesResponse, runsResponse] = await Promise.all([api.sources(), api.collectionRuns()]);
+    const [sourcesResponse, runsResponse] = await Promise.all([canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
   };
 
   const refreshSources = async () => {
-    const [sourcesResponse, runsResponse] = await Promise.all([api.sources(), api.collectionRuns()]);
+    const [sourcesResponse, runsResponse] = await Promise.all([canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
   };
 
@@ -203,6 +249,11 @@ export function App() {
     await refreshSources();
   };
 
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-[#f7f9ff] dark:bg-[#101d28] text-sm text-slate-500">正在验证登录状态…</div>;
+  }
+  if (!auth) return <LoginView onSubmit={handleLogin} error={authError} />;
+
   return (
     <div className="min-h-screen bg-[#f7f9ff] dark:bg-[#101d28] text-[#101d28] dark:text-slate-100 flex flex-col font-sans antialiased">
       <Sidebar
@@ -211,6 +262,7 @@ export function App() {
         onOpenExportModal={() => { setReportRisk(null); setIsExportModalOpen(true); }}
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         p1RiskCount={p1RiskCount}
+        canUseRiskAssistant={canUseRiskAssistant}
       />
 
       <div className="lg:pl-[240px] flex-1 flex flex-col min-w-0 transition-all">
@@ -221,6 +273,8 @@ export function App() {
           health={health}
           agentStatus={agentStatus}
           onSearch={handleAskAssistant}
+          user={auth.user}
+          onLogout={() => void handleLogout()}
         />
 
         <main className="p-4 pb-24 sm:p-6 sm:pb-24 lg:p-8 max-w-[1440px] w-full mx-auto flex-1">
@@ -257,7 +311,7 @@ export function App() {
                 )}
                 {activeTab === 'source-agent' && (
                   <SourceOnboardingAgentView agentStatus={agentStatus} role={consoleRole}
-                    onRoleChange={setConsoleRole} initialDraftId={sourceAgentDraftId} />
+                    initialDraftId={sourceAgentDraftId} />
                 )}
                 {activeTab === 'suppliers' && (
                   <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
@@ -266,14 +320,14 @@ export function App() {
                 )}
                 {activeTab === 'data-sources' && (
                   <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync}
-                    role={consoleRole} onRoleChange={setConsoleRole}
+                    role={consoleRole}
                     onCreateSource={handleCreateSource} onUpdateSource={handleUpdateSource}
                     onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources}
                     onOpenSourceAgent={(draftId) => { setSourceAgentDraftId(draftId ?? null); setActiveTab('source-agent'); }} />
                 )}
                 {activeTab === 'rules' && (
                   <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}
-                    onUpdateDimension={handleUpdateDimension} role={consoleRole} onRoleChange={setConsoleRole} />
+                    onUpdateDimension={handleUpdateDimension} role={consoleRole} />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -281,7 +335,7 @@ export function App() {
         </main>
       </div>
 
-      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} />
+      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} />
       <RiskDetailModal risk={selectedRisk} onClose={() => setSelectedRisk(null)}
         onExportReport={(risk) => { setReportRisk(risk); setSelectedRisk(null); setIsExportModalOpen(true); }} onAskAssistant={handleAskAssistant} />
       <ExportReportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} selectedRisk={reportRisk} riskItems={riskItems} />

@@ -8,6 +8,9 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
+from app.auth.models import User
+from app.auth.security import create_session, csrf_token_for_session
+from app.config import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.database import engine, get_session
 from app.main import app
 from app.risks.models import (
@@ -54,15 +57,58 @@ def db_session() -> Generator[Session]:
         connection.close()
 
 
+def authenticate_client(
+    test_client: TestClient,
+    db_session: Session,
+    *,
+    role: str = "platform_admin",
+    username: str = "test-platform-admin",
+) -> User:
+    user = User(
+        username=username,
+        password_hash="not-used-by-test-session",
+        display_name=username,
+        role=role,
+        status="active",
+    )
+    db_session.add(user)
+    db_session.commit()
+    token = create_session(db_session, user=user)
+    csrf_token = csrf_token_for_session(token)
+    test_client.cookies.set(SESSION_COOKIE_NAME, token)
+    test_client.cookies.set(CSRF_COOKIE_NAME, csrf_token)
+    test_client.headers["Origin"] = "http://testserver"
+    test_client.headers["X-CSRF-Token"] = csrf_token
+    return user
+
+
 @pytest.fixture
-def client(db_session: Session) -> Generator[TestClient]:
+def client(
+    db_session: Session, request: pytest.FixtureRequest
+) -> Generator[TestClient]:
     def override_session() -> Generator[Session]:
         yield db_session
 
     app.dependency_overrides[get_session] = override_session
     with TestClient(app) as test_client:
+        if request.path.name != "test_auth.py":
+            authenticate_client(test_client, db_session)
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def auth_as(
+    client: TestClient, db_session: Session
+) -> Callable[[str, str], User]:
+    def authenticate(role: str, username: str) -> User:
+        client.cookies.clear()
+        client.headers.pop("X-CSRF-Token", None)
+        return authenticate_client(
+            client, db_session, role=role, username=username
+        )
+
+    return authenticate
 
 
 @pytest.fixture

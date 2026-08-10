@@ -239,17 +239,30 @@ def test_admin_tools_are_hidden_without_current_message_confirmation() -> None:
     assert {"publish_source_adapter", "run_source_now"} <= confirmed_names
 
 
-def test_source_agent_endpoint_requires_admin(client: TestClient) -> None:
-    response = client.post(
+def test_source_agent_endpoint_requires_permission(client: TestClient, auth_as) -> None:
+    auth_as("viewer", "source-agent-viewer")
+    denied = client.post(
         "/api/v1/source-agent/chat",
         json={"question": "接入一个数据源", "session_id": None},
     )
-    assert response.status_code == 403
+    assert denied.status_code == 403
+
+    auth_as("risk_admin", "source-agent-admin")
+    allowed = client.post(
+        "/api/v1/source-agent/chat",
+        json={"question": "接入一个数据源", "session_id": None},
+    )
+    assert allowed.status_code == 200
 
 
-def test_source_agent_draft_box_requires_admin(client: TestClient) -> None:
-    response = client.get("/api/v1/source-agent/drafts")
-    assert response.status_code == 403
+def test_source_agent_draft_box_requires_permission(client: TestClient, auth_as) -> None:
+    auth_as("viewer", "draft-box-viewer")
+    denied = client.get("/api/v1/source-agent/drafts")
+    assert denied.status_code == 403
+
+    auth_as("risk_admin", "draft-box-admin")
+    allowed = client.get("/api/v1/source-agent/drafts")
+    assert allowed.status_code == 200
 
 
 def test_create_adapter_draft_links_onboarding_draft(db_session) -> None:
@@ -287,7 +300,9 @@ def test_create_adapter_draft_links_onboarding_draft(db_session) -> None:
     assert onboarding.current_step == "completed"
 
 
-def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeypatch) -> None:
+def test_source_draft_preview_publish_and_enable_api(
+    client, db_session, monkeypatch, auth_as
+) -> None:
     payload = {
         "code": "declarative-test",
         "name": "声明式测试源",
@@ -302,6 +317,7 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
         "adapter_config": _spec().model_dump(mode="json"),
         "enabled": False,
     }
+    auth_as("viewer", "declarative-viewer")
     denied = client.post(
         "/api/v1/sources/preview",
         json={
@@ -311,6 +327,7 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
     )
     assert denied.status_code == 403
 
+    auth_as("risk_admin", "declarative-risk-admin")
     created = client.post(
         "/api/v1/sources",
         json=payload,
@@ -372,12 +389,14 @@ def test_source_draft_preview_publish_and_enable_api(client, db_session, monkeyp
     assert enabled.status_code == 200
     assert enabled.json()["enabled"] is True
 
+    auth_as("viewer", "declarative-viewer-2")
     denied_disable = client.put(
         f"/api/v1/sources/{source_id}",
         json={"enabled": False},
     )
     assert denied_disable.status_code == 403
 
+    auth_as("risk_admin", "declarative-risk-admin-2")
     disabled = client.put(
         f"/api/v1/sources/{source_id}",
         json={"enabled": False},
@@ -410,8 +429,11 @@ def test_run_source_now_rejects_disabled_source(db_session) -> None:
     assert "尚未启用" in str(result["message"])
 
 
-def test_source_agent_delete_draft_flow(client, db_session) -> None:
-    agent_session = AgentSession(agent_kind="source_onboarding")
+def test_source_agent_delete_draft_flow(client, db_session, auth_as) -> None:
+    owner = auth_as("risk_admin", "draft-owner")
+    agent_session = AgentSession(
+        agent_kind="source_onboarding", owner_user_id=owner.id
+    )
     db_session.add(agent_session)
     db_session.flush()
     draft = SourceOnboardingDraft(
@@ -424,9 +446,16 @@ def test_source_agent_delete_draft_flow(client, db_session) -> None:
     db_session.flush()
     draft_id = draft.id
 
-    denied = client.delete(f"/api/v1/source-agent/drafts/{draft_id}")
+    auth_as("viewer", "draft-viewer")
+    denied = client.delete(
+        f"/api/v1/source-agent/drafts/{draft_id}",
+        headers={"X-User-Role": "admin"},
+    )
     assert denied.status_code == 403
 
+    owner_2 = auth_as("risk_admin", "draft-owner-2")
+    agent_session.owner_user_id = owner_2.id
+    db_session.commit()
     box = client.get("/api/v1/source-agent/drafts", headers={"X-User-Role": "admin"})
     assert box.status_code == 200
     assert any(
@@ -446,7 +475,8 @@ def test_source_agent_delete_draft_flow(client, db_session) -> None:
     assert missing.status_code == 404
 
 
-def test_source_agent_delete_completed_draft_rejected(client, db_session) -> None:
+def test_source_agent_delete_completed_draft_rejected(client, db_session, auth_as) -> None:
+    owner = auth_as("risk_admin", "completed-draft-owner")
     source = DataSource(
         code="linked-source",
         name="已关联数据源的草稿",
@@ -459,7 +489,13 @@ def test_source_agent_delete_completed_draft_rejected(client, db_session) -> Non
     )
     db_session.add(source)
     db_session.flush()
+    agent_session = AgentSession(
+        agent_kind="source_onboarding", owner_user_id=owner.id
+    )
+    db_session.add(agent_session)
+    db_session.flush()
     draft = SourceOnboardingDraft(
+        agent_session_id=agent_session.id,
         actor_id="test-admin",
         current_step="completed",
         answers={"source_url": "https://official.example/events"},

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -11,8 +11,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import config
+from app.auth.models import User
+from app.auth.security import (
+    PERM_BUSINESS_AUDIT_VIEW,
+    PERM_COLLECTION_TRIGGER,
+    PERM_SIGNAL_IMPORT,
+    PERM_SOURCE_MANAGE,
+    PERM_SOURCE_STATUS_VIEW,
+    require_permission,
+    verify_csrf,
+)
 from app.database import get_session
-from app.security import require_admin
 from app.signals.adapter import (
     MAX_FILE_BYTES,
     ManualJsonAdapter,
@@ -39,10 +48,12 @@ from app.signals.schemas import (
     DataSourceAuditLogListResponse,
     DataSourceAuditLogRead,
     DataSourceRead,
+    DataSourceSummaryRead,
     DataSourceUpdate,
     DataSourceWrite,
     SignalImportSummary,
 )
+from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
 from app.signals.sources import (
     NmcWeatherAdapter,
@@ -53,6 +64,12 @@ from app.signals.sources import (
 
 router = APIRouter(prefix="/api/v1", tags=["风险信号"])
 SessionDependency = Annotated[Session, Depends(get_session)]
+SourceStatusView = Annotated[User, Depends(require_permission(PERM_SOURCE_STATUS_VIEW))]
+SourceManage = Annotated[User, Depends(require_permission(PERM_SOURCE_MANAGE))]
+CollectionTrigger = Annotated[User, Depends(require_permission(PERM_COLLECTION_TRIGGER))]
+SignalImport = Annotated[User, Depends(require_permission(PERM_SIGNAL_IMPORT))]
+BusinessAuditView = Annotated[User, Depends(require_permission(PERM_BUSINESS_AUDIT_VIEW))]
+CsrfGuard = Annotated[None, Depends(verify_csrf)]
 adapter: SourceAdapter = ManualJsonAdapter()
 
 
@@ -73,7 +90,15 @@ def _api_key_fields(api_key: str | None) -> dict[str, str | None]:
     return {
         "api_key_hash": hashlib.sha256(value.encode("utf-8")).hexdigest(),
         "api_key_last4": value[-4:],
+        "api_key_encrypted": encrypt_secret(value),
     }
+
+
+def _source_has_secret(source: DataSource, pending: dict[str, object]) -> bool:
+    """数据源是否已有可用运行密钥（控制台密文或非生产环境兼容回退）。"""
+    if pending.get("api_key_encrypted") or source.api_key_encrypted:
+        return True
+    return source.code == "tianyancha" and bool(config.get_tyc_env_fallback())
 
 
 def _sanitize_login_config(config: dict[str, object] | None) -> dict[str, object]:
@@ -100,14 +125,14 @@ def _audit(
     source_id: int | None,
     action: str,
     changes: dict[str, object],
-    actor_id: str | None,
+    actor: User,
 ) -> None:
     session.add(
         DataSourceAuditLog(
             source_id=source_id,
             action=action,
-            actor_role="admin",
-            actor_id=actor_id,
+            actor_role=actor.role,
+            actor_id=str(actor.id),
             changes=changes,
         )
     )
@@ -145,14 +170,29 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
     elif effective_endpoint != source.endpoint_url:
         payload = payload.model_copy(update={"endpoint_url": effective_endpoint})
     if source.code == "tianyancha":
-        configured = bool(config.TYC_API_KEY)
+        # 运行密钥优先取控制台加密存库；环境变量仅在非生产环境兼容回退
+        db_configured = (
+            source.api_key_encrypted is not None
+            and decrypt_secret(source.api_key_encrypted) is not None
+    )
+        env_configured = bool(config.get_tyc_env_fallback())
         return payload.model_copy(
             update={
-                "api_key_configured": configured,
-                "api_key_hint": "环境变量已配置" if configured else None,
+                "api_key_configured": db_configured or env_configured,
+                "api_key_hint": (
+                    payload.api_key_hint
+                    if db_configured
+                    else "环境变量已配置" if env_configured else None
+                ),
             }
         )
     return payload
+
+
+def _serialize_source_summary(
+    source: DataSource, session: Session | None = None
+) -> DataSourceSummaryRead:
+    return DataSourceSummaryRead.model_validate(_serialize_source(source, session))
 
 
 def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
@@ -217,8 +257,20 @@ def fail_run(session: Session, run_id: int, message: str) -> None:
         session.commit()
 
 
-@router.get("/sources", response_model=list[DataSourceRead])
-def list_sources(session: SessionDependency) -> list[DataSourceRead]:
+@router.get("/sources", response_model=list[DataSourceSummaryRead])
+def list_sources(
+    session: SessionDependency, _user: SourceStatusView
+) -> list[DataSourceSummaryRead]:
+    return [
+        _serialize_source_summary(source, session)
+        for source in session.scalars(select(DataSource).order_by(DataSource.id))
+    ]
+
+
+@router.get("/sources/admin", response_model=list[DataSourceRead])
+def list_sources_admin(
+    session: SessionDependency, _user: SourceManage
+) -> list[DataSourceRead]:
     return [
         _serialize_source(source, session)
         for source in session.scalars(select(DataSource).order_by(DataSource.id))
@@ -228,6 +280,7 @@ def list_sources(session: SessionDependency) -> list[DataSourceRead]:
 @router.get("/sources/audit-logs", response_model=DataSourceAuditLogListResponse)
 def list_source_audit_logs(
     session: SessionDependency,
+    _user: BusinessAuditView,
     source_id: int | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -257,8 +310,8 @@ def list_source_audit_logs(
 def create_source(
     payload: DataSourceWrite,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
-    actor_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user: SourceManage,
+    _csrf: CsrfGuard,
 ) -> DataSourceRead:
     _validate_schedule(payload.schedule)
     spec = _adapter_spec(payload.adapter_config)
@@ -295,7 +348,7 @@ def create_source(
         session,
         source_id=source.id,
         action="created",
-        actor_id=actor_id,
+        actor=user,
         changes={"code": source.code, "name": source.name, "source_type": source.source_type},
     )
     session.commit()
@@ -308,8 +361,8 @@ def update_source(
     source_id: int,
     payload: DataSourceUpdate,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
-    actor_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user: SourceManage,
+    _csrf: CsrfGuard,
 ) -> DataSourceRead:
     source = session.get(DataSource, source_id)
     if source is None:
@@ -330,11 +383,22 @@ def update_source(
         update_values.pop("adapter_config", None)
     requested_enabled = update_values.get("enabled")
     resulting_status = str(update_values.get("adapter_status") or source.adapter_status)
-    if requested_enabled is True and resulting_status not in {"builtin", "published"}:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="数据源适配器尚未发布，不能启用",
-        )
+    is_external_tool = (
+        str(update_values.get("source_type") or source.source_type) == "external_tool"
+    )
+    if requested_enabled is True:
+        if is_external_tool:
+            # 按需外部核查工具：不要求适配器发布，但必须已有运行密钥
+            if not _source_has_secret(source, update_values):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="未配置运行密钥，不能启用",
+                )
+        elif resulting_status not in {"builtin", "published"}:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="数据源适配器尚未发布，不能启用",
+            )
     if "login_config" in update_values:
         update_values["login_config"] = _sanitize_login_config(update_values["login_config"])
     if "endpoint_url" in update_values and update_values["endpoint_url"] is not None:
@@ -343,19 +407,24 @@ def update_source(
         update_values.update(
             _api_key_fields(payload.api_key)
             if payload.api_key
-            else {"api_key_hash": None, "api_key_last4": None}
+            else {
+                "api_key_hash": None,
+                "api_key_last4": None,
+                "api_key_encrypted": None,
+            }
         )
         changes["api_key"] = "updated" if payload.api_key else "cleared"
     for key, value in update_values.items():
         if key == "api_key":
             continue
         if getattr(source, key) != value:
-            if key != "adapter_config":
+            # adapter_config 以标记形式记录；密文只落库不进审计日志
+            if key not in {"adapter_config", "api_key_encrypted"}:
                 changes[key] = value
             setattr(source, key, value)
     if not changes:
         return _serialize_source(source, session)
-    _audit(session, source_id=source.id, action="updated", actor_id=actor_id, changes=changes)
+    _audit(session, source_id=source.id, action="updated", actor=user, changes=changes)
     session.commit()
     session.refresh(source)
     return _serialize_source(source, session)
@@ -364,7 +433,8 @@ def update_source(
 @router.post("/sources/preview", response_model=AdapterPreviewResponse)
 async def preview_source_adapter(
     payload: AdapterPreviewRequest,
-    _admin: Annotated[str, Depends(require_admin)],
+    _user: SourceManage,
+    _csrf: CsrfGuard,
 ) -> AdapterPreviewResponse:
     spec = _adapter_spec(payload.adapter_config)
     assert spec is not None
@@ -388,8 +458,8 @@ async def preview_source_adapter(
 async def publish_source_adapter(
     source_id: int,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
-    actor_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user: SourceManage,
+    _csrf: CsrfGuard,
 ) -> DataSourceRead:
     source = session.get(DataSource, source_id)
     if source is None:
@@ -413,7 +483,7 @@ async def publish_source_adapter(
             session,
             source_id=source.id,
             action=("adapter_access_blocked" if exc.error_kind else "adapter_validation_failed"),
-            actor_id=actor_id,
+            actor=user,
             changes={"message": str(exc)[:500], "error_kind": exc.error_kind},
         )
         session.commit()
@@ -429,7 +499,7 @@ async def publish_source_adapter(
         session,
         source_id=source.id,
         action="adapter_published",
-        actor_id=actor_id,
+        actor=user,
         changes={"adapter_version": source.adapter_version, "enabled": False},
     )
     session.commit()
@@ -441,8 +511,8 @@ async def publish_source_adapter(
 def delete_source(
     source_id: int,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
-    actor_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    user: SourceManage,
+    _csrf: CsrfGuard,
 ) -> dict[str, object]:
     source = session.get(DataSource, source_id)
     if source is None:
@@ -467,7 +537,7 @@ def delete_source(
         session,
         source_id=source.id,
         action="deleted",
-        actor_id=actor_id,
+        actor=user,
         changes={"code": code},
     )
     session.delete(source)
@@ -478,6 +548,7 @@ def delete_source(
 @router.get("/collection-runs", response_model=CollectionRunListResponse)
 def list_collection_runs(
     session: SessionDependency,
+    _user: SourceStatusView,
     source_id: int | None = None,
     run_status: Annotated[str | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -518,6 +589,8 @@ def list_collection_runs(
 async def import_signals(
     session: SessionDependency,
     file: Annotated[UploadFile, File(description="标准 UTF-8 JSON 风险信号文件")],
+    _user: SignalImport,
+    _csrf: CsrfGuard,
 ) -> SignalImportSummary:
     source = get_manual_source(session)
     run = start_run(session, source.id)
@@ -584,7 +657,8 @@ async def import_signals(
 def run_source_collection(
     source_id: int,
     session: SessionDependency,
-    _admin: Annotated[str, Depends(require_admin)],
+    _user: CollectionTrigger,
+    _csrf: CsrfGuard,
 ) -> CollectionRun:
     """手动触发一次数据源采集（仅支持 HTTP 拉取式数据源）。"""
     source = session.get(DataSource, source_id)

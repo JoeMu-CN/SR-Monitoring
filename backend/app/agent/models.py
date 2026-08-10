@@ -39,6 +39,10 @@ class AgentSession(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # 会话归属用户；为按用户隔离做准备（Phase 2 落地查询过滤）
+    owner_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     messages: Mapped[list["AgentMessage"]] = relationship(
         back_populates="session", cascade="all, delete-orphan", passive_deletes=True

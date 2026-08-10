@@ -31,18 +31,24 @@ _SENSITIVE_TEXT = re.compile(
 )
 
 
+class AgentSessionAccessError(AgentError):
+    """会话或草稿不存在，或不属于当前用户。"""
+
+
 async def chat(
     session: Session,
     question: str,
     *,
     session_id: int | None = None,
     llm: AgentLLM | None = None,
+    owner_user_id: int,
 ) -> ChatResponse:
     """风险查询 Agent：永久只读，不加载数据源写入工具。"""
     return await _chat(
         session,
         question,
         session_id=session_id,
+        owner_user_id=owner_user_id,
         llm=llm,
         agent_kind=RISK_QUERY,
         tools=build_tools(),
@@ -57,14 +63,14 @@ async def chat_source_onboarding(
     session_id: int | None = None,
     draft_id: int | None = None,
     llm: AgentLLM | None = None,
-    actor_id: str | None = None,
+    owner_user_id: int,
 ) -> ChatResponse:
     """数据源接入 Agent：仅加载接入工具，发布和采集需要当前消息确认。"""
     active_session, draft = _load_or_create_onboarding_draft(
         session,
         session_id=session_id,
         draft_id=draft_id,
-        actor_id=actor_id,
+        owner_user_id=owner_user_id,
     )
     if question.strip() == START_ONBOARDING and not draft.answers:
         return _record_onboarding_prompt(
@@ -93,7 +99,7 @@ async def chat_source_onboarding(
     tools = cast(
         list[Tool],
         build_source_onboarding_tools(
-            actor_id=actor_id,
+            actor_id=str(owner_user_id),
             allow_publish="确认发布" in question,
             allow_run="立即采集" in question,
             onboarding_draft_id=draft.id,
@@ -104,6 +110,7 @@ async def chat_source_onboarding(
         session,
         question,
         session_id=active_session.id,
+        owner_user_id=owner_user_id,
         llm=llm,
         agent_kind=SOURCE_ONBOARDING,
         tools=tools,
@@ -124,13 +131,16 @@ async def _chat(
     question: str,
     *,
     session_id: int | None,
+    owner_user_id: int,
     llm: AgentLLM | None,
     agent_kind: str,
     tools: list[Tool],
     system_prompt: str,
     persisted_question: str | None = None,
 ) -> ChatResponse:
-    active_session = _load_or_create_session(session, session_id, agent_kind)
+    active_session = _load_or_create_session(
+        session, session_id, agent_kind, owner_user_id
+    )
     session.add(
         AgentMessage(
             session_id=active_session.id,
@@ -176,15 +186,21 @@ async def _chat(
 
 
 def _load_or_create_session(
-    session: Session, session_id: int | None, agent_kind: str
+    session: Session, session_id: int | None, agent_kind: str, owner_user_id: int
 ) -> AgentSession:
     if session_id is not None:
-        existing = session.get(AgentSession, session_id)
-        if existing is not None:
-            if existing.agent_kind != agent_kind:
-                raise AgentError("会话属于另一 Agent，不能跨类型复用")
-            return existing
-    created = AgentSession(agent_kind=agent_kind)
+        existing = session.scalar(
+            select(AgentSession).where(
+                AgentSession.id == session_id,
+                AgentSession.owner_user_id == owner_user_id,
+            )
+        )
+        if existing is None:
+            raise AgentSessionAccessError("会话不存在或无权访问")
+        if existing.agent_kind != agent_kind:
+            raise AgentError("会话属于另一 Agent，不能跨类型复用")
+        return existing
+    created = AgentSession(agent_kind=agent_kind, owner_user_id=owner_user_id)
     session.add(created)
     session.commit()
     session.refresh(created)
@@ -209,24 +225,36 @@ def _load_or_create_onboarding_draft(
     *,
     session_id: int | None,
     draft_id: int | None,
-    actor_id: str | None,
+    owner_user_id: int,
 ) -> tuple[AgentSession, SourceOnboardingDraft]:
     if draft_id is not None:
-        draft = session.get(SourceOnboardingDraft, draft_id)
+        draft = session.scalar(
+            select(SourceOnboardingDraft)
+            .join(
+                AgentSession,
+                SourceOnboardingDraft.agent_session_id == AgentSession.id,
+            )
+            .where(
+                SourceOnboardingDraft.id == draft_id,
+                AgentSession.owner_user_id == owner_user_id,
+            )
+        )
         if draft is None:
-            raise AgentError("数据源接入草稿不存在")
+            raise AgentSessionAccessError("数据源接入草稿不存在或无权访问")
         if draft.source_id is not None:
             raise AgentError("该草稿已生成正式数据源，请在数据源管理页继续操作")
-        if draft.agent_session_id is None:
-            active_session = _load_or_create_session(session, session_id, SOURCE_ONBOARDING)
-            draft.agent_session_id = active_session.id
-            session.commit()
-            return active_session, draft
         if session_id is not None and session_id != draft.agent_session_id:
             raise AgentError("草稿与会话不匹配")
-        return _load_or_create_session(session, draft.agent_session_id, SOURCE_ONBOARDING), draft
+        return (
+            _load_or_create_session(
+                session, draft.agent_session_id, SOURCE_ONBOARDING, owner_user_id
+            ),
+            draft,
+        )
 
-    active_session = _load_or_create_session(session, session_id, SOURCE_ONBOARDING)
+    active_session = _load_or_create_session(
+        session, session_id, SOURCE_ONBOARDING, owner_user_id
+    )
     draft = session.scalar(
         select(SourceOnboardingDraft).where(
             SourceOnboardingDraft.agent_session_id == active_session.id
@@ -235,7 +263,7 @@ def _load_or_create_onboarding_draft(
     if draft is None:
         draft = SourceOnboardingDraft(
             agent_session_id=active_session.id,
-            actor_id=actor_id,
+            actor_id=str(owner_user_id),
             current_step="source_url",
             answers={},
         )

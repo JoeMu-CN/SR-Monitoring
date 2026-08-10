@@ -12,6 +12,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.schemas import SignalAnalysisResult
+from app.auth.models import User
+from app.auth.security import (
+    PERM_RULE_MANAGE,
+    PERM_RULE_SUMMARY_VIEW,
+    require_permission,
+    verify_csrf,
+)
 from app.database import get_session
 from app.risks.engine.config import ALL_COLUMNS
 from app.risks.engine.engine import evaluate_event
@@ -23,11 +30,12 @@ from app.risks.workbench_schemas import (
     DimensionUpdate,
     SandboxRequest,
 )
-from app.security import require_admin
 
 router = APIRouter(prefix="/api/v1/rule-engine", tags=["规则引擎工作台"])
 SessionDependency = Annotated[Session, Depends(get_session)]
-AdminDependency = Annotated[str, Depends(require_admin)]
+RuleSummaryView = Annotated[User, Depends(require_permission(PERM_RULE_SUMMARY_VIEW))]
+RuleManage = Annotated[User, Depends(require_permission(PERM_RULE_MANAGE))]
+CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 _EVENT_TYPE_LABELS = {
     "weather": "天气",
@@ -130,13 +138,17 @@ def _load_state(
 
 
 @router.get("/dimensions", response_model=list[DimensionRead])
-def list_dimensions(session: SessionDependency) -> list[DimensionRead]:
+def list_dimensions(
+    session: SessionDependency, _user: RuleSummaryView
+) -> list[DimensionRead]:
     dimensions, override_keys, counts = _load_state(session)
     return [_to_read(dim, override_keys, counts) for dim in dimensions]
 
 
 @router.get("/dimensions/{key}", response_model=DimensionRead)
-def get_dimension(key: str, session: SessionDependency) -> DimensionRead:
+def get_dimension(
+    key: str, session: SessionDependency, _user: RuleSummaryView
+) -> DimensionRead:
     dimensions, override_keys, counts = _load_state(session)
     dim = next((d for d in dimensions if d.key == key), None)
     if dim is None:
@@ -146,7 +158,11 @@ def get_dimension(key: str, session: SessionDependency) -> DimensionRead:
 
 @router.put("/dimensions/{key}", response_model=DimensionRead)
 def update_dimension(
-    key: str, payload: DimensionUpdate, session: SessionDependency, _admin: AdminDependency
+    key: str,
+    payload: DimensionUpdate,
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
 ) -> DimensionRead:
     dimensions, _, _ = _load_state(session)
     base = next((d for d in dimensions if d.key == key), None)
@@ -187,13 +203,19 @@ def update_dimension(
 
 @router.post("/dimensions/{key}/toggle", response_model=DimensionRead)
 def toggle_dimension(
-    key: str, payload: DimensionToggle, session: SessionDependency, _admin: AdminDependency
+    key: str,
+    payload: DimensionToggle,
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
 ) -> DimensionRead:
-    return update_dimension(key, DimensionUpdate(enabled=payload.enabled), session, _admin)
+    return update_dimension(
+        key, DimensionUpdate(enabled=payload.enabled), session, _user, _csrf
+    )
 
 
 @router.get("/match-columns")
-def list_match_columns() -> dict[str, object]:
+def list_match_columns(_user: RuleSummaryView) -> dict[str, object]:
     """匹配柱与事件类型选项，供工作台表单渲染。"""
     return {
         "match_columns": list(ALL_COLUMNS),
@@ -209,7 +231,12 @@ def list_match_columns() -> dict[str, object]:
 
 
 @router.post("/test")
-def sandbox_test(payload: SandboxRequest, session: SessionDependency) -> dict[str, object]:
+def sandbox_test(
+    payload: SandboxRequest,
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
+) -> dict[str, object]:
     """沙箱：构造样例事件，不落库评估维度命中与评分明细。"""
     result = SignalAnalysisResult(
         event_type=payload.event_type,

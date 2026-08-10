@@ -8,7 +8,6 @@ interface RuleEngineViewProps {
   onToggleDimension: (id: string) => Promise<void>;
   onUpdateDimension: (updatedDim: MonitoringDimension) => Promise<void>;
   role: 'viewer' | 'admin';
-  onRoleChange: (role: 'viewer' | 'admin') => void;
 }
 
 export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
@@ -16,7 +15,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   onToggleDimension,
   onUpdateDimension,
   role,
-  onRoleChange,
 }) => {
   const [activeDimId, setActiveDimId] = useState<string>(dimensions[0]?.id || 'dim-01');
 
@@ -131,7 +129,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
           自定义监控维度、计算权重及沙箱仿真评估。
         </p>
         </div>
-        <div className="flex items-center gap-2 text-xs"><span className="text-slate-500">当前角色：{role === 'admin' ? '管理员' : '只读用户'}</span><button onClick={() => onRoleChange(role === 'admin' ? 'viewer' : 'admin')} className="border border-slate-300 rounded-lg px-3 py-2 font-bold">切换为{role === 'admin' ? '只读' : '管理员'}模式</button></div>
+        <div className="flex items-center gap-2 text-xs"><span className="text-slate-500">当前权限：{role === 'admin' ? '规则管理' : '只读'}</span></div>
       </div>
 
       {/* Main Grid Layout (Left: Dimensions List, Right: Rule Config + Sandbox) */}

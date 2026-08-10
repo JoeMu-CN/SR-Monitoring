@@ -112,7 +112,7 @@ def test_create_update_and_disable_supplier(client: TestClient) -> None:
     assert client.get("/api/v1/suppliers", params={"enabled": False}).json()["total"] == 1
 
 
-def test_supplier_monitoring_toggle_requires_admin(client: TestClient) -> None:
+def test_supplier_monitoring_toggle_requires_admin(client: TestClient, auth_as) -> None:
     payload = {
         "supplier_code": "SUP-ROLE-1",
         "legal_name": "权限测试供应商",
@@ -126,19 +126,20 @@ def test_supplier_monitoring_toggle_requires_admin(client: TestClient) -> None:
     created = client.post("/api/v1/suppliers", json=payload)
     supplier_id = created.json()["id"]
 
+    auth_as("viewer", "supplier-viewer")
     viewer = client.patch(
         f"/api/v1/suppliers/{supplier_id}/enabled",
         json={"enabled": False},
-        headers={"X-User-Role": "viewer"},
+        headers={"X-User-Role": "admin"},
     )
 
     assert viewer.status_code == 403
     assert client.get(f"/api/v1/suppliers/{supplier_id}").json()["enabled"] is True
 
+    auth_as("risk_admin", "supplier-risk-admin")
     admin = client.patch(
         f"/api/v1/suppliers/{supplier_id}/enabled",
         json={"enabled": False},
-        headers={"X-User-Role": "admin"},
     )
     assert admin.status_code == 200
     assert admin.json()["enabled"] is False

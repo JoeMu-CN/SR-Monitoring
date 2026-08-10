@@ -5,17 +5,19 @@ interface MobileNavProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   p1RiskCount: number;
+  canUseRiskAssistant: boolean;
 }
 
 export const MobileNav: React.FC<MobileNavProps> = ({
   activeTab,
   setActiveTab,
   p1RiskCount,
+  canUseRiskAssistant,
 }) => {
   const tabs: { id: ActiveTab; label: string; icon: string; badge?: number }[] = [
     { id: 'overview', label: '总览', icon: 'dashboard' },
     { id: 'current-risks', label: '风险', icon: 'warning', badge: p1RiskCount },
-    { id: 'risk-assistant', label: '查询AI', icon: 'smart_toy' },
+    ...(canUseRiskAssistant ? [{ id: 'risk-assistant' as ActiveTab, label: '查询AI', icon: 'smart_toy' }] : []),
     { id: 'suppliers', label: '供应商', icon: 'factory' },
     { id: 'data-sources', label: '数据', icon: 'database' },
     { id: 'rules', label: '规则', icon: 'rule' },

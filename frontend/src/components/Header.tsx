@@ -1,6 +1,6 @@
 import {useState} from 'react';
 import {motion} from 'motion/react';
-import type {AgentStatusRead, SystemHealth} from '../api';
+import type {AgentStatusRead, AuthUser, SystemHealth} from '../api';
 import type {ActiveTab, RiskItem} from '../types';
 
 interface HeaderProps {
@@ -10,9 +10,11 @@ interface HeaderProps {
   health: SystemHealth | null;
   agentStatus: AgentStatusRead | null;
   onSearch?: (term: string) => void;
+  user: AuthUser;
+  onLogout: () => void;
 }
 
-export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, onSearch}: HeaderProps) => {
+export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, onSearch, user, onLogout}: HeaderProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -113,11 +115,13 @@ export const Header = ({activeTab, unreadCount, riskItems, health, agentStatus, 
             {showProfile && (
               <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-700 rounded-xl shadow-xl p-3 z-50">
                 <div className="pb-2 border-b border-slate-100 dark:border-slate-800 mb-2">
-                  <div className="font-bold text-[14px]">本地单用户模式</div>
-                  <div className="text-[12px] text-slate-500">仅绑定 127.0.0.1</div>
+                  <div className="font-bold text-[14px]">{user.display_name || user.username}</div>
+                  <div className="text-[12px] text-slate-500">{user.role}</div>
                 </div>
                 <a href="/api/docs" target="_blank" rel="noreferrer"
                   className="block w-full text-left px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-[13px]">打开接口文档</a>
+                <button type="button" onClick={onLogout}
+                  className="mt-1 block w-full text-left px-2 py-1.5 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg text-[13px] text-red-700 dark:text-red-300">退出登录</button>
               </div>
             )}
           </div>

@@ -7,7 +7,6 @@ interface DataSourcesViewProps {
   dataSources: DataSource[];
   onTriggerSync: () => Promise<void>;
   role: 'viewer' | 'admin';
-  onRoleChange: (role: 'viewer' | 'admin') => void;
   onCreateSource: (payload: DataSourceWritePayload) => Promise<void>;
   onUpdateSource: (id: string, payload: Partial<DataSourceWritePayload>) => Promise<void>;
   onDeleteSource: (id: string) => Promise<void>;
@@ -38,7 +37,7 @@ const emptyForm: DataSourceWritePayload = {
 };
 
 export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
-  dataSources, onTriggerSync, role, onRoleChange, onCreateSource, onUpdateSource,
+  dataSources, onTriggerSync, role, onCreateSource, onUpdateSource,
   onDeleteSource, onRefreshSources, onOpenSourceAgent,
 }) => {
   const [isSyncing, setIsSyncing] = useState(false);
@@ -52,6 +51,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [showForm, setShowForm] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [showDraftBox, setShowDraftBox] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [editingKeyHint, setEditingKeyHint] = useState<string | null>(null);
   const [draftItems, setDraftItems] = useState<Awaited<ReturnType<typeof api.sourceOnboardingDrafts>>['items']>([]);
   const [isLoadingDrafts, setIsLoadingDrafts] = useState(false);
   const [auditText, setAuditText] = useState('');
@@ -62,12 +63,21 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     setForm((current) => ({...current, [key]: value}));
   };
 
+  const updateTycConfig = (key: 'daily_limit' | 'monthly_limit', value: number) => {
+    setForm((current) => ({
+      ...current,
+      login_config: {...current.login_config, [key]: value},
+    }));
+  };
+
   const openCreate = () => {
     setEditingId(null);
     setEditingStatus('draft');
     setForm({...emptyForm, adapter_config: {...adapterTemplate}});
     setAdapterText(JSON.stringify(adapterTemplate, null, 2));
     setPreviewText('');
+    setApiKeyInput('');
+    setEditingKeyHint(null);
     setError(null);
     setShowForm(true);
   };
@@ -86,6 +96,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     setAdapterText(Object.keys(source.adapterConfig).length
       ? JSON.stringify(source.adapterConfig, null, 2) : '');
     setPreviewText('');
+    setApiKeyInput('');
+    setEditingKeyHint(source.apiKeyHint);
     setError(null);
     setShowForm(true);
   };
@@ -131,9 +143,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         ...form,
         schedule: isExternalTool ? null : form.schedule,
         adapter_config: adapterConfig,
+        api_key: apiKeyInput.trim() || undefined,
       };
       if (editingId) {
-        const {code: _code, adapter_config: _adapterConfig, ...rest} = payload;
+        const {code: _code, adapter_config: _adapterConfig, api_key: _apiKey, ...rest} = payload;
         const changes = adapterConfig ? {...rest, adapter_config: adapterConfig} : rest;
         await onUpdateSource(editingId, changes);
       } else {
@@ -178,7 +191,12 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   };
 
   const handleToggleSource = async (source: DataSource) => {
-    if (role !== 'admin' || togglingId || !['builtin', 'published'].includes(source.adapterStatus)) return;
+    if (role !== 'admin' || togglingId) return;
+    if (!['builtin', 'published'].includes(source.adapterStatus) && source.type !== 'external_tool') return;
+    if (!source.enabled && !source.apiKeyConfigured) {
+      setError('未配置运行密钥，请先编辑数据源并填写 API Key 后再启用');
+      return;
+    }
     const action = source.enabled ? '停用' : '启用';
     if (!window.confirm(`确认${action}“${source.name}”？`)) return;
     setTogglingId(source.id);
@@ -232,6 +250,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   };
 
   const isExternalForm = form.source_type === 'external_tool';
+  const isTycForm = isExternalForm && form.code === 'tianyancha';
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
 
   return (
@@ -242,11 +261,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">监控多维数据 API 接口连通度、网络延迟、已拉取监管日志及全网缓存节点状态。</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <span className="text-xs text-slate-500 mr-1">当前角色：{role === 'admin' ? '管理员' : '只读用户'}</span>
-          <button onClick={() => onRoleChange(role === 'admin' ? 'viewer' : 'admin')} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800">切换为{role === 'admin' ? '只读' : '管理员'}模式</button>
+          <span className="text-xs text-slate-500 mr-1">当前权限：{role === 'admin' ? '风险运营管理' : '只读'}</span>
           <button onClick={() => void loadDraftBox()} disabled={role !== 'admin' || isLoadingDrafts} className="border border-[#c2c6d2] bg-white text-[#004782] dark:bg-slate-900 dark:text-blue-300 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">inventory_2</span>{isLoadingDrafts ? '加载草稿…' : '草稿箱'}</button>
           <button onClick={() => onOpenSourceAgent()} disabled={role !== 'admin'} className="border border-[#004782] bg-[#ecf4ff] text-[#004782] dark:bg-slate-950/30 dark:text-blue-300 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#d6e4f3] dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">add_link</span>数据源接入助手</button>
-          <button onClick={() => void loadAudit()} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800">修改日志</button>
+          <button onClick={() => void loadAudit()} disabled={role !== 'admin'} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800 disabled:opacity-40">修改日志</button>
           <button onClick={() => void handleSyncClick()} disabled={isSyncing || role !== 'admin'} className="bg-[#004782] hover:bg-[#185fa5] text-white font-bold text-[13px] px-4 py-2 rounded-lg shadow-2xs transition-all flex items-center gap-2 disabled:opacity-50"><span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>{isSyncing ? '全量数据同步中...' : '立即全量数据同步'}</button>
           <button onClick={openCreate} disabled={role !== 'admin'} className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[13px] px-4 py-2 rounded-lg disabled:opacity-40">新增数据源</button>
         </div>
@@ -292,7 +310,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             const isWarning = source.status === 'warning' || source.status === 'error';
             const isExternalTool = source.type === 'external_tool';
             const canPublish = !isExternalTool && (source.adapterStatus === 'draft' || source.adapterStatus === 'invalid');
-            const canToggle = source.adapterStatus === 'builtin' || source.adapterStatus === 'published';
+            const canToggle = source.adapterStatus === 'builtin' || source.adapterStatus === 'published' || isExternalTool;
             const isTesting = testingId === source.id;
             const isToggling = togglingId === source.id;
             const typeLabel = isExternalTool ? '按需外部核查' : source.type === 'official_api' ? '官方 API' : source.type.replaceAll('_', ' ');
@@ -306,7 +324,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   <div className="col-span-6 md:col-span-2 flex items-center gap-2"><span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'}`}><span className="relative flex items-center justify-center w-2 h-2"><motion.span className={`absolute inline-flex h-full w-full rounded-full ${isWarning ? 'bg-red-500/60' : 'bg-emerald-500/60'}`} animate={{scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8]}} transition={{duration: isWarning ? 1.2 : 2, repeat: Infinity, ease: 'easeInOut'}} /><span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isWarning ? 'bg-[#ba1a1a]' : 'bg-emerald-600'}`} /></span>{source.latency}</span></div>
                   <div className="col-span-6 md:col-span-2 text-[12px] font-mono text-slate-700 dark:text-slate-300"><span className="md:hidden text-slate-400 text-[11px] font-sans mr-1">同步:</span>{source.lastSyncTime}</div>
                   <div className="col-span-6 md:col-span-2 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400"><span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">记录:</span>{source.itemCount.toLocaleString()} <span className="text-[11px] font-normal text-slate-500">条</span></div>
-                  <div className="col-span-6 md:col-span-2 flex flex-wrap items-center justify-end gap-2 text-right"><span className="text-[11px] font-mono text-slate-500 hidden xl:inline-block">{isExternalTool ? '按需外部工具' : source.code === 'manual-json' ? '非联网数据源' : !source.endpointUrl ? '等待配置地址' : source.accessLastHttpStatus ? `HTTP ${source.accessLastHttpStatus}` : '域名保护已启用'}</span>{canToggle && <button type="button" onClick={() => void handleToggleSource(source)} disabled={role !== 'admin' || togglingId !== null} aria-pressed={source.enabled} className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}>{isToggling ? '处理中...' : source.enabled ? '停用' : '启用'}</button>}<button onClick={() => void handleTestConnection(source)} disabled={role !== 'admin' || !source.endpointUrl || isExternalTool || isTesting || source.accessStatus !== 'ready'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 text-[#004782] dark:text-blue-300 transition-colors flex items-center gap-1 disabled:opacity-40" title={source.accessStatus === 'ready' ? '触发一次采集并刷新状态' : source.latency}><span className={`material-symbols-outlined text-[14px] ${isTesting ? 'animate-spin' : ''}`}>{isTesting ? 'sync' : 'network_check'}</span><span>{isTesting ? '测速中...' : '测试连通'}</span></button><button onClick={() => openEdit(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 disabled:opacity-40">编辑</button>{canPublish && <button onClick={() => void publish(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-800 dark:text-emerald-300 disabled:opacity-40">发布</button>}<button onClick={() => { if (role === 'admin' && window.confirm(`确认删除“${source.name}”？`)) void onDeleteSource(source.id); }} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-red-200 text-red-700 dark:text-red-300 disabled:opacity-40">删除</button></div>
+                  <div className="col-span-6 md:col-span-2 flex flex-wrap items-center justify-end gap-2 text-right"><span className="text-[11px] font-mono text-slate-500 hidden xl:inline-block">{isExternalTool ? (source.apiKeyConfigured ? (source.apiKeyHint ? `运行密钥 ${source.apiKeyHint}` : '运行密钥已配置') : '运行密钥未配置') : source.code === 'manual-json' ? '非联网数据源' : !source.endpointUrl ? '等待配置地址' : source.accessLastHttpStatus ? `HTTP ${source.accessLastHttpStatus}` : '域名保护已启用'}</span>{canToggle && <button type="button" onClick={() => void handleToggleSource(source)} disabled={role !== 'admin' || togglingId !== null} aria-pressed={source.enabled} className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}>{isToggling ? '处理中...' : source.enabled ? '停用' : '启用'}</button>}<button onClick={() => void handleTestConnection(source)} disabled={role !== 'admin' || !source.endpointUrl || isExternalTool || isTesting || source.accessStatus !== 'ready'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 text-[#004782] dark:text-blue-300 transition-colors flex items-center gap-1 disabled:opacity-40" title={source.accessStatus === 'ready' ? '触发一次采集并刷新状态' : source.latency}><span className={`material-symbols-outlined text-[14px] ${isTesting ? 'animate-spin' : ''}`}>{isTesting ? 'sync' : 'network_check'}</span><span>{isTesting ? '测速中...' : '测试连通'}</span></button><button onClick={() => openEdit(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 disabled:opacity-40">编辑</button>{canPublish && <button onClick={() => void publish(source)} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-800 dark:text-emerald-300 disabled:opacity-40">发布</button>}<button onClick={() => { if (role === 'admin' && window.confirm(`确认删除“${source.name}”？`)) void onDeleteSource(source.id); }} disabled={role !== 'admin'} className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-red-200 text-red-700 dark:text-red-300 disabled:opacity-40">删除</button></div>
                 </div>
               </motion.div>
             );
@@ -326,12 +344,15 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <label className="text-xs font-bold sm:col-span-2">官方接口 URL<input type="url" value={form.endpoint_url ?? ''} onChange={(event) => update('endpoint_url', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" /></label>
               <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}<input disabled={isExternalForm} value={isExternalForm ? '按需调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" /></label>
               <label className="text-xs font-bold">认证方式<select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2"><option value="none">无需认证</option><option value="api_key">API Key Header</option><option value="bearer">Bearer Token</option></select></label>
-              <label className="text-xs font-bold">凭据引用<input value={form.credential_ref ?? ''} onChange={(event) => update('credential_ref', event.target.value || null)} placeholder="env:SOURCE_API_KEY" className="mt-1 w-full border rounded-lg p-2 font-mono" /></label>
-              <label className="text-xs font-bold">API Key 请求头名<input value={String(form.login_config.header_name ?? '')} onChange={(event) => update('login_config', event.target.value ? {header_name: event.target.value} : {})} placeholder="X-API-Key" className="mt-1 w-full border rounded-lg p-2" /></label>
+              {!isExternalForm && <label className="text-xs font-bold">凭据引用<input value={form.credential_ref ?? ''} onChange={(event) => update('credential_ref', event.target.value || null)} placeholder="env:SOURCE_API_KEY" className="mt-1 w-full border rounded-lg p-2 font-mono" /></label>}
+              {!isExternalForm && <label className="text-xs font-bold">API Key 请求头名<input value={String(form.login_config.header_name ?? '')} onChange={(event) => update('login_config', event.target.value ? {header_name: event.target.value} : {})} placeholder="X-API-Key" className="mt-1 w-full border rounded-lg p-2" /></label>}
+              {isExternalForm && <label className="text-xs font-bold sm:col-span-2">运行密钥 API Key<input type="password" autoComplete="new-password" value={apiKeyInput} onChange={(event) => setApiKeyInput(event.target.value)} placeholder={editingKeyHint ? `已配置（${editingKeyHint}），留空保持不变` : '输入天眼查 API Key（tyc_ 开头）'} className="mt-1 w-full border rounded-lg p-2 font-mono" /></label>}
+              {isTycForm && <label className="text-xs font-bold">每日调用上限<input type="number" min="1" max="1000" value={String(form.login_config.daily_limit ?? 80)} onChange={(event) => updateTycConfig('daily_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" /></label>}
+              {isTycForm && <label className="text-xs font-bold">每月调用上限<input type="number" min="1" max="10000" value={String(form.login_config.monthly_limit ?? 900)} onChange={(event) => updateTycConfig('monthly_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" /></label>}
               <label className="text-xs font-bold sm:col-span-2">说明<textarea value={form.description ?? ''} onChange={(event) => update('description', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" /></label>
               {!isExternalForm && <label className="text-xs font-bold sm:col-span-2">声明式适配器 JSON<textarea required={editingStatus !== 'builtin'} rows={15} value={adapterText} onChange={(event) => setAdapterText(event.target.value)} className="mt-1 w-full border rounded-lg p-3 font-mono text-xs" /></label>}
             </div>
-            {isExternalForm && <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">运行密钥仅通过服务器环境变量注入，控制台只保存凭据引用，不保存或返回明文。</p>}
+            {isExternalForm && <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">运行密钥加密保存在服务器数据库中，控制台仅显示末四位，保存后不回传明文；启用/停用由下方开关统一控制。</p>}
             <label className="text-xs font-bold flex items-center gap-2"><input type="checkbox" disabled={!mayEnable} checked={form.enabled && mayEnable} onChange={(event) => update('enabled', event.target.checked)} />{isExternalForm ? '启用按需核查' : '启用正式采集（仅已发布或内置适配器可用）'}</label>
             {previewText && <pre className="bg-slate-50 border rounded-lg p-3 text-xs whitespace-pre-wrap max-h-56 overflow-auto">{previewText}</pre>}
             <div className="flex justify-end gap-2">{!isExternalForm && <button type="button" onClick={() => void preview()} disabled={isPreviewing} className="border border-emerald-300 text-emerald-800 rounded-lg px-4 py-2 font-bold">{isPreviewing ? '联网查询中...' : '实时联网预览'}</button>}<button type="button" onClick={() => setShowForm(false)} className="border rounded-lg px-4 py-2">取消</button><button type="submit" className="bg-[#004782] text-white rounded-lg px-4 py-2 font-bold">{isExternalForm ? '保存配置' : '保存草稿'}</button></div>

@@ -48,7 +48,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
         <button
           onClick={onOpenImportModal}
-          className="bg-[#004782] hover:bg-[#185fa5] text-white font-bold text-[13px] px-4 py-2 rounded-lg shadow-sm transition-all flex items-center gap-2"
+          disabled={role !== 'admin'}
+          className="bg-[#004782] hover:bg-[#185fa5] text-white font-bold text-[13px] px-4 py-2 rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-40"
         >
           <span className="material-symbols-outlined text-[18px]">upload_file</span>
           <span>导入供应商</span>

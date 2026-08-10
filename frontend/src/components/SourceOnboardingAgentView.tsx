@@ -5,7 +5,6 @@ import {api, type AgentStatusRead, type ChatResponse, type ToolCallRead} from '.
 interface SourceOnboardingAgentViewProps {
   agentStatus: AgentStatusRead | null;
   role: 'viewer' | 'admin';
-  onRoleChange: (role: 'viewer' | 'admin') => void;
   initialDraftId: number | null;
 }
 
@@ -41,7 +40,6 @@ const welcomeMessage = (): Message => ({
 export function SourceOnboardingAgentView({
   agentStatus,
   role,
-  onRoleChange,
   initialDraftId,
 }: SourceOnboardingAgentViewProps) {
   const [messages, setMessages] = useState<Message[]>(() => [welcomeMessage()]);
@@ -136,10 +134,6 @@ export function SourceOnboardingAgentView({
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">模型：{agentStatus?.llm_configured ? agentStatus.model : '未配置'}</span>
-            <button onClick={() => onRoleChange(role === 'admin' ? 'viewer' : 'admin')}
-              className="border border-[#c2c6d2] rounded-lg px-3 py-2 text-xs font-bold text-[#004782] dark:text-blue-300">
-              {role === 'admin' ? '退出管理员模式' : '进入管理员模式'}
-            </button>
             <button onClick={reset} className="border border-[#c2c6d2] rounded-lg px-3 py-2 text-xs font-bold">新建接入</button>
           </div>
         </header>
@@ -163,7 +157,7 @@ export function SourceOnboardingAgentView({
 
         {role !== 'admin' && (
           <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 px-4 py-3 text-sm">
-            数据源接入涉及配置写入，仅管理员可以使用。进入管理员模式后才会保存草稿或发送探测请求。
+            数据源接入涉及配置写入，仅风险运营管理员或平台管理员可以使用。
           </div>
         )}
 

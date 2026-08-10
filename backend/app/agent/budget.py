@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.agent.models import TycUsageRecord
-from app.config import AGENT_TYC_DAILY_LIMIT, AGENT_TYC_MONTHLY_LIMIT
 from app.signals.models import DataSource
 
 BEIJING_OFFSET = timedelta(hours=8)
@@ -52,6 +51,39 @@ class TycUsageSnapshot:
         }
 
 
+def _source_has_key(source: DataSource | None) -> bool:
+    """天眼查是否有可用运行密钥：控制台密文优先，非生产环境允许兼容回退。"""
+    if source is not None and source.api_key_encrypted:
+        from app.signals.secret_store import decrypt_secret
+
+        if decrypt_secret(source.api_key_encrypted):
+            return True
+    return bool(config.get_tyc_env_fallback())
+
+
+def _limit_value(value: object, default: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value) if isinstance(value, (int, str)) else default
+    except (TypeError, ValueError):
+        return default
+    return parsed if 1 <= parsed <= maximum else default
+
+
+def _source_limits(source: DataSource | None) -> tuple[int, int]:
+    daily_default, monthly_default = config.get_tyc_budget_fallback()
+    values = (
+        source.login_config
+        if source is not None and isinstance(source.login_config, dict)
+        else {}
+    )
+    return (
+        _limit_value(values.get("daily_limit"), daily_default, 1000),
+        _limit_value(values.get("monthly_limit"), monthly_default, 10000),
+    )
+
+
 def get_tyc_usage(session: Session) -> TycUsageSnapshot:
     now_utc = datetime.now(UTC)
     beijing_today = now_utc + BEIJING_OFFSET
@@ -63,15 +95,14 @@ def get_tyc_usage(session: Session) -> TycUsageSnapshot:
 
     daily_used = _count_success(session, since=day_start_utc)
     monthly_used = _count_success(session, since=month_start_utc)
-    source_enabled = session.scalar(
-        select(DataSource.enabled).where(DataSource.code == TYC_SOURCE_CODE)
-    )
+    source = session.scalar(select(DataSource).where(DataSource.code == TYC_SOURCE_CODE))
+    daily_limit, monthly_limit = _source_limits(source)
     return TycUsageSnapshot(
-        enabled=bool(source_enabled and config.TYC_API_KEY),
+        enabled=bool(source is not None and source.enabled and _source_has_key(source)),
         daily_used=daily_used,
-        daily_limit=AGENT_TYC_DAILY_LIMIT,
+        daily_limit=daily_limit,
         monthly_used=monthly_used,
-        monthly_limit=AGENT_TYC_MONTHLY_LIMIT,
+        monthly_limit=monthly_limit,
     )
 
 

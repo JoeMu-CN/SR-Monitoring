@@ -1,10 +1,13 @@
+import hashlib
+
 from sqlalchemy import select
 
 from app.signals.models import DataSource, DataSourceAuditLog
+from app.signals.secret_store import decrypt_secret
 from app.signals.sources import NmcWeatherAdapter, OfacSdnAdapter
 
 
-def test_source_console_requires_admin_and_audits_changes(client, db_session):
+def test_source_console_requires_admin_and_audits_changes(client, db_session, auth_as):
     payload = {
         "code": "custom-official-test",
         "name": "测试官方数据源",
@@ -18,14 +21,14 @@ def test_source_console_requires_admin_and_audits_changes(client, db_session):
         "description": "仅用于接口契约测试",
         "enabled": False,
     }
-    denied = client.post("/api/v1/sources", json=payload)
+    auth_as("viewer", "source-viewer")
+    denied = client.post(
+        "/api/v1/sources", json=payload, headers={"X-User-Role": "admin"}
+    )
     assert denied.status_code == 403
 
-    created = client.post(
-        "/api/v1/sources",
-        json=payload,
-        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
-    )
+    auth_as("risk_admin", "source-risk-admin")
+    created = client.post("/api/v1/sources", json=payload)
     assert created.status_code == 201
     body = created.json()
     assert body["api_key_configured"] is True
@@ -36,7 +39,6 @@ def test_source_console_requires_admin_and_audits_changes(client, db_session):
     updated = client.put(
         f"/api/v1/sources/{source_id}",
         json={"schedule": "*/30 * * * *", "enabled": False},
-        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
     )
     assert updated.status_code == 200
     assert updated.json()["schedule"] == "*/30 * * * *"
@@ -45,7 +47,8 @@ def test_source_console_requires_admin_and_audits_changes(client, db_session):
     logs = client.get(f"/api/v1/sources/audit-logs?source_id={source_id}")
     assert logs.status_code == 200
     assert [item["action"] for item in logs.json()["items"]] == ["updated", "created"]
-    assert all(item["actor_role"] == "admin" for item in logs.json()["items"])
+    assert all(item["actor_role"] == "risk_admin" for item in logs.json()["items"])
+    assert all(item["actor_id"].isdigit() for item in logs.json()["items"])
 
     source = db_session.scalar(select(DataSource).where(DataSource.id == source_id))
     assert source is not None
@@ -71,16 +74,99 @@ def test_source_console_rejects_invalid_schedule(client):
     assert response.status_code == 422
 
 
-def test_tianyancha_source_reports_runtime_key_without_exposing_it(
+def test_tianyancha_console_key_roundtrip_without_exposing_it(
     client, db_session, monkeypatch
-):
+) -> None:
+    """天眼查运行密钥在数据源控制台配置：加密存库、接口只暴露末四位。"""
+    import app.config as config_module
+
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "")  # 隔离环境变量兜底
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    source_id = source.id
+
+    before = next(
+        item
+        for item in client.get("/api/v1/sources/admin").json()
+        if item["code"] == "tianyancha"
+    )
+    assert before["api_key_configured"] is False
+
+    updated = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"api_key": "tyc_console_secret_1234"},
+        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
+    )
+    assert updated.status_code == 200
+    body = updated.json()
+    assert body["api_key_configured"] is True
+    assert body["api_key_hint"] == "••••1234"
+    assert "tyc_console_secret_1234" not in updated.text
+
+    persisted = db_session.scalar(select(DataSource).where(DataSource.id == source_id))
+    assert persisted is not None
+    assert persisted.api_key_encrypted is not None
+    assert decrypt_secret(persisted.api_key_encrypted) == "tyc_console_secret_1234"
+    assert persisted.api_key_hash == hashlib.sha256(
+        b"tyc_console_secret_1234"
+    ).hexdigest()
+
+    listed = client.get("/api/v1/sources/admin")
+    assert listed.status_code == 200
+    tianyancha = next(
+        item for item in listed.json() if item["code"] == "tianyancha"
+    )
+    assert tianyancha["api_key_hint"] == "••••1234"
+    assert "tyc_console_secret_1234" not in listed.text
+
+
+def test_tianyancha_enable_requires_configured_key(
+    client, db_session, monkeypatch
+) -> None:
+    """外部核查工具启用前置条件：必须已有运行密钥。"""
+    import app.config as config_module
+
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    source_id = source.id
+
+    denied = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"enabled": True},
+        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
+    )
+    assert denied.status_code == 409
+    assert "运行密钥" in denied.json()["detail"]
+
+    configured = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"api_key": "tyc_console_key"},
+        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
+    )
+    assert configured.status_code == 200
+
+    enabled = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"enabled": True},
+        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["enabled"] is True
+
+
+def test_tianyancha_env_key_fallback_is_development_only(
+    client, db_session, monkeypatch
+) -> None:
+    """开发环境可兼容读取环境变量，但生产环境不将其视为已配置。"""
     import app.config as config_module
 
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
+    assert source.api_key_encrypted is None
     monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_runtime_secret")
 
-    response = client.get("/api/v1/sources")
+    response = client.get("/api/v1/sources/admin")
     assert response.status_code == 200
     tianyancha = next(item for item in response.json() if item["code"] == "tianyancha")
     assert tianyancha["source_type"] == "external_tool"
@@ -88,9 +174,16 @@ def test_tianyancha_source_reports_runtime_key_without_exposing_it(
     assert tianyancha["api_key_hint"] == "环境变量已配置"
     assert "tyc_runtime_secret" not in response.text
 
+    monkeypatch.setattr(config_module, "APP_ENV", "production")
+    response = client.get("/api/v1/sources/admin")
+    assert response.status_code == 200
+    tianyancha = next(item for item in response.json() if item["code"] == "tianyancha")
+    assert tianyancha["api_key_configured"] is False
+    assert tianyancha["api_key_hint"] is None
+
 
 def test_builtin_http_sources_report_effective_endpoint_and_access_state(client):
-    response = client.get("/api/v1/sources")
+    response = client.get("/api/v1/sources/admin")
 
     assert response.status_code == 200
     by_code = {item["code"]: item for item in response.json()}

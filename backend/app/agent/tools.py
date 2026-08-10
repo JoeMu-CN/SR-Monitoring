@@ -159,7 +159,7 @@ class VerifyCompanyTool:
     }
 
     def __init__(self, gateway: TycGateway | None = None) -> None:
-        self.gateway = gateway or build_tyc_gateway()
+        self.gateway = gateway
 
     async def execute(
         self, arguments: dict[str, object], session: Session
@@ -172,7 +172,7 @@ class VerifyCompanyTool:
         if not usage.enabled:
             return {
                 "status": "not_configured",
-                "message": "天眼查未启用：请在数据源控制台启用，并通过 TYC_API_KEY 注入运行密钥",
+                "message": "天眼查未启用：请在数据源控制台配置运行密钥并启用",
                 "usage": usage.to_dict(),
             }
         if not usage.allowed:
@@ -185,8 +185,9 @@ class VerifyCompanyTool:
                 "usage": usage.to_dict(),
             }
 
+        gateway = self.gateway or build_tyc_gateway(session=session)
         try:
-            result = await self.gateway.verify(name)
+            result = await gateway.verify(name)
         except Exception as exc:  # noqa: BLE001
             result = {"status": "error", "message": f"天眼查调用失败：{exc}"[:500]}
         call_status = _classify_call(result)

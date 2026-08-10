@@ -8,6 +8,13 @@ from sqlalchemy.orm import Session
 from app.ai.models import AIAnalysisRecord
 from app.ai.providers import AIConfigurationError, AIProviderError
 from app.ai.service import analyze_raw_signal
+from app.auth.models import User
+from app.auth.security import (
+    PERM_ANALYSIS_RUN,
+    PERM_RISK_VIEW,
+    require_permission,
+    verify_csrf,
+)
 from app.database import get_session
 from app.risks.models import (
     EventEntity,
@@ -34,6 +41,9 @@ from app.suppliers.models import Supplier
 
 router = APIRouter(prefix="/api/v1", tags=["风险提醒"])
 SessionDependency = Annotated[Session, Depends(get_session)]
+RiskView = Annotated[User, Depends(require_permission(PERM_RISK_VIEW))]
+AnalysisRun = Annotated[User, Depends(require_permission(PERM_ANALYSIS_RUN))]
+CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 
 def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertRead]:
@@ -85,7 +95,12 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
 
 
 @router.post("/signals/{signal_id}/process", response_model=RiskProcessResult)
-async def process_signal(signal_id: int, session: SessionDependency) -> RiskProcessResult:
+async def process_signal(
+    signal_id: int,
+    session: SessionDependency,
+    _user: AnalysisRun,
+    _csrf: CsrfGuard,
+) -> RiskProcessResult:
     signal = session.get(RawSignal, signal_id)
     if signal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险信号不存在")
@@ -115,6 +130,7 @@ async def process_signal(signal_id: int, session: SessionDependency) -> RiskProc
 @router.get("/risk-alerts", response_model=RiskAlertListResponse)
 def list_risk_alerts(
     session: SessionDependency,
+    _user: RiskView,
     level: Annotated[str | None, Query(pattern=r"^P[1-4]$")] = None,
     alert_status: Annotated[str, Query(alias="status", pattern=r"^(current|expired)$")] = "current",
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -139,7 +155,9 @@ def list_risk_alerts(
 
 
 @router.get("/risk-alerts/{alert_id}", response_model=RiskAlertRead)
-def get_risk_alert(alert_id: int, session: SessionDependency) -> RiskAlertRead:
+def get_risk_alert(
+    alert_id: int, session: SessionDependency, _user: RiskView
+) -> RiskAlertRead:
     """风险详情：评分明细、匹配理由、证据与原始来源。"""
     row = session.execute(
         select(RiskAlert, SupplierEventMatch, RiskEvent, Supplier)
@@ -157,7 +175,9 @@ def get_risk_alert(alert_id: int, session: SessionDependency) -> RiskAlertRead:
 
 
 @router.get("/events/{event_id}", response_model=EventDetailRead)
-def get_event_detail(event_id: int, session: SessionDependency) -> EventDetailRead:
+def get_event_detail(
+    event_id: int, session: SessionDependency, _user: RiskView
+) -> EventDetailRead:
     """事件及全部证据：关联信号、涉及主体、地点。"""
     event = session.get(RiskEvent, event_id)
     if event is None:
@@ -223,7 +243,9 @@ def get_event_detail(event_id: int, session: SessionDependency) -> EventDetailRe
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummary)
-def dashboard_summary(session: SessionDependency) -> DashboardSummary:
+def dashboard_summary(
+    session: SessionDependency, _user: RiskView
+) -> DashboardSummary:
     """风险总览：P1-P4 数量、今日新增、类型分布、最近提醒、数据源状态。"""
     from datetime import UTC, datetime, timedelta
 
@@ -324,7 +346,11 @@ def dashboard_summary(session: SessionDependency) -> DashboardSummary:
 
 
 @router.post("/risk-alerts/expire")
-def trigger_expire_alerts(session: SessionDependency) -> dict[str, int]:
+def trigger_expire_alerts(
+    session: SessionDependency,
+    _user: AnalysisRun,
+    _csrf: CsrfGuard,
+) -> dict[str, int]:
     expired_count = expire_alerts(session)
     session.commit()
     return {"expired_count": expired_count}

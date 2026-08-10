@@ -1,6 +1,7 @@
 """Agent 模块测试：FakeAgentLLM 全链路，不访问真实模型接口。"""
 
 import asyncio
+import hashlib
 import json
 
 import httpx
@@ -40,6 +41,7 @@ from app.agent.tyc_gateway import (
     UnconfiguredTycGateway,
     build_tyc_gateway,
 )
+from app.auth.models import User
 from app.signals.models import DataSource
 from app.suppliers.models import Supplier
 
@@ -50,6 +52,16 @@ def clean_agent_tables(db_session: Session) -> Session:
     db_session.execute(delete(AgentMessage))
     db_session.execute(delete(AgentSession))
     db_session.execute(delete(TycUsageRecord))
+    if db_session.get(User, 1) is None:
+        db_session.add(
+            User(
+                id=1,
+                username="agent-service-owner",
+                password_hash="not-used",
+                role="risk_admin",
+                status="active",
+            )
+        )
     db_session.flush()
     return db_session
 
@@ -79,6 +91,8 @@ class FakeTycGateway:
 
 @pytest.fixture
 def enable_tyc(db_session: Session, monkeypatch: MonkeyPatch) -> None:
+    from app.signals.secret_store import encrypt_secret
+
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     if source is None:
         source = DataSource(
@@ -90,24 +104,35 @@ def enable_tyc(db_session: Session, monkeypatch: MonkeyPatch) -> None:
             endpoint_url="https://mcp.tianyancha.com/v1",
             auth_type="api_key",
             login_config={},
-            credential_ref="env:TYC_API_KEY",
+            credential_ref=None,
             description="测试数据源",
             enabled=True,
         )
         db_session.add(source)
-    else:
-        source.enabled = True
+    # 运行密钥改为控制台加密存库，不再依赖环境变量
+    source.enabled = True
+    source.api_key_encrypted = encrypt_secret("tyc_test_key")
+    source.api_key_hash = hashlib.sha256(b"tyc_test_key").hexdigest()
+    source.api_key_last4 = "key"
     db_session.flush()
-    monkeypatch.setattr(budget_module.config, "TYC_API_KEY", "tyc_test_key")
-    monkeypatch.setattr(budget_module, "AGENT_TYC_DAILY_LIMIT", 5)
-    monkeypatch.setattr(budget_module, "AGENT_TYC_MONTHLY_LIMIT", 50)
+    source.login_config = {
+        "mode": "on_demand",
+        "secret_source": "console",
+        "daily_limit": 5,
+        "monthly_limit": 50,
+    }
 
 
 def test_chat_creates_session_and_persists_messages(
     clean_agent_tables: Session,
 ) -> None:
     response = asyncio.run(
-        chat(clean_agent_tables, "今天有什么风险？", llm=FakeAgentLLM())
+        chat(
+            clean_agent_tables,
+            "今天有什么风险？",
+            llm=FakeAgentLLM(),
+            owner_user_id=1,
+        )
     )
     assert response.session_id > 0
     assert "Fake" in response.answer
@@ -128,13 +153,21 @@ def test_chat_creates_session_and_persists_messages(
 
 
 def test_chat_continues_existing_session(clean_agent_tables: Session) -> None:
-    first = asyncio.run(chat(clean_agent_tables, "今天有什么风险？", llm=FakeAgentLLM()))
+    first = asyncio.run(
+        chat(
+            clean_agent_tables,
+            "今天有什么风险？",
+            llm=FakeAgentLLM(),
+            owner_user_id=1,
+        )
+    )
     second = asyncio.run(
         chat(
             clean_agent_tables,
             "再帮我查一下供应商",
             session_id=first.session_id,
             llm=FakeAgentLLM(),
+            owner_user_id=1,
         )
     )
     assert second.session_id == first.session_id
@@ -149,7 +182,11 @@ def test_chat_continues_existing_session(clean_agent_tables: Session) -> None:
 def test_chat_without_risk_keyword_calls_no_tool(
     clean_agent_tables: Session,
 ) -> None:
-    response = asyncio.run(chat(clean_agent_tables, "你好", llm=FakeAgentLLM()))
+    response = asyncio.run(
+        chat(
+            clean_agent_tables, "你好", llm=FakeAgentLLM(), owner_user_id=1
+        )
+    )
     assert response.tool_calls == []
 
 
@@ -175,7 +212,12 @@ def test_two_agents_use_disjoint_tools_and_sessions(
 
     risk_llm = CapturingLLM()
     risk = asyncio.run(
-        chat(clean_agent_tables, "接入数据源并确认发布立即采集", llm=risk_llm)
+        chat(
+            clean_agent_tables,
+            "接入数据源并确认发布立即采集",
+            llm=risk_llm,
+            owner_user_id=1,
+        )
     )
     source_llm = CapturingLLM()
     started = asyncio.run(
@@ -183,7 +225,7 @@ def test_two_agents_use_disjoint_tools_and_sessions(
             clean_agent_tables,
             START_ONBOARDING,
             llm=source_llm,
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     source = asyncio.run(
@@ -193,7 +235,7 @@ def test_two_agents_use_disjoint_tools_and_sessions(
             session_id=started.session_id,
             draft_id=started.onboarding_draft.id if started.onboarding_draft else None,
             llm=source_llm,
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
 
@@ -221,6 +263,7 @@ def test_two_agents_use_disjoint_tools_and_sessions(
                 "继续",
                 session_id=risk.session_id,
                 llm=source_llm,
+                owner_user_id=1,
             )
         )
     with pytest.raises(AgentError, match="不能跨类型复用"):
@@ -230,6 +273,7 @@ def test_two_agents_use_disjoint_tools_and_sessions(
                 "继续",
                 session_id=source.session_id,
                 llm=risk_llm,
+                owner_user_id=1,
             )
         )
 
@@ -242,7 +286,7 @@ def test_source_onboarding_saves_one_step_and_redacts_secret(
             clean_agent_tables,
             START_ONBOARDING,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert started.onboarding_draft is not None
@@ -255,7 +299,7 @@ def test_source_onboarding_saves_one_step_and_redacts_secret(
             session_id=started.session_id,
             draft_id=started.onboarding_draft.id,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     goal_step = asyncio.run(
@@ -265,7 +309,7 @@ def test_source_onboarding_saves_one_step_and_redacts_secret(
             session_id=url_step.session_id,
             draft_id=url_step.onboarding_draft.id if url_step.onboarding_draft else None,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     auth_step = asyncio.run(
@@ -275,7 +319,7 @@ def test_source_onboarding_saves_one_step_and_redacts_secret(
             session_id=goal_step.session_id,
             draft_id=goal_step.onboarding_draft.id if goal_step.onboarding_draft else None,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert auth_step.onboarding_draft is not None
@@ -302,7 +346,7 @@ def test_source_onboarding_resume_restores_step_without_advancing(
             clean_agent_tables,
             START_ONBOARDING,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert started.onboarding_draft is not None
@@ -314,7 +358,7 @@ def test_source_onboarding_resume_restores_step_without_advancing(
             session_id=started.session_id,
             draft_id=draft_id,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert answered.onboarding_draft is not None
@@ -327,7 +371,7 @@ def test_source_onboarding_resume_restores_step_without_advancing(
             RESUME_ONBOARDING,
             draft_id=draft_id,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert resumed.onboarding_draft is not None
@@ -340,7 +384,7 @@ def test_source_onboarding_resume_restores_step_without_advancing(
             clean_agent_tables,
             START_ONBOARDING,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     with pytest.raises(AgentError, match="草稿与会话不匹配"):
@@ -351,7 +395,7 @@ def test_source_onboarding_resume_restores_step_without_advancing(
                 session_id=started.session_id,
                 draft_id=other.onboarding_draft.id if other.onboarding_draft else None,
                 llm=FakeAgentLLM(),
-                actor_id="test-admin",
+                owner_user_id=1,
             )
         )
 
@@ -364,7 +408,7 @@ def test_source_onboarding_completed_draft_cannot_resume(
             clean_agent_tables,
             START_ONBOARDING,
             llm=FakeAgentLLM(),
-            actor_id="test-admin",
+            owner_user_id=1,
         )
     )
     assert started.onboarding_draft is not None
@@ -390,7 +434,7 @@ def test_source_onboarding_completed_draft_cannot_resume(
                 RESUME_ONBOARDING,
                 draft_id=draft.id,
                 llm=FakeAgentLLM(),
-                actor_id="test-admin",
+                owner_user_id=1,
             )
         )
 
@@ -515,6 +559,44 @@ def test_get_budget_returns_real_counts(
     assert result["daily_used"] == 1
     assert result["daily_remaining"] == 4  # type: ignore[index]
     assert result["monthly_remaining"] == 49  # type: ignore[index]
+
+
+def test_tyc_usage_ignores_env_key_in_production(
+    clean_agent_tables: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import app.config as config_module
+
+    source = clean_agent_tables.scalar(
+        select(DataSource).where(DataSource.code == "tianyancha")
+    )
+    assert source is not None
+    source.enabled = True
+    source.api_key_encrypted = None
+    monkeypatch.setattr(config_module, "APP_ENV", "production")
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+
+    assert get_tyc_usage(clean_agent_tables).enabled is False
+
+
+def test_tyc_usage_reads_console_limits_in_production(
+    clean_agent_tables: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    import app.config as config_module
+
+    source = clean_agent_tables.scalar(
+        select(DataSource).where(DataSource.code == "tianyancha")
+    )
+    assert source is not None
+    source.login_config = {"daily_limit": 17, "monthly_limit": 123}
+    monkeypatch.setattr(config_module, "APP_ENV", "production")
+    monkeypatch.setattr(config_module, "AGENT_TYC_DAILY_LIMIT", 1)
+    monkeypatch.setattr(config_module, "AGENT_TYC_MONTHLY_LIMIT", 2)
+
+    usage = get_tyc_usage(clean_agent_tables)
+    assert usage.daily_limit == 17
+    assert usage.monthly_limit == 123
 
 
 CANDIDATES_MD = (
@@ -658,9 +740,6 @@ def test_mcp_gateway_auth_failure_raises() -> None:
 def test_build_tyc_gateway_defaults_to_unconfigured(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    import app.agent.tyc_gateway as gateway_module
-
-    monkeypatch.setattr(gateway_module, "TYC_API_KEY", "", raising=False)
     import app.config as config_module
 
     monkeypatch.setattr(config_module, "TYC_API_KEY", "")
@@ -668,6 +747,68 @@ def test_build_tyc_gateway_defaults_to_unconfigured(
     assert isinstance(gateway, UnconfiguredTycGateway)
     result = asyncio.run(gateway.verify("测试公司"))
     assert result["status"] == "not_configured"
+
+
+def test_build_tyc_gateway_reads_console_key_from_db(
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """网关构建优先取数据源控制台加密存库的运行密钥。"""
+    import app.config as config_module
+    from app.signals.secret_store import encrypt_secret
+
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    source.enabled = True
+    source.api_key_encrypted = encrypt_secret("tyc_db_key")
+    source.api_key_last4 = "key"
+    source.endpoint_url = "https://console.example/mcp"
+    db_session.flush()
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
+
+    gateway = build_tyc_gateway(session=db_session)
+    assert isinstance(gateway, McpTycGateway)
+    assert gateway.api_key == "tyc_db_key"
+    assert gateway.endpoint == "https://console.example/mcp"
+
+    # 控制台密钥优先于环境变量兜底
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+    gateway = build_tyc_gateway(session=db_session)
+    assert gateway.api_key == "tyc_db_key"
+
+
+def test_build_tyc_gateway_falls_back_to_env_key(
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """开发环境在控制台未配置密钥时仍兼容读取 TYC_API_KEY。"""
+    import app.config as config_module
+
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    assert source.api_key_encrypted is None
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+
+    gateway = build_tyc_gateway(session=db_session)
+    assert isinstance(gateway, McpTycGateway)
+    assert gateway.api_key == "tyc_env_key"
+
+
+def test_build_tyc_gateway_ignores_env_key_in_production(
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """生产环境即使存在 TYC_API_KEY，也只能由数据源控制台提供密钥。"""
+    import app.config as config_module
+
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    source.api_key_encrypted = None
+    monkeypatch.setattr(config_module, "APP_ENV", "production")
+    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+
+    gateway = build_tyc_gateway(session=db_session)
+    assert isinstance(gateway, UnconfiguredTycGateway)
 
 
 def test_chat_endpoint(

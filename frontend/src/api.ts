@@ -241,6 +241,29 @@ export interface AgentStatusRead {
 
 export interface SystemHealth { status: string; database: string }
 
+export interface AuthUser {
+  id: number;
+  username: string;
+  email: string | null;
+  display_name: string | null;
+  role: 'viewer' | 'risk_analyst' | 'risk_admin' | 'platform_admin';
+  status: 'pending' | 'active' | 'disabled';
+  last_login_at: string | null;
+  created_at: string;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser;
+  permissions: string[];
+}
+
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export interface SupplierCreatePayload {
   supplier_code: string;
   legal_name: string;
@@ -264,27 +287,32 @@ export interface SupplierCreatePayload {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  if (currentRole) headers.set('X-User-Role', currentRole);
-  headers.set('X-User-Id', 'console-user');
-  const response = await fetch(path, {...options, headers});
+  const method = (options.method ?? 'GET').toUpperCase();
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && typeof document !== 'undefined') {
+    const csrfCookie = document.cookie.split('; ').find((item) => item.split('=', 1)[0].endsWith('_csrf'));
+    if (csrfCookie) headers.set('X-CSRF-Token', csrfCookie.split('=').slice(1).join('='));
+  }
+  const response = await fetch(path, {...options, headers, credentials: 'include'});
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as {detail?: unknown} | null;
-    throw new Error(payload?.detail ? String(payload.detail) : `HTTP ${response.status}`);
+    throw new ApiError(response.status, payload?.detail ? String(payload.detail) : `HTTP ${response.status}`);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-let currentRole: 'viewer' | 'admin' = 'viewer';
-
-export function setApiRole(role: 'viewer' | 'admin'): void {
-  currentRole = role;
-}
-
 export const api = {
+  auth: {
+    me: () => request<AuthMeResponse>('/api/v1/auth/me'),
+    login: (username: string, password: string) => request<AuthUser>('/api/v1/auth/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password}),
+    }),
+    logout: () => request<{detail: string}>('/api/v1/auth/logout', {method: 'POST'}),
+  },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
+  sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),
   createSource: (payload: DataSourceWritePayload) => request<DataSourceRead>('/api/v1/sources', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),

@@ -12,16 +12,26 @@ from app.ai.schemas import (
     AIStatusRead,
 )
 from app.ai.service import analyze_raw_signal
+from app.auth.models import User
+from app.auth.security import (
+    PERM_ANALYSIS_RUN,
+    PERM_RISK_VIEW,
+    require_permission,
+    verify_csrf,
+)
 from app.config import get_ai_settings
 from app.database import get_session
 from app.signals.models import RawSignal
 
 router = APIRouter(prefix="/api/v1", tags=["AI 分析"])
 SessionDependency = Annotated[Session, Depends(get_session)]
+RiskView = Annotated[User, Depends(require_permission(PERM_RISK_VIEW))]
+AnalysisRun = Annotated[User, Depends(require_permission(PERM_ANALYSIS_RUN))]
+CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 
 @router.get("/ai/status", response_model=AIStatusRead)
-def ai_status() -> AIStatusRead:
+def ai_status(_user: RiskView) -> AIStatusRead:
     settings = get_ai_settings()
     configured = settings.provider == "fake" or (
         settings.provider == "openai-compatible"
@@ -34,6 +44,7 @@ def ai_status() -> AIStatusRead:
 @router.get("/ai-analysis-records", response_model=AIAnalysisRecordListResponse)
 def list_ai_analysis_records(
     session: SessionDependency,
+    _user: RiskView,
     signal_id: int | None = None,
     record_status: Annotated[str | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -71,7 +82,12 @@ def list_ai_analysis_records(
 
 
 @router.post("/signals/{signal_id}/analyze", response_model=AIAnalysisRecordRead)
-async def analyze_signal(signal_id: int, session: SessionDependency) -> AIAnalysisRecord:
+async def analyze_signal(
+    signal_id: int,
+    session: SessionDependency,
+    _user: AnalysisRun,
+    _csrf: CsrfGuard,
+) -> AIAnalysisRecord:
     signal = session.get(RawSignal, signal_id)
     if signal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险信号不存在")

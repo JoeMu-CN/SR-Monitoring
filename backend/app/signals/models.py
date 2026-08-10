@@ -43,6 +43,7 @@ class DataSource(Base):
     credential_ref: Mapped[str | None] = mapped_column(Text)
     api_key_hash: Mapped[str | None] = mapped_column(Text)
     api_key_last4: Mapped[str | None] = mapped_column(Text)
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     adapter_config: Mapped[dict[str, object]] = mapped_column(
         JSONB, server_default=text("'{}'::jsonb")

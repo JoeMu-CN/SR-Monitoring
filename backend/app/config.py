@@ -17,6 +17,14 @@ class AISettings:
     max_retries: int
 
 
+@dataclass(frozen=True)
+class SearchSettings:
+    provider: str
+    api_key: str
+    base_url: str
+    timeout_seconds: float
+
+
 def get_ai_settings() -> AISettings:
     return AISettings(
         provider=os.getenv("AI_PROVIDER", "fake").strip().lower(),
@@ -25,6 +33,16 @@ def get_ai_settings() -> AISettings:
         api_key=os.getenv("AI_API_KEY", "").strip(),
         timeout_seconds=_float_env("AI_TIMEOUT_SECONDS", 30, minimum=1, maximum=300),
         max_retries=_int_env("AI_MAX_RETRIES", 2, minimum=0, maximum=5),
+    )
+
+
+def get_search_settings() -> SearchSettings:
+    """读取研究搜索配置；缺少 Provider 或 Key 时保持未配置。"""
+    return SearchSettings(
+        provider=os.getenv("SEARCH_PROVIDER", "none").strip().lower(),
+        api_key=os.getenv("SEARCH_API_KEY", "").strip(),
+        base_url=os.getenv("SEARCH_BASE_URL", "").strip(),
+        timeout_seconds=_float_env("SEARCH_TIMEOUT_SECONDS", 15, minimum=1, maximum=60),
     )
 
 
@@ -124,6 +142,19 @@ def validate_auth_config() -> None:
 SCHEDULER_COLLECT_CRON = os.getenv("SCHEDULER_COLLECT_CRON", "*/30 * * * *").strip()
 SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()
 SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip()
+# 研究轨发布开关：本地默认开启以保留开发/测试能力，生产发布候选必须显式关闭。
+RESEARCH_TRACK_ENABLED = os.getenv("RESEARCH_TRACK_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+# 研究轨只由 Scheduler 创建到期任务；主题或归属管理员留空时对应调度停用。
+RESEARCH_SCHEDULE_OWNER_USERNAME = os.getenv("RESEARCH_SCHEDULE_OWNER_USERNAME", "").strip()
+RESEARCH_DAILY_CRON = os.getenv("RESEARCH_DAILY_CRON", "0 8 * * *").strip()
+RESEARCH_DAILY_TOPIC = os.getenv("RESEARCH_DAILY_TOPIC", "").strip()
+RESEARCH_WEEKLY_CRON = os.getenv("RESEARCH_WEEKLY_CRON", "30 8 * * mon").strip()
+RESEARCH_WEEKLY_TOPIC = os.getenv("RESEARCH_WEEKLY_TOPIC", "").strip()
 # 每次定时任务对积压信号执行 AI 解析的批大小；每条信号一次独立 LLM 调用
 SIGNAL_ANALYZE_BATCH = _int_env(
     "SIGNAL_ANALYZE_BATCH", 20, minimum=1, maximum=500

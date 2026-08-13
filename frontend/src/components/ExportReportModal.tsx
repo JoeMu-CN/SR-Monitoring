@@ -58,7 +58,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-      <div data-print-report className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden p-6 space-y-5">
+      <div data-print-report className="w-full max-w-lg space-y-5 overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2 font-bold text-[18px] text-[#101d28] dark:text-white">
             <span className="material-symbols-outlined text-[#004782] text-[22px]">download</span>

@@ -52,6 +52,14 @@ def clean_agent_tables(db_session: Session) -> Session:
     db_session.execute(delete(AgentMessage))
     db_session.execute(delete(AgentSession))
     db_session.execute(delete(TycUsageRecord))
+    configured_tyc = db_session.scalar(
+        select(DataSource).where(DataSource.code == "tianyancha")
+    )
+    if configured_tyc is not None:
+        configured_tyc.enabled = False
+        configured_tyc.api_key_hash = None
+        configured_tyc.api_key_last4 = None
+        configured_tyc.api_key_encrypted = None
     if db_session.get(User, 1) is None:
         db_session.add(
             User(

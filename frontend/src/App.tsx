@@ -10,6 +10,8 @@ import {
   updateDimensionConfig,
   type AuthMeResponse,
   type AgentStatusRead,
+  type AIReviewSummary,
+  type AIReviewItem,
   type SystemHealth,
 } from './api';
 import type {ActiveTab, DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
@@ -21,6 +23,7 @@ import {MobileNav} from './components/MobileNav';
 import {NewSupplierModal} from './components/NewSupplierModal';
 import {OverviewView} from './components/OverviewView';
 import {RiskAssistantView} from './components/RiskAssistantView';
+import {ResearchView} from './components/ResearchView';
 import {SourceOnboardingAgentView} from './components/SourceOnboardingAgentView';
 import {RiskDetailModal} from './components/RiskDetailModal';
 import {RuleEngineView} from './components/RuleEngineView';
@@ -42,6 +45,8 @@ export function App() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [dimensions, setDimensions] = useState<MonitoringDimension[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatusRead | null>(null);
+  const [aiReviewSummary, setAiReviewSummary] = useState<AIReviewSummary | null>(null);
+  const [aiReviewItems, setAiReviewItems] = useState<AIReviewItem[]>([]);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
@@ -56,6 +61,15 @@ export function App() {
   const canManage = auth?.permissions.includes('source_manage') ?? false;
   const consoleRole: 'viewer' | 'admin' = canManage ? 'admin' : 'viewer';
   const canUseRiskAssistant = auth?.permissions.includes('risk_query_use') ?? false;
+  const canUseResearch = auth?.permissions.includes('research_task_create') ?? false;
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('sr-theme') ?? 'light';
+    const useDark = savedTheme === 'dark' || (savedTheme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.classList.toggle('dark', useDark);
+    document.documentElement.classList.toggle('light', !useDark);
+    document.documentElement.classList.toggle('reduce-motion', localStorage.getItem('sr-reduce-motion') === 'true');
+  }, []);
 
   useEffect(() => {
     api.auth.me()
@@ -71,8 +85,8 @@ export function App() {
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
-        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
+      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse, aiReviewResponse, aiReviewItemsResponse] = await Promise.all([
+        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(), api.aiReviewSummary(), api.aiReviewItems(),
       ]);
       const mappedRisks = alertsResponse.items.map(mapRiskAlert);
       const strongestRisk = new Map<number, {level: RiskLevel; score: number}>();
@@ -91,6 +105,8 @@ export function App() {
       setDimensions(dimensionResponse.map(mapDimension));
       setHealth(healthResponse);
       setAgentStatus(agentResponse);
+      setAiReviewSummary(aiReviewResponse);
+      setAiReviewItems(aiReviewItemsResponse);
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
         setAuth(null);
@@ -250,12 +266,12 @@ export function App() {
   };
 
   if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center bg-[#f7f9ff] dark:bg-[#101d28] text-sm text-slate-500">正在验证登录状态…</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-slate-100/90 text-sm text-slate-500 dark:bg-[#0b131e]">正在验证登录状态…</div>;
   }
   if (!auth) return <LoginView onSubmit={handleLogin} error={authError} />;
 
   return (
-    <div className="min-h-screen bg-[#f7f9ff] dark:bg-[#101d28] text-[#101d28] dark:text-slate-100 flex flex-col font-sans antialiased">
+    <div className="flex min-h-screen flex-col bg-slate-100/90 font-sans text-[#101d28] antialiased dark:bg-[#0b131e] dark:text-slate-100">
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -263,6 +279,8 @@ export function App() {
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         p1RiskCount={p1RiskCount}
         canUseRiskAssistant={canUseRiskAssistant}
+        canManage={canManage}
+        canUseResearch={canUseResearch}
       />
 
       <div className="lg:pl-[240px] flex-1 flex flex-col min-w-0 transition-all">
@@ -277,11 +295,19 @@ export function App() {
           onLogout={() => void handleLogout()}
         />
 
-        <main className="p-4 pb-24 sm:p-6 sm:pb-24 lg:p-8 max-w-[1440px] w-full mx-auto flex-1">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-hidden p-4 pb-24 sm:p-6 sm:pb-24 lg:p-6">
           {error && (
             <div className="mb-4 bg-[#ffdad6] border border-[#ba1a1a] text-[#93000a] rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-[13px]">
               <span>{error}</span>
               <button className="font-bold hover:underline" onClick={() => void loadData()}>重新加载</button>
+            </div>
+          )}
+          {aiReviewSummary && aiReviewSummary.needs_review > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-300/80 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+              <div>有 {aiReviewSummary.needs_review} 条信号需要复核，其中 {aiReviewSummary.filtered} 条曾被相关性预过滤；“暂无风险提醒”不代表没有待确认信息。</div>
+              {aiReviewItems.length > 0 && <div className="mt-2 space-y-1 text-[12px]">
+                {aiReviewItems.map((item) => <div key={item.id} className="truncate">· {item.title}：{item.review_reason ?? '需要人工确认'}</div>)}
+              </div>}
             </div>
           )}
           {loading ? (
@@ -309,6 +335,7 @@ export function App() {
                     onSelectRisk={setSelectedRisk} onSelectSupplier={handleSelectSupplier}
                     pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />
                 )}
+                {activeTab === 'research' && <ResearchView canCreate={canUseResearch} />}
                 {activeTab === 'source-agent' && (
                   <SourceOnboardingAgentView agentStatus={agentStatus} role={consoleRole}
                     initialDraftId={sourceAgentDraftId} />
@@ -333,9 +360,20 @@ export function App() {
             </AnimatePresence>
           )}
         </main>
+
+        <footer className="hidden items-center justify-between border-t border-slate-200/80 bg-slate-100/90 px-6 py-1.5 text-[11px] font-mono text-slate-500 backdrop-blur-xl dark:border-slate-800/80 dark:bg-[#0c1420]/90 dark:text-slate-400 lg:flex">
+          <div className="flex items-center gap-4">
+            <span className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300"><span className="h-2 w-2 rounded-full bg-[#007aff]"/>SR Risk Studio · 本地实时控制台</span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span>活跃供应商：{suppliers.filter((supplier) => supplier.monitoringStatus === 'normal').length} / {suppliers.length}</span>
+            <span className="text-slate-300 dark:text-slate-700">|</span>
+            <span className="font-bold text-[#ff3b30]">P1 紧急风险：{p1RiskCount} 个</span>
+          </div>
+          <span className={`font-medium ${health?.status === 'ok' && health.database === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>{health?.status === 'ok' && health.database === 'ok' ? '系统服务正常' : '系统状态待确认'}</span>
+        </footer>
       </div>
 
-      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} />
+      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} canUseResearch={canUseResearch} />
       <RiskDetailModal risk={selectedRisk} onClose={() => setSelectedRisk(null)}
         onExportReport={(risk) => { setReportRisk(risk); setSelectedRisk(null); setIsExportModalOpen(true); }} onAskAssistant={handleAskAssistant} />
       <ExportReportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} selectedRisk={reportRisk} riskItems={riskItems} />

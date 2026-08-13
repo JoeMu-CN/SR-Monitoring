@@ -105,6 +105,16 @@ _US_STATE_ABBR = frozenset(
     }
 )
 
+# 高影响主题不因地理字段不完整而预过滤，交给模型和本地规则继续判断。
+_HIGH_IMPACT_KEYWORDS = frozenset(
+    {
+        "制裁", "sanction", "出口管制", "export control", "实体清单",
+        "供应中断", "供应链中断", "supply disruption", "supply chain disruption",
+        "重大灾害", "台风", "地震", "洪水", "海啸", "火山", "重大事故",
+        "司法", "失信被执行", "刑事立案", "停产", "停工",
+    }
+)
+
 
 @dataclass(frozen=True)
 class RelevanceDecision:
@@ -117,6 +127,8 @@ def assess_signal_relevance(
 ) -> RelevanceDecision:
     """对原始信号文本做确定性相关性判定。relevant=False 表示明确不相关可跳过 LLM。"""
     text = normalize_alias(f"{title} {content}")
+    if any(keyword in text for keyword in _HIGH_IMPACT_KEYWORDS):
+        return RelevanceDecision(True, "命中高影响主题，强制放行复核")
     suppliers = list(
         session.scalars(select(Supplier).where(Supplier.enabled.is_(True)))
     )

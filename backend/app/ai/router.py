@@ -9,6 +9,8 @@ from app.ai.providers import AIConfigurationError, AIProviderError
 from app.ai.schemas import (
     AIAnalysisRecordListResponse,
     AIAnalysisRecordRead,
+    AIReviewItemRead,
+    AIReviewSummaryRead,
     AIStatusRead,
 )
 from app.ai.service import analyze_raw_signal
@@ -47,6 +49,7 @@ def list_ai_analysis_records(
     _user: RiskView,
     signal_id: int | None = None,
     record_status: Annotated[str | None, Query(alias="status")] = None,
+    needs_review: bool | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> AIAnalysisRecordListResponse:
@@ -60,6 +63,8 @@ def list_ai_analysis_records(
                 detail="状态必须是 running、succeeded 或 failed",
             )
         filters.append(AIAnalysisRecord.status == record_status)
+    if needs_review is not None:
+        filters.append(AIAnalysisRecord.needs_review.is_(needs_review))
     total = (
         session.scalar(select(func.count()).select_from(AIAnalysisRecord).where(*filters))
         or 0
@@ -79,6 +84,59 @@ def list_ai_analysis_records(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/ai-review-summary", response_model=AIReviewSummaryRead)
+def ai_review_summary(session: SessionDependency, _user: RiskView) -> AIReviewSummaryRead:
+    review_count = session.scalar(
+        select(func.count()).select_from(AIAnalysisRecord).where(AIAnalysisRecord.needs_review.is_(True))
+    ) or 0
+    filtered_count = session.scalar(
+        select(func.count()).select_from(AIAnalysisRecord).where(
+            AIAnalysisRecord.provider == "deterministic-filter",
+            AIAnalysisRecord.needs_review.is_(True),
+        )
+    ) or 0
+    no_alert_count = session.scalar(
+        select(func.count()).select_from(AIAnalysisRecord).where(
+            AIAnalysisRecord.review_reason.like("%未匹配到供应商%")
+        )
+    ) or 0
+    return AIReviewSummaryRead(
+        needs_review=review_count,
+        filtered=filtered_count,
+        analyzed_without_alert=no_alert_count,
+    )
+
+
+@router.get("/ai-review-items", response_model=list[AIReviewItemRead])
+def ai_review_items(
+    session: SessionDependency,
+    _user: RiskView,
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> list[AIReviewItemRead]:
+    rows = session.execute(
+        select(AIAnalysisRecord, RawSignal)
+        .join(RawSignal, RawSignal.id == AIAnalysisRecord.signal_id)
+        .where(AIAnalysisRecord.needs_review.is_(True))
+        .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
+        .limit(limit)
+    ).all()
+    return [
+        AIReviewItemRead(
+            id=record.id,
+            signal_id=record.signal_id,
+            title=signal.title,
+            content=signal.content,
+            url=signal.url,
+            provider=record.provider,
+            model=record.model,
+            status=record.status,
+            started_at=record.started_at,
+            review_reason=record.review_reason,
+        )
+        for record, signal in rows
+    ]
 
 
 @router.post("/signals/{signal_id}/analyze", response_model=AIAnalysisRecordRead)

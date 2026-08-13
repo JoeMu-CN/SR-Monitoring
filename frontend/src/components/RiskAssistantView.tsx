@@ -205,9 +205,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-120px)] lg:min-h-[600px] w-full">
+    <div className="flex w-full flex-col gap-5 lg:h-[calc(100vh-120px)] lg:min-h-[600px] lg:flex-row">
       {/* LEFT COLUMN: Main Chat Assistant (72% on desktop) */}
-      <div className="lg:w-[72%] flex flex-col bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden h-[calc(100dvh-150px)] min-h-[520px] lg:h-full">
+      <div className="flex h-[calc(100dvh-150px)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101d28] lg:h-full lg:w-[72%]">
         {/* Assistant Top Banner */}
         <div className="bg-[#ecf4ff] dark:bg-slate-900/80 px-4 py-3 border-b border-[#c2c6d2] dark:border-slate-800 flex items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -245,7 +245,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
             </span>
 
             {/* External Check TianYanCha Status Light */}
-            <span className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg border ${agentStatus?.tyc_enabled ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800' : 'text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
+            <span className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg border ${agentStatus?.tyc_enabled ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800' : 'text-[#424751] dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
               <div className="relative flex items-center justify-center w-2 h-2">
                 <motion.span
                   className="absolute inline-flex h-full w-full rounded-full bg-blue-500/60"
@@ -707,7 +707,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
       </div>
 
       {/* RIGHT COLUMN: Context Panel & Capabilities Scope (28% on desktop) */}
-      <div className="lg:w-[28%] flex flex-col gap-4 h-auto overflow-visible lg:h-full lg:overflow-y-auto lg:pr-1">
+      <div className="flex h-auto flex-col gap-4 overflow-visible lg:h-full lg:w-[28%] lg:overflow-y-auto lg:pr-1">
         {/* Quick System Status Card */}
         <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
           <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
@@ -738,7 +738,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
               <span className="material-symbols-outlined text-[18px] text-blue-600">domain</span>
               <span>天眼查接口额度</span>
             </h3>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${agentStatus?.tyc_enabled ? 'text-emerald-600 bg-emerald-50' : 'text-slate-500 bg-slate-100'}`}>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${agentStatus?.tyc_enabled ? 'text-emerald-700 bg-emerald-50' : 'text-[#424751] bg-slate-100'}`}>
               {agentStatus?.tyc_enabled ? (quota?.status === 'exceeded' ? '额度已用尽' : '已启用') : '未启用'}
             </span>
           </div>

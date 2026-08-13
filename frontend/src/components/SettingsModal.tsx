@@ -6,7 +6,7 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const [theme, setTheme] = useState(() => localStorage.getItem('sr-theme') ?? 'system');
+  const [theme, setTheme] = useState(() => localStorage.getItem('sr-theme') ?? 'light');
   const [reduceMotion, setReduceMotion] = useState(() => localStorage.getItem('sr-reduce-motion') === 'true');
 
   if (!isOpen) return null;
@@ -23,7 +23,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-      <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden p-6 space-y-5">
+      <div className="w-full max-w-md space-y-5 overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2 font-bold text-[18px] text-[#101d28] dark:text-white">
             <span className="material-symbols-outlined text-[#004782] text-[22px]">settings</span>

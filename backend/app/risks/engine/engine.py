@@ -250,6 +250,15 @@ def process_event(
     dimensions = load_dimensions(session)
     dimension = _resolve_dimension(dimensions, result.event_type)
 
+    # 没有启用维度或没有供应商匹配时，保留事件但标记分析记录待复核，
+    # 避免“无提醒”被误读为“无风险”。
+    if dimension is None:
+        analysis.needs_review = True
+        reason = f"没有启用的维度接管事件类型 {result.event_type}"
+        analysis.review_reason = "；".join(
+            item for item in (analysis.review_reason, reason) if item
+        )
+
     alert_ids: list[int] = []
     if dimension is not None:
         scoring = dimension.scoring
@@ -356,6 +365,13 @@ def process_event(
                 alert.status = "current"
                 alert.updated_at = datetime.now(UTC)
             alert_ids.append(alert.id)
+
+        if not alert_ids:
+            analysis.needs_review = True
+            reason = "AI 分析成功但未匹配到供应商，未生成风险提醒"
+            analysis.review_reason = "；".join(
+                item for item in (analysis.review_reason, reason) if item
+            )
 
     expire_alerts(session)
     session.commit()

@@ -137,6 +137,7 @@ export type ActiveTab =
   | 'overview'
   | 'current-risks'
   | 'risk-assistant'
+  | 'research'
   | 'source-agent'
   | 'suppliers'
   | 'data-sources'

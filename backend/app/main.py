@@ -10,8 +10,9 @@ from app.agent.router import source_agent_router
 from app.ai.router import router as ai_router
 from app.auth.router import router as auth_router
 from app.auth.security import ensure_bootstrap_admin
-from app.config import validate_auth_config
+from app.config import RESEARCH_TRACK_ENABLED, validate_auth_config
 from app.database import SessionLocal, engine
+from app.research.router import router as research_router
 from app.risks.router import router as risks_router
 from app.risks.workbench_router import router as workbench_router
 from app.signals.router import router as signals_router
@@ -30,6 +31,8 @@ app.include_router(risks_router)
 app.include_router(agent_router)
 app.include_router(source_agent_router)
 app.include_router(workbench_router)
+if RESEARCH_TRACK_ENABLED:
+    app.include_router(research_router)
 app.include_router(auth_router)
 
 

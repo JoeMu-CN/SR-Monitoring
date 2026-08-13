@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgis/postgis:16-3.5-alpine
+    image: postgis/postgis:16-3.5-alpine@sha256:d2fe6296c8ed5b21b31a426f51b9176b4d89f80a0a380632a7a833d604951273
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-supplier_risk}
       POSTGRES_USER: ${POSTGRES_USER:-supplier_risk}
@@ -65,7 +65,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler.main"]
+    command: ["sh", "-c", "alembic upgrade $${ALEMBIC_UPGRADE_TARGET:-head} && python -m app.scheduler.main"]
     dns:
       - 223.5.5.5
       - 119.29.29.29
@@ -80,10 +80,16 @@ services:
       AI_API_KEY: ${AI_API_KEY:-}
       AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
       AI_MAX_RETRIES: ${AI_MAX_RETRIES:-2}
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-head}
       SIGNAL_ANALYZE_BATCH: ${SIGNAL_ANALYZE_BATCH:-20}
       SCHEDULER_COLLECT_CRON: ${SCHEDULER_COLLECT_CRON:-*/30 * * * *}
       SCHEDULER_EXPIRE_CRON: ${SCHEDULER_EXPIRE_CRON:-0 * * * *}
       SCHEDULER_CLEANUP_CRON: ${SCHEDULER_CLEANUP_CRON:-0 3 * * *}
+      RESEARCH_SCHEDULE_OWNER_USERNAME: "${RESEARCH_SCHEDULE_OWNER_USERNAME:-}"
+      RESEARCH_DAILY_CRON: "${RESEARCH_DAILY_CRON:-0 8 * * *}"
+      RESEARCH_DAILY_TOPIC: "${RESEARCH_DAILY_TOPIC:-}"
+      RESEARCH_WEEKLY_CRON: "${RESEARCH_WEEKLY_CRON:-30 8 * * mon}"
+      RESEARCH_WEEKLY_TOPIC: "${RESEARCH_WEEKLY_TOPIC:-}"
       RETENTION_SIGNAL_DAYS: ${RETENTION_SIGNAL_DAYS:-90}
       RETENTION_EVENT_DAYS: ${RETENTION_EVENT_DAYS:-90}
       RETENTION_RUN_DAYS: ${RETENTION_RUN_DAYS:-30}

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import delete
 
 from app import config
 from app.auth import security
@@ -220,6 +221,8 @@ def test_production_requires_data_source_secret(monkeypatch):
 
 
 def test_bootstrap_admin_rejects_weak_password(db_session, monkeypatch):
+    db_session.execute(delete(User))
+    db_session.flush()
     monkeypatch.setattr(security, "BOOTSTRAP_ADMIN_USERNAME", "bootstrap-admin")
     monkeypatch.setattr(security, "BOOTSTRAP_ADMIN_PASSWORD", "password")
     with pytest.raises(HTTPException, match="密码过于常见"):

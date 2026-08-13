@@ -31,6 +31,7 @@ from app.config import (
     BOOTSTRAP_ADMIN_PASSWORD,
     BOOTSTRAP_ADMIN_USERNAME,
     CSRF_COOKIE_NAME,
+    RESEARCH_TRACK_ENABLED,
     SESSION_ABSOLUTE_TIMEOUT_HOURS,
     SESSION_COOKIE_NAME,
     SESSION_IDLE_TIMEOUT_MINUTES,
@@ -70,6 +71,10 @@ PERM_USER_MANAGE = "user_manage"
 PERM_SESSION_REVOKE = "session_revoke"
 PERM_SECURITY_AUDIT_VIEW = "security_audit_view"
 PERM_AUTH_CONFIG_MANAGE = "auth_config_manage"
+PERM_RESEARCH_TASK_CREATE = "research_task_create"
+PERM_RESEARCH_SCHEDULE_MANAGE = "research_schedule_manage"
+PERM_RESEARCH_CLAIM_PROMOTE = "research_claim_promote"
+PERM_RESEARCH_PROVIDER_MANAGE = "research_provider_manage"
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "viewer": {
@@ -86,6 +91,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PERM_RISK_QUERY_USE,
         PERM_EXTERNAL_VERIFICATION,
         PERM_REPORT_EXPORT,
+        PERM_RESEARCH_TASK_CREATE,
     },
     "risk_admin": {
         PERM_RISK_VIEW,
@@ -95,6 +101,9 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PERM_RISK_QUERY_USE,
         PERM_EXTERNAL_VERIFICATION,
         PERM_REPORT_EXPORT,
+        PERM_RESEARCH_TASK_CREATE,
+        PERM_RESEARCH_SCHEDULE_MANAGE,
+        PERM_RESEARCH_CLAIM_PROMOTE,
         PERM_SUPPLIER_MANAGE,
         PERM_SIGNAL_IMPORT,
         PERM_ANALYSIS_RUN,
@@ -124,12 +133,26 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PERM_SESSION_REVOKE,
         PERM_SECURITY_AUDIT_VIEW,
         PERM_AUTH_CONFIG_MANAGE,
+        PERM_RESEARCH_TASK_CREATE,
+        PERM_RESEARCH_SCHEDULE_MANAGE,
+        PERM_RESEARCH_CLAIM_PROMOTE,
+        PERM_RESEARCH_PROVIDER_MANAGE,
     },
 }
 
 
 def role_permissions(role: str) -> list[str]:
-    return sorted(ROLE_PERMISSIONS.get(role, set()))
+    permissions = set(ROLE_PERMISSIONS.get(role, set()))
+    if not RESEARCH_TRACK_ENABLED:
+        permissions.difference_update(
+            {
+                PERM_RESEARCH_TASK_CREATE,
+                PERM_RESEARCH_SCHEDULE_MANAGE,
+                PERM_RESEARCH_CLAIM_PROMOTE,
+                PERM_RESEARCH_PROVIDER_MANAGE,
+            }
+        )
+    return sorted(permissions)
 
 
 # ---------------------------------------------------------------------------

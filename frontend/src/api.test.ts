@@ -87,3 +87,44 @@ describe('API 会话请求', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('研究 API 请求契约', () => {
+  it('使用只读请求读取任务列表、详情和报告草稿', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.research.tasks();
+    await api.research.task(12);
+    await api.research.reports(12);
+
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      '/api/v1/research/tasks',
+      '/api/v1/research/tasks/12',
+      '/api/v1/research/tasks/12/reports',
+    ]);
+    for (const [, options] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+      expect(options.credentials).toBe('include');
+      expect(options.method ?? 'GET').toBe('GET');
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('创建和取消任务使用 POST、JSON 载荷与 CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 202, json: async () => ({})});
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-research'});
+
+    await api.research.createTask('某供应商近 30 天风险动态');
+    await api.research.cancelTask(12);
+
+    const [, createOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, cancelOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(createOptions.method).toBe('POST');
+    expect(JSON.parse(String(createOptions.body))).toEqual({task_type: 'manual', topic: '某供应商近 30 天风险动态'});
+    expect(new Headers(createOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
+    expect(cancelOptions.method).toBe('POST');
+    expect(cancelOptions.body).toBeUndefined();
+    expect(new Headers(cancelOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
+    vi.unstubAllGlobals();
+  });
+});

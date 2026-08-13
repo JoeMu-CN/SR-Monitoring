@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Integer,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -43,5 +45,9 @@ class AIAnalysisRecord(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+    review_reason: Mapped[str | None] = mapped_column(Text)
 
     signal: Mapped[RawSignal] = relationship()

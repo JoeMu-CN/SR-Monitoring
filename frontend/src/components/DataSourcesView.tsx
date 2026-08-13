@@ -254,10 +254,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
 
   return (
-    <div className="space-y-6 pb-20 lg:pb-8">
+    <div className="space-y-5 pb-20 lg:pb-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-[#101d28] dark:text-white tracking-tight">数据源与同步状态</h1>
+          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">数据源与同步状态</h1>
           <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">监控多维数据 API 接口连通度、网络延迟、已拉取监管日志及全网缓存节点状态。</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -265,7 +265,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <button onClick={() => void loadDraftBox()} disabled={role !== 'admin' || isLoadingDrafts} className="border border-[#c2c6d2] bg-white text-[#004782] dark:bg-slate-900 dark:text-blue-300 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">inventory_2</span>{isLoadingDrafts ? '加载草稿…' : '草稿箱'}</button>
           <button onClick={() => onOpenSourceAgent()} disabled={role !== 'admin'} className="border border-[#004782] bg-[#ecf4ff] text-[#004782] dark:bg-slate-950/30 dark:text-blue-300 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#d6e4f3] dark:hover:bg-slate-800 disabled:opacity-40 flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">add_link</span>数据源接入助手</button>
           <button onClick={() => void loadAudit()} disabled={role !== 'admin'} className="border border-[#c2c6d2] dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 text-xs font-bold hover:bg-[#ecf4ff] dark:hover:bg-slate-800 disabled:opacity-40">修改日志</button>
-          <button onClick={() => void handleSyncClick()} disabled={isSyncing || role !== 'admin'} className="bg-[#004782] hover:bg-[#185fa5] text-white font-bold text-[13px] px-4 py-2 rounded-lg shadow-2xs transition-all flex items-center gap-2 disabled:opacity-50"><span className={`material-symbols-outlined text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>{isSyncing ? '全量数据同步中...' : '立即全量数据同步'}</button>
+          <button onClick={() => void handleSyncClick()} disabled={isSyncing || role !== 'admin'} className="rounded-xl bg-[#185fa5] px-4 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-[#004782] disabled:opacity-50"><span className={`material-symbols-outlined mr-1 align-middle text-[18px] ${isSyncing ? 'animate-spin' : ''}`}>sync</span>{isSyncing ? '全量数据同步中...' : '立即全量数据同步'}</button>
           <button onClick={openCreate} disabled={role !== 'admin'} className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[13px] px-4 py-2 rounded-lg disabled:opacity-40">新增数据源</button>
         </div>
       </div>
@@ -293,15 +293,15 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         </section>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs" aria-label="数据源概览">
+      <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 md:grid-cols-4" aria-label="数据源概览">
         <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">数据源接入数</div><div className="text-xl font-bold font-mono text-[#101d28] dark:text-white">{dataSources.length} <span className="text-xs font-normal text-slate-500">个管道</span></div></div>
         <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">正常运行 (Normal)</div><div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">{dataSources.filter((source) => source.status === 'normal').length} <span className="text-xs font-normal text-slate-500">个</span></div></div>
         <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">异常/延迟节点</div><div className="text-xl font-bold font-mono text-[#ba1a1a] dark:text-red-400">{dataSources.filter((source) => source.status === 'warning' || source.status === 'error').length} <span className="text-xs font-normal text-slate-500">个</span></div></div>
         <div className="space-y-0.5"><div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">全网拉取监管记录</div><div className="text-xl font-bold font-mono text-[#004782] dark:text-blue-400">{dataSources.reduce((total, source) => total + source.itemCount, 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">条</span></div></div>
       </div>
 
-      <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl shadow-2xs overflow-hidden" role="list" aria-label="数据源列表">
-        <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-3 bg-[#f7f9ff] dark:bg-slate-800/60 border-b border-[#c2c6d2] dark:border-slate-800 text-[12px] font-bold text-[#424751] dark:text-slate-300">
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60" role="list" aria-label="数据源列表">
+        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-12 md:gap-4">
           <div className="col-span-4">数据源名称与类型</div><div className="col-span-2">连通状态 / 延迟</div><div className="col-span-2">最近同步时间</div><div className="col-span-2">已拉取监管记录</div><div className="col-span-2 text-right">节点与操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
@@ -315,7 +315,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             const isToggling = togglingId === source.id;
             const typeLabel = isExternalTool ? '按需外部核查' : source.type === 'official_api' ? '官方 API' : source.type.replaceAll('_', ' ');
             return (
-              <motion.div key={source.id} role="listitem" className={`p-4 sm:px-5 transition-colors hover:bg-[#f7f9ff]/70 dark:hover:bg-slate-800/50 ${isWarning ? 'bg-red-50/20 dark:bg-red-950/10' : ''}`}>
+              <motion.div key={source.id} role="listitem" className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${isWarning ? 'bg-red-50/30 dark:bg-red-950/10' : ''}`}>
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 items-center">
                   <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
                     <div className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300' : 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300'}`}><span className="material-symbols-outlined text-[20px]">{source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}</span></div>

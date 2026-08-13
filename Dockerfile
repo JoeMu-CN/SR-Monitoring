@@ -8,7 +8,7 @@ RUN npm test
 RUN npm run lint
 RUN npm run build
 
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -26,4 +26,4 @@ COPY --from=frontend-build /frontend/dist ./app/static
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+CMD ["sh", "-c", "alembic upgrade ${ALEMBIC_UPGRADE_TARGET:-head} && uvicorn app.main:app --host 0.0.0.0 --port 8080"]

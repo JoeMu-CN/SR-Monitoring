@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from pytest import MonkeyPatch
@@ -123,6 +124,70 @@ def test_openai_compatible_provider_retries_and_validates() -> None:
     assert result.locations[0].country_code == "CN"
 
 
+def test_openai_compatible_provider_does_not_retry_semantic_validation_error() -> None:
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        invalid = valid_result()
+        invalid["event_type"] = "not-an-event-type"
+        invalid["event_subtype"] = None
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(invalid)}}]},
+        )
+
+    settings = AISettings(
+        provider="openai-compatible",
+        base_url="https://model.example.test/v1",
+        model="test-model",
+        api_key="test-secret",
+        timeout_seconds=5,
+        max_retries=2,
+    )
+    provider = OpenAICompatibleProvider(
+        settings,
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+    with pytest.raises(AIProviderError, match="结构化结果无效"):
+        asyncio.run(provider.analyze_signal(analysis_input()))
+    assert attempts == 1
+
+
+def test_openai_compatible_provider_drops_incompatible_event_subtype() -> None:
+    invalid = valid_result()
+    invalid["event_type"] = "corporate"
+    invalid["event_subtype"] = "transport_disruption"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(invalid)}}]},
+        )
+
+    settings = AISettings(
+        provider="openai-compatible",
+        base_url="https://model.example.test/v1",
+        model="test-model",
+        api_key="test-secret",
+        timeout_seconds=5,
+        max_retries=0,
+    )
+    provider = OpenAICompatibleProvider(
+        settings,
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+    result = asyncio.run(provider.analyze_signal(analysis_input()))
+
+    assert result.event_type == "corporate"
+    assert result.event_subtype is None
+
+
 def test_signal_analysis_api_uses_fake_without_network(
     client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
 ) -> None:
@@ -139,6 +204,24 @@ def test_signal_analysis_api_uses_fake_without_network(
     assert response.json()["result"]["summary_zh"] == "港口临时管制"
     records = client.get("/api/v1/ai-analysis-records", params={"signal_id": signal.id})
     assert records.json()["total"] == 1
+
+
+def test_low_confidence_analysis_is_marked_for_review(
+    client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "fake")
+    import_signal(client)
+    signal = db_session.scalar(select(RawSignal))
+    assert signal is not None
+    response = client.post(f"/api/v1/signals/{signal.id}/analyze")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["needs_review"] is True
+    assert "other" in payload["review_reason"]
+
+    summary = client.get("/api/v1/ai-review-summary")
+    assert summary.status_code == 200
+    assert summary.json()["needs_review"] == 1
 
 
 def test_provider_failure_is_recorded(

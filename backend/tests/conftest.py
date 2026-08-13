@@ -13,6 +13,14 @@ from app.auth.security import create_session, csrf_token_for_session
 from app.config import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.database import engine, get_session
 from app.main import app
+from app.research.models import (
+    ResearchCitation,
+    ResearchClaim,
+    ResearchClaimCitation,
+    ResearchReport,
+    ResearchSource,
+    ResearchTask,
+)
 from app.risks.models import (
     EventEntity,
     EventLocation,
@@ -46,6 +54,12 @@ def db_session() -> Generator[Session]:
     session.execute(delete(AIAnalysisRecord))
     session.execute(delete(RawSignal))
     session.execute(delete(CollectionRun))
+    session.execute(delete(ResearchReport))
+    session.execute(delete(ResearchClaimCitation))
+    session.execute(delete(ResearchCitation))
+    session.execute(delete(ResearchSource))
+    session.execute(delete(ResearchClaim))
+    session.execute(delete(ResearchTask))
     session.execute(delete(Supplier))
     session.execute(delete(RuleDimensionConfig))
     session.flush()

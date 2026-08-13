@@ -25,7 +25,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-2 backdrop-blur-sm sm:p-4"
           onClick={onClose}
         >
           <motion.div
@@ -33,11 +33,11 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 15 }}
             transition={{ type: 'spring', stiffness: 350, damping: 28 }}
-            className="bg-[#f7f9ff] dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden my-auto"
+            className="my-auto flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-[#f7f9ff] shadow-2xl dark:border-slate-800 dark:bg-slate-900"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top Sticky Bar */}
-        <div className="bg-white dark:bg-slate-950 px-6 py-4 border-b border-[#c2c6d2] dark:border-slate-800 flex justify-between items-center sticky top-0 z-10">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200/80 bg-white/90 px-6 py-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/90">
           <button
             onClick={onClose}
             className="flex items-center gap-1.5 text-[14px] font-bold text-[#004782] dark:text-blue-400 hover:underline"
@@ -79,7 +79,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
         </div>
 
         {/* Modal Scrollable Content */}
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <div className="flex-1 space-y-6 overflow-y-auto p-6">
           {/* Header Title Section */}
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1.5">
@@ -118,7 +118,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
           </div>
 
           {/* Overall Risk Evaluation Box */}
-          <div className="bg-white dark:bg-slate-950 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+          <div className="grid grid-cols-1 items-center gap-6 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80 md:grid-cols-12">
             <div className="md:col-span-8 space-y-3">
               <div className="flex items-center gap-2 text-[#ba1a1a] font-bold text-[15px]">
                 <span className="material-symbols-outlined text-[22px]">warning</span>
@@ -169,7 +169,7 @@ export const RiskDetailModal: React.FC<RiskDetailModalProps> = ({
           </div>
 
           {/* 风险证据链 Step Chain */}
-          <div className="bg-white dark:bg-slate-950 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs space-y-4">
+          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
             <div className="flex items-center gap-2 font-bold text-[15px] text-[#101d28] dark:text-white">
               <span className="material-symbols-outlined text-[#004782] text-[22px]">hub</span>
               <span>风险证据链</span>

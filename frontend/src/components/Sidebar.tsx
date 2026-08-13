@@ -1,6 +1,19 @@
 import React from 'react';
-import { motion } from 'motion/react';
-import { ActiveTab } from '../types';
+import {motion} from 'motion/react';
+import {
+  LayoutDashboard,
+  ShieldAlert,
+  Bot,
+  Building2,
+  Database,
+  SlidersHorizontal,
+  Download,
+  Settings,
+  HelpCircle,
+  Workflow,
+  Compass,
+} from 'lucide-react';
+import type {ActiveTab} from '../types';
 
 interface SidebarProps {
   activeTab: ActiveTab;
@@ -9,6 +22,8 @@ interface SidebarProps {
   onOpenSettingsModal: () => void;
   p1RiskCount: number;
   canUseRiskAssistant: boolean;
+  canManage: boolean;
+  canUseResearch: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -18,117 +33,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenSettingsModal,
   p1RiskCount,
   canUseRiskAssistant,
+  canManage,
+  canUseResearch,
 }) => {
-  const navItems: { id: ActiveTab; label: string; icon: string; badge?: number }[] = [
-    { id: 'overview', label: '总览', icon: 'dashboard' },
-    { id: 'current-risks', label: '当前风险', icon: 'warning', badge: p1RiskCount },
-    ...(canUseRiskAssistant ? [{ id: 'risk-assistant' as ActiveTab, label: '风险查询助手', icon: 'smart_toy' }] : []),
-    { id: 'suppliers', label: '供应商', icon: 'factory' },
-    { id: 'data-sources', label: '数据源', icon: 'database' },
-    { id: 'rules', label: '规则引擎', icon: 'rule' },
+  const mainItems: {id: ActiveTab; label: string; icon: React.ReactNode; badge?: number}[] = [
+    {id: 'overview', label: '风险总览', icon: <LayoutDashboard className="h-[18px] w-[18px]"/>},
+    {id: 'current-risks', label: '当前风险监控', icon: <ShieldAlert className="h-[18px] w-[18px]"/>, badge: p1RiskCount},
+    ...(canUseRiskAssistant ? [{id: 'risk-assistant' as ActiveTab, label: '风险查询助手', icon: <Bot className="h-[18px] w-[18px]"/>}] : []),
+    ...(canUseResearch ? [{id: 'research' as ActiveTab, label: '智能研究', icon: <Compass className="h-[18px] w-[18px]"/>}] : []),
+    {id: 'suppliers', label: '供应商名录', icon: <Building2 className="h-[18px] w-[18px]"/>},
+  ];
+  const systemItems: {id: ActiveTab; label: string; icon: React.ReactNode}[] = [
+    {id: 'data-sources', label: '数据源同步', icon: <Database className="h-[18px] w-[18px]"/>},
+    ...(canManage ? [{id: 'source-agent' as ActiveTab, label: '数据源接入助手', icon: <Workflow className="h-[18px] w-[18px]"/>}] : []),
+    {id: 'rules', label: '规则引擎', icon: <SlidersHorizontal className="h-[18px] w-[18px]"/>},
   ];
 
+  const renderItem = (item: {id: ActiveTab; label: string; icon: React.ReactNode; badge?: number}) => {
+    const active = activeTab === item.id;
+    return (
+      <motion.button
+        key={item.id}
+        type="button"
+        onClick={() => setActiveTab(item.id)}
+        whileTap={{scale: 0.98}}
+        className={`relative flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold transition-all ${
+          active ? 'text-white' : 'text-slate-700 hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800/70'
+        }`}
+      >
+        {active && <motion.span layoutId="sidebarTabHighlight" className="absolute inset-0 rounded-lg bg-[#185fa5] shadow-sm" transition={{type: 'spring', stiffness: 500, damping: 35}}/>}
+        <span className="relative z-10 flex items-center gap-2.5">{item.icon}<span>{item.label}</span></span>
+        {item.badge && item.badge > 0 ? <span className={`relative z-10 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white text-[#C92A2A]' : 'bg-[#C92A2A] text-white'}`}>{item.badge}</span> : null}
+      </motion.button>
+    );
+  };
+
   return (
-    <nav className="bg-[#ecf4ff] dark:bg-[#101d28] border-r border-[#c2c6d2] dark:border-slate-800 fixed left-0 top-0 h-screen w-[240px] hidden lg:flex flex-col p-4 gap-4 z-30 transition-colors">
-      {/* Brand & Logo */}
-      <div className="flex items-center gap-3 mb-2 pt-1">
-        <motion.div
-          whileHover={{ scale: 1.05, rotate: 3 }}
-          whileTap={{ scale: 0.95 }}
-          className="w-10 h-10 rounded-xl bg-[#004782] text-white flex items-center justify-center font-black shadow-md flex-shrink-0 cursor-pointer"
-        >
-          <img src="/logo.svg" alt="SR Monitoring" className="w-10 h-10 rounded-xl" />
-        </motion.div>
-        <div>
-          <div className="font-extrabold text-[18px] text-[#101d28] dark:text-white leading-tight">
-            SR Monitoring
-          </div>
-          <div className="text-[11px] font-bold text-[#424751] dark:text-slate-400 tracking-wider uppercase">
-            Enterprise Risk Intelligence
-          </div>
+    <nav className="fixed left-0 top-0 z-30 hidden h-screen w-[240px] select-none flex-col gap-4 border-r border-slate-200/80 bg-slate-100/90 p-3.5 backdrop-blur-2xl dark:border-slate-800/80 dark:bg-[#0c1420]/90 lg:flex">
+      <div className="flex items-center gap-2.5 rounded-xl border border-black/5 bg-white/70 px-2.5 py-2 shadow-sm dark:border-white/5 dark:bg-slate-800/60">
+        <img src="/logo.svg" alt="供应商风险监控平台" className="h-8 w-8 rounded-lg object-cover"/>
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-extrabold leading-tight text-slate-900 dark:text-white">SR Risk Studio</div>
+          <div className="truncate text-[10px] font-medium text-slate-500 dark:text-slate-400">企业级供应链风险系统</div>
         </div>
       </div>
 
-      {/* Primary Navigation Links */}
-      <div className="flex flex-col gap-1.5 flex-1 relative">
-        {navItems.map((item) => {
-          const isActive = activeTab === item.id;
-          return (
-            <motion.button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              whileHover={{ x: 3 }}
-              whileTap={{ scale: 0.98 }}
-              className={`relative flex items-center justify-between p-3 rounded-xl font-medium text-[14px] transition-colors text-left overflow-hidden ${
-                isActive
-                  ? 'text-white font-bold shadow-sm'
-                  : 'text-[#424751] dark:text-slate-300 hover:bg-[#d6e4f3]/60 dark:hover:bg-slate-800'
-              }`}
-            >
-              {/* Active Tab Background Pill */}
-              {isActive && (
-                <motion.div
-                  layoutId="sidebarTabHighlight"
-                  className="absolute inset-0 bg-[#185fa5] rounded-xl z-0"
-                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                />
-              )}
-
-              <div className="relative z-10 flex items-center gap-3">
-                <span className={`material-symbols-outlined text-[20px] ${isActive ? 'filled' : ''}`}>
-                  {item.icon}
-                </span>
-                <span>{item.label}</span>
-              </div>
-
-              {item.badge && item.badge > 0 ? (
-                <motion.span
-                  initial={{ scale: 0.8 }}
-                  animate={{ scale: [1, 1.1, 1] }}
-                  transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
-                  className={`relative z-10 text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                    isActive ? 'bg-white text-[#004782]' : 'bg-[#C92A2A] text-white shadow-xs'
-                  }`}
-                >
-                  {item.badge}
-                </motion.span>
-              ) : null}
-            </motion.button>
-          );
-        })}
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-0.5">
+        <div className="space-y-1">
+          <div className="mb-1 px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">核心监控 MONITORS</div>
+          {mainItems.map(renderItem)}
+        </div>
+        <div className="space-y-1">
+          <div className="mb-1 px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">系统与服务 SYSTEM</div>
+          {systemItems.map(renderItem)}
+        </div>
       </div>
 
-      {/* Bottom Actions */}
-      <div className="mt-auto flex flex-col gap-1.5 pt-4 border-t border-[#c2c6d2]/50">
-        <motion.button
-          onClick={onOpenExportModal}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-          className="w-full bg-[#004782] hover:bg-[#185fa5] text-white font-medium text-[14px] py-2.5 px-3 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
-        >
-          <span className="material-symbols-outlined text-[18px]">download</span>
-          <span>导出风险报告</span>
-        </motion.button>
-
-        <motion.button
-          onClick={onOpenSettingsModal}
-          whileHover={{ x: 2 }}
-          whileTap={{ scale: 0.98 }}
-          className="flex items-center gap-3 p-2.5 text-[#424751] dark:text-slate-300 hover:bg-[#d6e4f3]/60 dark:hover:bg-slate-800 transition-all rounded-xl text-[14px]"
-        >
-          <span className="material-symbols-outlined text-[20px]">settings</span>
-          <span>系统设置</span>
-        </motion.button>
-
-        <motion.button
-          onClick={() => alert('如需技术支持，请联系 SR 风险监控团队 support@srmonitoring.com')}
-          whileHover={{ x: 2 }}
-          whileTap={{ scale: 0.98 }}
-          className="flex items-center gap-3 p-2.5 text-[#424751] dark:text-slate-300 hover:bg-[#d6e4f3]/60 dark:hover:bg-slate-800 transition-all rounded-xl text-[14px]"
-        >
-          <span className="material-symbols-outlined text-[20px]">help</span>
-          <span>技术支持</span>
-        </motion.button>
+      <div className="mt-auto flex flex-col gap-1 border-t border-slate-200/80 pt-3 dark:border-slate-800">
+        <motion.button type="button" onClick={onOpenExportModal} whileTap={{scale: 0.97}} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#004782] px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-[#185fa5]"><Download className="h-4 w-4"/><span>导出风险报告</span></motion.button>
+        <div className="mt-1 grid grid-cols-2 gap-1">
+          <button type="button" onClick={onOpenSettingsModal} className="flex items-center justify-center gap-1.5 rounded-lg p-1.5 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"><Settings className="h-[15px] w-[15px]"/><span>设置</span></button>
+          <button type="button" onClick={() => alert('如需技术支持，请联系 SR 风险监控团队 support@srmonitoring.com')} className="flex items-center justify-center gap-1.5 rounded-lg p-1.5 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"><HelpCircle className="h-[15px] w-[15px]"/><span>帮助</span></button>
+        </div>
       </div>
     </nav>
   );

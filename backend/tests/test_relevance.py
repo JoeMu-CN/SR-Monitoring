@@ -102,3 +102,16 @@ def test_china_mention_overrides_foreign_filter(db_session: Session) -> None:
         db_session, "中美贸易摩擦升级", "双方加征关税"
     )
     assert decision.relevant is True
+
+
+def test_high_impact_topic_is_forced_through_even_without_matching_country(
+    db_session: Session,
+) -> None:
+    _add_supplier(db_session, "SUP-10", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session,
+        "美国出口管制升级",
+        "限制先进芯片供应，影响全球供应链。",
+    )
+    assert decision.relevant is True
+    assert "强制放行" in decision.reason

@@ -10,6 +10,7 @@ from app.database import Base
 from app.signals import models as signal_models  # noqa: F401
 from app.suppliers import models as supplier_models  # noqa: F401
 from app.auth import models as auth_models  # noqa: F401
+from app.research import models as research_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", DATABASE_URL)

@@ -118,11 +118,11 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   }
 
   return (
-    <div className="space-y-6 pb-20 lg:pb-8">
+    <div className="space-y-5 pb-20 lg:pb-8">
       {/* Title */}
       <div className="flex flex-col sm:flex-row justify-between gap-3">
         <div>
-        <h1 className="text-2xl font-bold text-[#101d28] dark:text-white tracking-tight">
+        <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">
           规则引擎与权重配置
         </h1>
         <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
@@ -136,7 +136,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Monitoring Dimensions List (4 cols) */}
         <div className="lg:col-span-4 space-y-3 h-fit">
-          <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-4 shadow-2xs space-y-3">
+          <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
           <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
             <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">监控维度</h2>
             <button
@@ -225,7 +225,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
           className="lg:col-span-8 space-y-6"
         >
           {/* Rule Configuration Card */}
-          <div className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs space-y-5">
+          <div className="space-y-5 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <h2 className="font-bold text-[18px] text-[#101d28] dark:text-white">
@@ -273,7 +273,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       <span className="text-slate-700 dark:text-slate-300">{source.name}</span>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
                         source.status === 'connected' ? 'bg-emerald-100 text-emerald-700' :
-                        source.status === 'external_tool' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                        source.status === 'external_tool' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-[#424751]'
                       }`}>
                         {source.status === 'connected' ? '已接入' : source.status === 'external_tool' ? '外部核查工具' : '规划中'}
                       </span>
@@ -391,7 +391,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
             animate={{opacity: 1, y: 0}}
             exit={reduceMotion ? {opacity: 0} : {opacity: 0, y: -6}}
             transition={{duration: reduceMotion ? 0 : 0.18, ease: 'easeOut'}}
-            className="bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 rounded-xl p-5 shadow-2xs space-y-4 text-[#101d28]"
+            className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 text-[#101d28] shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
           >
             <div className="flex items-start gap-3">
               <span className="material-symbols-outlined text-[22px] text-[#004782] mt-0.5">science</span>

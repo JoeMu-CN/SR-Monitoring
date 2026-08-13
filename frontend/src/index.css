@@ -4,11 +4,82 @@
 
 :root {
   font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
 }
 
 body {
   min-width: 320px;
+  margin: 0;
+  background: #f1f5f9;
+  color: #101d28;
 }
+
+::selection {
+  background: #dbeafe;
+  color: #007aff;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #0b131e;
+    color: #f8fafc;
+  }
+}
+
+/* Google AI Studio / macOS Sonoma palette compatibility for legacy utility classes. */
+[class~="bg-[#004782]"],
+[class~="bg-[#185fa5]"] { background-color: #007aff !important; }
+[class~="hover:bg-[#185fa5]"]:hover { background-color: #0062cc !important; }
+[class~="text-[#004782]"],
+[class~="text-[#185fa5]"] { color: #007aff !important; }
+[class~="border-[#004782]"],
+[class~="border-[#185fa5]"] { border-color: #007aff !important; }
+[class~="focus:ring-[#004782]"]:focus,
+[class~="focus-visible:ring-[#004782]"]:focus-visible { --tw-ring-color: #007aff !important; }
+[class~="bg-[#C92A2A]"] { background-color: #ff3b30 !important; }
+[class~="text-[#C92A2A]"] { color: #ff3b30 !important; }
+[class~="border-[#C92A2A]"] { border-color: #ff3b30 !important; }
+[class~="bg-[#D97706]"] { background-color: #ff9500 !important; }
+[class~="text-[#D97706]"] { color: #ff9500 !important; }
+[class~="border-[#D97706]"] { border-color: #ff9500 !important; }
+[class~="bg-[#10B981]"] { background-color: #34c759 !important; }
+[class~="text-[#10B981]"] { color: #34c759 !important; }
+[class~="bg-[#64748B]"] { background-color: #8e8e93 !important; }
+[class~="text-[#64748B]"] { color: #8e8e93 !important; }
+[class~="bg-[#2563EB]"] { background-color: #007aff !important; }
+[class~="text-[#2563EB]"] { color: #007aff !important; }
+[class~="bg-emerald-600"],
+[class~="bg-emerald-500"] { background-color: #34c759 !important; }
+[class~="text-emerald-600"] { color: #248a3d !important; }
+[class~="bg-amber-500"],
+[class~="bg-amber-600"] { background-color: #ff9500 !important; }
+[class~="text-amber-600"] { color: #b25000 !important; }
+[class~="bg-[#f7f9ff]"] { background-color: #f8fafc !important; }
+[class~="bg-[#ecf4ff]"] { background-color: #eef6ff !important; }
+[class~="border-[#c2c6d2]"] { border-color: #e2e8f0 !important; }
+
+.dark { color-scheme: dark; }
+.dark [class~="dark:bg-[#101d28]"] { background-color: #0b131e !important; }
+.dark [class~="dark:bg-[#0e1726]"] { background-color: #0e1726 !important; }
+.dark [class~="dark:bg-[#0c1420]"] { background-color: #0c1420 !important; }
+.dark [class~="dark:bg-[#101d28]"] { color: #f8fafc; }
 
 button,
 a,

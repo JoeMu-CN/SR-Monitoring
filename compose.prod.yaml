@@ -1,7 +1,7 @@
 services:
   postgres:
-    env_file:
-      - ${PROD_ENV_FILE:-deploy/.env.production}
+    # PostgreSQL 只需要数据库变量；不要把 Session、数据源密钥或 AI Key 注入数据库容器。
+    env_file: !reset []
     networks:
       - internal
 
@@ -15,6 +15,7 @@ services:
       DATA_SOURCE_SECRET_KEY: ${DATA_SOURCE_SECRET_KEY:?DATA_SOURCE_SECRET_KEY must be set}
       SESSION_SECURE_COOKIE: "true"
       ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN must be set to an https origin}
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0027}
     ports: !reset []
     expose:
       - "8080"
@@ -27,11 +28,12 @@ services:
       - ${PROD_ENV_FILE:-deploy/.env.production}
     environment:
       APP_ENV: production
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0027}
     networks:
       - internal
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30-alpine-slim@sha256:45c3810793fe3e982fb614c67e1b696816aff3ec742620e1ef7cd9d3184185ef
     depends_on:
       app:
         condition: service_healthy

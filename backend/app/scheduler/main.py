@@ -14,6 +14,12 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from app.config import (
+    RESEARCH_DAILY_CRON,
+    RESEARCH_DAILY_TOPIC,
+    RESEARCH_SCHEDULE_OWNER_USERNAME,
+    RESEARCH_TRACK_ENABLED,
+    RESEARCH_WEEKLY_CRON,
+    RESEARCH_WEEKLY_TOPIC,
     SCHEDULER_CLEANUP_CRON,
     SCHEDULER_COLLECT_CRON,
     SCHEDULER_EXPIRE_CRON,
@@ -24,6 +30,7 @@ from app.scheduler.jobs import (
     cleanup_job,
     collect_job,
     collect_source_job,
+    create_research_task_job,
     expire_job,
 )
 from app.signals.models import DataSource
@@ -98,11 +105,37 @@ def main() -> None:
     scheduler.add_job(
         cleanup_job, _trigger(SCHEDULER_CLEANUP_CRON), id="cleanup", name="保留清理"
     )
+    if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_DAILY_TOPIC:
+        scheduler.add_job(
+            create_research_task_job,
+            _trigger(RESEARCH_DAILY_CRON),
+            args=["daily"],
+            id="research-daily",
+            name="创建每日研究任务",
+        )
+    if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_WEEKLY_TOPIC:
+        scheduler.add_job(
+            create_research_task_job,
+            _trigger(RESEARCH_WEEKLY_CRON),
+            args=["weekly"],
+            id="research-weekly",
+            name="创建每周研究任务",
+        )
     logger.info(
-        "Scheduler 启动: collect=%s expire=%s cleanup=%s",
+        "Scheduler 启动: collect=%s expire=%s cleanup=%s research_daily=%s research_weekly=%s",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
+        (
+            RESEARCH_DAILY_CRON
+            if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_DAILY_TOPIC
+            else "disabled"
+        ),
+        (
+            RESEARCH_WEEKLY_CRON
+            if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_WEEKLY_TOPIC
+            else "disabled"
+        ),
     )
     scheduler.start()
 

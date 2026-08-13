@@ -14,14 +14,25 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
 from app.ai.service import analyze_raw_signal
-from app.config import SIGNAL_ANALYZE_BATCH, SIGNAL_RELEVANCE_FILTER_ENABLED
+from app.auth.models import User
+from app.auth.security import write_audit
+from app.config import (
+    RESEARCH_DAILY_TOPIC,
+    RESEARCH_SCHEDULE_OWNER_USERNAME,
+    RESEARCH_WEEKLY_TOPIC,
+    SIGNAL_ANALYZE_BATCH,
+    SIGNAL_RELEVANCE_FILTER_ENABLED,
+)
 from app.database import SessionLocal
+from app.research.models import ResearchTask
+from app.research.service import create_task
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
@@ -30,6 +41,7 @@ from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 
 logger = logging.getLogger("scheduler")
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _collect_enabled_sources(
@@ -117,6 +129,8 @@ def _process_pending_signals(limit: int | None = None) -> int:
                             duration_ms=0,
                             result=None,
                             error=f"filtered: {decision.reason}",
+                            needs_review=True,
+                            review_reason=f"预过滤结果待复核：{decision.reason}",
                         )
                     )
                     session.commit()
@@ -154,6 +168,62 @@ def collect_job() -> None:
         logger.info("本次处理新信号 %d 条", processed)
     except Exception as exc:
         logger.exception("定时采集任务异常: %s", exc)
+
+
+def create_research_task_job(task_type: str, *, now: datetime | None = None) -> int | None:
+    """按日或按自然周幂等创建研究任务；不执行搜索、抓取或模型调用。"""
+    topics = {"daily": RESEARCH_DAILY_TOPIC, "weekly": RESEARCH_WEEKLY_TOPIC}
+    if task_type not in topics:
+        raise ValueError(f"不支持的研究调度类型: {task_type}")
+    topic = topics[task_type]
+    if not topic or not RESEARCH_SCHEDULE_OWNER_USERNAME:
+        logger.info("跳过%s研究任务：主题或归属管理员未配置", task_type)
+        return None
+
+    current = (now or datetime.now(SHANGHAI_TZ)).astimezone(SHANGHAI_TZ)
+    period = (
+        current.date().isoformat()
+        if task_type == "daily"
+        else f"{current.isocalendar().year}-W{current.isocalendar().week:02d}"
+    )
+    idempotency_key = f"scheduled:{task_type}:{period}"
+    with SessionLocal() as session:
+        owner = session.scalar(
+            select(User).where(
+                User.username == RESEARCH_SCHEDULE_OWNER_USERNAME,
+                User.status == "active",
+                User.role.in_(("risk_admin", "platform_admin")),
+            )
+        )
+        if owner is None:
+            logger.error("跳过%s研究任务：归属管理员不存在、未启用或权限不足", task_type)
+            return None
+        existing = session.scalar(
+            select(ResearchTask).where(
+                ResearchTask.owner_user_id == owner.id,
+                ResearchTask.idempotency_key == idempotency_key,
+            )
+        )
+        if existing is not None:
+            return existing.id
+        task = create_task(
+            session,
+            owner_user_id=owner.id,
+            task_type=task_type,
+            topic=topic,
+            supplier_scope=[],
+            idempotency_key=idempotency_key,
+        )
+        write_audit(
+            session,
+            action="research_task_created",
+            resource_type="research_task",
+            resource_id=str(task.id),
+            detail=f"task_type={task_type} trigger=scheduler",
+        )
+        session.commit()
+        logger.info("已创建%s研究任务 %s，周期=%s", task_type, task.id, period)
+        return task.id
 
 
 def expire_job() -> None:

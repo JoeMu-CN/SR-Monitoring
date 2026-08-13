@@ -1,5 +1,70 @@
 import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
 
+export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
+export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type ResearchReportStatus = 'draft' | 'submitted' | 'rejected';
+export type ResearchReviewStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ResearchTaskRead {
+  id: number;
+  owner_user_id: number;
+  task_type: ResearchTaskType;
+  topic: string;
+  supplier_scope: number[];
+  budget_snapshot: Record<string, unknown>;
+  search_queries_used: number;
+  search_results_used: number;
+  input_tokens_used: number;
+  output_tokens_used: number;
+  cost_amount: string;
+  current_step: string | null;
+  status: ResearchTaskStatus;
+  cancel_requested_at: string | null;
+  worker_id: string | null;
+  lease_until: string | null;
+  attempts: number;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface ResearchClaimDraft {
+  claim_id: string;
+  claim_type: 'fact' | 'inference' | 'forecast';
+  text: string;
+  citation_ids: string[];
+  confidence: number | null;
+}
+
+export interface ResearchCitationDraft {
+  citation_id: string;
+  url: string;
+  quote: string;
+  verified: boolean;
+}
+
+export interface ResearchReportDraft {
+  title: string;
+  disclaimer: string;
+  facts: ResearchClaimDraft[];
+  inferences: ResearchClaimDraft[];
+  forecasts: ResearchClaimDraft[];
+  citations: ResearchCitationDraft[];
+}
+
+export interface ResearchReportRead {
+  id: number;
+  task_id: number;
+  title: string;
+  draft: ResearchReportDraft;
+  status: ResearchReportStatus;
+  review_status: ResearchReviewStatus;
+  model_version: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface RiskAlertRead {
   id: number;
   level: RiskLevel;
@@ -241,6 +306,25 @@ export interface AgentStatusRead {
 
 export interface SystemHealth { status: string; database: string }
 
+export interface AIReviewSummary {
+  needs_review: number;
+  filtered: number;
+  analyzed_without_alert: number;
+}
+
+export interface AIReviewItem {
+  id: number;
+  signal_id: number;
+  title: string;
+  content: string;
+  url: string | null;
+  provider: string;
+  model: string;
+  status: string;
+  started_at: string;
+  review_reason: string | null;
+}
+
 export interface AuthUser {
   id: number;
   username: string;
@@ -341,6 +425,18 @@ export const api = {
   }),
   health: () => request<SystemHealth>('/api/v1/system/health'),
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
+  aiReviewSummary: () => request<AIReviewSummary>('/api/v1/ai-review-summary'),
+  aiReviewItems: () => request<AIReviewItem[]>('/api/v1/ai-review-items?limit=5'),
+  research: {
+    tasks: () => request<{items: ResearchTaskRead[]}>('/api/v1/research/tasks'),
+    task: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}`),
+    cancelTask: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}/cancel`, {method: 'POST'}),
+    createTask: (topic: string) => request<ResearchTaskRead>('/api/v1/research/tasks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({task_type: 'manual', topic}),
+    }),
+    reports: (taskId: number) => request<{items: ResearchReportRead[]}>(`/api/v1/research/tasks/${taskId}/reports`),
+  },
   chat: (question: string, sessionId: number | null) => request<ChatResponse>('/api/v1/chat', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({question, session_id: sessionId}),

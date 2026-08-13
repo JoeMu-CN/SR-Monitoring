@@ -109,6 +109,7 @@ async def process_signal(
         .where(
             AIAnalysisRecord.signal_id == signal_id,
             AIAnalysisRecord.status == "succeeded",
+            AIAnalysisRecord.result.is_not(None),
         )
         .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
     )

@@ -51,6 +51,15 @@ async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisR
     stored_record.finished_at = datetime.now(UTC)
     stored_record.duration_ms = round((perf_counter() - started) * 1000)
     stored_record.result = result.model_dump(mode="json")
+    review_reasons: list[str] = []
+    if result.confidence < 0.65:
+        review_reasons.append(f"AI 置信度偏低（{result.confidence:.2f}）")
+    if result.event_type == "other":
+        review_reasons.append("风险大类为 other")
+    if result.event_subtype is None:
+        review_reasons.append("未识别出兼容的风险细类")
+    stored_record.needs_review = bool(review_reasons)
+    stored_record.review_reason = "；".join(review_reasons) or None
     session.commit()
     session.refresh(stored_record)
     return stored_record

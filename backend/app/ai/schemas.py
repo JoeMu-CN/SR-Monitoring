@@ -146,6 +146,8 @@ class AIAnalysisRecordRead(BaseModel):
     duration_ms: int | None
     result: SignalAnalysisResult | None
     error: str | None
+    needs_review: bool
+    review_reason: str | None
 
 
 class AIAnalysisRecordListResponse(BaseModel):
@@ -153,3 +155,22 @@ class AIAnalysisRecordListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class AIReviewSummaryRead(BaseModel):
+    needs_review: int
+    filtered: int
+    analyzed_without_alert: int
+
+
+class AIReviewItemRead(BaseModel):
+    id: int
+    signal_id: int
+    title: str
+    content: str
+    url: str | None
+    provider: str
+    model: str
+    status: str
+    started_at: datetime
+    review_reason: str | None

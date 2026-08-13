@@ -1,6 +1,6 @@
 # ECS MVP 发布基线执行记录
 
-> 状态：P0 执行中；PostGIS 残余风险已临时接受，发布仍被证书、凭据和范围冻结门禁阻断（2026-08-12）
+> 状态：ECS MVP 已上线；监控轨基线已进入观察期，研究轨仍关闭。阶段 0 叠加测试尚未启动（2026-08-13）
 
 ## 目标
 
@@ -13,15 +13,15 @@
 
 | 项目 | 当前状态 | 证据/说明 |
 | --- | --- | --- |
-| 当前分支 | `codex/ecs-mvp-release` | 已创建发布候选分支；尚未提交 |
-| 工作区 | 未冻结 | 存在大量未提交改动及未跟踪研究轨文件 |
-| 生产 Compose | 已具备基础编排 | `compose.yaml` + `compose.prod.yaml`，服务为 `postgres/app/scheduler/nginx` |
+| 当前分支 | `codex/ecs-mvp-release` | 已完成当前 ECS MVP 发布提交；后续研究轨改动不得直接覆盖生产镜像 |
+| 工作区 | 发布工作区已提交，仍有运行/生成物未跟踪 | `.workbuddy/`、`backend/data/`、前端静态构建物等不属于发布输入 |
+| 生产 Compose | 已上线 | `compose.yaml` + `compose.prod.yaml`；线上记录显示 `postgres/app/scheduler/nginx` 均已启动 |
 | 生产认证 | 已实现 | Cookie Session、bcrypt、CSRF、四角色；候选 Alpine 镜像内全量 pytest 已实测 |
-| 研究轨开关 | 已加入并验证 | `RESEARCH_TRACK_ENABLED`；本地默认 `true`，生产模板为 `false`；关闭时研究路由、权限和调度均不注册 |
+| 研究轨开关 | 线上保持关闭 | `RESEARCH_TRACK_ENABLED=false`；研究 API、研究页面权限、研究调度和 Provider 不进入 MVP 生产路径 |
 | 研究迁移 | 已建立双轨目标 | 新增幂等 `0027`（直接依赖 `0021`）作为 MVP 目标；`0028` 合并 `0026/0027` 供本地/阶段 0 使用 |
 | 域名/证书 | 技术验证待配置 | 技术验证阶段使用 ECS 公网 IP + IP SAN 自签名证书；正式上线前再申请域名和受信任证书 |
 | 生产密钥 | 未配置 | 仅模板占位；不读取或输出任何真实凭据 |
-| ECS 实测 | 未开始 | 本地 Docker 隔离迁移/测试已完成；尚未连接 ECS |
+| ECS 实测 | MVP 已完成上线，阶段0实测未开始 | 引用部署任务记录了 HTTPS、登录、Nginx、App、PostgreSQL、Scheduler 和基础网络边界；仍需从 ECS 采集一次可归档的命令输出作为本记录附件 |
 
 ## ECS 试用实例已创建（2026-08-12）
 
@@ -93,12 +93,77 @@ docker compose stop scheduler app
 
 ## 阻断项
 
-1. 当前工作区仍有大量用户未提交改动；候选镜像已构建，但尚未冻结发布 commit/tag。
-2. 生产新库必须使用 `ALEMBIC_UPGRADE_TARGET=0027`；已有执行过 `0026` 的数据库升级到完整 head 时由 `0027` 幂等跳过重复字段，仍需核对 Alembic 状态。
-3. `deploy/certs` 缺失，ECS Nginx 443 尚不能启动。
-4. 生产密钥、天眼查授权、千问生产额度和 ECS 账号权限需要在部署时由负责人注入；本记录不保存密钥。
-5. PostGIS 数据库镜像 Critical `1`、High `17`；负责人已于 2026-08-12 临时接受，条件、补偿控制和复核期限见范围冻结清单；补丁镜像可用后必须复扫。
-6. ECS/ACR、生产密钥、天眼查授权、千问生产额度尚未配置；本轮没有连接外部 ECS。
+1. 后续研究轨改动不得直接覆盖已经上线的 MVP 镜像；必须使用独立覆盖编排并可单独停止。
+2. 生产新库必须使用 `ALEMBIC_UPGRADE_TARGET=0027`；阶段0研究组件不得擅自把生产数据库升级到完整研究 head。
+3. PostGIS 数据库镜像 Critical `1`、High `17`；负责人已于 2026-08-12 临时接受，条件、补偿控制和复核期限见范围冻结清单；补丁镜像可用后必须复扫。
+4. 阶段0尚缺 ECS 现场资源基线、固定旁路镜像的正式 SBOM/漏洞扫描、研究执行器实际链路和 48 小时浸泡证据。
+
+## ECS MVP 上线确认（2026-08-13）
+
+引用任务《规划ECS MVP部署计划》的上线记录已确认以下线上基线：
+
+- Nginx、App、PostgreSQL、Scheduler 已启动；App 与 PostgreSQL 健康检查正常。
+- 公网入口使用 HTTPS；网站登录、首位管理员初始化和 bootstrap 配置移除已完成。
+- PostgreSQL、App、Scheduler 未对公网发布业务端口；外部入口为 Nginx。
+- ECS Workbench/SSH 与 UFW 基础访问已恢复，业务端口按 80/443 对外。
+- App 镜像已按不可变 digest 更新过登录页和默认浅色主题修复版本。
+
+以上是部署任务中的操作证据摘要，不替代本次阶段0的 ECS 现场采样。阶段0开始前仍需在 ECS 保存以下脱敏输出：
+
+```bash
+cd /opt/supplier-risk-monitoring
+docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml ps
+docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml config --services
+docker stats --no-stream
+docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml exec -T app alembic current
+```
+
+命令输出不得包含环境文件内容、密码、API Key、Cookie 或 Token；保存后再进入研究轨叠加审批。
+
+## 阶段0叠加执行边界（当前）
+
+1. 先完成上节 ECS 现场采样，并确认 MVP 观察期无异常。
+2. 仅使用独立的 `compose.stage0.yaml`（尚未创建），叠加固定 digest 的 RSSHub、Crawl4AI 和单实例研究执行器。
+3. 所有研究容器仅加入内部网络，不映射宿主端口；Crawl4AI 浏览器并发固定为 1。
+4. 首轮只允许一条人工批准的研究任务；不启用日报/周报，不启动自动调度，不进入风险评分链。
+5. 若内存、CPU、错误率或监控轨出现异常，立即停止叠加组件，不改动 MVP 四服务。
+
+## ECS 现场基线采样（2026-08-13）
+
+已通过 `deploy` 专用 SSH 公钥完成只读现场采样，未读取生产环境文件内容，未修改或重启任何容器：
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| Compose 服务 | `postgres`、`app`、`nginx`、`scheduler` 四项 |
+| 容器状态 | App/PostgreSQL healthy；Nginx/Scheduler running |
+| App 健康 | `{"status":"ok","database":"ok"}` |
+| Alembic | `0027` |
+| 整机内存 | 3.4 GiB，总可用约 2.4 GiB；无 Swap |
+| 根磁盘 | 40 GiB，已用约 5.1 GiB（14%） |
+| 基线容器内存 | App 约 85 MiB、Scheduler 约 120 MiB、PostgreSQL 约 72 MiB、Nginx 约 4 MiB |
+| CPU 复采 | App 两次低值约 0.41%/0.16%，一次短脉冲约 68.59%；进程累计约 0.4%，未见持续满载 |
+| 镜像一致性 | App 为 `2c0c…bc0`；Scheduler 仍为旧 `c517…e14`，存在运行镜像漂移 |
+
+### 监控轨新增阻断：待处理信号并发竞争
+
+- Scheduler 过去 6 小时日志中统计到 23 次 `uq_risk_events_dedup_key` 唯一键冲突，共观察到 3 轮“处理新信号”。
+- 日志显示中央“定时采集与处理”和 `nmc-weather` 独立采集任务在同一个 `*/30` 时间点运行；两条路径都会调用 `_process_pending_signals()`。
+- 两个并发任务可能同时选中相同的待处理信号，并竞争创建相同 `risk_events.dedup_key`，其中一方回滚并记录失败。
+- 当前任务最终仍记录为成功，健康接口也正常，但该竞争会制造错误日志，并可能造成重复模型调用、重复处理或部分信号延后，因此暂不满足阶段0“无重复计费、无持续积压”的前置条件。
+- 在修复、测试并只重建 Scheduler 前，不启动 RSSHub、Crawl4AI、研究 Worker 或 48 小时浸泡。
+
+### 并发竞争修复（已部署并通过真实周期验收）
+
+- 已在两个调度路径共享的 `_process_pending_signals()` 入口加入进程内非阻塞锁；一个批次运行时，重叠调用立即跳过，不再查询或处理同一批信号。
+- 该实现覆盖当前单 Scheduler 容器，避免重复 AI 调用和 `risk_events.dedup_key` 并发写入；不改变采集频率、信号筛选和既有事务逻辑。
+- 多 Scheduler 进程或多副本部署前，必须升级为 PostgreSQL advisory lock 或数据库级原子领取；当前不得扩容 Scheduler 副本。
+- 定向并发测试 3 项通过；Scheduler、风险处理和数据源采集相关回归 20 项通过；Ruff 通过，`git diff --check` 通过。
+- 生产代码 `app/scheduler/jobs.py` 的 mypy 检查通过；包含测试文件的定向检查仍被该文件原有的 4 处类型问题阻断（既有未标注 fixture 参数与过期 ignore），本次未扩大范围修复这些历史问题。
+- 已以同一新 digest 同时重建 App 与 Scheduler，`RESEARCH_TRACK_ENABLED=false`；PostgreSQL 和数据卷未重建，Nginx 仅因 App 容器地址变化重启一次。
+- 本地候选镜像 `supplier-risk-monitoring:ecs-mvp-20260813-scheduler-race` 构建成功，镜像内相关回归 21 项通过；已推送 ACR，不可变 digest 为 `sha256:ba7c44416f37f2927cf3022d9c6740968fd090b7bb35236763edebfdd214c1f4`。
+- ECS 的 `deploy` 用户无 ACR 登录态，因此使用 SSH 将本地已验证镜像流式导入 Docker；远端 RepoDigest 与 ACR digest 一致。生产环境文件已备份为 `deploy/.env.production.bak.pre-scheduler-race-20260813`，`APP_IMAGE` 使用固定版本标签 `ecs-mvp-20260813-scheduler-race`。
+- 2026-08-13 13:00 CST 真实重叠周期：中央任务处理 20 条信号，`nmc-weather` 独立任务记录一次“已有待处理信号批次运行，跳过本次重复处理”；部署后日志计数为唯一键冲突 0、锁跳过 1、处理失败 0、成功处理批次 1。
+- 最终状态：App healthy，PostgreSQL healthy，公网健康接口 HTTP 200 且返回 `{"status":"ok","database":"ok"}`，Alembic 为 `0027`；本阻断项关闭。
 
 ## 本轮验证结果（2026-08-12）
 

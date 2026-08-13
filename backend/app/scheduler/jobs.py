@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from threading import Lock
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, select
@@ -42,6 +43,8 @@ from app.signals.service import CollectionFailed, collect_source
 
 logger = logging.getLogger("scheduler")
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+# ponytail: 当前生产仅单 Scheduler 进程；扩为多副本前改用数据库级原子领取或 advisory lock。
+_pending_signal_processing_lock = Lock()
 
 
 def _collect_enabled_sources(
@@ -97,58 +100,65 @@ def _process_pending_signals(limit: int | None = None) -> int:
     调用 LLM 前先做确定性相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED），
     明确不相关的信号跳过 LLM 并写入 filtered 解析记录，避免重复取出。
     """
+    if not _pending_signal_processing_lock.acquire(blocking=False):
+        logger.info("已有待处理信号批次运行，跳过本次重复处理")
+        return 0
+
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
     processed = 0
     filtered = 0
-    with SessionLocal() as session:
-        signal_ids = list(
-            session.scalars(
-                select(RawSignal.id)
-                .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
-                .order_by(RawSignal.collected_at)
-                .limit(batch)
-            )
-        )
-        for signal_id in signal_ids:
-            signal = session.get(RawSignal, signal_id)
-            if signal is None:
-                continue
-            if SIGNAL_RELEVANCE_FILTER_ENABLED:
-                decision = assess_signal_relevance(
-                    session, signal.title, signal.content
+    try:
+        with SessionLocal() as session:
+            signal_ids = list(
+                session.scalars(
+                    select(RawSignal.id)
+                    .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
+                    .order_by(RawSignal.collected_at)
+                    .limit(batch)
                 )
-                if not decision.relevant:
-                    session.add(
-                        AIAnalysisRecord(
-                            signal_id=signal.id,
-                            provider="deterministic-filter",
-                            model="relevance-v1",
-                            prompt_version="relevance-v1",
-                            status="succeeded",
-                            finished_at=datetime.now(UTC),
-                            duration_ms=0,
-                            result=None,
-                            error=f"filtered: {decision.reason}",
-                            needs_review=True,
-                            review_reason=f"预过滤结果待复核：{decision.reason}",
-                        )
+            )
+            for signal_id in signal_ids:
+                signal = session.get(RawSignal, signal_id)
+                if signal is None:
+                    continue
+                if SIGNAL_RELEVANCE_FILTER_ENABLED:
+                    decision = assess_signal_relevance(
+                        session, signal.title, signal.content
                     )
+                    if not decision.relevant:
+                        session.add(
+                            AIAnalysisRecord(
+                                signal_id=signal.id,
+                                provider="deterministic-filter",
+                                model="relevance-v1",
+                                prompt_version="relevance-v1",
+                                status="succeeded",
+                                finished_at=datetime.now(UTC),
+                                duration_ms=0,
+                                result=None,
+                                error=f"filtered: {decision.reason}",
+                                needs_review=True,
+                                review_reason=f"预过滤结果待复核：{decision.reason}",
+                            )
+                        )
+                        session.commit()
+                        filtered += 1
+                        continue
+                try:
+                    analysis = asyncio.run(analyze_raw_signal(session, signal))
+                    if analysis.status != "succeeded" or analysis.result is None:
+                        continue
+                    process_analysis(session, signal, analysis)
                     session.commit()
-                    filtered += 1
-                    continue
-            try:
-                analysis = asyncio.run(analyze_raw_signal(session, signal))
-                if analysis.status != "succeeded" or analysis.result is None:
-                    continue
-                process_analysis(session, signal, analysis)
-                session.commit()
-                processed += 1
-            except Exception as exc:
-                session.rollback()
-                logger.error("信号 %s 处理失败: %s", signal_id, exc)
-    if filtered:
-        logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
-    return processed
+                    processed += 1
+                except Exception as exc:
+                    session.rollback()
+                    logger.error("信号 %s 处理失败: %s", signal_id, exc)
+        if filtered:
+            logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
+        return processed
+    finally:
+        _pending_signal_processing_lock.release()
 
 
 def _succeeded_signal_ids(session: Session) -> Select[tuple[int]]:

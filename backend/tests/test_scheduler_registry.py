@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from threading import Event
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -83,3 +85,34 @@ def test_research_job_skips_when_schedule_configuration_is_incomplete(
     monkeypatch.setattr(scheduler_jobs, "RESEARCH_SCHEDULE_OWNER_USERNAME", "research-admin")
 
     assert scheduler_jobs.create_research_task_job("daily") is None
+
+
+def test_pending_signal_processing_skips_overlapping_batch(monkeypatch) -> None:
+    entered = Event()
+    release = Event()
+    session_factory_calls = 0
+
+    class _BlockingSession(_FakeSession):
+        def scalars(self, query: object) -> list[SimpleNamespace]:
+            del query
+            entered.set()
+            assert release.wait(timeout=2)
+            return []
+
+    def session_factory() -> _BlockingSession:
+        nonlocal session_factory_calls
+        session_factory_calls += 1
+        return _BlockingSession([])
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", session_factory)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(scheduler_jobs._process_pending_signals)
+        assert entered.wait(timeout=1)
+        second = executor.submit(scheduler_jobs._process_pending_signals)
+
+        assert second.result(timeout=1) == 0
+        release.set()
+        assert first.result(timeout=1) == 0
+
+    assert session_factory_calls == 1

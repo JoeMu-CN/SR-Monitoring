@@ -1,0 +1,29 @@
+services:
+  rsshub:
+    image: diygod/rsshub@sha256:c7622431189ad84847287dc07478df9ca7494f33987d322f3e3e2b11cd75a2cd
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+    expose:
+      - "1200"
+    networks:
+      - internal
+    mem_limit: 512m
+    cpus: 0.50
+    restart: unless-stopped
+
+  crawl4ai:
+    image: unclecode/crawl4ai@sha256:bd36741e7bdd35ddc1a05d9183e1d6d8cefb61dd640d944a25d026b76e917690
+    environment:
+      CRAWL4AI_API_TOKEN: ${CRAWL4AI_API_TOKEN:?CRAWL4AI_API_TOKEN must be set}
+      REDIS_TASK_TTL: "900"
+    expose:
+      - "11235"
+    volumes:
+      - ./deploy/crawl4ai.stage0.yml:/app/config.yml:ro
+    networks:
+      - internal
+    mem_limit: 1536m
+    cpus: 1.00
+    shm_size: 256m
+    restart: unless-stopped

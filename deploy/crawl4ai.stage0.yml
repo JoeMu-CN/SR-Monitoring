@@ -1,0 +1,14 @@
+limits:
+  max_pages: 1
+  max_depth: 0
+  wall_clock_s: 120
+  queue:
+    maxsize: 1
+    workers: 1
+    per_principal: 1
+
+crawler:
+  memory_threshold_percent: 85.0
+  pool:
+    max_pages: 1
+    idle_ttl_sec: 120

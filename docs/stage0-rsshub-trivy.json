@@ -1,0 +1,3742 @@
+{
+  "SchemaVersion": 2,
+  "CreatedAt": "2026-08-13T09:51:13.376279701Z",
+  "ArtifactName": "/scanroot",
+  "ArtifactType": "filesystem",
+  "Metadata": {
+    "OS": {
+      "Family": "debian",
+      "Name": "13.6"
+    }
+  },
+  "Results": [
+    {
+      "Target": "/scanroot (debian 13.6)",
+      "Class": "os-pkgs",
+      "Type": "debian",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "bsdutils@1:2.41-5",
+          "PkgName": "bsdutils",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/bsdutils@2.41-5?arch=amd64\u0026distro=debian-13.6\u0026epoch=1",
+            "UID": "1d18f621e7fc5732"
+          },
+          "InstalledVersion": "1:2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-12064",
+          "PkgID": "curl@8.14.1-2+deb13u4",
+          "PkgName": "curl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/curl@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "c6774be322053bc7"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-12064",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: SSH host verification bypass when using schemeless URLs with SFTP/SCP",
+          "Description": "When a user invokes curl using a schemeless URL combined with\n`--proto-default` sftp (or scp), a disconnect occurs between the tool layer\nand libcurl. The tool layer incorrectly infers the URL scheme, which\nerroneously bypasses the initialization of critical SSH security options like\nCURLOPT_SSH_HOST_PUBLIC_KEY_SHA256 and CURLOPT_SSH_KNOWNHOSTS. Conversely, the\nlibcurl runtime successfully honors CURLOPT_DEFAULT_PROTOCOL and establishes\nthe connection via SFTP/SCP as specified. Because the tool layer skipped the\nsecurity configuration, these SSH host verification options are silently\nomitted, causing curl to connect to an unverified SSH remote host without\nthrowing an error.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-12064",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-12064.md",
+            "https://curl.se/docs/CVE-2026-12064.html",
+            "https://curl.se/docs/CVE-2026-12064.json",
+            "https://github.com/advisories/GHSA-jm94-9f7h-36pr",
+            "https://hackerone.com/reports/3797526",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-12064",
+            "https://ubuntu.com/security/notices/USN-8525-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-12064"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.217Z",
+          "LastModifiedDate": "2026-07-07T19:43:11.187Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8286",
+          "PkgID": "curl@8.14.1-2+deb13u4",
+          "PkgName": "curl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/curl@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "c6774be322053bc7"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8286",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: Insecure connection establishment due to TLS configuration mismatch",
+          "Description": "A vulnerability exists where a new transfer that uses STARTTLS to upgrade the\nconnection might reuse an existing live connection even though the TLS\nconfiguration mismatches so it should not.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8286",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8286.md",
+            "https://curl.se/docs/CVE-2026-8286.html",
+            "https://curl.se/docs/CVE-2026-8286.json",
+            "https://github.com/advisories/GHSA-32xh-3x3c-6g6h",
+            "https://hackerone.com/reports/3718195",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8286",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8286"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.453Z",
+          "LastModifiedDate": "2026-07-07T19:42:11.24Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8458",
+          "PkgID": "curl@8.14.1-2+deb13u4",
+          "PkgName": "curl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/curl@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "c6774be322053bc7"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8458",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: libcurl: Unauthorized connection reuse due to a logical error",
+          "Description": "libcurl might in some circumstances reuse the wrong connection when asked to\ndo Negotiate-authenticated ones, even when they are set to use different\n'services'.\n\nlibcurl features a pool of recent connections so that subsequent requests can\nreuse an existing connection to avoid overhead.\n\nWhen reusing a connection a range of criteria must be met. Due to a logical\nerror in the code, a request that was issued by an application could\nwrongfully reuse an existing connection to the same server that was\nauthenticated using different services.",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 2,
+            "photon": 2,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8458",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8458.md",
+            "https://curl.se/docs/CVE-2026-8458.html",
+            "https://curl.se/docs/CVE-2026-8458.json",
+            "https://github.com/advisories/GHSA-88c6-6jfq-mm4q",
+            "https://hackerone.com/reports/3721183",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8458",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8458"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.63Z",
+          "LastModifiedDate": "2026-07-07T23:12:17.003Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8927",
+          "PkgID": "curl@8.14.1-2+deb13u4",
+          "PkgName": "curl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/curl@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "c6774be322053bc7"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8927",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: Information disclosure due to uncleared proxy authentication state",
+          "Description": "When reusing a libcurl handle for sequential transfers driven by\nenvironment-variable proxy configuration, libcurl fails to clear the proxy\nauthentication state between requests. Specifically, if the initial transfer\nauthenticates against `proxyA` using Digest auth, a subsequent transfer routed\nthrough `proxyB` erroneously leaks the `Proxy-Authorization:` header intended\nsolely for `proxyA`.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-294"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 4,
+            "photon": 4,
+            "redhat": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8927",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8927.md",
+            "https://curl.se/docs/CVE-2026-8927.html",
+            "https://curl.se/docs/CVE-2026-8927.json",
+            "https://github.com/advisories/GHSA-jr4f-4564-w3mr",
+            "https://hackerone.com/reports/3744543",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8927",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8927"
+          ],
+          "PublishedDate": "2026-07-03T07:16:25.123Z",
+          "LastModifiedDate": "2026-07-07T23:21:03.53Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-41992",
+          "PkgID": "gzip@1.13-1",
+          "PkgName": "gzip",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/gzip@1.13-1?arch=amd64\u0026distro=debian-13.6",
+            "UID": "519c8b33ea08e19d"
+          },
+          "InstalledVersion": "1.13-1",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-41992",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "GNU gzip contains a global buffer overflow vulnerability in the LZH de ...",
+          "Description": "GNU gzip contains a global buffer overflow vulnerability in the LZH decompression logic caused by improper reuse of shared global state between different decompression formats within a single execution. GNU gzip maintains a global array that is shared across the LZ77, LZW, and LZH decompression routines and is not reinitialized between files processed in the same invocation.\nBy decompressing a specially crafted LZW file followed by a specially crafted LZH file in a single gzip -d command, an attacker can poison the shared global state and subsequently trigger an out‑of‑bounds read in the LZH decoder. The LZH decompression logic follows stale values left in the shared array, causing reads past the end of the allocated global buffer.\n\nThis issue has been fixed in the commit 63dbf6b3b9e6e781df1a6a64e609b10e23969681",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-126"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 2,
+            "nvd": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V40Vector": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+              "V3Score": 7.5,
+              "V40Score": 6.9
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://cert.pl/en/posts/2026/04/CVE-2026-41991",
+            "https://cert.pl/en/posts/2026/04/CVE-2026-41991/",
+            "https://cgit.git.savannah.gnu.org/cgit/gzip.git/commit/?id=63dbf6b3b9e6e781df1a6a64e609b10e23969681",
+            "https://github.com/advisories/GHSA-qxh4-rprf-2mmj",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-41992",
+            "https://ubuntu.com/security/notices/USN-8512-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-41992",
+            "https://www.gnu.org/software/gzip",
+            "https://www.gnu.org/software/gzip/"
+          ],
+          "PublishedDate": "2026-06-29T12:16:29.94Z",
+          "LastModifiedDate": "2026-07-01T14:02:20.173Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-54369",
+          "PkgID": "libacl1@2.3.2-2+b1",
+          "PkgName": "libacl1",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libacl1@2.3.2-2%2Bb1?arch=amd64\u0026distro=debian-13.6",
+            "UID": "246a687b7dce9809"
+          },
+          "InstalledVersion": "2.3.2-2+b1",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-54369",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "acl: Symlink traversal privilege escalation via libacl functions",
+          "Description": "acl before version 2.4.0 contains a symlink traversal vulnerability in the libacl pathname-based functions acl_get_file(), acl_set_file(), acl_extended_file(), and acl_delete_def_file() that allows local attackers to escalate privileges by replacing any pathname component with a symbolic link. Attackers who control any component of a pathname processed by a privileged caller can redirect ACL read or write operations to arbitrary files or directories, enabling unauthorized manipulation of access control lists and local privilege escalation.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-59"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "oracle-oval": 3,
+            "photon": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 7.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:34351",
+            "https://access.redhat.com/errata/RHSA-2026:42736",
+            "https://access.redhat.com/errata/RHSA-2026:42739",
+            "https://access.redhat.com/errata/RHSA-2026:43420",
+            "https://access.redhat.com/errata/RHSA-2026:44481",
+            "https://access.redhat.com/errata/RHSA-2026:46836",
+            "https://access.redhat.com/errata/RHSA-2026:50205",
+            "https://access.redhat.com/errata/RHSA-2026:53371",
+            "https://access.redhat.com/security/cve/CVE-2026-54369",
+            "https://bugzilla.redhat.com/2490277",
+            "https://bugzilla.redhat.com/2490279",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2490277",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2490279",
+            "https://cgit.git.savannah.nongnu.org/cgit/acl.git/commit/?id=24a227d0ab8576612194f8a56c2314389adc74a5",
+            "https://cgit.git.savannah.nongnu.org/cgit/acl.git/commit/?id=3589787cd589b34bdd9265936e17190b6d3f17d1",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-54369",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-54370",
+            "https://errata.almalinux.org/9/ALSA-2026-42736.html",
+            "https://errata.rockylinux.org/RLSA-2026:42736",
+            "https://linux.oracle.com/cve/CVE-2026-54369.html",
+            "https://linux.oracle.com/errata/ELSA-2026-43420.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-54369",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-54369.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-54369",
+            "https://www.vulncheck.com/advisories/acl-symlink-traversal-privilege-escalation-via-libacl-functions"
+          ],
+          "PublishedDate": "2026-06-29T14:16:57.487Z",
+          "LastModifiedDate": "2026-08-11T13:18:59.133Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "libblkid1@2.41-5",
+          "PkgName": "libblkid1",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libblkid1@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "50365cb4e3bd0ae9"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-12064",
+          "PkgID": "libcurl3t64-gnutls@8.14.1-2+deb13u4",
+          "PkgName": "libcurl3t64-gnutls",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl3t64-gnutls@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "18938b706e5da1a8"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-12064",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: SSH host verification bypass when using schemeless URLs with SFTP/SCP",
+          "Description": "When a user invokes curl using a schemeless URL combined with\n`--proto-default` sftp (or scp), a disconnect occurs between the tool layer\nand libcurl. The tool layer incorrectly infers the URL scheme, which\nerroneously bypasses the initialization of critical SSH security options like\nCURLOPT_SSH_HOST_PUBLIC_KEY_SHA256 and CURLOPT_SSH_KNOWNHOSTS. Conversely, the\nlibcurl runtime successfully honors CURLOPT_DEFAULT_PROTOCOL and establishes\nthe connection via SFTP/SCP as specified. Because the tool layer skipped the\nsecurity configuration, these SSH host verification options are silently\nomitted, causing curl to connect to an unverified SSH remote host without\nthrowing an error.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-12064",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-12064.md",
+            "https://curl.se/docs/CVE-2026-12064.html",
+            "https://curl.se/docs/CVE-2026-12064.json",
+            "https://github.com/advisories/GHSA-jm94-9f7h-36pr",
+            "https://hackerone.com/reports/3797526",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-12064",
+            "https://ubuntu.com/security/notices/USN-8525-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-12064"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.217Z",
+          "LastModifiedDate": "2026-07-07T19:43:11.187Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8286",
+          "PkgID": "libcurl3t64-gnutls@8.14.1-2+deb13u4",
+          "PkgName": "libcurl3t64-gnutls",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl3t64-gnutls@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "18938b706e5da1a8"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8286",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: Insecure connection establishment due to TLS configuration mismatch",
+          "Description": "A vulnerability exists where a new transfer that uses STARTTLS to upgrade the\nconnection might reuse an existing live connection even though the TLS\nconfiguration mismatches so it should not.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8286",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8286.md",
+            "https://curl.se/docs/CVE-2026-8286.html",
+            "https://curl.se/docs/CVE-2026-8286.json",
+            "https://github.com/advisories/GHSA-32xh-3x3c-6g6h",
+            "https://hackerone.com/reports/3718195",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8286",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8286"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.453Z",
+          "LastModifiedDate": "2026-07-07T19:42:11.24Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8458",
+          "PkgID": "libcurl3t64-gnutls@8.14.1-2+deb13u4",
+          "PkgName": "libcurl3t64-gnutls",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl3t64-gnutls@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "18938b706e5da1a8"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8458",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: libcurl: Unauthorized connection reuse due to a logical error",
+          "Description": "libcurl might in some circumstances reuse the wrong connection when asked to\ndo Negotiate-authenticated ones, even when they are set to use different\n'services'.\n\nlibcurl features a pool of recent connections so that subsequent requests can\nreuse an existing connection to avoid overhead.\n\nWhen reusing a connection a range of criteria must be met. Due to a logical\nerror in the code, a request that was issued by an application could\nwrongfully reuse an existing connection to the same server that was\nauthenticated using different services.",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 2,
+            "photon": 2,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8458",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8458.md",
+            "https://curl.se/docs/CVE-2026-8458.html",
+            "https://curl.se/docs/CVE-2026-8458.json",
+            "https://github.com/advisories/GHSA-88c6-6jfq-mm4q",
+            "https://hackerone.com/reports/3721183",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8458",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8458"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.63Z",
+          "LastModifiedDate": "2026-07-07T23:12:17.003Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8927",
+          "PkgID": "libcurl3t64-gnutls@8.14.1-2+deb13u4",
+          "PkgName": "libcurl3t64-gnutls",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl3t64-gnutls@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "18938b706e5da1a8"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8927",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: Information disclosure due to uncleared proxy authentication state",
+          "Description": "When reusing a libcurl handle for sequential transfers driven by\nenvironment-variable proxy configuration, libcurl fails to clear the proxy\nauthentication state between requests. Specifically, if the initial transfer\nauthenticates against `proxyA` using Digest auth, a subsequent transfer routed\nthrough `proxyB` erroneously leaks the `Proxy-Authorization:` header intended\nsolely for `proxyA`.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-294"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 4,
+            "photon": 4,
+            "redhat": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8927",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8927.md",
+            "https://curl.se/docs/CVE-2026-8927.html",
+            "https://curl.se/docs/CVE-2026-8927.json",
+            "https://github.com/advisories/GHSA-jr4f-4564-w3mr",
+            "https://hackerone.com/reports/3744543",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8927",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8927"
+          ],
+          "PublishedDate": "2026-07-03T07:16:25.123Z",
+          "LastModifiedDate": "2026-07-07T23:21:03.53Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-12064",
+          "PkgID": "libcurl4t64@8.14.1-2+deb13u4",
+          "PkgName": "libcurl4t64",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl4t64@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "48e5d8037648360"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-12064",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: SSH host verification bypass when using schemeless URLs with SFTP/SCP",
+          "Description": "When a user invokes curl using a schemeless URL combined with\n`--proto-default` sftp (or scp), a disconnect occurs between the tool layer\nand libcurl. The tool layer incorrectly infers the URL scheme, which\nerroneously bypasses the initialization of critical SSH security options like\nCURLOPT_SSH_HOST_PUBLIC_KEY_SHA256 and CURLOPT_SSH_KNOWNHOSTS. Conversely, the\nlibcurl runtime successfully honors CURLOPT_DEFAULT_PROTOCOL and establishes\nthe connection via SFTP/SCP as specified. Because the tool layer skipped the\nsecurity configuration, these SSH host verification options are silently\nomitted, causing curl to connect to an unverified SSH remote host without\nthrowing an error.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-12064",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-12064.md",
+            "https://curl.se/docs/CVE-2026-12064.html",
+            "https://curl.se/docs/CVE-2026-12064.json",
+            "https://github.com/advisories/GHSA-jm94-9f7h-36pr",
+            "https://hackerone.com/reports/3797526",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-12064",
+            "https://ubuntu.com/security/notices/USN-8525-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-12064"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.217Z",
+          "LastModifiedDate": "2026-07-07T19:43:11.187Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8286",
+          "PkgID": "libcurl4t64@8.14.1-2+deb13u4",
+          "PkgName": "libcurl4t64",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl4t64@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "48e5d8037648360"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8286",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: curl: Insecure connection establishment due to TLS configuration mismatch",
+          "Description": "A vulnerability exists where a new transfer that uses STARTTLS to upgrade the\nconnection might reuse an existing live connection even though the TLS\nconfiguration mismatches so it should not.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-295"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "julia": 3,
+            "photon": 3,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8286",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8286.md",
+            "https://curl.se/docs/CVE-2026-8286.html",
+            "https://curl.se/docs/CVE-2026-8286.json",
+            "https://github.com/advisories/GHSA-32xh-3x3c-6g6h",
+            "https://hackerone.com/reports/3718195",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8286",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8286"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.453Z",
+          "LastModifiedDate": "2026-07-07T19:42:11.24Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8458",
+          "PkgID": "libcurl4t64@8.14.1-2+deb13u4",
+          "PkgName": "libcurl4t64",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl4t64@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "48e5d8037648360"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8458",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: libcurl: Unauthorized connection reuse due to a logical error",
+          "Description": "libcurl might in some circumstances reuse the wrong connection when asked to\ndo Negotiate-authenticated ones, even when they are set to use different\n'services'.\n\nlibcurl features a pool of recent connections so that subsequent requests can\nreuse an existing connection to avoid overhead.\n\nWhen reusing a connection a range of criteria must be met. Due to a logical\nerror in the code, a request that was issued by an application could\nwrongfully reuse an existing connection to the same server that was\nauthenticated using different services.",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 2,
+            "photon": 2,
+            "redhat": 3,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 6.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 8.1
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8458",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8458.md",
+            "https://curl.se/docs/CVE-2026-8458.html",
+            "https://curl.se/docs/CVE-2026-8458.json",
+            "https://github.com/advisories/GHSA-88c6-6jfq-mm4q",
+            "https://hackerone.com/reports/3721183",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8458",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8458"
+          ],
+          "PublishedDate": "2026-07-03T07:16:24.63Z",
+          "LastModifiedDate": "2026-07-07T23:12:17.003Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8927",
+          "PkgID": "libcurl4t64@8.14.1-2+deb13u4",
+          "PkgName": "libcurl4t64",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libcurl4t64@8.14.1-2%2Bdeb13u4?arch=amd64\u0026distro=debian-13.6",
+            "UID": "48e5d8037648360"
+          },
+          "InstalledVersion": "8.14.1-2+deb13u4",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8927",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "curl: Information disclosure due to uncleared proxy authentication state",
+          "Description": "When reusing a libcurl handle for sequential transfers driven by\nenvironment-variable proxy configuration, libcurl fails to clear the proxy\nauthentication state between requests. Specifically, if the initial transfer\nauthenticates against `proxyA` using Digest auth, a subsequent transfer routed\nthrough `proxyB` erroneously leaks the `Proxy-Authorization:` header intended\nsolely for `proxyA`.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-294"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "julia": 4,
+            "photon": 4,
+            "redhat": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-8927",
+            "https://curl.se/L7HzKXisfJ/CVE-2026-8927.md",
+            "https://curl.se/docs/CVE-2026-8927.html",
+            "https://curl.se/docs/CVE-2026-8927.json",
+            "https://github.com/advisories/GHSA-jr4f-4564-w3mr",
+            "https://hackerone.com/reports/3744543",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8927",
+            "https://ubuntu.com/security/notices/USN-8487-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8927"
+          ],
+          "PublishedDate": "2026-07-03T07:16:25.123Z",
+          "LastModifiedDate": "2026-07-07T23:21:03.53Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "liblastlog2-2@2.41-5",
+          "PkgName": "liblastlog2-2",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/liblastlog2-2@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "233e409530df8ae5"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "libmount1@2.41-5",
+          "PkgName": "libmount1",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libmount1@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "217605bbd4300c0f"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-13221",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-13221",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Perl versions through 5.43.9 produce silently incorrect regular expres ...",
+          "Description": "Perl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+              "V3Score": 9.1
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/5",
+            "https://github.com/Perl/perl5/commit/03f74bbbd3a68350d926ee93d56ee4808c28c4c7.patch",
+            "https://github.com/Perl/perl5/issues/23388",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-13221"
+          ],
+          "PublishedDate": "2026-07-13T17:16:48.923Z",
+          "LastModifiedDate": "2026-07-14T18:15:18.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42496",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42496",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-archive-tar: perl-archive-tar: Path traversal via crafted symlinks allows arbitrary file access",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-22"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "nvd": 4,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:C/C:H/I:H/A:H",
+              "V3Score": 8.2
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30852",
+            "https://access.redhat.com/errata/RHSA-2026:30856",
+            "https://access.redhat.com/errata/RHSA-2026:30857",
+            "https://access.redhat.com/security/cve/CVE-2026-42496",
+            "https://bugzilla.redhat.com/2481314",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481314",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-42496",
+            "https://errata.almalinux.org/9/ALSA-2026-30856.html",
+            "https://errata.rockylinux.org/RLSA-2026:30856",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://linux.oracle.com/cve/CVE-2026-42496.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30857.html",
+            "https://lists.security.metacpan.org/cve-announce/msg/40396459/",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42496",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-42496.json",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.13Z",
+          "LastModifiedDate": "2026-07-24T10:10:00.197Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57433",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57433",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Storable versions before 3.41 for Perl have a signed integer overflow  ...",
+          "Description": "Storable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 4
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/7",
+            "https://github.com/Perl/perl5/commit/e4f681784bcdeaa91ff02a2fa4cdcae5c46779d7.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57433"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.783Z",
+          "LastModifiedDate": "2026-07-14T17:47:20.473Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8376",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8376",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Heap buffer overflow when compiling regular expressions on 32-bit builds",
+          "Description": "Perl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-680"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:H",
+              "V3Score": 5.7
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/1",
+            "https://access.redhat.com/security/cve/CVE-2026-8376",
+            "https://github.com/Perl/perl5/commit/5e7f119eb2bb1181be908701f22bf7068e722f1c.patch",
+            "https://github.com/Perl/perl5/pull/24433",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8376",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8376"
+          ],
+          "PublishedDate": "2026-05-26T00:16:57.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42497",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42497",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Arbitrary file modification via crafted hardlinks during archive extraction",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-732"
+          ],
+          "VendorSeverity": {
+            "amazon": 3,
+            "azure": 2,
+            "nvd": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:H/A:H",
+              "V3Score": 6.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-42497",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42497",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.25Z",
+          "LastModifiedDate": "2026-07-24T11:10:00.17Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-48962",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-48962",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-IO-Compress: perl-IO-Compress: Arbitrary code execution via attacker-controlled output glob",
+          "Description": "IO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-95",
+            "CWE-94"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/27/4",
+            "https://access.redhat.com/errata/RHSA-2026:29182",
+            "https://access.redhat.com/errata/RHSA-2026:29210",
+            "https://access.redhat.com/errata/RHSA-2026:29867",
+            "https://access.redhat.com/errata/RHSA-2026:29941",
+            "https://access.redhat.com/errata/RHSA-2026:30085",
+            "https://access.redhat.com/errata/RHSA-2026:30086",
+            "https://access.redhat.com/errata/RHSA-2026:30115",
+            "https://access.redhat.com/errata/RHSA-2026:30843",
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30858",
+            "https://access.redhat.com/errata/RHSA-2026:30859",
+            "https://access.redhat.com/errata/RHSA-2026:30860",
+            "https://access.redhat.com/errata/RHSA-2026:50262",
+            "https://access.redhat.com/security/cve/CVE-2026-48962",
+            "https://bugzilla.redhat.com/2481767",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481767",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48962",
+            "https://errata.almalinux.org/9/ALSA-2026-30859.html",
+            "https://errata.rockylinux.org/RLSA-2026:30859",
+            "https://github.com/pmqs/IO-Compress/commit/f2db247bf90d4cc7ee2710be384946081f3b4610.patch",
+            "https://linux.oracle.com/cve/CVE-2026-48962.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30860.html",
+            "https://metacpan.org/release/PMQS/IO-Compress-2.220/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-48962",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-48962.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-48962"
+          ],
+          "PublishedDate": "2026-05-27T04:16:31.333Z",
+          "LastModifiedDate": "2026-08-05T13:23:22.46Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57432",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57432",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Information disclosure via integer overflow in pack/unpack operations",
+          "Description": "Perl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-125",
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "nvd": 3,
+            "photon": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 8.4
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:N/A:N",
+              "V3Score": 5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/6",
+            "https://access.redhat.com/security/cve/CVE-2026-57432",
+            "https://github.com/Perl/perl5/commit/40754edc72dd3e513d758153c0e2f0215897740e.patch",
+            "https://github.com/Perl/perl5/commit/5f7eb6bbbe0510964e3fb1d6bb691e5445913e55.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57432",
+            "https://www.cve.org/CVERecord?id=CVE-2026-57432"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.67Z",
+          "LastModifiedDate": "2026-07-14T18:04:48.367Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-9538",
+          "PkgID": "libperl5.40@5.40.1-6",
+          "PkgName": "libperl5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libperl5.40@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "530e29e7abd525c6"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-9538",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size",
+          "Description": "Archive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-789"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/4",
+            "https://access.redhat.com/errata/RHSA-2026:49525",
+            "https://access.redhat.com/security/cve/CVE-2026-9538",
+            "https://bugzilla.redhat.com/2481315",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481315",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-9538",
+            "https://errata.almalinux.org/9/ALSA-2026-49525.html",
+            "https://errata.rockylinux.org/RLSA-2026:49525",
+            "https://github.com/jib/archive-tar-new/commit/f9af01426038e29d9578825a0cd3626946ab08c7.patch",
+            "https://linux.oracle.com/cve/CVE-2026-9538.html",
+            "https://linux.oracle.com/errata/ELSA-2026-49525.html",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.10/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-9538",
+            "https://www.cve.org/CVERecord?id=CVE-2026-9538"
+          ],
+          "PublishedDate": "2026-05-26T02:16:41.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "libsmartcols1@2.41-5",
+          "PkgName": "libsmartcols1",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libsmartcols1@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "7886ecb4a6308689"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-58050",
+          "PkgID": "libssh2-1t64@1.11.1-1+deb13u1",
+          "PkgName": "libssh2-1t64",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libssh2-1t64@1.11.1-1%2Bdeb13u1?arch=amd64\u0026distro=debian-13.6",
+            "UID": "17d08a8fc58d8f4e"
+          },
+          "InstalledVersion": "1.11.1-1+deb13u1",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-58050",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "libssh2: libssh2: Heap buffer overflow via integer overflow in publickey attribute allocation",
+          "Description": "libssh2 through 1.11.1 reads an attacker-controlled 32-bit attribute count from a publickey-subsystem response and uses it in the allocation num_attrs * sizeof(libssh2_publickey_attribute) without bounds checking, so on 32-bit platforms the multiplication overflows to an undersized buffer. A malicious SSH server can then drive the attribute-parsing loop to write past the allocation, causing a heap buffer overflow in a connecting libssh2 client.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "amazon": 3,
+            "julia": 3,
+            "nvd": 3,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:L/VI:L/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 7.5,
+              "V40Score": 8.3
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:H",
+              "V3Score": 7
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-58050",
+            "https://github.com/advisories/GHSA-mf77-5hj2-98w9",
+            "https://github.com/bikini/exploitarium/tree/main/libssh2-publickey-list-calc-poc",
+            "https://github.com/libssh2/libssh2/blob/master/src/publickey.c",
+            "https://github.com/libssh2/libssh2/pull/2205#discussion_r3523193089",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-58050",
+            "https://ubuntu.com/security/notices/USN-8532-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-58050",
+            "https://www.vulncheck.com/advisories/libssh2-integer-overflow-in-publickey-subsystem-attribute-allocation"
+          ],
+          "PublishedDate": "2026-06-28T02:16:32.017Z",
+          "LastModifiedDate": "2026-06-30T20:27:36.86Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-69720",
+          "PkgID": "libtinfo6@6.5+20250216-2",
+          "PkgName": "libtinfo6",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libtinfo6@6.5%2B20250216-2?arch=amd64\u0026distro=debian-13.6",
+            "UID": "2d50553181ce9032"
+          },
+          "InstalledVersion": "6.5+20250216-2",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-69720",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+          "Description": "The infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-120"
+          ],
+          "VendorSeverity": {
+            "alma": 2,
+            "azure": 4,
+            "cbl-mariner": 4,
+            "julia": 3,
+            "nvd": 3,
+            "oracle-oval": 2,
+            "photon": 3,
+            "redhat": 2,
+            "rocky": 2,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:5913",
+            "https://access.redhat.com/security/cve/CVE-2025-69720",
+            "https://bugzilla.redhat.com/2449037",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2449037",
+            "https://cert-portal.siemens.com/productcert/html/ssa-253495.html",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-69720",
+            "https://errata.almalinux.org/10/ALSA-2026-5913.html",
+            "https://errata.rockylinux.org/RLSA-2026:5913",
+            "https://github.com/Cao-Wuhui/CVE-2025-69720",
+            "https://github.com/advisories/GHSA-9952-mrqj-h4jh",
+            "https://invisible-island.net/archives/ncurses/6.5",
+            "https://invisible-island.net/archives/ncurses/6.5/",
+            "https://invisible-island.net/ncurses",
+            "https://invisible-island.net/ncurses/",
+            "https://linux.oracle.com/cve/CVE-2025-69720.html",
+            "https://linux.oracle.com/errata/ELSA-2026-5913.html",
+            "https://marc.info/?l=ncurses-bug\u0026m=176539968328570\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176540731801330\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176545557728083\u0026w=2",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-69720",
+            "https://ubuntu.com/security/notices/USN-8503-1",
+            "https://www.cve.org/CVERecord?id=CVE-2025-69720"
+          ],
+          "PublishedDate": "2026-03-19T15:16:21.293Z",
+          "LastModifiedDate": "2026-06-17T10:00:50.423Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "libuuid1@2.41-5",
+          "PkgName": "libuuid1",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/libuuid1@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "c282d9d763659501"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "login@1:4.16.0-2+really2.41-5",
+          "PkgName": "login",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/login@4.16.0-2%2Breally2.41-5?arch=amd64\u0026distro=debian-13.6\u0026epoch=1",
+            "UID": "309b0db33c171942"
+          },
+          "InstalledVersion": "1:4.16.0-2+really2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "mount@2.41-5",
+          "PkgName": "mount",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/mount@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "8ba64e390cfa06a6"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        },
+        {
+          "VulnerabilityID": "CVE-2025-69720",
+          "PkgID": "ncurses-base@6.5+20250216-2",
+          "PkgName": "ncurses-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/ncurses-base@6.5%2B20250216-2?arch=all\u0026distro=debian-13.6",
+            "UID": "f32eaaea372922a1"
+          },
+          "InstalledVersion": "6.5+20250216-2",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-69720",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+          "Description": "The infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-120"
+          ],
+          "VendorSeverity": {
+            "alma": 2,
+            "azure": 4,
+            "cbl-mariner": 4,
+            "julia": 3,
+            "nvd": 3,
+            "oracle-oval": 2,
+            "photon": 3,
+            "redhat": 2,
+            "rocky": 2,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:5913",
+            "https://access.redhat.com/security/cve/CVE-2025-69720",
+            "https://bugzilla.redhat.com/2449037",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2449037",
+            "https://cert-portal.siemens.com/productcert/html/ssa-253495.html",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-69720",
+            "https://errata.almalinux.org/10/ALSA-2026-5913.html",
+            "https://errata.rockylinux.org/RLSA-2026:5913",
+            "https://github.com/Cao-Wuhui/CVE-2025-69720",
+            "https://github.com/advisories/GHSA-9952-mrqj-h4jh",
+            "https://invisible-island.net/archives/ncurses/6.5",
+            "https://invisible-island.net/archives/ncurses/6.5/",
+            "https://invisible-island.net/ncurses",
+            "https://invisible-island.net/ncurses/",
+            "https://linux.oracle.com/cve/CVE-2025-69720.html",
+            "https://linux.oracle.com/errata/ELSA-2026-5913.html",
+            "https://marc.info/?l=ncurses-bug\u0026m=176539968328570\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176540731801330\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176545557728083\u0026w=2",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-69720",
+            "https://ubuntu.com/security/notices/USN-8503-1",
+            "https://www.cve.org/CVERecord?id=CVE-2025-69720"
+          ],
+          "PublishedDate": "2026-03-19T15:16:21.293Z",
+          "LastModifiedDate": "2026-06-17T10:00:50.423Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-69720",
+          "PkgID": "ncurses-bin@6.5+20250216-2",
+          "PkgName": "ncurses-bin",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/ncurses-bin@6.5%2B20250216-2?arch=amd64\u0026distro=debian-13.6",
+            "UID": "4939877e06746ab0"
+          },
+          "InstalledVersion": "6.5+20250216-2",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-69720",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+          "Description": "The infocmp command-line tool in ncurses before 6.5-20251213 has a stack-based buffer overflow in analyze_string in progs/infocmp.c.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-121",
+            "CWE-120"
+          ],
+          "VendorSeverity": {
+            "alma": 2,
+            "azure": 4,
+            "cbl-mariner": 4,
+            "julia": 3,
+            "nvd": 3,
+            "oracle-oval": 2,
+            "photon": 3,
+            "redhat": 2,
+            "rocky": 2,
+            "ubuntu": 1
+          },
+          "CVSS": {
+            "julia": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:5913",
+            "https://access.redhat.com/security/cve/CVE-2025-69720",
+            "https://bugzilla.redhat.com/2449037",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2449037",
+            "https://cert-portal.siemens.com/productcert/html/ssa-253495.html",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2025-69720",
+            "https://errata.almalinux.org/10/ALSA-2026-5913.html",
+            "https://errata.rockylinux.org/RLSA-2026:5913",
+            "https://github.com/Cao-Wuhui/CVE-2025-69720",
+            "https://github.com/advisories/GHSA-9952-mrqj-h4jh",
+            "https://invisible-island.net/archives/ncurses/6.5",
+            "https://invisible-island.net/archives/ncurses/6.5/",
+            "https://invisible-island.net/ncurses",
+            "https://invisible-island.net/ncurses/",
+            "https://linux.oracle.com/cve/CVE-2025-69720.html",
+            "https://linux.oracle.com/errata/ELSA-2026-5913.html",
+            "https://marc.info/?l=ncurses-bug\u0026m=176539968328570\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176540731801330\u0026w=2",
+            "https://marc.info/?l=ncurses-bug\u0026m=176545557728083\u0026w=2",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-69720",
+            "https://ubuntu.com/security/notices/USN-8503-1",
+            "https://www.cve.org/CVERecord?id=CVE-2025-69720"
+          ],
+          "PublishedDate": "2026-03-19T15:16:21.293Z",
+          "LastModifiedDate": "2026-06-17T10:00:50.423Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-13221",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-13221",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Perl versions through 5.43.9 produce silently incorrect regular expres ...",
+          "Description": "Perl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+              "V3Score": 9.1
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/5",
+            "https://github.com/Perl/perl5/commit/03f74bbbd3a68350d926ee93d56ee4808c28c4c7.patch",
+            "https://github.com/Perl/perl5/issues/23388",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-13221"
+          ],
+          "PublishedDate": "2026-07-13T17:16:48.923Z",
+          "LastModifiedDate": "2026-07-14T18:15:18.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42496",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42496",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-archive-tar: perl-archive-tar: Path traversal via crafted symlinks allows arbitrary file access",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-22"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "nvd": 4,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:C/C:H/I:H/A:H",
+              "V3Score": 8.2
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30852",
+            "https://access.redhat.com/errata/RHSA-2026:30856",
+            "https://access.redhat.com/errata/RHSA-2026:30857",
+            "https://access.redhat.com/security/cve/CVE-2026-42496",
+            "https://bugzilla.redhat.com/2481314",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481314",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-42496",
+            "https://errata.almalinux.org/9/ALSA-2026-30856.html",
+            "https://errata.rockylinux.org/RLSA-2026:30856",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://linux.oracle.com/cve/CVE-2026-42496.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30857.html",
+            "https://lists.security.metacpan.org/cve-announce/msg/40396459/",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42496",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-42496.json",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.13Z",
+          "LastModifiedDate": "2026-07-24T10:10:00.197Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57433",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57433",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Storable versions before 3.41 for Perl have a signed integer overflow  ...",
+          "Description": "Storable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 4
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/7",
+            "https://github.com/Perl/perl5/commit/e4f681784bcdeaa91ff02a2fa4cdcae5c46779d7.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57433"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.783Z",
+          "LastModifiedDate": "2026-07-14T17:47:20.473Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8376",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8376",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Heap buffer overflow when compiling regular expressions on 32-bit builds",
+          "Description": "Perl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-680"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:H",
+              "V3Score": 5.7
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/1",
+            "https://access.redhat.com/security/cve/CVE-2026-8376",
+            "https://github.com/Perl/perl5/commit/5e7f119eb2bb1181be908701f22bf7068e722f1c.patch",
+            "https://github.com/Perl/perl5/pull/24433",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8376",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8376"
+          ],
+          "PublishedDate": "2026-05-26T00:16:57.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42497",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42497",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Arbitrary file modification via crafted hardlinks during archive extraction",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-732"
+          ],
+          "VendorSeverity": {
+            "amazon": 3,
+            "azure": 2,
+            "nvd": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:H/A:H",
+              "V3Score": 6.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-42497",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42497",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.25Z",
+          "LastModifiedDate": "2026-07-24T11:10:00.17Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-48962",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-48962",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-IO-Compress: perl-IO-Compress: Arbitrary code execution via attacker-controlled output glob",
+          "Description": "IO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-95",
+            "CWE-94"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/27/4",
+            "https://access.redhat.com/errata/RHSA-2026:29182",
+            "https://access.redhat.com/errata/RHSA-2026:29210",
+            "https://access.redhat.com/errata/RHSA-2026:29867",
+            "https://access.redhat.com/errata/RHSA-2026:29941",
+            "https://access.redhat.com/errata/RHSA-2026:30085",
+            "https://access.redhat.com/errata/RHSA-2026:30086",
+            "https://access.redhat.com/errata/RHSA-2026:30115",
+            "https://access.redhat.com/errata/RHSA-2026:30843",
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30858",
+            "https://access.redhat.com/errata/RHSA-2026:30859",
+            "https://access.redhat.com/errata/RHSA-2026:30860",
+            "https://access.redhat.com/errata/RHSA-2026:50262",
+            "https://access.redhat.com/security/cve/CVE-2026-48962",
+            "https://bugzilla.redhat.com/2481767",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481767",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48962",
+            "https://errata.almalinux.org/9/ALSA-2026-30859.html",
+            "https://errata.rockylinux.org/RLSA-2026:30859",
+            "https://github.com/pmqs/IO-Compress/commit/f2db247bf90d4cc7ee2710be384946081f3b4610.patch",
+            "https://linux.oracle.com/cve/CVE-2026-48962.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30860.html",
+            "https://metacpan.org/release/PMQS/IO-Compress-2.220/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-48962",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-48962.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-48962"
+          ],
+          "PublishedDate": "2026-05-27T04:16:31.333Z",
+          "LastModifiedDate": "2026-08-05T13:23:22.46Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57432",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57432",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Information disclosure via integer overflow in pack/unpack operations",
+          "Description": "Perl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-125",
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "nvd": 3,
+            "photon": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 8.4
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:N/A:N",
+              "V3Score": 5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/6",
+            "https://access.redhat.com/security/cve/CVE-2026-57432",
+            "https://github.com/Perl/perl5/commit/40754edc72dd3e513d758153c0e2f0215897740e.patch",
+            "https://github.com/Perl/perl5/commit/5f7eb6bbbe0510964e3fb1d6bb691e5445913e55.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57432",
+            "https://www.cve.org/CVERecord?id=CVE-2026-57432"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.67Z",
+          "LastModifiedDate": "2026-07-14T18:04:48.367Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-9538",
+          "PkgID": "perl@5.40.1-6",
+          "PkgName": "perl",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "a00917f9df5b3f3e"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-9538",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size",
+          "Description": "Archive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-789"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/4",
+            "https://access.redhat.com/errata/RHSA-2026:49525",
+            "https://access.redhat.com/security/cve/CVE-2026-9538",
+            "https://bugzilla.redhat.com/2481315",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481315",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-9538",
+            "https://errata.almalinux.org/9/ALSA-2026-49525.html",
+            "https://errata.rockylinux.org/RLSA-2026:49525",
+            "https://github.com/jib/archive-tar-new/commit/f9af01426038e29d9578825a0cd3626946ab08c7.patch",
+            "https://linux.oracle.com/cve/CVE-2026-9538.html",
+            "https://linux.oracle.com/errata/ELSA-2026-49525.html",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.10/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-9538",
+            "https://www.cve.org/CVERecord?id=CVE-2026-9538"
+          ],
+          "PublishedDate": "2026-05-26T02:16:41.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-13221",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-13221",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Perl versions through 5.43.9 produce silently incorrect regular expres ...",
+          "Description": "Perl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+              "V3Score": 9.1
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/5",
+            "https://github.com/Perl/perl5/commit/03f74bbbd3a68350d926ee93d56ee4808c28c4c7.patch",
+            "https://github.com/Perl/perl5/issues/23388",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-13221"
+          ],
+          "PublishedDate": "2026-07-13T17:16:48.923Z",
+          "LastModifiedDate": "2026-07-14T18:15:18.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42496",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42496",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-archive-tar: perl-archive-tar: Path traversal via crafted symlinks allows arbitrary file access",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-22"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "nvd": 4,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:C/C:H/I:H/A:H",
+              "V3Score": 8.2
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30852",
+            "https://access.redhat.com/errata/RHSA-2026:30856",
+            "https://access.redhat.com/errata/RHSA-2026:30857",
+            "https://access.redhat.com/security/cve/CVE-2026-42496",
+            "https://bugzilla.redhat.com/2481314",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481314",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-42496",
+            "https://errata.almalinux.org/9/ALSA-2026-30856.html",
+            "https://errata.rockylinux.org/RLSA-2026:30856",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://linux.oracle.com/cve/CVE-2026-42496.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30857.html",
+            "https://lists.security.metacpan.org/cve-announce/msg/40396459/",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42496",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-42496.json",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.13Z",
+          "LastModifiedDate": "2026-07-24T10:10:00.197Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57433",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57433",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Storable versions before 3.41 for Perl have a signed integer overflow  ...",
+          "Description": "Storable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 4
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/7",
+            "https://github.com/Perl/perl5/commit/e4f681784bcdeaa91ff02a2fa4cdcae5c46779d7.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57433"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.783Z",
+          "LastModifiedDate": "2026-07-14T17:47:20.473Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8376",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8376",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Heap buffer overflow when compiling regular expressions on 32-bit builds",
+          "Description": "Perl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-680"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:H",
+              "V3Score": 5.7
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/1",
+            "https://access.redhat.com/security/cve/CVE-2026-8376",
+            "https://github.com/Perl/perl5/commit/5e7f119eb2bb1181be908701f22bf7068e722f1c.patch",
+            "https://github.com/Perl/perl5/pull/24433",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8376",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8376"
+          ],
+          "PublishedDate": "2026-05-26T00:16:57.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42497",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42497",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Arbitrary file modification via crafted hardlinks during archive extraction",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-732"
+          ],
+          "VendorSeverity": {
+            "amazon": 3,
+            "azure": 2,
+            "nvd": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:H/A:H",
+              "V3Score": 6.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-42497",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42497",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.25Z",
+          "LastModifiedDate": "2026-07-24T11:10:00.17Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-48962",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-48962",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-IO-Compress: perl-IO-Compress: Arbitrary code execution via attacker-controlled output glob",
+          "Description": "IO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-95",
+            "CWE-94"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/27/4",
+            "https://access.redhat.com/errata/RHSA-2026:29182",
+            "https://access.redhat.com/errata/RHSA-2026:29210",
+            "https://access.redhat.com/errata/RHSA-2026:29867",
+            "https://access.redhat.com/errata/RHSA-2026:29941",
+            "https://access.redhat.com/errata/RHSA-2026:30085",
+            "https://access.redhat.com/errata/RHSA-2026:30086",
+            "https://access.redhat.com/errata/RHSA-2026:30115",
+            "https://access.redhat.com/errata/RHSA-2026:30843",
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30858",
+            "https://access.redhat.com/errata/RHSA-2026:30859",
+            "https://access.redhat.com/errata/RHSA-2026:30860",
+            "https://access.redhat.com/errata/RHSA-2026:50262",
+            "https://access.redhat.com/security/cve/CVE-2026-48962",
+            "https://bugzilla.redhat.com/2481767",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481767",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48962",
+            "https://errata.almalinux.org/9/ALSA-2026-30859.html",
+            "https://errata.rockylinux.org/RLSA-2026:30859",
+            "https://github.com/pmqs/IO-Compress/commit/f2db247bf90d4cc7ee2710be384946081f3b4610.patch",
+            "https://linux.oracle.com/cve/CVE-2026-48962.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30860.html",
+            "https://metacpan.org/release/PMQS/IO-Compress-2.220/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-48962",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-48962.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-48962"
+          ],
+          "PublishedDate": "2026-05-27T04:16:31.333Z",
+          "LastModifiedDate": "2026-08-05T13:23:22.46Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57432",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57432",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Information disclosure via integer overflow in pack/unpack operations",
+          "Description": "Perl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-125",
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "nvd": 3,
+            "photon": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 8.4
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:N/A:N",
+              "V3Score": 5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/6",
+            "https://access.redhat.com/security/cve/CVE-2026-57432",
+            "https://github.com/Perl/perl5/commit/40754edc72dd3e513d758153c0e2f0215897740e.patch",
+            "https://github.com/Perl/perl5/commit/5f7eb6bbbe0510964e3fb1d6bb691e5445913e55.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57432",
+            "https://www.cve.org/CVERecord?id=CVE-2026-57432"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.67Z",
+          "LastModifiedDate": "2026-07-14T18:04:48.367Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-9538",
+          "PkgID": "perl-base@5.40.1-6",
+          "PkgName": "perl-base",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-base@5.40.1-6?arch=amd64\u0026distro=debian-13.6",
+            "UID": "878b0c3739b48fe5"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-9538",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size",
+          "Description": "Archive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-789"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/4",
+            "https://access.redhat.com/errata/RHSA-2026:49525",
+            "https://access.redhat.com/security/cve/CVE-2026-9538",
+            "https://bugzilla.redhat.com/2481315",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481315",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-9538",
+            "https://errata.almalinux.org/9/ALSA-2026-49525.html",
+            "https://errata.rockylinux.org/RLSA-2026:49525",
+            "https://github.com/jib/archive-tar-new/commit/f9af01426038e29d9578825a0cd3626946ab08c7.patch",
+            "https://linux.oracle.com/cve/CVE-2026-9538.html",
+            "https://linux.oracle.com/errata/ELSA-2026-49525.html",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.10/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-9538",
+            "https://www.cve.org/CVERecord?id=CVE-2026-9538"
+          ],
+          "PublishedDate": "2026-05-26T02:16:41.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-13221",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-13221",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Perl versions through 5.43.9 produce silently incorrect regular expres ...",
+          "Description": "Perl versions through 5.43.9 produce silently incorrect regular expression matches when an alternation of more than 65535 fixed string branches is compiled into a trie in Perl_study_chunk.\n\nWhen such branches are combined into a trie, the delta between the first branch and the shared tail is stored in a 16-bit field. A branch count above 65535 overflows the field, and the trie's match decision table is truncated with no warning or error.\n\nA pattern of this shape produces false positive matches (matching strings it should not) and false negative matches (failing to match strings it should). When such a pattern gates an access or filtering decision, the result is wrong.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+              "V3Score": 9.1
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/5",
+            "https://github.com/Perl/perl5/commit/03f74bbbd3a68350d926ee93d56ee4808c28c4c7.patch",
+            "https://github.com/Perl/perl5/issues/23388",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-13221"
+          ],
+          "PublishedDate": "2026-07-13T17:16:48.923Z",
+          "LastModifiedDate": "2026-07-14T18:15:18.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42496",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42496",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-archive-tar: perl-archive-tar: Path traversal via crafted symlinks allows arbitrary file access",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract symlinks with attacker controlled targets outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to symlink() without validating it against absolute paths or .. segments. The secure-extract mode check that guards regular file extraction does not cover the symlink target.\n\nA subsequent open through the extracted name reads or writes the attacker chosen path.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-22"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "nvd": 4,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N",
+              "V3Score": 9.1
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:C/C:H/I:H/A:H",
+              "V3Score": 8.2
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30852",
+            "https://access.redhat.com/errata/RHSA-2026:30856",
+            "https://access.redhat.com/errata/RHSA-2026:30857",
+            "https://access.redhat.com/security/cve/CVE-2026-42496",
+            "https://bugzilla.redhat.com/2481314",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481314",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-42496",
+            "https://errata.almalinux.org/9/ALSA-2026-30856.html",
+            "https://errata.rockylinux.org/RLSA-2026:30856",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://linux.oracle.com/cve/CVE-2026-42496.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30857.html",
+            "https://lists.security.metacpan.org/cve-announce/msg/40396459/",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42496",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-42496.json",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.13Z",
+          "LastModifiedDate": "2026-07-24T10:10:00.197Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57433",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57433",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "Storable versions before 3.41 for Perl have a signed integer overflow  ...",
+          "Description": "Storable versions before 3.41 for Perl have a signed integer overflow when deserializing a crafted SX_HOOK record.\n\nretrieve_hook_common reads a signed 32-bit item count from an SX_HOOK record and calls av_extend with that count plus one. A count of I32_MAX wraps the addition to a negative value.\n\nA crafted blob passed to thaw or retrieve triggers the overflow; av_extend receives the negative count and dies with a panic, terminating the deserialization.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 4
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/7",
+            "https://github.com/Perl/perl5/commit/e4f681784bcdeaa91ff02a2fa4cdcae5c46779d7.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57433"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.783Z",
+          "LastModifiedDate": "2026-07-14T17:47:20.473Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-8376",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-8376",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Heap buffer overflow when compiling regular expressions on 32-bit builds",
+          "Description": "Perl versions through 5.43.10 have a heap buffer overflow when compiling regular expressions with a repeated fixed string on 32-bit builds.\n\nPerl_study_chunk in regcomp_study.c checked the size of the joined substring buffer in characters rather than bytes. For a quantified fixed substring with a large minimum count, the byte length mincount * l could overflow SSize_t, producing an undersized SvGROW allocation; the subsequent copy writes past the end of the buffer.\n\nA caller that compiles an attacker-controlled regular expression on a 32-bit perl build triggers a heap buffer overflow at compile time.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-680"
+          ],
+          "VendorSeverity": {
+            "amazon": 2,
+            "azure": 2,
+            "nvd": 4,
+            "photon": 4,
+            "redhat": 2,
+            "ubuntu": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:N/S:U/C:N/I:L/A:H",
+              "V3Score": 5.7
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/1",
+            "https://access.redhat.com/security/cve/CVE-2026-8376",
+            "https://github.com/Perl/perl5/commit/5e7f119eb2bb1181be908701f22bf7068e722f1c.patch",
+            "https://github.com/Perl/perl5/pull/24433",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-8376",
+            "https://ubuntu.com/security/notices/USN-8467-1",
+            "https://www.cve.org/CVERecord?id=CVE-2026-8376"
+          ],
+          "PublishedDate": "2026-05-26T00:16:57.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-42497",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-42497",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Arbitrary file modification via crafted hardlinks during archive extraction",
+          "Description": "Archive::Tar versions before 3.08 for Perl extract hardlinks to attacker controlled paths outside the extraction directory.\n\n_make_special_file() passes the tar header's linkname to link() without validating it against absolute paths or .. segments, creating a hardlink that shares the victim file's inode.\n\nA subsequent write through the extracted name modifies the victim file, and the post-extraction chmod, chown, and utime block in _extract_file() (guarded only against symlinks via -l) applies the tar header's mode, owner, and timestamps to the shared inode during extraction alone.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-59",
+            "CWE-732"
+          ],
+          "VendorSeverity": {
+            "amazon": 3,
+            "azure": 2,
+            "nvd": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:H/A:H",
+              "V3Score": 6.8
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-42497",
+            "https://github.com/jib/archive-tar-new/commit/17c873492a05eddc0de18c1485e0b2cccd5a9158.patch",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.08/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-42497",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42496",
+            "https://www.cve.org/CVERecord?id=CVE-2026-42497"
+          ],
+          "PublishedDate": "2026-05-26T02:16:40.25Z",
+          "LastModifiedDate": "2026-07-24T11:10:00.17Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-48962",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-48962",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-IO-Compress: perl-IO-Compress: Arbitrary code execution via attacker-controlled output glob",
+          "Description": "IO::Compress versions before 2.220 for Perl can execute arbitrary code in File::GlobMapper via an attacker-controlled output glob.\n\n_parseOutputGlob() wraps the caller-supplied output glob string in double quotes and stores it in the parser state; _getFiles() then runs the stored expression through eval STRING. A literal double quote in the output glob closes the dquote wrapper, and the characters that follow are evaluated as Perl.\n\nArbitrary Perl in the output glob executes at the calling process's privilege.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-95",
+            "CWE-94"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 7.8
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/27/4",
+            "https://access.redhat.com/errata/RHSA-2026:29182",
+            "https://access.redhat.com/errata/RHSA-2026:29210",
+            "https://access.redhat.com/errata/RHSA-2026:29867",
+            "https://access.redhat.com/errata/RHSA-2026:29941",
+            "https://access.redhat.com/errata/RHSA-2026:30085",
+            "https://access.redhat.com/errata/RHSA-2026:30086",
+            "https://access.redhat.com/errata/RHSA-2026:30115",
+            "https://access.redhat.com/errata/RHSA-2026:30843",
+            "https://access.redhat.com/errata/RHSA-2026:30851",
+            "https://access.redhat.com/errata/RHSA-2026:30858",
+            "https://access.redhat.com/errata/RHSA-2026:30859",
+            "https://access.redhat.com/errata/RHSA-2026:30860",
+            "https://access.redhat.com/errata/RHSA-2026:50262",
+            "https://access.redhat.com/security/cve/CVE-2026-48962",
+            "https://bugzilla.redhat.com/2481767",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481767",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48962",
+            "https://errata.almalinux.org/9/ALSA-2026-30859.html",
+            "https://errata.rockylinux.org/RLSA-2026:30859",
+            "https://github.com/pmqs/IO-Compress/commit/f2db247bf90d4cc7ee2710be384946081f3b4610.patch",
+            "https://linux.oracle.com/cve/CVE-2026-48962.html",
+            "https://linux.oracle.com/errata/ELSA-2026-30860.html",
+            "https://metacpan.org/release/PMQS/IO-Compress-2.220/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-48962",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-48962.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-48962"
+          ],
+          "PublishedDate": "2026-05-27T04:16:31.333Z",
+          "LastModifiedDate": "2026-08-05T13:23:22.46Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-57432",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "affected",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-57432",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl: Perl: Information disclosure via integer overflow in pack/unpack operations",
+          "Description": "Perl versions through 5.43.10 have an integer overflow in S_measure_struct leading to an out-of-bounds heap read in pack and unpack.\n\nS_measure_struct adds each item's size times its repeat count to a running total with no overflow check, so a large repeat count in a pack or unpack template wraps the signed SSize_t total negative. The @, X, and x position codes then guard their moves with a signed length comparison that passes when the length is negative, advancing the buffer pointer out of bounds.\n\nA template derived from untrusted input can read heap memory past the buffer and return it to the caller.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-125",
+            "CWE-190"
+          ],
+          "VendorSeverity": {
+            "azure": 3,
+            "nvd": 3,
+            "photon": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 8.4
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:N/A:N",
+              "V3Score": 5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/07/13/6",
+            "https://access.redhat.com/security/cve/CVE-2026-57432",
+            "https://github.com/Perl/perl5/commit/40754edc72dd3e513d758153c0e2f0215897740e.patch",
+            "https://github.com/Perl/perl5/commit/5f7eb6bbbe0510964e3fb1d6bb691e5445913e55.patch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-57432",
+            "https://www.cve.org/CVERecord?id=CVE-2026-57432"
+          ],
+          "PublishedDate": "2026-07-13T17:17:55.67Z",
+          "LastModifiedDate": "2026-07-14T18:04:48.367Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-9538",
+          "PkgID": "perl-modules-5.40@5.40.1-6",
+          "PkgName": "perl-modules-5.40",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/perl-modules-5.40@5.40.1-6?arch=all\u0026distro=debian-13.6",
+            "UID": "b8a21b97868334be"
+          },
+          "InstalledVersion": "5.40.1-6",
+          "Status": "fix_deferred",
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-9538",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size",
+          "Description": "Archive::Tar versions before 3.10 for Perl allow memory exhaustion via attacker controlled entry size field in tar header.\n\n_read_tar() reads each entry's payload with $handle-\u003eread($$data, $block), where $block is derived from the entry's 12-byte size field in the tar header with no upper bound on that value.\n\nA crafted header declaring a multi-gigabyte size causes Perl to allocate a scalar of that size.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-789"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "http://www.openwall.com/lists/oss-security/2026/05/26/4",
+            "https://access.redhat.com/errata/RHSA-2026:49525",
+            "https://access.redhat.com/security/cve/CVE-2026-9538",
+            "https://bugzilla.redhat.com/2481315",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2481315",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-9538",
+            "https://errata.almalinux.org/9/ALSA-2026-49525.html",
+            "https://errata.rockylinux.org/RLSA-2026:49525",
+            "https://github.com/jib/archive-tar-new/commit/f9af01426038e29d9578825a0cd3626946ab08c7.patch",
+            "https://linux.oracle.com/cve/CVE-2026-9538.html",
+            "https://linux.oracle.com/errata/ELSA-2026-49525.html",
+            "https://metacpan.org/release/BINGOS/Archive-Tar-3.10/changes",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-9538",
+            "https://www.cve.org/CVERecord?id=CVE-2026-9538"
+          ],
+          "PublishedDate": "2026-05-26T02:16:41.15Z",
+          "LastModifiedDate": "2026-07-23T11:10:00.12Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-53615",
+          "PkgID": "util-linux@2.41-5",
+          "PkgName": "util-linux",
+          "PkgIdentifier": {
+            "PURL": "pkg:deb/debian/util-linux@2.41-5?arch=amd64\u0026distro=debian-13.6",
+            "UID": "7ec6f40412d222ed"
+          },
+          "InstalledVersion": "2.41-5",
+          "Status": "affected",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-53615",
+          "DataSource": {
+            "ID": "debian",
+            "Name": "Debian Security Tracker",
+            "URL": "https://salsa.debian.org/security-tracker-team/security-tracker"
+          },
+          "Title": "[Integer Overflow or Wraparound in libblkid/src/partitions/dos.c]",
+          "Description": "Package updates are available for Amazon Linux 2 that fix the following vulnerabilities:\nCVE-2026-53615:\n\tInteger Overflow or Wraparound in libblkid/src/partitions/dos.c\n",
+          "Severity": "HIGH",
+          "VendorSeverity": {
+            "amazon": 3
+          }
+        }
+      ]
+    },
+    {
+      "Target": "Node.js",
+      "Class": "lang-pkgs",
+      "Type": "node-pkg",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2026-13149",
+          "PkgID": "brace-expansion@5.0.6",
+          "PkgName": "brace-expansion",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/brace-expansion@5.0.6",
+            "UID": "c4c750411eb2da19"
+          },
+          "InstalledVersion": "5.0.6",
+          "FixedVersion": "5.0.7, 1.1.16, 2.1.2",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-13149",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "brace-expansion: Brace-expansion: Denial of Service due to exponential-time complexity",
+          "Description": "brace-expansion through 5.0.6 is vulnerable to denial of service. The expand() function exhibits exponential-time complexity in the number of consecutive non-expanding '{}' brace groups. An attacker who passes a crafted string to expand(), directly or transitively, can cause significant CPU consumption and event-loop blocking. The max option does not mitigate this, as it bounds the output size rather than the recursion work.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-400",
+            "CWE-407"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "ghsa": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N/E:P/S:N/AU:Y/R:U/V:D/RE:M/U:Amber",
+              "V3Score": 5.3,
+              "V40Score": 7.7
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:47058",
+            "https://access.redhat.com/security/cve/CVE-2026-13149",
+            "https://bugzilla.redhat.com/2494813",
+            "https://bugzilla.redhat.com/2498116",
+            "https://bugzilla.redhat.com/2498120",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2494813",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498116",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498120",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-13149",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59873",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59874",
+            "https://errata.almalinux.org/9/ALSA-2026-47058.html",
+            "https://errata.rockylinux.org/RLSA-2026:47058",
+            "https://github.com/juliangruber/brace-expansion",
+            "https://github.com/juliangruber/brace-expansion/commit/835d6be91201122d9adffb0c0c8c094189ace265",
+            "https://github.com/juliangruber/brace-expansion/commit/c7e33ec13ac1a684c116720843ce24e208611754",
+            "https://github.com/juliangruber/brace-expansion/commit/d74e63030c012e3b7ae81657b8d665619cd51b95",
+            "https://github.com/juliangruber/brace-expansion/pull/122",
+            "https://github.com/juliangruber/brace-expansion/pull/123",
+            "https://github.com/juliangruber/brace-expansion/releases/tag/v1.1.16",
+            "https://github.com/juliangruber/brace-expansion/releases/tag/v2.1.2",
+            "https://github.com/juliangruber/brace-expansion/releases/tag/v5.0.7",
+            "https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-3jxr-9vmj-r5cp",
+            "https://linux.oracle.com/cve/CVE-2026-13149.html",
+            "https://linux.oracle.com/errata/ELSA-2026-48034.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-13149",
+            "https://www.cve.org/CVERecord?id=CVE-2026-13149",
+            "https://www.npmjs.com/package/brace-expansion"
+          ],
+          "PublishedDate": "2026-06-30T10:16:34.56Z",
+          "LastModifiedDate": "2026-07-08T12:17:20.087Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-14257",
+          "PkgID": "brace-expansion@5.0.6",
+          "PkgName": "brace-expansion",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/brace-expansion@5.0.6",
+            "UID": "c4c750411eb2da19"
+          },
+          "InstalledVersion": "5.0.6",
+          "FixedVersion": "5.0.8, 3.0.3, 2.1.3, 1.1.17",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-14257",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "brace-expansion: Brace-expansion: Denial of Service via memory exhaustion in expand() function",
+          "Description": "brace-expansion through 5.0.7 is vulnerable to denial of service via memory exhaustion. The expand() function limits the number of results with a max option (default 100,000) but does not bound the length of each result string. By chaining multiple brace groups, an attacker keeps the result count under the limit while making each result progressively longer, so total memory scales with both count and string length until the process hits a fatal, uncatchable out-of-memory error. About 7.5 KB of input ('{a,b}'.repeat(1500)) crashes a default Node.js process. Any application that passes attacker-influenced strings to brace-expansion.expand() - directly or transitively via minimatch / glob brace patterns - can be crashed by a small request. Fixed in 5.0.8 by adding a maxLength option (default 4,000,000) that bounds accumulated output and intermediate arrays.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-400",
+            "CWE-770"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "redhat": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-14257",
+            "https://github.com/juliangruber/brace-expansion",
+            "https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d",
+            "https://github.com/juliangruber/brace-expansion/commit/a1bd33999ea75262c4749fff3bbb0d1372bd07b5",
+            "https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031",
+            "https://github.com/juliangruber/brace-expansion/commit/d13ff455a58b0d56704f0111e3c2a0b16ceb06eb",
+            "https://github.com/juliangruber/brace-expansion/pull/129",
+            "https://github.com/juliangruber/brace-expansion/pull/130",
+            "https://github.com/juliangruber/brace-expansion/pull/136",
+            "https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-mh99-v99m-4gvg",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-14257",
+            "https://www.cve.org/CVERecord?id=CVE-2026-14257",
+            "https://www.npmjs.com/package/brace-expansion"
+          ],
+          "PublishedDate": "2026-07-23T14:17:00.25Z",
+          "LastModifiedDate": "2026-07-23T15:48:25.133Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-69152",
+          "PkgID": "brace-expansion@5.0.6",
+          "PkgName": "brace-expansion",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/brace-expansion@5.0.6",
+            "UID": "c4c750411eb2da19"
+          },
+          "InstalledVersion": "5.0.6",
+          "FixedVersion": "1.1.18, 2.1.4, 3.0.6, 5.0.9",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-69152",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "brace-expansion: DoS via unbounded intermediate arrays, bypassing the CVE-2026-14257 mitigation",
+          "Description": "The brace-expansion library generates arbitrary strings containing a common prefix and suffix. Prior to 1.1.18, 2.1.4, 3.0.6, and 5.0.9, expand() does not apply maxLength while constructing comma-alternative intermediate arrays or padded sequences, allowing attacker-controlled input to exhaust memory or block the event loop. The fix for CVE-2026-14257 is bypassed by the vulnerability. This issue is fixed in versions 1.1.18, 2.1.4, 3.0.6, and 5.0.9.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-400",
+            "CWE-770"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "ghsa": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:52841",
+            "https://access.redhat.com/security/cve/CVE-2026-69152",
+            "https://bugzilla.redhat.com/2510722",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2510722",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-69152",
+            "https://errata.almalinux.org/10/ALSA-2026-52841.html",
+            "https://errata.rockylinux.org/RLSA-2026:52841",
+            "https://github.com/juliangruber/brace-expansion",
+            "https://github.com/juliangruber/brace-expansion/commit/139d015104e71433ad52a41d19467c48ecbb2c7d",
+            "https://github.com/juliangruber/brace-expansion/commit/1e30c930238d7162802d88a94189182def178dac",
+            "https://github.com/juliangruber/brace-expansion/commit/688a99eeaab02627c2b89ba8ba4821fecfa659cf",
+            "https://github.com/juliangruber/brace-expansion/commit/cb4b9e47cc2ec777c14b2b4492fb431a56f6a031",
+            "https://github.com/juliangruber/brace-expansion/security/advisories/GHSA-rgw5-rvv9-x895",
+            "https://linux.oracle.com/cve/CVE-2026-69152.html",
+            "https://linux.oracle.com/errata/ELSA-2026-52841.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-69152",
+            "https://www.cve.org/CVERecord?id=CVE-2026-69152"
+          ],
+          "PublishedDate": "2026-08-03T17:16:45.953Z",
+          "LastModifiedDate": "2026-08-05T14:58:28.177Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-71329",
+          "PkgID": "image-size@0.7.5",
+          "PkgName": "image-size",
+          "PkgPath": "app/node_modules/.pnpm/image-size@0.7.5/node_modules/image-size/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/image-size@0.7.5",
+            "UID": "d1379d1ae2fa1471"
+          },
+          "InstalledVersion": "0.7.5",
+          "Status": "affected",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-71329",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "image-size: image-size: Denial of Service via crafted image buffer with zero-valued size field",
+          "Description": "image-size through 2.0.2 contains a denial of service vulnerability that allows remote attackers to permanently block the Node.js event loop by supplying a specially crafted image buffer with a zero-valued size field in a recognized box-type. Attackers can trigger an infinite loop in the JXL or HEIF image parsers by providing a crafted image containing a box with a size of zero, causing the offset to never advance and permanently hanging the application.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-835"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 7.5,
+              "V40Score": 8.7
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2025-71329",
+            "https://github.com/image-size/image-size",
+            "https://joshua.hu/image-size-infinite-loop-dos-vulnerabilities",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-71329",
+            "https://web.archive.org/web/20260224152152/https://github.com/image-size/image-size/pull/439",
+            "https://www.cve.org/CVERecord?id=CVE-2025-71329",
+            "https://www.vulncheck.com/advisories/image-size-denial-of-service-via-infinite-loop-in-jxl-heif-parser"
+          ],
+          "PublishedDate": "2026-06-10T14:16:30.16Z",
+          "LastModifiedDate": "2026-06-17T10:04:04.183Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-71330",
+          "PkgID": "image-size@0.7.5",
+          "PkgName": "image-size",
+          "PkgPath": "app/node_modules/.pnpm/image-size@0.7.5/node_modules/image-size/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/image-size@0.7.5",
+            "UID": "d1379d1ae2fa1471"
+          },
+          "InstalledVersion": "0.7.5",
+          "Status": "affected",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-71330",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "image-size: image-size: Denial of Service via crafted ICNS image buffer",
+          "Description": "image-size through 2.0.2 contains a denial of service vulnerability that allows remote attackers to permanently block the Node.js event loop by supplying a specially crafted ICNS image buffer. Attackers can craft an ICNS buffer containing valid magic bytes and a zero-valued entry length field to trigger an infinite loop in the ICNS parser, as the offset is never incremented when the entry length field is 0, causing the while loop condition to remain true indefinitely.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-835"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "redhat": 2
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 7.5,
+              "V40Score": 8.7
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2025-71330",
+            "https://github.com/image-size/image-size",
+            "https://joshua.hu/image-size-infinite-loop-dos-vulnerabilities",
+            "https://nvd.nist.gov/vuln/detail/CVE-2025-71330",
+            "https://web.archive.org/web/20260224152152/https://github.com/image-size/image-size/pull/439",
+            "https://www.cve.org/CVERecord?id=CVE-2025-71330",
+            "https://www.vulncheck.com/advisories/image-size-denial-of-service-via-malformed-icns-image-parsing"
+          ],
+          "PublishedDate": "2026-06-10T14:16:30.387Z",
+          "LastModifiedDate": "2026-06-17T10:04:04.31Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-69192",
+          "PkgID": "ip-address@10.2.0",
+          "PkgName": "ip-address",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/ip-address/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/ip-address@10.2.0",
+            "UID": "e7c45c297903d4c1"
+          },
+          "InstalledVersion": "10.2.0",
+          "FixedVersion": "10.3.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-69192",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "ip-address: ip-address: Inconsistent IP address parsing leads to Server-Side Request Forgery (SSRF) and trust-boundary bypass",
+          "Description": "ip-address is a library for parsing and manipulating IPv4 and IPv6 addresses in JavaScript. Prior to 10.3.1, Address4 accepts an octet written with a leading zero and decodes it as decimal, while the WHATWG URL host parser, inet_aton, and getaddrinfo all decode a leading zero as octal. The library and the network stack therefore disagree about which host a string names. new Address4('012.0.0.1') reports correctForm() of 12.0.0.1 and isPrivate() of false, but fetch('http://012.0.0.1/') connects to 10.0.0.1. An application that builds a network trust-boundary decision on these checks, for example a filter intended to block Server-Side Request Forgery, or SSRF, will classify an internal target as external and allow the request. The defect is in the parse gate rather than in any one classifier, so every consumer of Address4 inherits it: isPrivate(), isLoopback(), isLinkLocal(), isCGNAT(), isInSubnet(), isHostInSubnet(), and correctForm() are all computed from the mis-decoded octets. This issue is fixed in version 10.3.1.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-20",
+            "CWE-918"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "redhat": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:H/SI:N/SA:N",
+              "V40Score": 7.7
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
+              "V3Score": 8.6
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-69192",
+            "https://github.com/beaugunderson/ip-address",
+            "https://github.com/beaugunderson/ip-address/commit/56368cb3d66c73ba0ee9b6b834fd31b22c2fd71e",
+            "https://github.com/beaugunderson/ip-address/releases/tag/v10.3.1",
+            "https://github.com/beaugunderson/ip-address/security/advisories/GHSA-mwp4-54f8-5fhr",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-69192",
+            "https://www.cve.org/CVERecord?id=CVE-2026-69192"
+          ],
+          "PublishedDate": "2026-08-03T20:17:29.96Z",
+          "LastModifiedDate": "2026-08-04T15:16:41.66Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-67213",
+          "PkgID": "nanoid@3.3.16",
+          "PkgName": "nanoid",
+          "PkgPath": "app/node_modules/.pnpm/nanoid@3.3.16/node_modules/nanoid/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/nanoid@3.3.16",
+            "UID": "eb29205ced963eb4"
+          },
+          "InstalledVersion": "3.3.16",
+          "FixedVersion": "3.3.17, 5.1.6",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-67213",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "nanoid: nanoid: Denial of Service via infinite loop in random ID generation",
+          "Description": "nanoid (Nano ID) before 5.1.6 contains an infinite loop in the customAlphabet and customRandom functions. When these functions are configured with a size of 0, the internal generation loop never satisfies its exit condition and spins indefinitely, hanging the calling thread. An application that passes an unvalidated, attacker-controlled size of 0 to these functions is exposed to a denial-of-service condition.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-835"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "redhat": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 5.9,
+              "V40Score": 8.2
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/security/cve/CVE-2026-67213",
+            "https://github.com/ai/nanoid",
+            "https://github.com/ai/nanoid/commit/cb3626d0f3342fdf179cd425fd9c4fbb92c7d0e7",
+            "https://github.com/ai/nanoid/commit/f9d13f150847d117877adee3460a46eceb0cf49b",
+            "https://github.com/ai/nanoid/releases/tag/3.3.17",
+            "https://github.com/ai/nanoid/releases/tag/5.1.6",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-67213",
+            "https://www.cve.org/CVERecord?id=CVE-2026-67213",
+            "https://www.vulncheck.com/advisories/nanoid-before-infinite-loop-via-zero-size-in-customalphabet-and-customrandom"
+          ],
+          "PublishedDate": "2026-07-29T14:16:34.89Z",
+          "LastModifiedDate": "2026-08-10T16:19:48.757Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2021-21278",
+          "PkgID": "rsshub@1.0.0",
+          "PkgName": "rsshub",
+          "PkgPath": "app/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/rsshub@1.0.0",
+            "UID": "e21759321935a4d5"
+          },
+          "InstalledVersion": "1.0.0",
+          "Status": "affected",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2021-21278",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "Risk of code injection",
+          "Description": "RSSHub is an open source, easy to use, and extensible RSS feed generator. In RSSHub before version 7f1c430 (non-semantic versioning) there is a risk of code injection. Some routes use `eval` or `Function constructor`, which may be injected by the target site with unsafe code, causing server-side security issues The fix in version 7f1c430 is to temporarily remove the problematic route and added a `no-new-func` rule to eslint.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-74"
+          ],
+          "VendorSeverity": {
+            "ghsa": 3,
+            "nvd": 4
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N",
+              "V3Score": 8.6
+            },
+            "nvd": {
+              "V2Vector": "AV:N/AC:L/Au:N/C:P/I:P/A:P",
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V2Score": 7.5,
+              "V3Score": 9.8
+            }
+          },
+          "References": [
+            "https://github.com/DIYgod/RSSHub",
+            "https://github.com/DIYgod/RSSHub/commit/7f1c43094e8a82e4d8f036ff7d42568fed00699d",
+            "https://github.com/DIYgod/RSSHub/security/advisories/GHSA-pgjj-866w-fc5c",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-21278",
+            "https://www.npmjs.com/package/rsshub"
+          ],
+          "PublishedDate": "2021-01-26T21:15:12.673Z",
+          "LastModifiedDate": "2026-06-17T03:35:10.85Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-59873",
+          "PkgID": "tar@7.5.16",
+          "PkgName": "tar",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/tar/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/tar@7.5.16",
+            "UID": "dd23fedd5eca6cc1"
+          },
+          "InstalledVersion": "7.5.16",
+          "FixedVersion": "7.5.19",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-59873",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "tar: node-tar: Denial of Service via crafted gzip bomb",
+          "Description": "node-tar is a tar archive manipulation library for Node.js. Prior to 7.5.19, node-tar does not enforce hard upper bounds on total decompressed data, entry counts, or decompression ratio in extraction and parsing paths such as src/extract.ts, allowing a small crafted gzip bomb to exhaust disk space and CPU. This issue is fixed in version 7.5.19.",
+          "Severity": "CRITICAL",
+          "CweIDs": [
+            "CWE-770"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "ghsa": 4,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+              "V3Score": 7.5,
+              "V40Score": 9.2
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:47058",
+            "https://access.redhat.com/security/cve/CVE-2026-59873",
+            "https://bugzilla.redhat.com/2494813",
+            "https://bugzilla.redhat.com/2498116",
+            "https://bugzilla.redhat.com/2498120",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2494813",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498116",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498120",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-13149",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59873",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59874",
+            "https://errata.almalinux.org/9/ALSA-2026-47058.html",
+            "https://errata.rockylinux.org/RLSA-2026:47058",
+            "https://github.com/isaacs/node-tar",
+            "https://github.com/isaacs/node-tar/commit/2812e9338665659b183aa7226518c307044957d3",
+            "https://github.com/isaacs/node-tar/releases/tag/v7.5.19",
+            "https://github.com/isaacs/node-tar/security/advisories/GHSA-23hp-3jrh-7fpw",
+            "https://linux.oracle.com/cve/CVE-2026-59873.html",
+            "https://linux.oracle.com/errata/ELSA-2026-48034.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-59873",
+            "https://www.cve.org/CVERecord?id=CVE-2026-59873"
+          ],
+          "PublishedDate": "2026-07-08T16:16:33.867Z",
+          "LastModifiedDate": "2026-07-10T18:57:17.907Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-59874",
+          "PkgID": "tar@7.5.16",
+          "PkgName": "tar",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/tar/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/tar@7.5.16",
+            "UID": "dd23fedd5eca6cc1"
+          },
+          "InstalledVersion": "7.5.16",
+          "FixedVersion": "7.5.18",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-59874",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "tar: Node-tar: Denial of Service via malformed tar archive header",
+          "Description": "node-tar is a tar archive manipulation library for Node.js. Prior to 7.5.18, tar.replace accepts a checksum-valid tar header with a negative base-256 encoded entry size, causing the archive scanner to make no progress while repeatedly parsing the same header. This issue is fixed in version 7.5.18.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-835"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "ghsa": 3,
+            "nvd": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V40Vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+              "V3Score": 7.5,
+              "V40Score": 8.7
+            },
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:47058",
+            "https://access.redhat.com/security/cve/CVE-2026-59874",
+            "https://bugzilla.redhat.com/2494813",
+            "https://bugzilla.redhat.com/2498116",
+            "https://bugzilla.redhat.com/2498120",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2494813",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498116",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2498120",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-13149",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59873",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-59874",
+            "https://errata.almalinux.org/9/ALSA-2026-47058.html",
+            "https://errata.rockylinux.org/RLSA-2026:47058",
+            "https://github.com/isaacs/node-tar",
+            "https://github.com/isaacs/node-tar/commit/9e78bf058b2c22dd4d52e00d8922d5c06fc2f7b5",
+            "https://github.com/isaacs/node-tar/releases/tag/v7.5.18",
+            "https://github.com/isaacs/node-tar/security/advisories/GHSA-8x88-c5mf-7j5w",
+            "https://linux.oracle.com/cve/CVE-2026-59874.html",
+            "https://linux.oracle.com/errata/ELSA-2026-48034.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-59874",
+            "https://www.cve.org/CVERecord?id=CVE-2026-59874"
+          ],
+          "PublishedDate": "2026-07-08T16:16:33.99Z",
+          "LastModifiedDate": "2026-07-10T18:54:12.67Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-12151",
+          "PkgID": "undici@6.26.0",
+          "PkgName": "undici",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/undici/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/undici@6.26.0",
+            "UID": "dcdcf0e431c7780e"
+          },
+          "InstalledVersion": "6.26.0",
+          "FixedVersion": "6.27.0, 7.28.0, 8.5.0",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2026-12151",
+          "DataSource": {
+            "ID": "ghsa",
+            "Name": "GitHub Security Advisory npm",
+            "URL": "https://github.com/advisories?query=type%3Areviewed+ecosystem%3Anpm"
+          },
+          "Title": "undici: undici: Denial of Service due to unbounded memory growth via WebSocket frames",
+          "Description": "Impact:\nThe undici WebSocket client enforces maxPayloadSize on the cumulative byte count of fragments in a message but does not enforce a limit on the number of fragments. A malicious WebSocket server can stream many small or empty continuation frames that each pass per-frame and cumulative-size validation, collectively causing unbounded memory growth in the client process. The result is memory exhaustion and a denial of service.\n\nAffected applications are those using the undici WebSocket client (new WebSocket(...)) or the WebSocketStream API that can be induced to connect to an attacker-controlled or compromised WebSocket endpoint.\n\nAll releases starting at undici 6.17.0 are affected.\n\nPatches: Upgrade to undici \u003e= 6.26.0, \u003e= 7.28.0, or \u003e= 8.5.0. Workarounds:\nNo workaround is available. The fix must be applied through an upgrade.",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-400",
+            "CWE-770"
+          ],
+          "VendorSeverity": {
+            "alma": 3,
+            "amazon": 3,
+            "azure": 3,
+            "ghsa": 3,
+            "oracle-oval": 3,
+            "redhat": 3,
+            "rocky": 3
+          },
+          "CVSS": {
+            "ghsa": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            },
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 7.5
+            }
+          },
+          "References": [
+            "https://access.redhat.com/errata/RHSA-2026:34342",
+            "https://access.redhat.com/errata/RHSA-2026:35841",
+            "https://access.redhat.com/errata/RHSA-2026:35842",
+            "https://access.redhat.com/errata/RHSA-2026:35891",
+            "https://access.redhat.com/errata/RHSA-2026:35892",
+            "https://access.redhat.com/errata/RHSA-2026:36621",
+            "https://access.redhat.com/errata/RHSA-2026:36754",
+            "https://access.redhat.com/errata/RHSA-2026:36820",
+            "https://access.redhat.com/errata/RHSA-2026:38009",
+            "https://access.redhat.com/errata/RHSA-2026:38236",
+            "https://access.redhat.com/errata/RHSA-2026:39246",
+            "https://access.redhat.com/errata/RHSA-2026:39868",
+            "https://access.redhat.com/errata/RHSA-2026:41929",
+            "https://access.redhat.com/errata/RHSA-2026:41947",
+            "https://access.redhat.com/errata/RHSA-2026:47728",
+            "https://access.redhat.com/errata/RHSA-2026:48124",
+            "https://access.redhat.com/errata/RHSA-2026:48151",
+            "https://access.redhat.com/errata/RHSA-2026:52399",
+            "https://access.redhat.com/security/cve/CVE-2026-12151",
+            "https://bugzilla.redhat.com/2476810",
+            "https://bugzilla.redhat.com/2489980",
+            "https://bugzilla.redhat.com/2490000",
+            "https://bugzilla.redhat.com/2490006",
+            "https://bugzilla.redhat.com/2490008",
+            "https://bugzilla.redhat.com/2493325",
+            "https://bugzilla.redhat.com/2493326",
+            "https://bugzilla.redhat.com/2493329",
+            "https://bugzilla.redhat.com/2493331",
+            "https://bugzilla.redhat.com/2493332",
+            "https://bugzilla.redhat.com/2493333",
+            "https://bugzilla.redhat.com/2493335",
+            "https://bugzilla.redhat.com/2493337",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2476810",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2489980",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2490000",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2490006",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2490008",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493325",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493326",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493329",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493331",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493332",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493333",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493335",
+            "https://bugzilla.redhat.com/show_bug.cgi?id=2493337",
+            "https://cna.openjsf.org/security-advisories.html",
+            "https://creativecommons.org/licenses/by/4.0/",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-11525",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-12151",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-42338",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48615",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48618",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48619",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48928",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48930",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48933",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48934",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-48935",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-6733",
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2026-9678",
+            "https://errata.almalinux.org/9/ALSA-2026-35892.html",
+            "https://errata.rockylinux.org/RLSA-2026:35892",
+            "https://github.com/nodejs/undici",
+            "https://github.com/nodejs/undici/security/advisories/GHSA-vxpw-j846-p89q",
+            "https://linux.oracle.com/cve/CVE-2026-12151.html",
+            "https://linux.oracle.com/errata/ELSA-2026-41947.html",
+            "https://nvd.nist.gov/vuln/detail/CVE-2026-12151",
+            "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-12151.json",
+            "https://www.cve.org/CVERecord?id=CVE-2026-12151"
+          ],
+          "PublishedDate": "2026-06-17T17:16:42.37Z",
+          "LastModifiedDate": "2026-08-10T13:17:53.71Z"
+        }
+      ]
+    }
+  ]
+}

@@ -46,6 +46,27 @@ class ResearchReportDraft(BaseModel):
     citations: list[ResearchCitationDraft] = Field(default_factory=list, max_length=500)
 
 
+class ResearchEvidenceInput(BaseModel):
+    """提供给报告模型的一条已回验平台证据。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    citation_id: str = Field(min_length=1, max_length=128)
+    title: str | None = Field(default=None, max_length=500)
+    url: str = Field(min_length=1, max_length=2000)
+    quote: str = Field(min_length=1, max_length=2000)
+    excerpt: str = Field(min_length=1, max_length=400)
+
+
+class ResearchReportGenerationInput(BaseModel):
+    """报告生成的受限输入；不含原始页面、凭据或任意工具参数。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    topic: str = Field(min_length=1, max_length=2000)
+    evidence: list[ResearchEvidenceInput] = Field(min_length=1, max_length=20)
+
+
 @dataclass(frozen=True)
 class PromotionDecision:
     allowed: bool
@@ -88,6 +109,28 @@ def validate_report_draft(report: ResearchReportDraft) -> None:
                 raise ReportValidationError(
                     f"结论 {claim.claim_id} 没有经过回验的引用"
                 )
+
+
+def canonicalize_generated_report(
+    report: ResearchReportDraft,
+    context: ResearchReportGenerationInput,
+) -> ResearchReportDraft:
+    """只保留平台提供的回验引用，拒绝模型引用未知证据。"""
+    claims = [*report.facts, *report.inferences, *report.forecasts]
+    if not claims:
+        raise ReportValidationError("报告至少需要一条带引用的结论")
+    platform_citations = [
+        ResearchCitationDraft(
+            citation_id=item.citation_id,
+            url=item.url,
+            quote=item.quote,
+            verified=True,
+        )
+        for item in context.evidence
+    ]
+    normalized = report.model_copy(update={"citations": platform_citations})
+    validate_report_draft(normalized)
+    return normalized
 
 
 def can_promote_claim(

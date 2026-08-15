@@ -155,6 +155,20 @@ RESEARCH_DAILY_CRON = os.getenv("RESEARCH_DAILY_CRON", "0 8 * * *").strip()
 RESEARCH_DAILY_TOPIC = os.getenv("RESEARCH_DAILY_TOPIC", "").strip()
 RESEARCH_WEEKLY_CRON = os.getenv("RESEARCH_WEEKLY_CRON", "30 8 * * mon").strip()
 RESEARCH_WEEKLY_TOPIC = os.getenv("RESEARCH_WEEKLY_TOPIC", "").strip()
+# 本地研究 Worker 默认关闭。当前仅提供不访问外网/Provider/模型的生命周期测试模式。
+RESEARCH_WORKER_ENABLED = os.getenv("RESEARCH_WORKER_ENABLED", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+RESEARCH_WORKER_MODE = os.getenv("RESEARCH_WORKER_MODE", "local_lifecycle_test").strip()
+RESEARCH_WORKER_POLL_SECONDS = _float_env(
+    "RESEARCH_WORKER_POLL_SECONDS", 5, minimum=0.1, maximum=60
+)
+RESEARCH_WORKER_LEASE_SECONDS = _int_env(
+    "RESEARCH_WORKER_LEASE_SECONDS", 300, minimum=30, maximum=3600
+)
 # 每次定时任务对积压信号执行 AI 解析的批大小；每条信号一次独立 LLM 调用
 SIGNAL_ANALYZE_BATCH = _int_env(
     "SIGNAL_ANALYZE_BATCH", 20, minimum=1, maximum=500

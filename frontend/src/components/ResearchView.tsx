@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {motion} from 'motion/react';
 import {CheckCircle2, Clock3, FileText, Plus, RefreshCw, Search, ShieldCheck, XCircle} from 'lucide-react';
-import {api, type ResearchReportRead, type ResearchTaskRead} from '../api';
+import {api, type ResearchReportRead, type ResearchSourceRead, type ResearchTaskRead} from '../api';
 
 interface ResearchViewProps { canCreate: boolean; }
 
@@ -32,10 +32,12 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
   const [tasks, setTasks] = useState<ResearchTaskRead[]>([]);
   const [selectedTask, setSelectedTask] = useState<ResearchTaskRead | null>(null);
   const [reports, setReports] = useState<ResearchReportRead[]>([]);
+  const [sources, setSources] = useState<ResearchSourceRead[]>([]);
   const [topic, setTopic] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingReports, setLoadingReports] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,22 +67,40 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
     }
   }, []);
 
+  const loadSources = useCallback(async (taskId: number) => {
+    try {
+      const response = await api.research.sources(taskId);
+      setSources(response.items);
+    } catch (caught) {
+      setSources([]);
+      setError(caught instanceof Error ? caught.message : '研究来源加载失败');
+    }
+  }, []);
+
   const refreshSelectedTask = useCallback(async (taskId: number) => {
     try {
       const next = await api.research.task(taskId);
       setTasks((current) => current.map((task) => task.id === taskId ? next : task));
       setSelectedTask((current) => current?.id === taskId ? next : current);
-      if (next.status === 'succeeded') void loadReports(taskId);
+      if (next.status === 'succeeded') {
+        void loadReports(taskId);
+        void loadSources(taskId);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '研究任务状态刷新失败');
     }
-  }, [loadReports]);
+  }, [loadReports, loadSources]);
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
   useEffect(() => {
-    if (selectedTask) void loadReports(selectedTask.id);
-    else setReports([]);
-  }, [loadReports, selectedTask]);
+    if (selectedTask) {
+      void loadReports(selectedTask.id);
+      void loadSources(selectedTask.id);
+    } else {
+      setReports([]);
+      setSources([]);
+    }
+  }, [loadReports, loadSources, selectedTask]);
   useEffect(() => {
     if (!selectedTask || !['queued', 'running'].includes(selectedTask.status)) return undefined;
     const timer = window.setInterval(() => void refreshSelectedTask(selectedTask.id), 5000);
@@ -99,6 +119,7 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
       setSelectedTask(created);
       setTopic('');
       setReports([]);
+      setSources([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '研究任务创建失败');
     } finally {
@@ -118,6 +139,21 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
       setError(caught instanceof Error ? caught.message : '研究任务取消失败');
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleStart = async () => {
+    if (!selectedTask || starting || selectedTask.status !== 'queued' || selectedTask.execution_requested_at) return;
+    setStarting(true);
+    setError(null);
+    try {
+      const updated = await api.research.startTask(selectedTask.id);
+      setTasks((current) => current.map((task) => task.id === updated.id ? updated : task));
+      setSelectedTask(updated);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '研究任务启动失败');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -160,7 +196,7 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
             <div className="mb-3 flex items-center justify-between">
               <div>
                 <h2 className="flex items-center gap-2 text-[15px] font-extrabold text-[#101d28] dark:text-white"><Search className="h-4 w-4 text-[#007aff]" />新建研究任务</h2>
-                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">描述一个公开信息主题，暂不自动执行。</p>
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">只需填写研究主题，系统将自动发现并读取公开信源。</p>
               </div>
               <span className="font-mono text-[10px] text-slate-400">MANUAL</span>
             </div>
@@ -175,7 +211,7 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
                 className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] leading-5 text-[#101d28] outline-none transition focus:border-[#007aff] focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-blue-950"
               />
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] text-slate-400">仅发送公开企业名称和研究主题</span>
+                <span className="text-[10px] text-slate-400">开始研究后调用搜索服务，并按任务预算受控读取候选页面</span>
                 <button type="submit" disabled={!topic.trim() || saving || !canCreate} className="inline-flex items-center gap-1.5 rounded-lg bg-[#007aff] px-3 py-2 text-[12px] font-bold text-white shadow-sm transition hover:bg-[#0062cc] disabled:cursor-not-allowed disabled:opacity-45">
                   <Plus className="h-3.5 w-3.5" />{saving ? '创建中…' : '创建任务'}
                 </button>
@@ -195,7 +231,7 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
               const active = selectedTask?.id === task.id;
               return <button key={task.id} type="button" onClick={() => setSelectedTask(task)} className={`w-full rounded-xl border p-3 text-left transition ${active ? 'border-blue-300 bg-blue-50/70 shadow-sm dark:border-blue-800 dark:bg-blue-950/30' : 'border-transparent hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-900'}`}>
                 <div className="mb-1.5 flex items-start justify-between gap-2"><span className="line-clamp-2 text-[13px] font-bold text-[#101d28] dark:text-slate-100">{task.topic}</span><span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${meta.className}`}>{meta.label}</span></div>
-                <div className="flex items-center justify-between text-[10px] text-slate-400"><span>#{task.id} · 手动任务</span><span>{formatDate(task.created_at)}</span></div>
+                <div className="flex items-center justify-between text-[10px] text-slate-400"><span>#{task.id} · 自动发现信源</span><span>{formatDate(task.created_at)}</span></div>
               </button>;
             })}
           </div>
@@ -204,8 +240,8 @@ export const ResearchView: React.FC<ResearchViewProps> = ({canCreate}) => {
         <section className="min-h-[560px] rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101d28]">
           {!selectedTask ? <div className="flex min-h-[560px] flex-col items-center justify-center px-6 text-center"><div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-[#007aff] dark:bg-blue-950/40"><FileText className="h-7 w-7" /></div><h2 className="text-[16px] font-extrabold text-[#101d28] dark:text-white">选择一项研究任务</h2><p className="mt-2 max-w-xs text-[12px] leading-5 text-slate-500 dark:text-slate-400">任务完成后，带引用的报告草稿会显示在这里。</p></div> : (
             <div>
-              <div className="flex flex-col gap-3 border-b border-slate-200/80 p-5 sm:flex-row sm:items-start sm:justify-between dark:border-slate-800"><div><div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#007aff]"><span>任务 #{selectedTask.id}</span><span className="text-slate-300">/</span><span>手动研究</span>{['queued', 'running'].includes(selectedTask.status) && <span className="inline-flex items-center gap-1 text-slate-400"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#007aff]" />每 5 秒刷新</span>}</div><h2 className="text-xl font-black text-[#101d28] dark:text-white">{selectedTask.topic}</h2><p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">创建于 {formatDate(selectedTask.created_at)} · 尝试 {selectedTask.attempts} 次{selectedTask.cancel_requested_at ? ' · 已请求取消' : ''}</p><div className="mt-3 flex flex-wrap gap-1.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400"><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">查询 {selectedTask.search_queries_used}/{budgetLimit(selectedTask, 'max_queries')}</span><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">结果 {selectedTask.search_results_used}/{budgetLimit(selectedTask, 'max_results')}</span><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">Token {(selectedTask.input_tokens_used + selectedTask.output_tokens_used).toLocaleString()}/{budgetLimit(selectedTask, 'max_input_tokens')}+{budgetLimit(selectedTask, 'max_output_tokens')}</span>{selectedTask.current_step && <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">当前步骤：{selectedTask.current_step}</span>}</div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${taskStatus[selectedTask.status].className}`}>{taskStatus[selectedTask.status].label}</span><span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">草稿仅供参考</span>{['queued', 'running'].includes(selectedTask.status) && <button type="button" onClick={() => void handleCancel()} disabled={cancelling || Boolean(selectedTask.cancel_requested_at)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30">{cancelling || selectedTask.cancel_requested_at ? '取消中…' : '取消任务'}</button>}</div></div>
-              <div className="p-5">{loadingReports ? <div className="py-16 text-center text-[12px] text-slate-400">正在加载研究草稿…</div> : !latestReport ? <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-6 py-14 text-center dark:border-slate-700 dark:bg-slate-900/50"><Clock3 className="mx-auto mb-3 h-7 w-7 text-slate-300" /><h3 className="text-[14px] font-bold text-slate-600 dark:text-slate-300">研究尚未产出草稿</h3><p className="mx-auto mt-2 max-w-sm text-[12px] leading-5 text-slate-400">当前只完成任务创建。搜索 Provider 和研究 Worker 尚未启用，因此不会自动产生外部访问或费用。</p></div> : <ReportDraftCard report={latestReport} claimCount={claimCount} />}</div>
+              <div className="flex flex-col gap-3 border-b border-slate-200/80 p-5 sm:flex-row sm:items-start sm:justify-between dark:border-slate-800"><div><div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[#007aff]"><span>任务 #{selectedTask.id}</span><span className="text-slate-300">/</span><span>手动研究</span>{['queued', 'running'].includes(selectedTask.status) && <span className="inline-flex items-center gap-1 text-slate-400"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#007aff]" />每 5 秒刷新</span>}</div><h2 className="text-xl font-black text-[#101d28] dark:text-white">{selectedTask.topic}</h2><p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">创建于 {formatDate(selectedTask.created_at)} · 尝试 {selectedTask.attempts} 次{selectedTask.cancel_requested_at ? ' · 已请求取消' : ''}</p><div className="mt-3 flex flex-wrap gap-1.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400"><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">查询 {selectedTask.search_queries_used}/{budgetLimit(selectedTask, 'max_queries')}</span><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">结果 {selectedTask.search_results_used}/{budgetLimit(selectedTask, 'max_results')}</span><span className="rounded-md bg-slate-100 px-2 py-1 dark:bg-slate-800">Token {(selectedTask.input_tokens_used + selectedTask.output_tokens_used).toLocaleString()}/{budgetLimit(selectedTask, 'max_input_tokens')}+{budgetLimit(selectedTask, 'max_output_tokens')}</span>{selectedTask.current_step && <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">当前步骤：{selectedTask.current_step}</span>}</div></div><div className="flex flex-wrap items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${taskStatus[selectedTask.status].className}`}>{taskStatus[selectedTask.status].label}</span><span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">草稿仅供参考</span>{selectedTask.status === 'queued' && <button type="button" onClick={() => void handleStart()} disabled={starting || Boolean(selectedTask.execution_requested_at)} className="rounded-lg bg-[#007aff] px-2.5 py-1.5 text-[11px] font-bold text-white transition hover:bg-[#0062cc] disabled:cursor-not-allowed disabled:opacity-50">{starting ? '请求中…' : selectedTask.execution_requested_at ? '等待 Worker' : '开始研究'}</button>}{['queued', 'running'].includes(selectedTask.status) && <button type="button" onClick={() => void handleCancel()} disabled={cancelling || Boolean(selectedTask.cancel_requested_at)} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-[11px] font-bold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/30">{cancelling || selectedTask.cancel_requested_at ? '取消中…' : '取消任务'}</button>}</div></div>
+              <div className="space-y-5 p-5">{sources.length > 0 && <div><div className="mb-2 flex items-center justify-between"><h3 className="text-[13px] font-extrabold text-[#101d28] dark:text-white">自动发现的公开来源</h3><span className="text-[10px] font-bold text-slate-400">{sources.length} 个已读取</span></div><div className="space-y-2">{sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="block rounded-xl border border-slate-200/80 p-3 transition hover:border-blue-300 hover:bg-blue-50/50 dark:border-slate-800 dark:hover:border-blue-800 dark:hover:bg-blue-950/20"><div className="flex items-center justify-between gap-3"><span className="truncate text-[12px] font-bold text-[#007aff]">{source.title || source.url}</span><span className="shrink-0 text-[10px] text-slate-400">HTTP {source.http_status ?? '—'}</span></div>{source.content_excerpt && <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">{source.content_excerpt}</p>}</a>)}</div></div>}{loadingReports ? <div className="py-16 text-center text-[12px] text-slate-400">正在加载研究草稿…</div> : !latestReport ? <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-6 py-10 text-center dark:border-slate-700 dark:bg-slate-900/50"><Clock3 className="mx-auto mb-3 h-7 w-7 text-slate-300" /><h3 className="text-[14px] font-bold text-slate-600 dark:text-slate-300">{sources.length > 0 ? '信源读取完成，尚未生成研究草稿' : '研究尚未产出结果'}</h3><p className="mx-auto mt-2 max-w-sm text-[12px] leading-5 text-slate-400">系统会按主题自动检索并受控读取公开页面；模型报告生成仍未启用。</p></div> : <ReportDraftCard report={latestReport} claimCount={claimCount} />}</div>
             </div>
           )}
         </section>

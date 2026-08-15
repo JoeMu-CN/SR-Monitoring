@@ -24,6 +24,10 @@ def run_once(
     worker_id: str,
     execute: TaskExecutor,
     lease_seconds: int = 300,
+    task_type: str | None = None,
+    topic_prefix: str | None = None,
+    require_source_urls: bool = False,
+    require_execution_requested: bool = False,
     now: datetime | None = None,
 ) -> ResearchTask | None:
     """认领并执行一个任务；没有可执行任务时返回 ``None``。
@@ -37,6 +41,10 @@ def run_once(
         session,
         worker_id=worker_id,
         lease_seconds=lease_seconds,
+        task_type=task_type,
+        topic_prefix=topic_prefix,
+        require_source_urls=require_source_urls,
+        require_execution_requested=require_execution_requested,
         now=now,
     )
     if task is None:

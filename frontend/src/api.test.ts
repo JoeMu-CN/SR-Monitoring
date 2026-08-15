@@ -95,11 +95,13 @@ describe('研究 API 请求契约', () => {
 
     await api.research.tasks();
     await api.research.task(12);
+    await api.research.sources(12);
     await api.research.reports(12);
 
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/research/tasks',
       '/api/v1/research/tasks/12',
+      '/api/v1/research/tasks/12/sources',
       '/api/v1/research/tasks/12/reports',
     ]);
     for (const [, options] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
@@ -115,13 +117,18 @@ describe('研究 API 请求契约', () => {
     vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-research'});
 
     await api.research.createTask('某供应商近 30 天风险动态');
+    await api.research.startTask(12);
     await api.research.cancelTask(12);
 
     const [, createOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const [, cancelOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [, startOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [, cancelOptions] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(createOptions.method).toBe('POST');
     expect(JSON.parse(String(createOptions.body))).toEqual({task_type: 'manual', topic: '某供应商近 30 天风险动态'});
     expect(new Headers(createOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
+    expect(startOptions.method).toBe('POST');
+    expect(startOptions.body).toBeUndefined();
+    expect(new Headers(startOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
     expect(cancelOptions.method).toBe('POST');
     expect(cancelOptions.body).toBeUndefined();
     expect(new Headers(cancelOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');

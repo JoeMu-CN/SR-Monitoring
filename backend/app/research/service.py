@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.research.models import ResearchReport, ResearchTask
+from app.research.models import ResearchReport, ResearchSource, ResearchTask
 from app.research.reporting import ResearchReportDraft, validate_report_draft
 
 TASK_ADMIN_ROLES = {"risk_admin", "platform_admin"}
@@ -26,6 +26,10 @@ class ResearchBudgetExceeded(RuntimeError):
     """研究任务预计用量超过预算快照。"""
 
 
+class ResearchTaskStartError(ValueError):
+    """研究任务不满足受控读取的显式启动条件。"""
+
+
 def create_task(
     session: Session,
     *,
@@ -33,6 +37,7 @@ def create_task(
     task_type: str,
     topic: str,
     supplier_scope: list[int],
+    source_urls: list[str] | None = None,
     idempotency_key: str | None,
     budget_snapshot: dict[str, object] | None = None,
 ) -> ResearchTask:
@@ -51,6 +56,7 @@ def create_task(
         task_type=task_type,
         topic=topic.strip(),
         supplier_scope=sorted(set(supplier_scope)),
+        source_urls=list(source_urls or []),
         budget_snapshot=dict(budget_snapshot or DEFAULT_RESEARCH_BUDGET),
         idempotency_key=idempotency_key,
     )
@@ -112,27 +118,63 @@ def cancel_task(
     return task
 
 
+def request_controlled_execution(
+    session: Session, *, task_id: int, owner_user_id: int, role: str
+) -> ResearchTask | None:
+    """记录用户对搜索与公开页面读取的显式授权。"""
+    task = get_task(session, task_id=task_id, owner_user_id=owner_user_id, role=role)
+    if task is None:
+        return None
+    if task.task_type != "manual":
+        raise ResearchTaskStartError("仅手动研究任务可以请求受控读取")
+    if task.status != "queued":
+        raise ResearchTaskStartError("仅等待执行的研究任务可以开始")
+    if task.execution_requested_at is None:
+        task.execution_requested_at = datetime.now(UTC)
+        task.current_step = "awaiting_research_worker"
+        session.commit()
+        session.refresh(task)
+    return task
+
+
 def claim_next_task(
     session: Session,
     *,
     worker_id: str,
     lease_seconds: int = 300,
+    task_type: str | None = None,
+    topic_prefix: str | None = None,
+    require_source_urls: bool = False,
+    require_execution_requested: bool = False,
     now: datetime | None = None,
 ) -> ResearchTask | None:
-    """以行锁认领一个任务；租约过期的 running 任务可恢复。"""
+    """以行锁认领一个任务；租约过期的 running 任务可恢复。
+
+    ``task_type`` 和 ``topic_prefix`` 仅用于隔离特定 Worker 可执行的任务集合；
+    未传入时保持原有全队列认领行为。
+    """
     current = now or datetime.now(UTC)
+    conditions = [
+        ResearchTask.cancel_requested_at.is_(None),
+        or_(
+            ResearchTask.status == "queued",
+            (
+                (ResearchTask.status == "running")
+                & (ResearchTask.lease_until <= current)
+            ),
+        ),
+    ]
+    if task_type:
+        conditions.append(ResearchTask.task_type == task_type)
+    if topic_prefix:
+        conditions.append(ResearchTask.topic.startswith(topic_prefix, autoescape=True))
+    if require_source_urls:
+        conditions.append(ResearchTask.source_urls != [])
+    if require_execution_requested:
+        conditions.append(ResearchTask.execution_requested_at.is_not(None))
     stmt = (
         select(ResearchTask)
-        .where(
-            ResearchTask.cancel_requested_at.is_(None),
-            or_(
-                ResearchTask.status == "queued",
-                (
-                    (ResearchTask.status == "running")
-                    & (ResearchTask.lease_until <= current)
-                ),
-            ),
-        )
+        .where(*conditions)
         .order_by(ResearchTask.created_at, ResearchTask.id)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -336,6 +378,22 @@ def create_report(
     task = get_task(session, task_id=task_id, owner_user_id=owner_user_id, role=role)
     if task is None:
         return None
+    return create_generated_report(
+        session,
+        task_id=task.id,
+        draft=draft,
+        model_version=model_version,
+    )
+
+
+def create_generated_report(
+    session: Session,
+    *,
+    task_id: int,
+    draft: ResearchReportDraft,
+    model_version: str | None,
+) -> ResearchReport:
+    """保存已通过校验的系统生成或人工提交报告草稿。"""
     validate_report_draft(draft)
     payload = draft.model_dump(mode="json")
     report = ResearchReport(
@@ -362,5 +420,19 @@ def list_reports(
         select(ResearchReport)
         .where(ResearchReport.task_id == task_id)
         .order_by(ResearchReport.created_at.desc(), ResearchReport.id.desc())
+    )
+    return list(session.scalars(stmt))
+
+
+def list_sources(
+    session: Session, *, task_id: int, owner_user_id: int, role: str
+) -> list[ResearchSource] | None:
+    """按任务读取自动发现的公开来源，并沿用任务访问隔离规则。"""
+    if get_task(session, task_id=task_id, owner_user_id=owner_user_id, role=role) is None:
+        return None
+    stmt = (
+        select(ResearchSource)
+        .where(ResearchSource.task_id == task_id)
+        .order_by(ResearchSource.retrieved_at.desc(), ResearchSource.id.desc())
     )
     return list(session.scalars(stmt))

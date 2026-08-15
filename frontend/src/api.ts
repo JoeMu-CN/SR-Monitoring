@@ -11,6 +11,7 @@ export interface ResearchTaskRead {
   task_type: ResearchTaskType;
   topic: string;
   supplier_scope: number[];
+  source_urls: string[];
   budget_snapshot: Record<string, unknown>;
   search_queries_used: number;
   search_results_used: number;
@@ -19,6 +20,7 @@ export interface ResearchTaskRead {
   cost_amount: string;
   current_step: string | null;
   status: ResearchTaskStatus;
+  execution_requested_at: string | null;
   cancel_requested_at: string | null;
   worker_id: string | null;
   lease_until: string | null;
@@ -27,6 +29,18 @@ export interface ResearchTaskRead {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+}
+
+export interface ResearchSourceRead {
+  id: number;
+  task_id: number;
+  url: string;
+  title: string | null;
+  source_type: string;
+  credibility_tier: string;
+  http_status: number | null;
+  content_excerpt: string | null;
+  retrieved_at: string;
 }
 
 export interface ResearchClaimDraft {
@@ -430,6 +444,8 @@ export const api = {
   research: {
     tasks: () => request<{items: ResearchTaskRead[]}>('/api/v1/research/tasks'),
     task: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}`),
+    sources: (taskId: number) => request<{items: ResearchSourceRead[]}>(`/api/v1/research/tasks/${taskId}/sources`),
+    startTask: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}/start`, {method: 'POST'}),
     cancelTask: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}/cancel`, {method: 'POST'}),
     createTask: (topic: string) => request<ResearchTaskRead>('/api/v1/research/tasks', {
       method: 'POST', headers: {'Content-Type': 'application/json'},

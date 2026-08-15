@@ -11,6 +11,7 @@ def test_research_task_creation_is_idempotent_and_returns_accepted(client, auth_
         "task_type": "manual",
         "topic": "某供应商近 30 天公开风险动态",
         "supplier_scope": [3, 1, 3],
+        "source_urls": ["https://official.example/notices"],
         "idempotency_key": "manual-2026-08-11-001",
     }
 
@@ -21,6 +22,7 @@ def test_research_task_creation_is_idempotent_and_returns_accepted(client, auth_
     assert second.status_code == 202
     assert first.json()["id"] == second.json()["id"]
     assert first.json()["supplier_scope"] == [1, 3]
+    assert first.json()["source_urls"] == ["https://official.example/notices"]
     assert first.json()["status"] == "queued"
 
 
@@ -39,6 +41,60 @@ def test_manual_api_creates_immediate_task_and_rejects_scheduled_types(client) -
     assert created.json()["status"] == "queued"
     assert rejected.status_code == 422
     assert rejected.json()["detail"] == "daily/weekly 任务只能由 Scheduler 创建"
+
+
+def test_manual_api_rejects_non_https_or_credential_source_urls(client) -> None:
+    for source_url in ("http://official.example/page", "https://user:pass@official.example/page"):
+        response = client.post(
+            "/api/v1/research/tasks",
+            json={"topic": "来源校验", "source_urls": [source_url]},
+        )
+        assert response.status_code == 422
+
+
+def test_manual_task_requires_explicit_start_before_controlled_worker_claims(
+    db_session, client, auth_as
+) -> None:
+    user = auth_as("risk_analyst", "research-start-owner")
+    task = create_task(
+        db_session,
+        owner_user_id=user.id,
+        task_type="manual",
+        topic="显式启动",
+        supplier_scope=[],
+        source_urls=["https://official.example/notice"],
+        idempotency_key=None,
+    )
+
+    assert (
+        claim_next_task(
+            db_session,
+            worker_id="controlled-worker",
+            require_source_urls=True,
+            require_execution_requested=True,
+        )
+        is None
+    )
+    started = client.post(f"/api/v1/research/tasks/{task.id}/start")
+    assert started.status_code == 200
+    assert started.json()["execution_requested_at"] is not None
+    assert started.json()["current_step"] == "awaiting_research_worker"
+    claimed = claim_next_task(
+        db_session,
+        worker_id="controlled-worker",
+        require_source_urls=True,
+        require_execution_requested=True,
+    )
+    assert claimed is not None and claimed.id == task.id
+
+
+def test_manual_task_without_source_urls_can_start_automatic_discovery(client) -> None:
+    created = client.post("/api/v1/research/tasks", json={"topic": "自动发现公开来源"})
+    response = client.post(f"/api/v1/research/tasks/{created.json()['id']}/start")
+
+    assert response.status_code == 200
+    assert response.json()["execution_requested_at"] is not None
+    assert response.json()["current_step"] == "awaiting_research_worker"
 
 
 def test_research_task_requires_analyst_and_owner_isolation(client, auth_as) -> None:

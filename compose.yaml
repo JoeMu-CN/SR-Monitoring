@@ -98,6 +98,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  research-worker:
+    image: supplierriskmonitoring-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["sh", "-c", "alembic upgrade $${ALEMBIC_UPGRADE_TARGET:-head} && python -m app.research.runner"]
+    profiles: ["research-local-test"]
+    dns:
+      - 223.5.5.5
+      - 119.29.29.29
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://supplier_risk:local_mvp_change_me@postgres:5432/supplier_risk}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RESEARCH_WORKER_ENABLED: ${RESEARCH_WORKER_ENABLED:-false}
+      # local_lifecycle_test 不访问外网；topic_source_discovery 按主题搜索并受控读取候选页面。
+      RESEARCH_WORKER_MODE: ${RESEARCH_WORKER_MODE:-local_lifecycle_test}
+      RESEARCH_WORKER_POLL_SECONDS: ${RESEARCH_WORKER_POLL_SECONDS:-5}
+      RESEARCH_WORKER_LEASE_SECONDS: ${RESEARCH_WORKER_LEASE_SECONDS:-300}
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-head}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:
   evidence_data:

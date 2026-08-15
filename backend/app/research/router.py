@@ -25,17 +25,22 @@ from app.research.schemas import (
     ResearchReportCreate,
     ResearchReportList,
     ResearchReportRead,
+    ResearchSourceList,
+    ResearchSourceRead,
     ResearchTaskCreate,
     ResearchTaskList,
     ResearchTaskRead,
 )
 from app.research.service import (
+    ResearchTaskStartError,
     cancel_task,
     create_report,
     create_task,
     get_task,
     list_reports,
+    list_sources,
     list_tasks,
+    request_controlled_execution,
 )
 
 router = APIRouter(prefix="/api/v1/research", tags=["智能研究"])
@@ -65,6 +70,7 @@ def create_research_task(
         task_type=payload.task_type,
         topic=payload.topic,
         supplier_scope=payload.supplier_scope,
+        source_urls=payload.source_urls,
         idempotency_key=payload.idempotency_key,
     )
     write_audit(
@@ -101,6 +107,7 @@ def list_research_audit_logs(
     """仅返回研究生命周期事件，且只暴露业务审计所需的最小字段。"""
     actions = (
         "research_task_created",
+        "research_task_execution_requested",
         "research_task_claimed",
         "research_task_cancel_requested",
         "research_task_cancelled",
@@ -141,6 +148,54 @@ def get_research_task(
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="研究任务不存在")
     return ResearchTaskRead.model_validate(task)
+
+
+@router.post("/tasks/{task_id}/start", response_model=ResearchTaskRead)
+def start_research_task(
+    task_id: int,
+    session: SessionDependency,
+    user: ResearchUser,
+    _csrf: CsrfGuard,
+) -> ResearchTaskRead:
+    try:
+        task = request_controlled_execution(
+            session, task_id=task_id, owner_user_id=user.id, role=user.role
+        )
+    except ResearchTaskStartError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="研究任务不存在")
+    write_audit(
+        session,
+        action="research_task_execution_requested",
+        actor_user_id=user.id,
+        resource_type="research_task",
+        resource_id=str(task.id),
+        detail="mode=topic_source_discovery",
+    )
+    session.commit()
+    return ResearchTaskRead.model_validate(task)
+
+
+@router.get("/tasks/{task_id}/sources", response_model=ResearchSourceList)
+def list_research_sources(
+    task_id: int,
+    session: SessionDependency,
+    user: ResearchUser,
+) -> ResearchSourceList:
+    sources = list_sources(
+        session,
+        task_id=task_id,
+        owner_user_id=user.id,
+        role=user.role,
+    )
+    if sources is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="研究任务不存在")
+    return ResearchSourceList(
+        items=[ResearchSourceRead.model_validate(source) for source in sources]
+    )
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=ResearchTaskRead)

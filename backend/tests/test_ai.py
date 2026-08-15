@@ -14,6 +14,7 @@ from app.ai.models import AIAnalysisRecord
 from app.ai.providers import AIProviderError, FakeAIProvider, OpenAICompatibleProvider
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.config import AISettings
+from app.research.reporting import ResearchEvidenceInput, ResearchReportGenerationInput
 from app.signals.models import RawSignal
 
 
@@ -84,6 +85,71 @@ def test_fake_provider_returns_valid_structure() -> None:
     assert result.event_type == "other"
     assert result.summary_zh == "港口临时管制"
     assert result.confidence == 0.5
+
+
+def test_openai_compatible_provider_generates_research_report_with_usage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["max_tokens"] == 321
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title": "研究报告",
+                                    "disclaimer": "AI 生成，仅供参考。",
+                                    "facts": [
+                                        {
+                                            "claim_id": "fact-1",
+                                            "claim_type": "fact",
+                                            "text": "公开来源确认了相关事实。",
+                                            "citation_ids": ["citation-1"],
+                                            "confidence": 80,
+                                        }
+                                    ],
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 123, "completion_tokens": 45},
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        AISettings(
+            provider="openai-compatible",
+            base_url="https://model.example.test/v1",
+            model="test-model",
+            api_key="test-secret",
+            timeout_seconds=5,
+            max_retries=0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    result = asyncio.run(
+        provider.generate_research_report(
+            ResearchReportGenerationInput(
+                topic="供应链风险",
+                evidence=[
+                    ResearchEvidenceInput(
+                        citation_id="citation-1",
+                        url="https://official.example/notice",
+                        quote="公开来源确认了相关事实。",
+                        excerpt="公开来源确认了相关事实。",
+                    )
+                ],
+            ),
+            max_output_tokens=321,
+        )
+    )
+
+    assert result.draft.title == "研究报告"
+    assert result.input_tokens == 123
+    assert result.output_tokens == 45
 
 
 def test_openai_compatible_provider_retries_and_validates() -> None:

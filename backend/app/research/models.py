@@ -60,6 +60,9 @@ class ResearchTask(Base):
     supplier_scope: Mapped[list[int]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    source_urls: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     budget_snapshot: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
@@ -83,6 +86,7 @@ class ResearchTask(Base):
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'queued'")
     )
+    execution_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     worker_id: Mapped[str | None] = mapped_column(Text)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

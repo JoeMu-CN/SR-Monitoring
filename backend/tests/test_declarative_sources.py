@@ -271,6 +271,27 @@ def test_private_network_and_secret_static_headers_are_rejected() -> None:
         )
 
 
+def test_http_requires_allow_http_hosts_whitelist() -> None:
+    """HTTP 明文数据源必须显式加入 allow_http_hosts 白名单。"""
+    # 默认拒绝 HTTP
+    with pytest.raises(ValidationError, match="allow_http_hosts"):
+        DeclarativeRequest(url="http://aqygzj.mofcom.gov.cn/")
+    # 白名单放行
+    req = DeclarativeRequest(
+        url="http://aqygzj.mofcom.gov.cn/",
+        allow_http_hosts={"aqygzj.mofcom.gov.cn"},
+    )
+    assert req.url.startswith("http://")
+    # 白名单不匹配仍拒绝
+    with pytest.raises(ValidationError, match="allow_http_hosts"):
+        DeclarativeRequest(
+            url="http://evil.example/",
+            allow_http_hosts={"aqygzj.mofcom.gov.cn"},
+        )
+    # HTTPS 不受影响
+    DeclarativeRequest(url="https://www.mem.gov.cn/xw/zhsgxx/")
+
+
 def test_validator_returns_public_ips_for_pinning(monkeypatch) -> None:
     """成功路径必须返回公网 IP 列表，供 PinnedIPTransport 锁定。"""
     import socket as _socket

@@ -19,7 +19,13 @@ from typing import Literal, cast
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.signals.request_control import PinnedIPTransport, SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
@@ -56,14 +62,28 @@ class DeclarativeRequest(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = Field(default=15, ge=1, le=30)
     max_response_bytes: int = Field(default=MAX_RESPONSE_BYTES, ge=1024, le=MAX_RESPONSE_BYTES)
+    # 极少数源站仅支持 HTTP 明文（TLS 反爬），显式放行这些主机（小写域名）。
+    allow_http_hosts: set[str] = Field(default_factory=set)
 
     @field_validator("url")
     @classmethod
     def require_https(cls, value: str) -> str:
         parsed = urlparse(value)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError("数据源 URL 必须是无内嵌凭据的 HTTPS 地址")
+        if parsed.username or parsed.password:
+            raise ValueError("数据源 URL 不得内嵌凭据")
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("数据源 URL 必须是无内嵌凭据的 HTTP(S) 地址")
         return value
+
+    @model_validator(mode="after")
+    def enforce_scheme_whitelist(self) -> DeclarativeRequest:
+        parsed = urlparse(self.url)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if parsed.scheme == "http" and host not in self.allow_http_hosts:
+            raise ValueError(
+                f"数据源 URL 使用 HTTP 明文，须将 {host} 加入 allow_http_hosts 白名单"
+            )
+        return self
 
     @field_validator("headers")
     @classmethod
@@ -147,6 +167,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             pinned_ips = await validate_public_https_url(
                 self.spec.request.url,
                 resolve_dns=True,
+                allow_http_hosts=self.spec.request.allow_http_hosts,
             )
             parsed = urlparse(self.spec.request.url)
             request_transport: httpx.AsyncBaseTransport = PinnedIPTransport(
@@ -158,6 +179,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             await validate_public_https_url(
                 self.spec.request.url,
                 resolve_dns=False,
+                allow_http_hosts=self.spec.request.allow_http_hosts,
             )
             request_transport = self._transport
         headers = dict(self.spec.request.headers)
@@ -605,15 +627,25 @@ def _html_data_clues(
     return script_sources, hints
 
 
-async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> list[str]:
-    """校验 HTTPS URL 的目标是公网地址，并返回所有可用的公网 IP 列表。
+async def validate_public_https_url(
+    url: str,
+    *,
+    resolve_dns: bool = True,
+    allow_http_hosts: set[str] | frozenset[str] | None = None,
+) -> list[str]:
+    """校验 URL 的目标是公网地址，并返回所有可用的公网 IP 列表。
 
+    ``allow_http_hosts``：极少数源站仅支持 HTTP 明文（TLS 反爬/指纹要求，
+    如商务部产业安全与进出口管制局），可显式放行这些域名走 HTTP。
+    仅用于只读抓取公开政府公告；默认不开放。
     返回的 IP 列表可与 ``PinnedIPTransport`` 配合使用，避免 validate 之后、
     实际请求时发生 DNS rebinding（TOCTOU）。
     """
     parsed = urlparse(url)
     host = (parsed.hostname or "").rstrip(".").lower()
-    if parsed.scheme != "https" or not host:
+    if parsed.scheme == "http" and host in (allow_http_hosts or set()):
+        pass  # 显式白名单放行 HTTP 明文
+    elif parsed.scheme != "https" or not host:
         raise SourceFetchError("仅允许访问 HTTPS 数据源")
     if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
         raise SourceFetchError("禁止访问本机或内部网络地址")

@@ -63,7 +63,35 @@ def get_crawl4ai_settings() -> Crawl4AISettings:
         in {"1", "true", "yes", "on"},
         base_url=os.getenv("RESEARCH_CRAWL4AI_BASE_URL", "http://crawl4ai:11235").strip(),
         api_token=os.getenv("RESEARCH_CRAWL4AI_API_TOKEN", "").strip(),
-        timeout_seconds=_float_env("RESEARCH_CRAWL4AI_TIMEOUT_SECONDS", 120, minimum=5, maximum=180),
+        timeout_seconds=_float_env(
+            "RESEARCH_CRAWL4AI_TIMEOUT_SECONDS", 120, minimum=5, maximum=180
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class MonitorCrawl4AISettings:
+    """监控轨专用 Crawl4AI 回退配置：与 RESEARCH_CRAWL4AI_* 完全隔离。
+
+    之所以分离：
+    1. 研究轨配置冻结（10.6 决策），避免误改共享 env 污染研究链路。
+    2. 监控轨与研究轨生命周期、付费模型、调用频率都不同，需要独立开关与额度。
+    """
+
+    enabled: bool
+    base_url: str
+    api_token: str
+    timeout_seconds: float
+
+
+def get_monitor_crawl4ai_settings() -> MonitorCrawl4AISettings:
+    """读取监控轨 Crawl4AI 回退配置；缺 token 时 enabled 字段仍可访问，端点调用时再失败。"""
+    return MonitorCrawl4AISettings(
+        enabled=os.getenv("MONITOR_CRAWL4AI_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        base_url=os.getenv("MONITOR_CRAWL4AI_BASE_URL", "http://crawl4ai:11235").strip(),
+        api_token=os.getenv("MONITOR_CRAWL4AI_API_TOKEN", "").strip(),
+        timeout_seconds=_float_env("MONITOR_CRAWL4AI_TIMEOUT_SECONDS", 60, minimum=5, maximum=180),
     )
 
 

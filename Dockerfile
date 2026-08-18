@@ -17,7 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/app ./app
-RUN pip install --no-cache-dir ".[dev]"
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple ".[dev]"
 
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic

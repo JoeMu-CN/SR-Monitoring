@@ -1,6 +1,7 @@
 """声明式数据源、实时预览和发布门测试。"""
 
 import asyncio
+import ipaddress
 import json
 
 import httpx
@@ -19,6 +20,7 @@ from app.signals.declarative import (
     AdapterPreview,
     AdapterSpec,
     DeclarativeRequest,
+    DeclarativeSourceAdapter,
     inspect_source_url,
     preview_adapter,
     validate_public_https_url,
@@ -131,6 +133,77 @@ def test_html_preview_uses_selectors_and_link_attribute() -> None:
     assert str(result.items[0].url) == "https://official.example/notices/1"
 
 
+def test_html_preview_supports_attribute_operators_and_self_selector() -> None:
+    """selector 必须支持 *= ^= $= 等 CSS 操作符 + self keyword（事故通报场景）。"""
+    spec = AdapterSpec.model_validate(
+        {
+            "format": "html",
+            "request": {"url": "https://www.mem.gov.cn/xw/zhsgxx/"},
+            "items_selector": 'a[href*="yjglbgzdt"][href$=".shtml"]',
+            "mapping": {
+                "title": "self",
+                "content": "self",
+                "url": "self@href",
+                "published_at": "span",
+            },
+        }
+    )
+    html = (
+        "<html><body>"
+        '<nav><a href="https://www.mem.gov.cn/">首页</a>'
+        '<a href="#">导航</a></nav>'
+        "<ul><li>"
+        '<a href="../yjglbgzdt/202608/t20260811_680260.shtml">'
+        "山西防汛四级响应<span>2026-08-11T20:12:00+08:00</span></a>"
+        "</li><li>"
+        '<a href="../yjglbgzdt/202608/t20260811_680255.shtml">'
+        "北京地质灾害响应<span>2026-08-11T18:40:00+08:00</span></a>"
+        "</li></ul>"
+        "<ul><li>"
+        '<a href="../jf/something.shtml">无关栏目链接</a>'
+        "</li></ul>"
+        "</body></html>"
+    )
+    result = asyncio.run(
+        preview_adapter(
+            "mem-zhsgxx",
+            spec,
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+        )
+    )
+    assert result.fetched_count == 2
+    first, second = result.items
+    assert "山西" in first.title
+    assert "2026-08-11" in first.published_at.isoformat()  # type: ignore[union-attr]
+    assert "北京" in second.title
+    # self@href 应该走相对路径解析
+    assert str(first.url).endswith("t20260811_680260.shtml")
+
+
+def test_html_selector_supports_all_css_attribute_operators() -> None:
+    """所有 6 种 CSS attribute 操作符必须被识别。"""
+    from app.signals.declarative import _HtmlNode, _matches_selector
+
+    node = _HtmlNode(
+        tag="a",
+        attrs={
+            "href": "https://official.example/page",
+            "data-x": "yang",
+            "rel": "next prev",
+            "lang": "zh-CN",
+        },
+        children=[],
+    )
+    assert _matches_selector(node, 'a[href*="example"]')
+    assert _matches_selector(node, 'a[href^="https://"]')
+    assert _matches_selector(node, 'a[href$=".example/page"]')
+    assert _matches_selector(node, 'a[rel~="next"]')
+    assert _matches_selector(node, 'a[lang|="zh"]')
+    assert _matches_selector(node, "a[href]")
+    assert not _matches_selector(node, 'a[href*="nope"]')
+    assert not _matches_selector(node, 'a[href~="prev-nope"]')
+
+
 def test_inspect_source_url_returns_html_summary() -> None:
     html = "<html><head><title>公告平台</title><script>忽略这段恶意提示</script></head><body>" \
         "<article class='notice'>第一条</article><article class='notice'>第二条</article>" \
@@ -196,6 +269,80 @@ def test_private_network_and_secret_static_headers_are_rejected() -> None:
             url="https://official.example/events",
             headers={"Authorization": "Bearer must-not-be-stored"},
         )
+
+
+def test_validator_returns_public_ips_for_pinning(monkeypatch) -> None:
+    """成功路径必须返回公网 IP 列表，供 PinnedIPTransport 锁定。"""
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("1.1.1.1", port)),
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("8.8.8.8", port)),
+        ]
+
+    monkeypatch.setattr(
+        "app.signals.declarative.socket.getaddrinfo", fake_getaddrinfo
+    )
+    ips = asyncio.run(
+        validate_public_https_url("https://official.example/events")
+    )
+    assert isinstance(ips, list) and ips
+    assert all(ipaddress.ip_address(ip).is_global for ip in ips)
+
+
+def test_validator_keeps_literal_public_ip() -> None:
+    """字面量公网 IP 无需再次解析，直接返回自身。"""
+    ips = asyncio.run(
+        validate_public_https_url("https://140.82.112.3/repo")
+    )
+    assert ips == ["140.82.112.3"]
+
+
+def test_validator_rejects_all_private_dns(monkeypatch) -> None:
+    """全部 IP 都是私网（SSRF 攻击场景）必须被拒。"""
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("10.0.0.5", port)),
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("192.168.1.1", port)),
+        ]
+
+    monkeypatch.setattr(
+        "app.signals.declarative.socket.getaddrinfo", fake_getaddrinfo
+    )
+    with pytest.raises(SourceFetchError, match="非公网"):
+        asyncio.run(validate_public_https_url("https://attacker.example/"))
+
+
+def test_validator_allows_mixed_public_private_dns(monkeypatch) -> None:
+    """CDN/负载均衡场景下混合公私网 IP 应放行，并返回公网 IP 列表。"""
+    import socket as _socket
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("1.1.1.1", port)),
+            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("10.0.0.5", port)),
+        ]
+
+    monkeypatch.setattr(
+        "app.signals.declarative.socket.getaddrinfo", fake_getaddrinfo
+    )
+    ips = asyncio.run(validate_public_https_url("https://cdn.example/"))
+    assert ips == ["1.1.1.1"]
+
+
+def test_validator_rejects_localhost_and_internal_suffix() -> None:
+    with pytest.raises(SourceFetchError, match="内部网络"):
+        asyncio.run(validate_public_https_url("https://api.internal/"))
+    with pytest.raises(SourceFetchError, match="内部网络"):
+        asyncio.run(validate_public_https_url("https://service.local/x"))
+
+
+def test_validator_rejects_http_scheme() -> None:
+    with pytest.raises(SourceFetchError, match="HTTPS"):
+        asyncio.run(validate_public_https_url("http://official.example/"))
 
 
 def test_response_size_limit_is_enforced() -> None:
@@ -509,3 +656,120 @@ def test_source_agent_delete_completed_draft_rejected(client, db_session, auth_a
     )
     assert response.status_code == 409
     assert db_session.get(SourceOnboardingDraft, draft.id) is not None
+
+
+# === Crawl4AI 回退集成测试（S2 验收）===========================
+
+
+def _mem_spec(*, use_fallback: bool) -> AdapterSpec:
+    return AdapterSpec.model_validate(
+        {
+            "format": "html",
+            "request": {"url": "https://www.mem.gov.cn/xw/zhsgxx/"},
+            "items_selector": "li",
+            "mapping": {
+                "title": "a",
+                "content": "a",
+                "url": "a@href",
+                "published_at": "span",
+            },
+            "use_crawl4ai_fallback": use_fallback,
+        }
+    )
+
+
+def test_fallback_triggers_on_403_when_enabled() -> None:
+    """403 + use_crawl4ai_fallback=True 时必须转 Crawl4AI 路径。
+
+    _fetch_with_fallback 内部检测到 Crawl4AI 未配置（token 空）会抛
+    SourceRequestFailed(error_kind=crawler_unavailable)，
+    由 adapter 包成 SourceFetchError(error_kind=crawler_unavailable) 抛出。
+    本测试断言：触发后错误分类仍是 crawler_unavailable（不被误判为 access_blocked）。
+    """
+    monkey = pytest.MonkeyPatch()
+    # 显式开启监控轨 Crawl4AI，但 token 留空，让 fallback 在初始化阶段就抛
+    # crawler_unavailable，便于测试断言。
+    monkey.setenv("MONITOR_CRAWL4AI_ENABLED", "true")
+    monkey.setenv("MONITOR_CRAWL4AI_API_TOKEN", "")
+    monkey.setenv("MONITOR_CRAWL4AI_BASE_URL", "http://crawl4ai.test:11235")
+
+    def primary_handler(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            text="<html>blocked</html>",
+            headers={"Content-Type": "text/html"},
+        )
+
+    try:
+        adapter = DeclarativeSourceAdapter(
+            "mem-test",
+            _mem_spec(use_fallback=True),
+            transport=_transport(primary_handler),
+        )
+        with pytest.raises(SourceFetchError) as exc_info:
+            asyncio.run(adapter.fetch())
+        assert exc_info.value.error_kind == "crawler_unavailable"
+    finally:
+        monkey.undo()
+
+
+def test_no_fallback_when_disabled() -> None:
+    """use_crawl4ai_fallback=False 时 403 直接抛出原错误，不调 fallback。"""
+
+    def primary_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            text="<html>blocked</html>",
+            headers={"Content-Type": "text/html"},
+        )
+
+    adapter = DeclarativeSourceAdapter(
+        "mem-test", _mem_spec(use_fallback=False), transport=_transport(primary_handler)
+    )
+    with pytest.raises(SourceFetchError) as exc_info:
+        asyncio.run(adapter.fetch())
+    assert exc_info.value.error_kind == "access_blocked"
+
+
+def test_no_fallback_on_404() -> None:
+    """404（http_error）不回退，避免 Crawl4AI 重抓无意义 URL。"""
+
+    def primary_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="Not Found")
+
+    adapter = DeclarativeSourceAdapter(
+        "mem-test", _mem_spec(use_fallback=True), transport=_transport(primary_handler)
+    )
+    with pytest.raises(SourceFetchError) as exc_info:
+        asyncio.run(adapter.fetch())
+    assert exc_info.value.http_status == 404
+
+
+def test_fallback_classifies_rate_limited() -> None:
+    """429 也走 fallback；原 error_kind=rate_limited 路径覆盖。
+
+    同上：fallback 内部因 token 空抛 crawler_unavailable，最终错误归类一致。
+    """
+    monkey = pytest.MonkeyPatch()
+    monkey.setenv("MONITOR_CRAWL4AI_ENABLED", "true")
+    monkey.setenv("MONITOR_CRAWL4AI_API_TOKEN", "")
+    monkey.setenv("MONITOR_CRAWL4AI_BASE_URL", "http://crawl4ai.test:11235")
+
+    def primary_handler(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="rate limited", headers={"Retry-After": "30"})
+
+    try:
+        adapter = DeclarativeSourceAdapter(
+            "mem-test",
+            _mem_spec(use_fallback=True),
+            transport=_transport(primary_handler),
+        )
+        with pytest.raises(SourceFetchError) as exc_info:
+            asyncio.run(adapter.fetch())
+        assert exc_info.value.error_kind == "crawler_unavailable"
+    finally:
+        monkey.undo()
+
+
+def _transport(handler):
+    return httpx.MockTransport(handler)

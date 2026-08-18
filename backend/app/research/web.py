@@ -16,6 +16,7 @@ from app.config import Crawl4AISettings, get_crawl4ai_settings
 from app.signals.declarative import validate_public_https_url
 from app.signals.request_control import (
     HostLease,
+    PinnedIPTransport,
     SourceAccessDeferred,
     SourceRequestFailed,
     acquire_host_lease,
@@ -82,13 +83,23 @@ async def _read_public_page_direct(
     current_url = url
     redirect_chain: list[str] = []
     active_lease: HostLease | None = None
+    active_transport: httpx.AsyncBaseTransport | None = transport
     try:
         for _ in range(maximum_redirects + 1):
-            await validate_public_https_url(current_url, resolve_dns=transport is None)
+            if active_transport is None:
+                # 真实抓取：validate 阶段把公网 IP pin 住，避免 DNS rebinding
+                pinned_ips = await validate_public_https_url(current_url, resolve_dns=True)
+                parsed_current = urlparse(current_url)
+                active_transport = PinnedIPTransport(
+                    pinned_ips, parsed_current.hostname or ""
+                )
+            else:
+                # 测试或上层传入的 transport：仅做轻量校验
+                await validate_public_https_url(current_url, resolve_dns=False)
             response, active_lease = await _fetch_hop(
                 current_url,
                 maximum_bytes=maximum_bytes,
-                transport=transport,
+                transport=active_transport,
                 lease=active_lease,
             )
             content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
@@ -101,7 +112,16 @@ async def _read_public_page_direct(
                         status_code=response.status_code,
                     )
                 target = urljoin(current_url, location)
-                await validate_public_https_url(target, resolve_dns=transport is None)
+                if active_transport is None or not isinstance(active_transport, PinnedIPTransport):
+                    # 上层 transport 不允许动态换主机；保持现状。
+                    pass
+                else:
+                    # 为新的 target 重新解析并 pin
+                    target_pinned = await validate_public_https_url(target, resolve_dns=True)
+                    target_parsed = urlparse(target)
+                    active_transport = PinnedIPTransport(
+                        target_pinned, target_parsed.hostname or ""
+                    )
                 if _hostname(target) != _hostname(current_url) and active_lease:
                     release_host_lease(active_lease)
                     active_lease = None
@@ -151,6 +171,8 @@ async def read_public_page_with_crawl4ai(
     current = settings or get_crawl4ai_settings()
     if not current.enabled or not current.api_token:
         raise SourceRequestFailed("Crawl4AI 回退未配置", error_kind="crawler_unavailable")
+    # Crawl4AI 内部抓取走它自己的浏览器，仍需确保目标 URL 解析为公网 IP；
+    # 不在这里 pin transport，因为调用 Crawl4AI 服务是平台内网地址。
     await validate_public_https_url(url, resolve_dns=False)
     endpoint = f"{current.base_url.rstrip('/')}/crawl"
     payload = {

@@ -8,6 +8,7 @@ import hashlib
 import io
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
@@ -20,9 +21,11 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.signals.request_control import SourceRequestFailed, controlled_get
+from app.signals.request_control import PinnedIPTransport, SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError, SourceHealth
+
+logger = logging.getLogger(__name__)
 
 MAX_PREVIEW_ITEMS = 10
 MAX_FETCH_ITEMS = 1000
@@ -96,6 +99,9 @@ class AdapterSpec(BaseModel):
         min_length=1,
     )
     max_items: int = Field(default=MAX_FETCH_ITEMS, ge=1, le=MAX_FETCH_ITEMS)
+    # 直连失败（按 classify_response 4 类错误）时是否调用监控轨 Crawl4AI 回退抓取同 URL；
+    # 默认 False，避免隐式启用浏览器出网。S2 验收信源须显式打开。
+    use_crawl4ai_fallback: bool = False
 
     @model_validator(mode="after")
     def validate_format_options(self) -> AdapterSpec:
@@ -135,12 +141,28 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
 
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         del cursor
-        await validate_public_https_url(
-            self.spec.request.url,
-            resolve_dns=self._transport is None,
-        )
+        if self._transport is None:
+            # 真实网络抓取：validate 阶段把公网 IP pin 住，避免后续请求
+            # 发生 DNS rebinding 攻击或被异常 DNS 解析误导到私网。
+            pinned_ips = await validate_public_https_url(
+                self.spec.request.url,
+                resolve_dns=True,
+            )
+            parsed = urlparse(self.spec.request.url)
+            request_transport: httpx.AsyncBaseTransport = PinnedIPTransport(
+                pinned_ips,
+                parsed.hostname or "",
+            )
+        else:
+            # 测试或自定义 transport：不解析、不 pin，调用方负责。
+            await validate_public_https_url(
+                self.spec.request.url,
+                resolve_dns=False,
+            )
+            request_transport = self._transport
         headers = dict(self.spec.request.headers)
         headers.update(_credential_headers(self.auth_type, self.credential_ref, self.login_config))
+        fallback_used = False
         try:
             response = await controlled_get(
                 self.spec.request.url,
@@ -148,20 +170,84 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 headers=headers,
                 timeout=self.spec.request.timeout_seconds,
                 maximum_bytes=self.spec.request.max_response_bytes,
-                transport=self._transport,
+                transport=request_transport,
                 follow_redirects=False,
             )
             body = response.content
-        except SourceFetchError:
-            raise
+        except SourceFetchError as exc:
+            if self._should_try_crawl4ai_fallback(exc):
+                body = await self._fetch_with_fallback(headers)
+                fallback_used = True
+            else:
+                raise
         except SourceRequestFailed as exc:
-            raise SourceFetchError(
+            primary_error = SourceFetchError(
                 f"声明式数据源请求失败: {exc}",
                 error_kind=exc.error_kind,
                 http_status=exc.status_code,
-            ) from exc
-        rows = _parse_rows(self.spec, body)
+            )
+            if self._should_try_crawl4ai_fallback(primary_error):
+                body = await self._fetch_with_fallback(headers)
+                fallback_used = True
+            else:
+                raise primary_error from exc
+        try:
+            rows = _parse_rows(self.spec, body)
+        except SourceFetchError as parse_exc:
+            # fallback 触发的解析失败统一归 crawler_unavailable；
+            # 监控台能据此把"已触发 fallback" 与"未触发 fallback" 区分开。
+            if fallback_used:
+                raise SourceFetchError(
+                    f"回退抓取后解析失败: {parse_exc}",
+                    error_kind="crawler_unavailable",
+                ) from parse_exc
+            raise
         return [self._map_row(row) for row in rows[: self._item_limit]]
+
+    async def _fetch_with_fallback(self, headers: dict[str, str]) -> bytes:
+        """直连失败且 spec.use_crawl4ai_fallback=True 时调用 Crawl4AI 抓同 URL。
+
+        返回值供 ``_parse_rows`` 复用：把 markdown 包成最小 HTML bytes，
+        让原 items_selector 仍可触发（即便匹配不到也按既有错误路径抛错）。
+        fallback 链路抛错统一归 ``error_kind=crawler_unavailable``，便于
+        监控台分类。
+        """
+        from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
+
+        try:
+            markdown = await read_public_page_with_crawl4ai_for_monitor(
+                self.spec.request.url
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"声明式数据源回退抓取失败: {exc}",
+                error_kind="crawler_unavailable",
+                http_status=exc.status_code,
+            ) from exc
+        # 包装为最小 HTML：让适配器的 items_selector 仍可触发并按错误路径失败
+        # （验收要求"错误分类不误判"，触发后归 crawler_unavailable）
+        escaped = (
+            markdown.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        wrapper = (
+            "<!DOCTYPE html><html><head></head><body>"
+            f"<article>{escaped}</article>"
+            "</body></html>"
+        )
+        return wrapper.encode("utf-8")
+
+    def _should_try_crawl4ai_fallback(self, exc: SourceFetchError) -> bool:
+        """仅当 spec 开关打开、且错误分类属于会真正触发回退价值时才回退。"""
+        if not self.spec.use_crawl4ai_fallback:
+            return False
+        recoverable = {
+            "access_blocked",
+            "rate_limited",
+            "upstream_error",
+        }
+        return exc.error_kind in recoverable
 
     def _map_row(self, row: dict[str, object]) -> RawSourceItem:
         mapping = self.spec.mapping
@@ -300,7 +386,11 @@ _SELECTOR_TOKEN = re.compile(
     r"^(?P<tag>\*|[A-Za-z][\w:-]*)?(?P<id>#[\w:-]+)?"
     r"(?P<classes>(?:\.[\w:-]+)*)(?P<attrs>(?:\[[^\]]+\])*)$"
 )
-_ATTRIBUTE_TOKEN = re.compile(r"\[\s*([\w:-]+)(?:\s*=\s*['\"]?([^'\"]*)['\"]?)?\s*\]")
+# 支持 CSS attribute 操作符 = *= ^= $= ~= |=；值可用单引号或双引号包裹。
+_ATTRIBUTE_TOKEN = re.compile(
+    r"\[\s*(?P<name>[\w:-]+)(?:\s*(?P<op>~=|\|=|\^=|\$=|\*=|=)\s*"
+    r"['\"]?(?P<val>[^'\"]*)['\"]?)?\s*\]"
+)
 
 
 def _descendants(node: _HtmlNode) -> list[_HtmlNode]:
@@ -326,10 +416,26 @@ def _matches_selector(node: _HtmlNode, token: str) -> bool:
     if any(class_name not in node_classes for class_name in classes):
         return False
     for attr_match in _ATTRIBUTE_TOKEN.finditer(match.group("attrs")):
-        name, expected = attr_match.groups()
+        name = attr_match.group("name")
+        op = attr_match.group("op") or "="
+        expected = attr_match.group("val")
         if name not in node.attrs:
             return False
-        if expected is not None and node.attrs[name] != expected:
+        actual = node.attrs[name]
+        if expected is None:
+            # 仅有 [attr] 形式：只要属性存在即可
+            continue
+        if op == "=" and actual != expected:
+            return False
+        if op == "*=" and expected not in actual:
+            return False
+        if op == "^=" and not actual.startswith(expected):
+            return False
+        if op == "$=" and not actual.endswith(expected):
+            return False
+        if op == "~=" and expected not in actual.split():
+            return False
+        if op == "|=" and actual != expected and not actual.startswith(expected + "-"):
             return False
     return True
 
@@ -347,6 +453,14 @@ def _select_nodes(root: _HtmlNode, selector: str) -> list[_HtmlNode]:
 
 
 def _read_html_value(node: _HtmlNode, selector: str) -> str | None:
+    # ``self`` 是 extension：直接对节点本身取值（text 或 attribute）
+    if selector == "self" or selector.startswith("self@"):
+        attr: str | None = None
+        if "@" in selector:
+            attr = selector.split("@", 1)[1]
+        if attr:
+            return node.attrs.get(attr.lower())
+        return " ".join(node.text_content().split())
     selector_text = selector
     attribute: str | None = None
     if "@" in selector:
@@ -491,7 +605,12 @@ def _html_data_clues(
     return script_sources, hints
 
 
-async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> None:
+async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> list[str]:
+    """校验 HTTPS URL 的目标是公网地址，并返回所有可用的公网 IP 列表。
+
+    返回的 IP 列表可与 ``PinnedIPTransport`` 配合使用，避免 validate 之后、
+    实际请求时发生 DNS rebinding（TOCTOU）。
+    """
     parsed = urlparse(url)
     host = (parsed.hostname or "").rstrip(".").lower()
     if parsed.scheme != "https" or not host:
@@ -505,14 +624,39 @@ async def validate_public_https_url(url: str, *, resolve_dns: bool = True) -> No
     if literal is not None and not literal.is_global:
         raise SourceFetchError("禁止访问非公网 IP 地址")
     if not resolve_dns or literal is not None:
-        return
+        # 显式字面量公网 IP，无需再次解析
+        return [host]
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, parsed.port or 443)
     except OSError as exc:
         raise SourceFetchError(f"数据源域名解析失败: {host}") from exc
-    addresses = {cast(str, item[4][0]).split("%")[0] for item in infos}
-    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+    addresses = sorted({cast(str, item[4][0]).split("%")[0] for item in infos})
+    if not addresses:
+        raise SourceFetchError("数据源域名解析到空地址集")
+    public_ips: list[str] = []
+    private_ips: list[str] = []
+    for address in addresses:
+        if ipaddress.ip_address(address).is_global:
+            public_ips.append(address)
+        else:
+            private_ips.append(address)
+    if not public_ips:
+        logger.warning(
+            "数据源域名 %s 解析到 %d 个地址，全部非公网：%s",
+            host,
+            len(addresses),
+            addresses,
+        )
         raise SourceFetchError("数据源域名解析到非公网地址")
+    if private_ips:
+        logger.warning(
+            "数据源 %s 混合公私网 IP：公网 %d 个、私网 %d 个，仍放行（CDN/负载均衡）",
+            host,
+            len(public_ips),
+            len(private_ips),
+        )
+    # IPv4 优先：容器网络常无 IPv6 路由，先连 IPv4 可避免不必要的超时重试
+    return sorted(public_ips, key=lambda ip: (":" in ip, ip))
 
 
 def _parse_rows(spec: AdapterSpec, body: bytes) -> list[dict[str, object]]:

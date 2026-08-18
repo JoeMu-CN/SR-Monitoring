@@ -15,7 +15,7 @@ services:
       DATA_SOURCE_SECRET_KEY: ${DATA_SOURCE_SECRET_KEY:?DATA_SOURCE_SECRET_KEY must be set}
       SESSION_SECURE_COOKIE: "true"
       ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN must be set to an https origin}
-      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0027}
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0033}
     ports: !reset []
     expose:
       - "8080"
@@ -28,7 +28,7 @@ services:
       - ${PROD_ENV_FILE:-deploy/.env.production}
     environment:
       APP_ENV: production
-      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0027}
+      ALEMBIC_UPGRADE_TARGET: ${ALEMBIC_UPGRADE_TARGET:-0033}
     networks:
       - internal
 

@@ -52,6 +52,7 @@ class SiteInput(BaseModel):
     country_code: str
     region: str | None = None
     city: str | None = None
+    district: str | None = None
     address: NonEmptyText
     latitude: Decimal | None = Field(default=None, ge=-90, le=90)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180)
@@ -64,7 +65,7 @@ class SiteInput(BaseModel):
             raise ValueError("国家代码必须是两个英文字母")
         return normalized
 
-    @field_validator("region", "city", mode="before")
+    @field_validator("region", "city", "district", mode="before")
     @classmethod
     def clean_optional_fields(cls, value: object) -> str | None:
         return clean_optional_text(value)
@@ -90,6 +91,7 @@ class SupplierBase(BaseModel):
     legal_name: NonEmptyText
     country_code: str
     registry_no: str | None = None
+    registration_address: str | None = None
     industry: str | None = None
     raw_materials: list[str] = Field(default_factory=list)
     enabled: bool = True
@@ -108,6 +110,11 @@ class SupplierBase(BaseModel):
     @field_validator("registry_no", mode="before")
     @classmethod
     def clean_registry_no(cls, value: object) -> str | None:
+        return clean_optional_text(value)
+
+    @field_validator("registration_address", mode="before")
+    @classmethod
+    def clean_registration_address(cls, value: object) -> str | None:
         return clean_optional_text(value)
 
     @field_validator("industry", mode="before")
@@ -185,6 +192,7 @@ class SupplierRead(BaseModel):
     legal_name: str
     country_code: str
     registry_no: str | None
+    registration_address: str | None
     industry: str | None
     raw_materials: list[str]
     enabled: bool

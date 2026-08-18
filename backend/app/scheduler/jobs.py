@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from calendar import monthrange
+from datetime import UTC, datetime, timedelta
 from threading import Lock
 from zoneinfo import ZoneInfo
 
@@ -26,20 +27,37 @@ from app.auth.models import User
 from app.auth.security import write_audit
 from app.config import (
     RESEARCH_DAILY_TOPIC,
+    RESEARCH_MONTHLY_CRON,
+    RESEARCH_MONTHLY_ENABLED,
+    RESEARCH_MONTHLY_TOPIC,
+    RESEARCH_ORCHESTRATOR,
     RESEARCH_SCHEDULE_OWNER_USERNAME,
+    RESEARCH_TOOL_RUN_STALE_SECONDS,
     RESEARCH_WEEKLY_TOPIC,
     SIGNAL_ANALYZE_BATCH,
     SIGNAL_RELEVANCE_FILTER_ENABLED,
 )
 from app.database import SessionLocal
-from app.research.models import ResearchTask
-from app.research.service import create_task
+from app.research.models import ResearchBatch, ResearchTask
+from app.research.schedule import (
+    get_schedule_config,
+    monthly_schedule_preflight,
+    select_monthly_suppliers,
+    weekly_schedule_preflight,
+)
+from app.research.service import (
+    DEFAULT_MONTHLY_RESEARCH_BUDGET,
+    DEFAULT_RESEARCH_BUDGET,
+    create_task,
+    reconcile_stale_tool_runs,
+)
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
 from app.signals.relevance import assess_signal_relevance
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
+from app.suppliers.models import Supplier
 
 logger = logging.getLogger("scheduler")
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -112,7 +130,9 @@ def _process_pending_signals(limit: int | None = None) -> int:
             signal_ids = list(
                 session.scalars(
                     select(RawSignal.id)
+                    .join(DataSource, DataSource.id == RawSignal.source_id)
                     .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
+                    .where(DataSource.enabled.is_(True))
                     .order_by(RawSignal.collected_at)
                     .limit(batch)
                 )
@@ -236,6 +256,324 @@ def create_research_task_job(task_type: str, *, now: datetime | None = None) -> 
         return task.id
 
 
+def _merge_research_budget(budget_template: dict[str, object]) -> dict[str, object]:
+    budget = dict(DEFAULT_RESEARCH_BUDGET)
+    budget.update(budget_template)
+    return budget
+
+
+def _create_periodic_research_batch(
+    session: Session,
+    *,
+    period_type: str,
+    topic: str,
+    budget_snapshot: dict[str, object],
+    now: datetime,
+    suppliers: list[Supplier] | None = None,
+) -> int | None:
+    """按周期快照启用供应商并扇出同一研究批次流程。"""
+    if period_type not in {"weekly", "monthly"}:
+        raise ValueError("不支持的周期研究批次类型")
+    current = now.astimezone(SHANGHAI_TZ)
+    if period_type == "monthly":
+        period_key = f"{current.year:04d}-{current.month:02d}"
+        period_start = current.date().replace(day=1)
+        period_end = current.date().replace(day=monthrange(current.year, current.month)[1])
+    else:
+        iso = current.isocalendar()
+        period_key = f"{iso.year}-W{iso.week:02d}"
+        period_start = (current - timedelta(days=current.weekday())).date()
+        period_end = period_start + timedelta(days=6)
+    owner = session.scalar(
+        select(User).where(
+            User.username == RESEARCH_SCHEDULE_OWNER_USERNAME,
+            User.status == "active",
+            User.role.in_(("risk_admin", "platform_admin")),
+        )
+    )
+    if owner is None:
+        logger.error("跳过%s批次：归属管理员不存在、未启用或权限不足", period_type)
+        return None
+    existing = session.scalar(
+        select(ResearchBatch).where(
+            ResearchBatch.owner_user_id == owner.id,
+            ResearchBatch.period_type == period_type,
+            ResearchBatch.period_key == period_key,
+        )
+    )
+    if existing is not None:
+        return existing.id
+    if suppliers is None:
+        suppliers = (
+            select_monthly_suppliers(session)
+            if period_type == "monthly"
+            else list(
+                session.scalars(
+                    select(Supplier).where(Supplier.enabled.is_(True)).order_by(Supplier.id)
+                )
+            )
+        )
+    if not suppliers:
+        logger.info("跳过%s批次：没有启用供应商", period_type)
+        return None
+    supplier_snapshot = [
+        {
+            "supplier_id": supplier.id,
+            "supplier_code": supplier.supplier_code,
+            "legal_name": supplier.legal_name,
+        }
+        for supplier in suppliers
+    ]
+    blocking_batch = session.scalar(
+        select(ResearchBatch)
+        .where(
+            ResearchBatch.owner_user_id == owner.id,
+            ResearchBatch.period_type == period_type,
+            ResearchBatch.period_end < period_start,
+            ResearchBatch.status.in_(("queued", "running")),
+        )
+        .order_by(ResearchBatch.period_end.desc(), ResearchBatch.id.desc())
+    )
+    if blocking_batch is not None:
+        batch = ResearchBatch(
+            owner_user_id=owner.id,
+            period_type=period_type,
+            period_key=period_key,
+            period_start=period_start,
+            period_end=period_end,
+            topic=topic,
+            supplier_snapshot=supplier_snapshot,
+            supplier_count=len(supplier_snapshot),
+            budget_snapshot=dict(budget_snapshot),
+            status="capacity_blocked",
+            error=(
+                f"前一{period_type}批次 {blocking_batch.id} 尚未完成，等待单 Worker 串行恢复"
+            ),
+            graph_version=(
+                "research-graph-v2" if RESEARCH_ORCHESTRATOR == "langgraph" else None
+            ),
+        )
+        session.add(batch)
+        session.flush()
+        write_audit(
+            session,
+            action="research_batch_capacity_blocked",
+            actor_user_id=owner.id,
+            resource_type="research_batch",
+            resource_id=str(batch.id),
+            detail=f"period_type={period_type};blocked_by_batch={blocking_batch.id}",
+        )
+        session.commit()
+        logger.warning(
+            "%s批次 %s 因前序批次 %s 未完成而容量阻塞",
+            period_type,
+            batch.id,
+            blocking_batch.id,
+        )
+        return batch.id
+    batch = ResearchBatch(
+        owner_user_id=owner.id,
+        period_type=period_type,
+        period_key=period_key,
+        period_start=period_start,
+        period_end=period_end,
+        topic=topic,
+        supplier_snapshot=supplier_snapshot,
+        supplier_count=len(supplier_snapshot),
+        queued_count=len(suppliers),
+        budget_snapshot=dict(budget_snapshot),
+        graph_version=(
+            "research-graph-v2" if RESEARCH_ORCHESTRATOR == "langgraph" else None
+        ),
+    )
+    session.add(batch)
+    session.flush()
+    for supplier in suppliers:
+        create_task(
+            session,
+            owner_user_id=owner.id,
+            task_type=period_type,
+            topic=topic,
+            supplier_scope=[supplier.id],
+            idempotency_key=f"scheduled:{period_type}:{period_key}:{supplier.id}",
+            budget_snapshot=dict(budget_snapshot),
+            batch_id=batch.id,
+        )
+    write_audit(
+        session,
+        action="research_batch_created",
+        actor_user_id=owner.id,
+        resource_type="research_batch",
+        resource_id=str(batch.id),
+        detail=f"period_type={period_type};period_key={period_key};supplier_count={len(suppliers)}",
+    )
+    session.commit()
+    logger.info(
+        "已创建%s批次 %s，供应商数=%d，周期=%s",
+        period_type,
+        batch.id,
+        len(suppliers),
+        period_key,
+    )
+    return batch.id
+
+
+def _capacity_blocked_batch_preflight(
+    session: Session, batch: ResearchBatch, *, now: datetime
+) -> bool:
+    if batch.period_type == "monthly":
+        if not RESEARCH_MONTHLY_ENABLED or not RESEARCH_MONTHLY_TOPIC:
+            return False
+        preflight = monthly_schedule_preflight(
+            session,
+            cron_expression=RESEARCH_MONTHLY_CRON,
+            topic_template=RESEARCH_MONTHLY_TOPIC,
+            budget_template=dict(batch.budget_snapshot),
+            supplier_count=batch.supplier_count,
+            now=now,
+        )
+        return preflight.can_enable
+    config = get_schedule_config(session, schedule_type="weekly")
+    if config is None or not config.enabled:
+        return False
+    preflight = weekly_schedule_preflight(
+        session,
+        cron_expression=config.cron_expression,
+        topic_template=config.topic_template,
+        budget_template=config.budget_template,
+        approved_monthly_quota=config.approved_monthly_quota,
+        now=now,
+    )
+    return preflight.can_enable
+
+
+def recover_capacity_blocked_research_batches_job(
+    *, now: datetime | None = None
+) -> int:
+    """前序批次完成后，按原快照恢复容量阻塞批次。"""
+    current = now or datetime.now(SHANGHAI_TZ)
+    activated = 0
+    with SessionLocal() as session:
+        blocked_batches = list(
+            session.scalars(
+                select(ResearchBatch)
+                .where(ResearchBatch.status == "capacity_blocked")
+                .order_by(ResearchBatch.period_start, ResearchBatch.id)
+            )
+        )
+        for batch in blocked_batches:
+            blocking_batch = session.scalar(
+                select(ResearchBatch)
+                .where(
+                    ResearchBatch.owner_user_id == batch.owner_user_id,
+                    ResearchBatch.period_type == batch.period_type,
+                    ResearchBatch.period_end < batch.period_start,
+                    ResearchBatch.status.in_(("queued", "running")),
+                )
+                .order_by(ResearchBatch.period_end.desc(), ResearchBatch.id.desc())
+            )
+            if blocking_batch is not None or not _capacity_blocked_batch_preflight(
+                session, batch, now=current
+            ):
+                continue
+            for item in batch.supplier_snapshot:
+                supplier_id = item.get("supplier_id")
+                if not isinstance(supplier_id, int):
+                    continue
+                create_task(
+                    session,
+                    owner_user_id=batch.owner_user_id,
+                    task_type=batch.period_type,
+                    topic=batch.topic,
+                    supplier_scope=[supplier_id],
+                    idempotency_key=(
+                        f"scheduled:{batch.period_type}:{batch.period_key}:{supplier_id}"
+                    ),
+                    budget_snapshot=dict(batch.budget_snapshot),
+                    batch_id=batch.id,
+                )
+            batch.status = "queued"
+            batch.queued_count = len(batch.supplier_snapshot)
+            batch.error = None
+            write_audit(
+                session,
+                action="research_batch_capacity_released",
+                actor_user_id=batch.owner_user_id,
+                resource_type="research_batch",
+                resource_id=str(batch.id),
+                detail=f"period_type={batch.period_type};supplier_count={len(batch.supplier_snapshot)}",
+            )
+            session.commit()
+            activated += 1
+    if activated:
+        logger.info("已恢复容量阻塞研究批次 %d 个", activated)
+    return activated
+
+
+def create_monthly_research_batch_job(*, now: datetime | None = None) -> int | None:
+    """按自然月快照月报范围内的供应商并扇出 monthly 子任务。"""
+    if not RESEARCH_MONTHLY_ENABLED:
+        logger.info("跳过月报批次：RESEARCH_MONTHLY_ENABLED=false")
+        return None
+    if not RESEARCH_MONTHLY_TOPIC or not RESEARCH_SCHEDULE_OWNER_USERNAME:
+        logger.info("跳过月报批次：主题或归属管理员未配置")
+        return None
+    current = now or datetime.now(SHANGHAI_TZ)
+    with SessionLocal() as session:
+        suppliers = select_monthly_suppliers(session)
+        preflight = monthly_schedule_preflight(
+            session,
+            cron_expression=RESEARCH_MONTHLY_CRON,
+            topic_template=RESEARCH_MONTHLY_TOPIC,
+            budget_template=DEFAULT_MONTHLY_RESEARCH_BUDGET,
+            supplier_count=len(suppliers),
+            now=current,
+        )
+        if not preflight.can_enable:
+            logger.warning("跳过月报批次：%s", preflight.block_reason)
+            return None
+        return _create_periodic_research_batch(
+            session,
+            period_type="monthly",
+            topic=RESEARCH_MONTHLY_TOPIC,
+            budget_snapshot=dict(DEFAULT_MONTHLY_RESEARCH_BUDGET),
+            now=current,
+            suppliers=suppliers,
+        )
+
+
+def create_weekly_research_batch_job(*, now: datetime | None = None) -> int | None:
+    """运行时开关打开且预检通过时创建 weekly 全供应商批次。"""
+    current = now or datetime.now(SHANGHAI_TZ)
+    with SessionLocal() as session:
+        config = get_schedule_config(session, schedule_type="weekly")
+        if config is None or not config.enabled:
+            logger.info("跳过周报批次：运行时开关关闭")
+            return None
+        preflight = weekly_schedule_preflight(
+            session,
+            cron_expression=config.cron_expression,
+            topic_template=config.topic_template,
+            budget_template=config.budget_template,
+            approved_monthly_quota=config.approved_monthly_quota,
+            now=current,
+        )
+        if not preflight.can_enable:
+            logger.warning("跳过周报批次：%s", preflight.block_reason)
+            return None
+        if not RESEARCH_SCHEDULE_OWNER_USERNAME:
+            logger.warning("跳过周报批次：归属管理员未配置")
+            return None
+        topic = config.topic_template.replace("{period}", preflight.period_key)
+        return _create_periodic_research_batch(
+            session,
+            period_type="weekly",
+            topic=topic,
+            budget_snapshot=_merge_research_budget(config.budget_template),
+            now=current,
+        )
+
+
 def expire_job() -> None:
     with SessionLocal() as session:
         try:
@@ -251,9 +589,16 @@ def expire_job() -> None:
 def cleanup_job() -> None:
     with SessionLocal() as session:
         try:
+            now = datetime.now(UTC)
+            reconciled_tool_runs = reconcile_stale_tool_runs(
+                session,
+                stale_before=now - timedelta(seconds=RESEARCH_TOOL_RUN_STALE_SECONDS),
+                now=now,
+            )
             result = cleanup_retention(session)
             logger.info(
-                "保留清理完成: 失效提醒=%d 事件=%d 信号=%d 分析记录=%d 运行记录=%d",
+                "保留清理完成: 遗留工具对账=%d 失效提醒=%d 事件=%d 信号=%d 分析记录=%d 运行记录=%d",
+                reconciled_tool_runs,
                 result.expired_alerts,
                 result.deleted_events,
                 result.deleted_signals,

@@ -44,6 +44,7 @@ def test_build_source_keeps_final_url_and_records_hash_scope() -> None:
     assert source.content_hash == excerpt_hash(source.content_excerpt or "")
     assert source.source_metadata["hash_scope"] == "normalized_excerpt"
     assert source.source_metadata["requested_url"] == "https://official.example/start"
+    assert source.source_metadata["reader"] == "direct_http"
     assert source.source_metadata["provider_metadata"] == {"provider": "fake"}
 
 

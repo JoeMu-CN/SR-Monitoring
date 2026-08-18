@@ -2,7 +2,7 @@
 
 本项目用于在本机收集外部供应风险信息，匹配重点供应商、生产地点和供应产品，并通过 localhost 网页显示分级风险提醒。
 
-后 MVP 已批准开展“监控轨 + 研究轨”阶段 0 技术 Spike，用于验证通用公开信息搜索、单页读取、逐条引用和服务器容量；研究轨尚不是当前已交付能力，不得用于正式采集或重大决策。
+后 MVP 已批准开展“研究轨开发阶段0”技术 Spike，用于验证通用公开信息搜索、单页读取和逐条引用；ECS 上的旁路部署、真实任务、容量与 48 小时观察统一归入后续独立的“ECS部署验证阶段0”。研究轨尚不是当前已交付能力，不得用于正式采集或重大决策。
 
 当前已完成两周 MVP 的 D1 基础骨架、D2 供应商主数据、D3 手工风险信号采集、
 D4 AI 结构化解析、D5 风险纵向链路、D6 确定性供应商匹配、D7 可配置评分、
@@ -185,17 +185,53 @@ Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动�
 
 研究调度只写入 `queued` 任务，不在 Scheduler 内执行搜索、网页读取或模型调用。主题或归属管理员留空时对应调度保持停用；归属账号必须是启用的 `risk_admin` 或 `platform_admin`。管理员可通过 `POST /api/v1/research/tasks` 手动即时创建 `manual` 任务，浏览器不能伪造 `daily`/`weekly` 类型。是否产生外部访问或费用，仍取决于后续是否单独启动并配置 research Worker/Provider。
 
+### 本地手动研究 Worker
+
+`app` 和 `scheduler` 不会在 Web 请求或调度进程内执行研究；创建任务并点击“开始研究”后，必须另行启动 `research-worker` 才会被认领。推荐在仓库根目录执行：
+
+```powershell
+.\scripts\start-research-worker.ps1 -Build
+```
+
+如果已按研究轨旁路要求启动同一 Compose 项目的 Crawl4AI，并希望动态页面读取失败时受控回退，可显式增加 `-EnableCrawl4AI`：
+
+```powershell
+.\scripts\start-research-worker.ps1 -Build -EnableCrawl4AI
+```
+
+该开关要求本地已准备被 Git 忽略的 `deploy/.env.stage0`；默认不启用浏览器回退。
+
+脚本默认使用 `topic_source_discovery` 和 `langgraph`，以 `research-local-test` profile 前台启动并显示 Worker 日志；`Ctrl+C` 可停止。只做不联网的生命周期验证时执行：
+
+```powershell
+.\scripts\start-research-worker.ps1 -Mode local_lifecycle_test
+```
+
+需要后台运行时增加 `-Detached`，需要回退旧执行器时增加 `-Orchestrator legacy`。脚本不会打印或改写 `.env` 中的密钥。若 `SEARCH_PROVIDER=none`，主题发现不会发起外部搜索；真实 Provider、网页读取和模型调用仍需单独授权。
+
+任务仍显示等待 Worker 时，可在已登录会话中查看 `GET /api/v1/research/worker/status`：`online` 表示最近有心跳，`stale` 表示曾启动但超过阈值未续期，`offline` 表示当前没有可观测 Worker。该接口只提供诊断，不会自动启动 Worker 或执行任务。
+
 也可以不依赖调度器，随时通过 API 手动触发单次采集：
 
     POST /api/v1/sources/{id}/run
 
 ## 验证
 
-后端：
+后端数据库测试必须在 Compose 网络内执行。`postgres` 只是容器服务名，未映射到宿主机 `5432`，因此不要在宿主机直接执行 `pytest` 或进入 `backend` 目录后执行测试；这类失败属于连接环境问题，不是代码断言失败。
 
-    docker compose run --rm app pytest
+从仓库根目录运行以下命令，脚本会重建当前 `app` 镜像、等待 PostgreSQL 健康后，在同一 Compose 网络内执行测试：
+
+    .\scripts\test-backend.ps1
+
+也可以直接使用 Compose 命令：
+
+    docker compose run --rm --build app pytest
     docker compose run --rm app ruff check app tests
     docker compose run --rm app mypy app
+
+需要运行定向测试时，把测试参数放在 `test-backend.ps1` 后面，例如：
+
+    .\scripts\test-backend.ps1 tests/test_health.py -q
 
 前端测试和检查在镜像构建时执行类型检查；也可以在 frontend 目录安装依赖后执行：
 
@@ -241,6 +277,6 @@ API Key 不以明文写入数据库，仅保存 SHA-256 指纹和末四位；实
 
 ## 已批准的下一阶段
 
-2026-08-11 条件审批仅允许启动[《智能信源采集与分析落地执行计划》](智能信源采集与分析落地执行计划.md) v1.2 的阶段 0 技术 Spike：固定版本试跑 RSSHub 与 Crawl4AI，实测搜索 Provider，验证单页读取、旁路域名治理、异步研究任务、引用回验、成本和 2 核 4G 容量边界。
+2026-08-11 条件审批仅允许启动[《智能信源采集与分析落地执行计划》](智能信源采集与分析落地执行计划.md) v1.2 的研究轨开发阶段0技术 Spike；固定版本 RSSHub/Crawl4AI 的 ECS 旁路试跑、真实搜索 Provider、旁路域名治理、成本和 2 核 4G 容量边界统一纳入需独立验收的 ECS部署验证阶段0。
 
-阶段 0 不授权正式发布、批量采集、生产凭据录入或对外开放抓取服务。2026-08-12 已单独批准最小调度切片：即时信源沿用独立 cron 高频采集，Scheduler 可按日/周创建研究任务，管理员可手动即时创建任务；这不等于批准自动执行研究或调用外部付费 API。阶段 1（监控轨连接器扩展）和阶段 2（研究轨）其余能力仍需取得前序验收证据后单独审批。
+研究轨开发阶段0与 ECS部署验证阶段0均不授权正式发布、批量采集、生产凭据录入或对外开放抓取服务。2026-08-12 已单独批准最小调度切片：即时信源沿用独立 cron 高频采集，Scheduler 可按日/周创建研究任务，管理员可手动即时创建任务；这不等于批准自动执行研究或调用外部付费 API。阶段 1（监控轨连接器扩展）和阶段 2（研究轨）其余能力仍需取得前序验收证据后单独审批。

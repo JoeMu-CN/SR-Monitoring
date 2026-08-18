@@ -73,6 +73,7 @@ def replace_supplier_details(
     supplier.legal_name = payload.legal_name
     supplier.country_code = payload.country_code
     supplier.registry_no = payload.registry_no
+    supplier.registration_address = payload.registration_address
     supplier.industry = payload.industry
     supplier.raw_materials = list(payload.raw_materials)
     supplier.enabled = payload.enabled
@@ -91,6 +92,7 @@ def replace_supplier_details(
             country_code=item.country_code,
             region=item.region,
             city=item.city,
+            district=item.district,
             address=item.address,
             latitude=item.latitude,
             longitude=item.longitude,

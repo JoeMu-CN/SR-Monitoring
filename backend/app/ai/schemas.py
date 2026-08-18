@@ -63,6 +63,7 @@ class LocationReference(BaseModel):
     country_code: str | None = Field(default=None, pattern=r"^[A-Z]{2}$")
     region: str | None = None
     city: str | None = None
+    district: str | None = None
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     radius_km: float | None = Field(default=None, gt=0, le=5000)

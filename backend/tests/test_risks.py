@@ -60,7 +60,7 @@ def create_supplier(client: TestClient) -> None:
     assert response.status_code == 201
 
 
-def create_rich_supplier(client: TestClient) -> None:
+def create_rich_supplier(client: TestClient, *, district: str = "浦东新区") -> None:
     response = client.post(
         "/api/v1/suppliers",
         json={
@@ -75,6 +75,7 @@ def create_rich_supplier(client: TestClient) -> None:
                     "country_code": "CN",
                     "region": "上海市",
                     "city": "上海市",
+                    "district": district,
                     "address": "上海市浦东新区测试路1号",
                     "latitude": 31.2304,
                     "longitude": 121.4737,
@@ -261,6 +262,153 @@ def test_postgis_distance_match_caps_weak_association_at_p2(
     assert alert.level == "P2"
     assert alert.score_detail["level_cap"] == "weak_association_max_p2"
     assert db_session.scalar(select(func.count()).select_from(EventLocation)) == 1
+
+
+def test_district_location_match_rejects_same_city_other_district(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    result = SignalAnalysisResult(
+        event_type="weather",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "上海市浦东新区",
+                "country_code": "CN",
+                "region": "上海市",
+                "city": "上海市",
+                "district": "浦东新区",
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="浦东新区天气影响",
+        evidence_sentences=["浦东新区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_rich_supplier(client, district="宝山区")
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 200
+    assert response.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+    event_location = db_session.scalar(select(EventLocation))
+    assert event_location is not None
+    assert event_location.district == "浦东新区"
+
+    detail = client.get(f"/api/v1/events/{event_location.event_id}")
+    assert detail.status_code == 200
+    assert detail.json()["locations"][0]["district"] == "浦东新区"
+
+
+def test_district_in_location_name_rejects_site_city_other_district(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """事件未填 district 时，也不能因 city/region 字段错位跨区命中。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "上海市宝山区",
+                "country_code": "CN",
+                "region": "上海市",
+                "city": "上海市",
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="宝山区天气影响",
+        evidence_sentences=["宝山区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    response = client.post(
+        "/api/v1/suppliers",
+        json={
+            "supplier_code": "D7-TEST",
+            "legal_name": "上海松江测试有限公司",
+            "country_code": "CN",
+            "registry_no": "91310000D7TEST001",
+            "aliases": [],
+            "sites": [
+                {
+                    "site_name": "上海松江",
+                    "country_code": "CN",
+                    "region": "上海市",
+                    "city": "松江区",
+                    "district": None,
+                    "address": "上海市松江区测试路1号",
+                    "latitude": None,
+                    "longitude": None,
+                }
+            ],
+            "products": [],
+        },
+    )
+    assert response.status_code == 201
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    processed = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert processed.status_code == 200
+    assert processed.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+
+
+def test_district_spatial_match_rejects_same_district_in_wrong_city(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    result = SignalAnalysisResult(
+        event_type="weather",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "南京市浦东新区",
+                "country_code": "CN",
+                "region": "江苏省",
+                "city": "南京市",
+                "district": "浦东新区",
+                "latitude": 31.2304,
+                "longitude": 121.4737,
+                "radius_km": 50,
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="南京市浦东新区天气影响",
+        evidence_sentences=["南京市浦东新区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_rich_supplier(client, district="浦东新区")
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 200
+    assert response.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
 
 
 def test_product_keyword_match_sets_product_relevance(

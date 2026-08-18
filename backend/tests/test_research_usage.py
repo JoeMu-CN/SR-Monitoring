@@ -73,6 +73,36 @@ def test_current_worker_can_record_usage_with_step(db_session, auth_as) -> None:
     assert updated.current_step == "引用回验"
 
 
+def test_record_usage_extends_active_task_lease(db_session, auth_as) -> None:
+    user = auth_as("risk_admin", "research-usage-lease-renew")
+    task = create_task(
+        db_session,
+        owner_user_id=user.id,
+        task_type="manual",
+        topic="进度记账续租",
+        supplier_scope=[],
+        idempotency_key=None,
+    )
+    start = datetime(2026, 8, 11, tzinfo=UTC)
+    assert claim_next_task(
+        db_session,
+        worker_id="worker-usage-lease",
+        lease_seconds=60,
+        now=start,
+    ) is not None
+
+    updated = record_task_usage(
+        db_session,
+        task_id=task.id,
+        worker_id="worker-usage-lease",
+        current_step="续租测试",
+        now=start + timedelta(seconds=30),
+    )
+
+    assert updated is not None
+    assert updated.lease_until == start + timedelta(seconds=330)
+
+
 def test_wrong_or_expired_worker_cannot_record_usage(db_session, auth_as) -> None:
     user = auth_as("risk_admin", "research-usage-owner")
     task = create_task(

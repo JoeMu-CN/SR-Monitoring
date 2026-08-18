@@ -47,16 +47,17 @@ describe('API 数据映射', () => {
       legal_name: '测试供应商',
       country_code: 'CN',
       registry_no: null,
+      registration_address: null,
       industry: '电子元器件',
       raw_materials: [],
       enabled: true,
       aliases: [],
-      sites: [{id: 1, site_name: '深圳工厂', country_code: 'CN', region: '广东', city: '深圳', address: '深圳市', latitude: null, longitude: null}],
+      sites: [{id: 1, site_name: '深圳工厂', country_code: 'CN', region: '广东', city: '深圳', district: '南山', address: '深圳市', latitude: null, longitude: null}],
       products: [{id: 1, name: '功率器件', keywords: []}],
     };
 
     expect(mapSupplier(supplier, 'P1', 90)).toMatchObject({
-      id: '3', code: 'SUP-0003', monitoringStatus: 'high_risk', productionLocation: '深圳', riskScore: 90,
+      id: '3', code: 'SUP-0003', monitoringStatus: 'high_risk', productionLocation: '深圳 南山 深圳工厂', riskScore: 90,
     });
   });
 
@@ -94,17 +95,23 @@ describe('研究 API 请求契约', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await api.research.tasks();
+    await api.research.workerStatus();
     await api.research.task(12);
+    await api.research.events(12, 7);
     await api.research.sources(12);
     await api.research.reports(12);
+    await api.research.deleteTask(12);
 
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
       '/api/v1/research/tasks',
+      '/api/v1/research/worker/status',
       '/api/v1/research/tasks/12',
+      '/api/v1/research/tasks/12/events?after_id=7&limit=200',
       '/api/v1/research/tasks/12/sources',
       '/api/v1/research/tasks/12/reports',
+      '/api/v1/research/tasks/12',
     ]);
-    for (const [, options] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+    for (const [, options] of fetchMock.mock.calls.slice(0, 6) as Array<[string, RequestInit]>) {
       expect(options.credentials).toBe('include');
       expect(options.method ?? 'GET').toBe('GET');
     }
@@ -116,15 +123,21 @@ describe('研究 API 请求契约', () => {
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-research'});
 
-    await api.research.createTask('某供应商近 30 天风险动态');
+    await api.research.createTask('某供应商近 30 天风险动态', [3, 7]);
     await api.research.startTask(12);
     await api.research.cancelTask(12);
+    await api.research.deleteTask(12);
 
     const [, createOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
     const [, startOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
     const [, cancelOptions] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const [, deleteOptions] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(createOptions.method).toBe('POST');
-    expect(JSON.parse(String(createOptions.body))).toEqual({task_type: 'manual', topic: '某供应商近 30 天风险动态'});
+    expect(JSON.parse(String(createOptions.body))).toEqual({
+      task_type: 'manual',
+      topic: '某供应商近 30 天风险动态',
+      supplier_scope: [3, 7],
+    });
     expect(new Headers(createOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
     expect(startOptions.method).toBe('POST');
     expect(startOptions.body).toBeUndefined();
@@ -132,6 +145,9 @@ describe('研究 API 请求契约', () => {
     expect(cancelOptions.method).toBe('POST');
     expect(cancelOptions.body).toBeUndefined();
     expect(new Headers(cancelOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
+    expect(deleteOptions.method).toBe('DELETE');
+    expect(deleteOptions.body).toBeUndefined();
+    expect(new Headers(deleteOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
     vi.unstubAllGlobals();
   });
 });

@@ -16,22 +16,27 @@ from sqlalchemy import select
 from app.config import (
     RESEARCH_DAILY_CRON,
     RESEARCH_DAILY_TOPIC,
+    RESEARCH_MONTHLY_CRON,
+    RESEARCH_MONTHLY_ENABLED,
+    RESEARCH_MONTHLY_TOPIC,
     RESEARCH_SCHEDULE_OWNER_USERNAME,
     RESEARCH_TRACK_ENABLED,
-    RESEARCH_WEEKLY_CRON,
-    RESEARCH_WEEKLY_TOPIC,
     SCHEDULER_CLEANUP_CRON,
     SCHEDULER_COLLECT_CRON,
     SCHEDULER_EXPIRE_CRON,
 )
 from app.database import SessionLocal
+from app.research.schedule import get_schedule_config, weekly_schedule_preflight
 from app.scheduler.jobs import (
     _cron_to_apscheduler,
     cleanup_job,
     collect_job,
     collect_source_job,
+    create_monthly_research_batch_job,
     create_research_task_job,
+    create_weekly_research_batch_job,
     expire_job,
+    recover_capacity_blocked_research_batches_job,
 )
 from app.signals.models import DataSource
 
@@ -85,12 +90,66 @@ def _register_source_jobs(scheduler: BlockingScheduler) -> None:
             logger.error("跳过非法数据源调度周期 %s=%s: %s", source.code, source.schedule, exc)
 
 
+def _register_weekly_research_job(scheduler: BlockingScheduler) -> None:
+    """按数据库运行时开关动态注册或移除周报批次 Job。"""
+    job_id = "research-weekly"
+    existing = scheduler.get_job(job_id)
+    if not RESEARCH_TRACK_ENABLED:
+        if existing is not None:
+            scheduler.remove_job(job_id)
+        return
+    with SessionLocal() as session:
+        config = get_schedule_config(session, schedule_type="weekly")
+        if config is None or not config.enabled:
+            if existing is not None:
+                scheduler.remove_job(job_id)
+            return
+        try:
+            preflight = weekly_schedule_preflight(
+                session,
+                cron_expression=config.cron_expression,
+                topic_template=config.topic_template,
+                budget_template=config.budget_template,
+                approved_monthly_quota=config.approved_monthly_quota,
+            )
+        except ValueError as exc:
+            logger.error("周报配置无效，暂不注册：%s", exc)
+            if existing is not None:
+                scheduler.remove_job(job_id)
+            return
+    if not preflight.can_enable or not RESEARCH_SCHEDULE_OWNER_USERNAME:
+        logger.warning(
+            "周报未注册：%s",
+            preflight.block_reason or "归属管理员未配置",
+        )
+        if existing is not None:
+            scheduler.remove_job(job_id)
+        return
+    try:
+        trigger = _trigger(config.cron_expression)
+    except ValueError as exc:
+        logger.error("周报 cron 无效，暂不注册：%s", exc)
+        if existing is not None:
+            scheduler.remove_job(job_id)
+        return
+    if existing is None:
+        scheduler.add_job(
+            create_weekly_research_batch_job,
+            trigger,
+            id=job_id,
+            name="创建全供应商周报批次",
+        )
+    elif str(existing.trigger) != str(trigger):
+        scheduler.reschedule_job(job_id, trigger=trigger)
+
+
 def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
     _register_source_jobs(scheduler)
+    _register_weekly_research_job(scheduler)
     scheduler.add_job(
         _register_source_jobs,
         "interval",
@@ -98,6 +157,21 @@ def main() -> None:
         args=[scheduler],
         id="registry-refresh",
         name="刷新数据源调度注册表",
+    )
+    scheduler.add_job(
+        _register_weekly_research_job,
+        "interval",
+        minutes=1,
+        args=[scheduler],
+        id="research-registry-refresh",
+        name="刷新研究周报运行时开关",
+    )
+    scheduler.add_job(
+        recover_capacity_blocked_research_batches_job,
+        "interval",
+        minutes=1,
+        id="research-capacity-recovery",
+        name="恢复容量阻塞研究批次",
     )
     scheduler.add_job(
         expire_job, _trigger(SCHEDULER_EXPIRE_CRON), id="expire", name="提醒失效"
@@ -113,16 +187,21 @@ def main() -> None:
             id="research-daily",
             name="创建每日研究任务",
         )
-    if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_WEEKLY_TOPIC:
+    if (
+        RESEARCH_TRACK_ENABLED
+        and RESEARCH_MONTHLY_ENABLED
+        and RESEARCH_SCHEDULE_OWNER_USERNAME
+        and RESEARCH_MONTHLY_TOPIC
+    ):
         scheduler.add_job(
-            create_research_task_job,
-            _trigger(RESEARCH_WEEKLY_CRON),
-            args=["weekly"],
-            id="research-weekly",
-            name="创建每周研究任务",
+            create_monthly_research_batch_job,
+            _trigger(RESEARCH_MONTHLY_CRON),
+            id="research-monthly",
+            name="创建月报批次",
         )
     logger.info(
-        "Scheduler 启动: collect=%s expire=%s cleanup=%s research_daily=%s research_weekly=%s",
+        "Scheduler 启动: collect=%s expire=%s cleanup=%s research_daily=%s "
+        "research_weekly=%s research_monthly=%s",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
@@ -131,9 +210,15 @@ def main() -> None:
             if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_DAILY_TOPIC
             else "disabled"
         ),
+        "dynamic",
         (
-            RESEARCH_WEEKLY_CRON
-            if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_WEEKLY_TOPIC
+            RESEARCH_MONTHLY_CRON
+            if (
+                RESEARCH_TRACK_ENABLED
+                and RESEARCH_MONTHLY_ENABLED
+                and RESEARCH_SCHEDULE_OWNER_USERNAME
+                and RESEARCH_MONTHLY_TOPIC
+            )
             else "disabled"
         ),
     )

@@ -76,8 +76,9 @@ def event_dedup_key(result: SignalAnalysisResult) -> str:
     organizations = sorted(
         (normalize_alias(item.name), item.registry_no or "") for item in result.organizations
     )
-    locations = sorted(
-        (
+    locations: list[tuple[object, ...]] = []
+    for item in result.locations:
+        location_identity: tuple[object, ...] = (
             normalize_alias(item.name),
             item.country_code or "",
             item.region or "",
@@ -86,9 +87,12 @@ def event_dedup_key(result: SignalAnalysisResult) -> str:
             round(item.longitude, 6) if item.longitude is not None else None,
             item.radius_km,
         )
-        for item in result.locations
-    )
-    identity: dict[str, object] = {
+        # 保持旧版无 district 结果的去重键稳定；新信号有区级信息时纳入身份。
+        if item.district:
+            location_identity += (normalize_alias(item.district),)
+        locations.append(location_identity)
+    locations.sort()
+    event_identity: dict[str, object] = {
         "type": result.event_type,
         "subtype": result.event_subtype,
         "organizations": organizations,
@@ -96,8 +100,8 @@ def event_dedup_key(result: SignalAnalysisResult) -> str:
         "start_date": result.start_at.date().isoformat() if result.start_at else None,
     }
     if not organizations and not locations and result.start_at is None:
-        identity["summary"] = normalize_alias(result.summary_zh)
-    encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()
+        event_identity["summary"] = normalize_alias(result.summary_zh)
+    encoded = json.dumps(event_identity, ensure_ascii=False, sort_keys=True).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -142,6 +146,7 @@ def _persist_event_facts(
                     country_code=location.country_code,
                     region=location.region,
                     city=location.city,
+                    district=location.district,
                     latitude=location.latitude,
                     longitude=location.longitude,
                     radius_km=location.radius_km,

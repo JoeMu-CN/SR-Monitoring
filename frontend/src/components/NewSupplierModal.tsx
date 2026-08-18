@@ -16,7 +16,11 @@ export const NewSupplierModal: React.FC<NewSupplierModalProps> = ({
   const [supplierCode, setSupplierCode] = useState('');
   const [countryCode, setCountryCode] = useState('CN');
   const [registrationNo, setRegistrationNo] = useState('');
-  const [productionLocation, setProductionLocation] = useState('广东 深圳');
+  const [registrationAddress, setRegistrationAddress] = useState('');
+  const [productionRegion, setProductionRegion] = useState('广东省');
+  const [productionCity, setProductionCity] = useState('深圳市');
+  const [productionDistrict, setProductionDistrict] = useState('南山区');
+  const [productionAddress, setProductionAddress] = useState('');
   const [category, setCategory] = useState('电子元器件');
   const [suppliedProduct, setSuppliedProduct] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -40,7 +44,12 @@ export const NewSupplierModal: React.FC<NewSupplierModalProps> = ({
       code: supplierCode.trim(),
       legalName: legalName.trim(),
       registrationNo: registrationNo.trim(),
-      productionLocation: productionLocation.trim(),
+      registrationAddress: registrationAddress.trim(),
+      productionLocation: [productionCity, productionDistrict].filter(Boolean).join(' ') || productionAddress.trim(),
+      productionAddress: productionAddress.trim(),
+      productionRegion: productionRegion.trim(),
+      productionCity: productionCity.trim(),
+      productionDistrict: productionDistrict.trim(),
       countryRegion: countryCode.trim().toUpperCase(),
       tier: '重点供应商',
       category: category.trim(),
@@ -56,6 +65,8 @@ export const NewSupplierModal: React.FC<NewSupplierModalProps> = ({
       setSupplierCode('');
       setLegalName('');
       setRegistrationNo('');
+      setRegistrationAddress('');
+      setProductionAddress('');
       setSuppliedProduct('');
       onClose();
     } catch (caught) {
@@ -136,19 +147,72 @@ export const NewSupplierModal: React.FC<NewSupplierModalProps> = ({
               />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+              工商注册地址
+            </label>
+            <input
+              type="text"
+              placeholder="例如: 广东省深圳市南山区科技园1号"
+              value={registrationAddress}
+              onChange={(e) => setRegistrationAddress(e.target.value)}
+              className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                主要生产/经营地点
+                生产省州
               </label>
               <input
                 type="text"
-                value={productionLocation}
-                onChange={(e) => setProductionLocation(e.target.value)}
+                value={productionRegion}
+                onChange={(e) => setProductionRegion(e.target.value)}
                 className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
               />
             </div>
 
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                生产城市
+              </label>
+              <input
+                type="text"
+                value={productionCity}
+                onChange={(e) => setProductionCity(e.target.value)}
+                className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                生产区县
+              </label>
+              <input
+                type="text"
+                value={productionDistrict}
+                onChange={(e) => setProductionDistrict(e.target.value)}
+                className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+              生产详细地址
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="例如: 西丽街道留仙洞工业区2号厂房"
+              value={productionAddress}
+              onChange={(e) => setProductionAddress(e.target.value)}
+              className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                 主要供应产品 *

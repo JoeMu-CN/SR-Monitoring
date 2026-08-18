@@ -23,7 +23,7 @@ from app.auth.security import (
 )
 from app.config import get_ai_settings
 from app.database import get_session
-from app.signals.models import RawSignal
+from app.signals.models import DataSource, RawSignal
 
 router = APIRouter(prefix="/api/v1", tags=["AI 分析"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -89,17 +89,34 @@ def list_ai_analysis_records(
 @router.get("/ai-review-summary", response_model=AIReviewSummaryRead)
 def ai_review_summary(session: SessionDependency, _user: RiskView) -> AIReviewSummaryRead:
     review_count = session.scalar(
-        select(func.count()).select_from(AIAnalysisRecord).where(AIAnalysisRecord.needs_review.is_(True))
+        select(func.count())
+        .select_from(AIAnalysisRecord)
+        .join(RawSignal, RawSignal.id == AIAnalysisRecord.signal_id)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(
+            AIAnalysisRecord.needs_review.is_(True),
+            DataSource.enabled.is_(True),
+        )
     ) or 0
     filtered_count = session.scalar(
-        select(func.count()).select_from(AIAnalysisRecord).where(
+        select(func.count())
+        .select_from(AIAnalysisRecord)
+        .join(RawSignal, RawSignal.id == AIAnalysisRecord.signal_id)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(
             AIAnalysisRecord.provider == "deterministic-filter",
             AIAnalysisRecord.needs_review.is_(True),
+            DataSource.enabled.is_(True),
         )
     ) or 0
     no_alert_count = session.scalar(
-        select(func.count()).select_from(AIAnalysisRecord).where(
-            AIAnalysisRecord.review_reason.like("%未匹配到供应商%")
+        select(func.count())
+        .select_from(AIAnalysisRecord)
+        .join(RawSignal, RawSignal.id == AIAnalysisRecord.signal_id)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(
+            AIAnalysisRecord.review_reason.like("%未匹配到供应商%"),
+            DataSource.enabled.is_(True),
         )
     ) or 0
     return AIReviewSummaryRead(
@@ -118,7 +135,11 @@ def ai_review_items(
     rows = session.execute(
         select(AIAnalysisRecord, RawSignal)
         .join(RawSignal, RawSignal.id == AIAnalysisRecord.signal_id)
-        .where(AIAnalysisRecord.needs_review.is_(True))
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(
+            AIAnalysisRecord.needs_review.is_(True),
+            DataSource.enabled.is_(True),
+        )
         .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
         .limit(limit)
     ).all()

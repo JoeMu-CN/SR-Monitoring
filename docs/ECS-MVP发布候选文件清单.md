@@ -4,7 +4,7 @@
 
 ## 1. 发布原则
 
-首次生产只启用监控轨。研究轨即使随候选源码存在，也必须由 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0027` 和生产 Compose 共同关闭；研究 API、研究页面、研究 Worker、搜索 Provider、自动日报/周报不纳入本次生产验收。
+首次生产只启用监控轨。研究轨即使随候选源码存在，也必须由 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0033` 和生产 Compose 共同关闭；研究 API、研究页面、研究 Worker、搜索 Provider、自动日报/周报不纳入本次生产验收。
 
 候选集合必须从当前 Git 基线和明确的工作区改动提取，禁止直接把整个工作区构建成生产镜像。真实生产环境只拉取冻结 commit 对应的镜像或不可变 digest。
 
@@ -25,6 +25,7 @@
 - `backend/alembic/env.py`
 - `backend/alembic/versions/0001~0021` 已提交的监控轨历史迁移
 - `backend/alembic/versions/0027_mvp_signal_review_state.py`
+- `backend/alembic/versions/0033_supplier_address_district.py`
 - `backend/pyproject.toml`
 - 监控轨对应的 `backend/tests/` 测试及发布前验证脚本
 
@@ -41,10 +42,10 @@
 
 - 研究 API、研究页面、研究 Worker 和研究自动调度
 - RSSHub、Crawl4AI、搜索 Provider、自动日报/周报
-- 研究迁移 `0022`～`0026` 及合并节点 `0028`（可随源码保留，但生产启动固定到 `0027`）
+- 研究迁移 `0022`～`0026`、`0031`～`0032`、`0035` 及合并节点 `0034`（可随源码保留，但生产启动固定到 `0033`）
 - 未经人工确认的研究结论进入风险评分链
 
-研究代码若因源码导入、测试或后续阶段 0 叠加需要随候选源码保留，仍必须满足生产开关关闭；其存在不代表研究能力已上线。
+研究代码若因源码导入、测试或后续 ECS部署验证阶段0叠加需要随候选源码保留，仍必须满足生产开关关闭；其存在不代表研究能力已上线。
 
 ## 4. 明确排除项
 
@@ -61,8 +62,8 @@
 
 1. `git status --short` 中没有 `.env`、证书、备份、`.workbuddy` 或生成物进入暂存区。
 2. 生产 Compose 渲染结果只有 `postgres`、`app`、`scheduler`、`nginx` 四个服务。
-3. 渲染结果满足 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0027`，且 PostgreSQL、app、Scheduler 无宿主端口。
-4. 新库迁移到 `0027`；本地完整 head `0028` 仅用于阶段 0/开发验证。
+3. 渲染结果满足 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0033`，且 PostgreSQL、app、Scheduler 无宿主端口。
+4. 新库迁移到 `0033`；本地完整 head `0035` 仅用于研究轨开发阶段0验证。
 5. app、Nginx、PostGIS 镜像均使用已记录的 digest；PostGIS 当前临时风险接受条件仍然有效。
 6. 完成 SBOM、Scout 扫描、全量测试、备份恢复演练和回滚演练后，才允许创建不可变生产 tag。
 

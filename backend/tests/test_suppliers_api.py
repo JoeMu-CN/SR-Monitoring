@@ -77,6 +77,7 @@ def test_create_update_and_disable_supplier(client: TestClient) -> None:
         "legal_name": "API供应商有限公司",
         "country_code": "cn",
         "registry_no": None,
+        "registration_address": "江苏省苏州市姑苏区登记路1号",
         "enabled": True,
         "aliases": [{"alias": "API Supplier", "language": "en"}],
         "sites": [
@@ -85,6 +86,7 @@ def test_create_update_and_disable_supplier(client: TestClient) -> None:
                 "country_code": "CN",
                 "region": "江苏省",
                 "city": "苏州市",
+                "district": "姑苏区",
                 "address": "苏州市测试路1号",
                 "latitude": 31.2989,
                 "longitude": 120.5853,
@@ -101,6 +103,8 @@ def test_create_update_and_disable_supplier(client: TestClient) -> None:
     updated = client.put(f"/api/v1/suppliers/{supplier_id}", json=update_payload)
     assert updated.status_code == 200
     assert updated.json()["legal_name"] == "API供应商股份有限公司"
+    assert updated.json()["registration_address"] == "江苏省苏州市姑苏区登记路1号"
+    assert updated.json()["sites"][0]["district"] == "姑苏区"
 
     disabled = client.patch(
         f"/api/v1/suppliers/{supplier_id}/enabled",
@@ -110,6 +114,47 @@ def test_create_update_and_disable_supplier(client: TestClient) -> None:
     assert disabled.status_code == 200
     assert disabled.json()["enabled"] is False
     assert client.get("/api/v1/suppliers", params={"enabled": False}).json()["total"] == 1
+
+
+def test_supplier_keeps_registration_separate_from_multiple_sites(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/suppliers",
+        json={
+            "supplier_code": "SUP-MULTI-SITE",
+            "legal_name": "多生产地址供应商",
+            "country_code": "CN",
+            "registry_no": None,
+            "registration_address": "广东省深圳市福田区登记路1号",
+            "sites": [
+                {
+                    "site_name": "深圳工厂",
+                    "country_code": "CN",
+                    "region": "广东省",
+                    "city": "深圳市",
+                    "district": "南山区",
+                    "address": "广东省深圳市南山区生产路1号",
+                },
+                {
+                    "site_name": "东莞工厂",
+                    "country_code": "CN",
+                    "region": "广东省",
+                    "city": "东莞市",
+                    "district": "松山湖",
+                    "address": "广东省东莞市松山湖生产路2号",
+                },
+            ],
+            "products": [{"name": "连接器", "keywords": []}],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["registration_address"] == "广东省深圳市福田区登记路1号"
+    assert {site["address"] for site in body["sites"]} == {
+        "广东省深圳市南山区生产路1号",
+        "广东省东莞市松山湖生产路2号",
+    }
+    assert {site["district"] for site in body["sites"]} == {"南山区", "松山湖"}
 
 
 def test_supplier_monitoring_toggle_requires_admin(client: TestClient, auth_as) -> None:

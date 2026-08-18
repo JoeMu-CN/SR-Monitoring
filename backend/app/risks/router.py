@@ -207,6 +207,7 @@ def get_event_detail(
             "country_code": location.country_code,
             "region": location.region,
             "city": location.city,
+            "district": location.district,
             "latitude": location.latitude,
             "longitude": location.longitude,
             "radius_km": location.radius_km,

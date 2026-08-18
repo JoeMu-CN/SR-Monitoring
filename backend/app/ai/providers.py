@@ -286,6 +286,8 @@ def system_prompt() -> str:
         "compliance→compliance_violation 或 sanctions，other→other；"
         "没有明确证据支持细类时 event_subtype 必须为 null。"
         "affected_products 与 affected_industries 必须分别提取，不得混用。"
+        "locations 中应尽量分别填写 country_code、region、city、district；"
+        "district 仅在原文明确支持区、县、旗或同级行政区时填写，不得根据城市名称猜测。"
         "只返回符合以下 JSON Schema 的 JSON 对象，不要返回 Markdown：" + schema
     )
 

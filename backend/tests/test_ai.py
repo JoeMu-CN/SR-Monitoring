@@ -15,7 +15,7 @@ from app.ai.providers import AIProviderError, FakeAIProvider, OpenAICompatiblePr
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.config import AISettings
 from app.research.reporting import ResearchEvidenceInput, ResearchReportGenerationInput
-from app.signals.models import RawSignal
+from app.signals.models import DataSource, RawSignal
 
 
 def analysis_input() -> SignalAnalysisInput:
@@ -288,6 +288,34 @@ def test_low_confidence_analysis_is_marked_for_review(
     summary = client.get("/api/v1/ai-review-summary")
     assert summary.status_code == 200
     assert summary.json()["needs_review"] == 1
+
+
+def test_disabled_source_is_excluded_from_review_summary_and_items(
+    client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "fake")
+    import_signal(client)
+    signal = db_session.scalar(select(RawSignal))
+    assert signal is not None
+    source = db_session.get(DataSource, signal.source_id)
+    assert source is not None
+    source.enabled = False
+    db_session.commit()
+
+    response = client.post(f"/api/v1/signals/{signal.id}/analyze")
+    assert response.status_code == 200
+    assert response.json()["needs_review"] is True
+
+    summary = client.get("/api/v1/ai-review-summary")
+    assert summary.status_code == 200
+    assert summary.json() == {
+        "needs_review": 0,
+        "filtered": 0,
+        "analyzed_without_alert": 0,
+    }
+    items = client.get("/api/v1/ai-review-items")
+    assert items.status_code == 200
+    assert items.json() == []
 
 
 def test_provider_failure_is_recorded(

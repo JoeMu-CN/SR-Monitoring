@@ -75,6 +75,7 @@ def build_research_source(
         "final_url": page.final_url,
         "redirect_chain": list(page.redirect_chain),
         "content_type": page.content_type,
+        "reader": page.reader,
         "hash_scope": "normalized_excerpt",
     }
     if metadata:

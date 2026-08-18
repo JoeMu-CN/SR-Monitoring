@@ -2,8 +2,11 @@ import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} fro
 
 export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
 export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type ResearchTaskEventStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'info';
 export type ResearchReportStatus = 'draft' | 'submitted' | 'rejected';
 export type ResearchReviewStatus = 'pending' | 'approved' | 'rejected';
+export type ResearchWorkerRuntimeStatus = 'online' | 'stale' | 'stopped';
+export type ResearchWorkerOverallStatus = 'online' | 'stale' | 'offline';
 
 export interface ResearchTaskRead {
   id: number;
@@ -29,6 +32,35 @@ export interface ResearchTaskRead {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+}
+
+export interface ResearchTaskEventRead {
+  id: number;
+  task_id: number;
+  event_type: string;
+  node_key: string;
+  parent_node_key: string | null;
+  status: ResearchTaskEventStatus;
+  label: string;
+  detail: Record<string, unknown>;
+  occurred_at: string;
+}
+
+export interface ResearchWorkerRead {
+  worker_id: string;
+  mode: string;
+  orchestrator: 'legacy' | 'langgraph';
+  status: ResearchWorkerRuntimeStatus;
+  started_at: string;
+  last_seen_at: string;
+  stopped_at: string | null;
+}
+
+export interface ResearchWorkerStatusRead {
+  checked_at: string;
+  stale_after_seconds: number;
+  status: ResearchWorkerOverallStatus;
+  workers: ResearchWorkerRead[];
 }
 
 export interface ResearchSourceRead {
@@ -111,6 +143,7 @@ export interface SupplierRead {
   legal_name: string;
   country_code: string;
   registry_no: string | null;
+  registration_address: string | null;
   industry: string | null;
   raw_materials: string[];
   enabled: boolean;
@@ -121,6 +154,7 @@ export interface SupplierRead {
     country_code: string;
     region: string | null;
     city: string | null;
+    district: string | null;
     address: string;
     latitude: number | null;
     longitude: number | null;
@@ -250,6 +284,7 @@ export interface SandboxRequest {
     country_code?: string | null;
     region?: string | null;
     city?: string | null;
+    district?: string | null;
   }>;
   affected_products: string[];
   affected_industries: string[];
@@ -367,6 +402,7 @@ export interface SupplierCreatePayload {
   legal_name: string;
   country_code: string;
   registry_no: string | null;
+  registration_address: string | null;
   industry: string | null;
   raw_materials: string[];
   enabled: boolean;
@@ -376,6 +412,7 @@ export interface SupplierCreatePayload {
     country_code: string;
     region: string | null;
     city: string | null;
+    district: string | null;
     address: string;
     latitude: number | null;
     longitude: number | null;
@@ -443,13 +480,16 @@ export const api = {
   aiReviewItems: () => request<AIReviewItem[]>('/api/v1/ai-review-items?limit=5'),
   research: {
     tasks: () => request<{items: ResearchTaskRead[]}>('/api/v1/research/tasks'),
+    workerStatus: () => request<ResearchWorkerStatusRead>('/api/v1/research/worker/status'),
     task: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}`),
+    events: (taskId: number, afterId = 0, limit = 200) => request<{items: ResearchTaskEventRead[]; next_after_id: number}>(`/api/v1/research/tasks/${taskId}/events?after_id=${afterId}&limit=${limit}`),
     sources: (taskId: number) => request<{items: ResearchSourceRead[]}>(`/api/v1/research/tasks/${taskId}/sources`),
     startTask: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}/start`, {method: 'POST'}),
     cancelTask: (taskId: number) => request<ResearchTaskRead>(`/api/v1/research/tasks/${taskId}/cancel`, {method: 'POST'}),
-    createTask: (topic: string) => request<ResearchTaskRead>('/api/v1/research/tasks', {
+    deleteTask: (taskId: number) => request<void>(`/api/v1/research/tasks/${taskId}`, {method: 'DELETE'}),
+    createTask: (topic: string, supplierScope: number[] = []) => request<ResearchTaskRead>('/api/v1/research/tasks', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({task_type: 'manual', topic}),
+      body: JSON.stringify({task_type: 'manual', topic, supplier_scope: supplierScope}),
     }),
     reports: (taskId: number) => request<{items: ResearchReportRead[]}>(`/api/v1/research/tasks/${taskId}/reports`),
   },
@@ -539,7 +579,8 @@ export function mapSupplier(supplier: SupplierRead, riskLevel?: RiskLevel, riskS
   return {
     id: String(supplier.id), code: supplier.supplier_code, legalName: supplier.legal_name,
     registrationNo: supplier.registry_no ?? '未登记',
-    productionLocation: supplier.sites.map((item) => item.city || item.site_name).join('、') || '未登记',
+    registrationAddress: supplier.registration_address ?? '未登记',
+    productionLocation: supplier.sites.map((item) => [item.city, item.district, item.site_name].filter(Boolean).join(' ')).join('、') || '未登记',
     countryRegion: supplier.country_code, tier: '重点供应商',
     category: supplier.industry ?? supplier.products[0]?.name ?? '未分类',
     suppliedProduct: supplier.products.map((item) => item.name).join('、') || '未登记',

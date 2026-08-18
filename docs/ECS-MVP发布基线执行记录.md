@@ -1,10 +1,12 @@
 # ECS MVP 发布基线执行记录
 
-> 状态：ECS MVP 已上线；监控轨基线已进入观察期，研究轨仍关闭。阶段 0 叠加测试尚未启动（2026-08-13）
+> 状态：ECS MVP 已上线；监控轨基线已进入观察期，研究轨仍关闭。ECS部署验证阶段0叠加测试尚未完成（2026-08-13）
+
+> 术语统一：本文中的“ECS部署验证阶段0”专指 ECS 研究旁路的部署、真实任务、容量和 48 小时验证；研究轨代码、测试和本地镜像研发统一称为“研究轨开发阶段0”，记录见主研究计划。
 
 ## 目标
 
-在阿里云 ECS 上发布已冻结的监控轨 MVP，并把研究轨作为后续可关闭、可回滚的阶段 0 叠加能力。首次生产部署不承担研究轨正式发布职责。
+在阿里云 ECS 上发布已冻结的监控轨 MVP，并把研究轨作为后续可关闭、可回滚的 ECS部署验证阶段0叠加能力。首次生产部署不承担研究轨正式发布职责。
 
 发布范围冻结清单见 [`docs/ECS-MVP发布范围冻结清单.md`](ECS-MVP发布范围冻结清单.md)。在负责人确认并从混合工作区提取干净发布集合前，不创建生产 tag、不推送 ACR。
 候选文件提取规则见 [`docs/ECS-MVP发布候选文件清单.md`](ECS-MVP发布候选文件清单.md)。
@@ -18,10 +20,10 @@
 | 生产 Compose | 已上线 | `compose.yaml` + `compose.prod.yaml`；线上记录显示 `postgres/app/scheduler/nginx` 均已启动 |
 | 生产认证 | 已实现 | Cookie Session、bcrypt、CSRF、四角色；候选 Alpine 镜像内全量 pytest 已实测 |
 | 研究轨开关 | 线上保持关闭 | `RESEARCH_TRACK_ENABLED=false`；研究 API、研究页面权限、研究调度和 Provider 不进入 MVP 生产路径 |
-| 研究迁移 | 已建立双轨目标 | 新增幂等 `0027`（直接依赖 `0021`）作为 MVP 目标；`0028` 合并 `0026/0027` 供本地/阶段 0 使用 |
+| 研究迁移 | 已建立双轨目标 | `0027` 为原 MVP 目标；本轮新增地址与区级校验迁移 `0033`（直接依赖 `0027`），`0034` 合并研究轨 `0032` 与监控轨 `0033`，`0035` 为后续研究轨迁移；生产仍固定到 `0033` |
 | 域名/证书 | 技术验证待配置 | 技术验证阶段使用 ECS 公网 IP + IP SAN 自签名证书；正式上线前再申请域名和受信任证书 |
 | 生产密钥 | 未配置 | 仅模板占位；不读取或输出任何真实凭据 |
-| ECS 实测 | MVP 已完成上线，阶段0实测未开始 | 引用部署任务记录了 HTTPS、登录、Nginx、App、PostgreSQL、Scheduler 和基础网络边界；仍需从 ECS 采集一次可归档的命令输出作为本记录附件 |
+| ECS 实测 | MVP 已完成上线，ECS部署验证阶段0尚未完成 | 引用部署任务记录了 HTTPS、登录、Nginx、App、PostgreSQL、Scheduler 和基础网络边界；仍需从 ECS 采集一次可归档的命令输出作为本记录附件 |
 
 ## ECS 试用实例已创建（2026-08-12）
 
@@ -57,7 +59,7 @@
 - 在 `backend/app/scheduler/main.py` 关闭开关时不注册每日/每周研究调度。
 - 在 `deploy/.env.production.example` 将研究轨显式设为关闭，并清空研究调度主题。
 - 将运行层切换为 `python:3.12-alpine`，并将 `cryptography` 约束提升至 `>=50,<51`；候选镜像已重新构建并生成 SBOM。
-- 在 `阿里云部署实施清单.md` 增加 ECS MVP 发布计划和阶段 0 叠加门禁。
+- 在 `阿里云部署实施清单.md` 增加 ECS MVP 发布计划和 ECS部署验证阶段0叠加门禁。
 - 创建 `codex/ecs-mvp-release` 发布候选分支；保留当前工作区改动，尚未提交。
 
 ## P0 待执行清单
@@ -71,7 +73,7 @@
 
 ## 验收与止损命令
 
-生产 Compose 渲染必须确认只有以下四个服务，且 app/scheduler 的 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0027`。真实部署时先创建 `deploy/.env.production`，不能直接使用模板文件：
+生产 Compose 渲染必须确认只有以下四个服务，且 app/scheduler 的 `RESEARCH_TRACK_ENABLED=false`、`ALEMBIC_UPGRADE_TARGET=0033`。真实部署时先创建 `deploy/.env.production`，不能直接使用模板文件：
 
 ```powershell
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml config
@@ -94,9 +96,9 @@ docker compose stop scheduler app
 ## 阻断项
 
 1. 后续研究轨改动不得直接覆盖已经上线的 MVP 镜像；必须使用独立覆盖编排并可单独停止。
-2. 生产新库必须使用 `ALEMBIC_UPGRADE_TARGET=0027`；阶段0研究组件不得擅自把生产数据库升级到完整研究 head。
+2. 生产新库必须使用 `ALEMBIC_UPGRADE_TARGET=0033`；ECS部署验证阶段0研究组件不得擅自把生产数据库升级到完整研究 head。当前 ECS 线上旧版本仍为 `0027`，本轮地址/区级补丁尚未部署。
 3. PostGIS 数据库镜像 Critical `1`、High `17`；负责人已于 2026-08-12 临时接受，条件、补偿控制和复核期限见范围冻结清单；补丁镜像可用后必须复扫。
-4. 阶段0尚缺 ECS 现场资源基线、固定旁路镜像的正式 SBOM/漏洞扫描、研究执行器实际链路和 48 小时浸泡证据。
+4. ECS部署验证阶段0尚缺 ECS 现场资源基线、固定旁路镜像的正式 SBOM/漏洞扫描、研究执行器实际链路和 48 小时浸泡证据。
 
 ## ECS MVP 上线确认（2026-08-13）
 
@@ -108,7 +110,7 @@ docker compose stop scheduler app
 - ECS Workbench/SSH 与 UFW 基础访问已恢复，业务端口按 80/443 对外。
 - App 镜像已按不可变 digest 更新过登录页和默认浅色主题修复版本。
 
-以上是部署任务中的操作证据摘要，不替代本次阶段0的 ECS 现场采样。阶段0开始前仍需在 ECS 保存以下脱敏输出：
+以上是部署任务中的操作证据摘要，不替代本次 ECS部署验证阶段0的 ECS 现场采样。ECS部署验证阶段0开始前仍需在 ECS 保存以下脱敏输出：
 
 ```bash
 cd /opt/supplier-risk-monitoring
@@ -120,7 +122,7 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 
 命令输出不得包含环境文件内容、密码、API Key、Cookie 或 Token；保存后再进入研究轨叠加审批。
 
-## 阶段0叠加执行边界（当前）
+## ECS部署验证阶段0叠加执行边界（当前）
 
 1. 先完成上节 ECS 现场采样，并确认 MVP 观察期无异常。
 2. 仅使用独立的 `compose.stage0.yaml` 叠加固定 digest 的 RSSHub 与 Crawl4AI；真实研究执行器完成前不启动空壳 `research-worker`。
@@ -149,10 +151,10 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 - Scheduler 过去 6 小时日志中统计到 23 次 `uq_risk_events_dedup_key` 唯一键冲突，共观察到 3 轮“处理新信号”。
 - 日志显示中央“定时采集与处理”和 `nmc-weather` 独立采集任务在同一个 `*/30` 时间点运行；两条路径都会调用 `_process_pending_signals()`。
 - 两个并发任务可能同时选中相同的待处理信号，并竞争创建相同 `risk_events.dedup_key`，其中一方回滚并记录失败。
-- 当前任务最终仍记录为成功，健康接口也正常，但该竞争会制造错误日志，并可能造成重复模型调用、重复处理或部分信号延后，因此暂不满足阶段0“无重复计费、无持续积压”的前置条件。
+- 当前任务最终仍记录为成功，健康接口也正常，但该竞争会制造错误日志，并可能造成重复模型调用、重复处理或部分信号延后，因此暂不满足 ECS部署验证阶段0“无重复计费、无持续积压”的前置条件。
 - 在修复、测试并只重建 Scheduler 前，不启动 RSSHub、Crawl4AI、研究 Worker 或 48 小时浸泡。
 
-## 阶段0旁路编排准备（2026-08-13）
+## ECS部署验证阶段0旁路编排准备（2026-08-13）
 
 - 新增 `compose.stage0.yaml`，只包含固定 digest 的 RSSHub 与 Crawl4AI；二者仅加入现有 `internal` 网络，未配置宿主端口映射。
 - RSSHub 限制为 0.5 CPU / 512 MiB；Crawl4AI 限制为 1 CPU / 1536 MiB，并配置 256 MiB `/dev/shm`。
@@ -160,7 +162,7 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 - `deploy/crawl4ai.stage0.yml` 将页面预算、全局页面池、后台队列 Worker 与单调用方并发均限制为 1，单次墙钟时间限制为 120 秒。
 - 当前不增加 `research-worker`：代码中只有租约/状态骨架，没有真实搜索、单页读取和报告生成执行器；启动空壳服务不能形成有效浸泡证据。
 - Compose 静态渲染通过：合并后为既有四服务加 RSSHub/Crawl4AI；只有 Nginx 发布 80/443，两个旁路服务的宿主端口数均为 0。
-- Crawl4AI 镜像内实际加载阶段0配置通过：`max_pages=1`、队列 `workers=1`、`per_principal=1`、页面池 `max_pages=1`。
+- Crawl4AI 镜像内实际加载 ECS部署验证阶段0配置通过：`max_pages=1`、队列 `workers=1`、`per_principal=1`、页面池 `max_pages=1`。
 - 三份非敏感配置已通过 SSH 同步至 ECS，SHA-256 与本地一致；真实 `deploy/.env.stage0` 未创建，旁路容器未启动，既有四服务保持运行。
 - Docker Scout 1.23.1 对这两个本地多架构 digest 的 OCI 临时导出失败，SBOM/漏洞概览未形成；本机也无 Trivy/Syft/Grype。该安全门禁仍为阻断项，不得将扫描失败误记为通过。
 - 已在 ECS 固定并验证 Trivy `0.66.0` amd64 镜像 digest `sha256:adbf…fb8`。首次漏洞库下载访问 `mirror.gcr.io` 连接超时；改用官方备用 `public.ecr.aws/aquasecurity/trivy-db:2` 后可开始下载，但约 7.3% 时连接被重置。两次均未进入目标镜像漏洞判定阶段。
@@ -168,46 +170,46 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 - Trivy临时容器均使用 `--rm`，ECS无遗留扫描容器；现有 App、PostgreSQL、Scheduler、Nginx保持运行。安全门禁仍未通过，旁路容器继续不启动。
 - 本轮未执行抓取、搜索 Provider 或模型调用。
 
-### 阶段0固定镜像安全门禁实测（2026-08-13）
+### ECS部署验证阶段0固定镜像安全门禁实测（2026-08-13）
 
 - 本机固定使用 Trivy `0.66.0` amd64 镜像 digest `sha256:adbf…fb8`，漏洞库来自已缓存的 `public.ecr.aws/aquasecurity/trivy-db:2`；未读取或输出任何环境文件、Token 或 API Key。
 - RSSHub 固定 digest `sha256:c762…a2cd` 已完成 rootfs 扫描，报告见 [`docs/stage0-rsshub-trivy.json`](stage0-rsshub-trivy.json)，CycloneDX SBOM 见 [`docs/stage0-rsshub.sbom.cdx.json`](stage0-rsshub.sbom.cdx.json)：共发现 Critical `17`、High `53`。结果包含 Node `tar` 的 Critical（当前版本 `7.5.16`，修复版本为 `7.5.19`）以及 `ip-address`、`undici`、`brace-expansion` 等 High/SSRF 或拒绝服务相关项；不能按“零高危”门禁放行。
 - Crawl4AI 固定 digest `sha256:bd36…690` 的首次远程扫描曾因 Trivy 超时和 Docker Registry 层 `EOF` 失败；后续已改用 D 盘 rootfs 离线方式完成可信复扫，最终结果见下文“Crawl4AI 固定镜像复扫结果”。
 - 为避免把本机 Docker Desktop 的多架构导出缺陷误判为安全通过，所有扫描均未启动 RSSHub/Crawl4AI；也未执行抓取、搜索 Provider 或模型调用。
-- 结论：阶段0旁路安全门禁未通过，禁止创建真实 `deploy/.env.stage0`，禁止启动 RSSHub、Crawl4AI、research-worker 或自动研究调度；两个固定 digest 的漏洞报告与 SBOM 已形成，最终阻断原因见下文复扫结果。
+- 结论：ECS部署验证阶段0旁路安全门禁未通过，禁止创建真实 `deploy/.env.stage0`，禁止启动 RSSHub、Crawl4AI、research-worker 或自动研究调度；两个固定 digest 的漏洞报告与 SBOM 已形成，最终阻断原因见下文复扫结果。
 
 ### Crawl4AI 固定镜像复扫结果（2026-08-13 18:32 CST）
 
 - 已将固定 digest `sha256:bd36…690` 导出到 D 盘临时归档，在 Docker 临时卷内解包后完成 Trivy `0.66.0` rootfs 扫描；临时容器始终保持 `Created`/未启动状态。
 - 漏洞报告见 [`docs/stage0-crawl4ai-trivy.json`](stage0-crawl4ai-trivy.json)，CycloneDX SBOM 见 [`docs/stage0-crawl4ai.sbom.cdx.json`](stage0-crawl4ai.sbom.cdx.json)。扫描识别 Debian 12.15、583 个 Debian 包、2 个语言包清单，共发现 Critical `44`、High `604`。
 - 主要风险集中在浏览器/媒体运行时与系统库（`linux-libc-dev` 215 项、`pillow` 26 项、`nltk` 22 项等）。镜像标签与实际 Python 元数据均为 Crawl4AI `0.9.2`；原始 Trivy 结果另出现无 `PkgPath` 的 `crawl4ai@0.7.8` 条目，属于需在候选复扫中核对的残留/第三方包记录，不能直接当作当前运行时版本证据。
-- 该结果是完整可信扫描，不是扫描工具失败或误报豁免；阶段0安全门禁继续阻断，旁路组件不得启动。后续应先选定已修复且可复扫的 Crawl4AI 版本，再重新验证资源限制、SBOM、漏洞和最小抓取链路。
+- 该结果是完整可信扫描，不是扫描工具失败或误报豁免；ECS部署验证阶段0安全门禁继续阻断，旁路组件不得启动。后续应先选定已修复且可复扫的 Crawl4AI 版本，再重新验证资源限制、SBOM、漏洞和最小抓取链路。
 
-### 阶段0上游镜像核查补充（2026-08-14）
+### ECS部署验证阶段0上游镜像核查补充（2026-08-14）
 
 - RSSHub 上游的 `Docker Release` 工作流仍处于 active，最新可见成功运行是 #8221（2026-08-12，提交 `e086c17fa01bfbedf0dd4f4ee0b79c35a96fba61`）。工作流同时发布 Docker Hub 与 GHCR，并生成 amd64/arm64 多架构镜像；这证明上游近期有成功构建，不等于已有通过本项目安全门禁的新 digest。
 - RSSHub 仓库当前没有正式 Git Tag；GHCR 版本 API 和 manifest 查询要求认证，当前 Docker Hub Registry 链路也无法完成读取。因此本轮没有把“上游存在构建”误记为“已核验新镜像”，也没有替换现有固定 digest。
 - RSSHub `master` 当前提交（`7fcec5001ebb9b25fe9de1435f5aff216746ab84`，2026-08-13）晚于上述 Docker Release；尚未发现对应的新 Docker Release 成功证据或可公开核验的安全清零 digest。现有 RSSHub 固定 digest 的 Critical `17` / High `53` 扫描结果仍有效。
-- Crawl4AI 上游最新正式 Release/Tag 仍为 `v0.9.2`（2026-07-15）；未发现比 `v0.9.2` 更新的正式版本。现有固定 digest `sha256:bd36…690` 的 Critical `44` / High `604` 复扫结果仍是阶段0阻断依据。
-- 结论：本轮不启动旁路容器，不创建 `deploy/.env.stage0`，不更新 `compose.stage0.yaml`。下一步只能在“构建并重新扫描最小加固派生镜像”和“移除 RSSHub/Crawl4AI、改用已有受控读取路径”之间择一推进；任何候选都必须先完成 SBOM、漏洞、配置加载、资源限制和最小链路复验，再申请阶段0启动。
+- Crawl4AI 上游最新正式 Release/Tag 仍为 `v0.9.2`（2026-07-15）；未发现比 `v0.9.2` 更新的正式版本。现有固定 digest `sha256:bd36…690` 的 Critical `44` / High `604` 复扫结果仍是 ECS部署验证阶段0阻断依据。
+- 结论：本轮不启动旁路容器，不创建 `deploy/.env.stage0`，不更新 `compose.stage0.yaml`。下一步只能在“构建并重新扫描最小加固派生镜像”和“移除 RSSHub/Crawl4AI、改用已有受控读取路径”之间择一推进；任何候选都必须先完成 SBOM、漏洞、配置加载、资源限制和最小链路复验，再申请 ECS部署验证阶段0启动。
 
-### 阶段0候选路径取舍（2026-08-14）
+### ECS部署验证阶段0候选路径取舍（2026-08-14）
 
 - RSSHub 报告的 17 个 Critical 中仅 1 个带有 Trivy 修复版本，Crawl4AI 报告的 44 个 Critical 中仅 12 个带有修复版本；其余主要来自基础系统、浏览器/媒体库和 Perl 等运行时，当前不能通过简单升级单个 Python/Node 依赖清零。
 - Crawl4AI 报告中 `crawl4ai@0.7.8` 的若干 Critical/High 条目没有 `PkgPath`，而镜像元数据和 Python 元数据均显示 `0.9.2`。这些条目必须在候选镜像复扫中核对，不能直接当作误报，也不能在没有证据时据此放行。
 - 因此“构建最小加固派生镜像”只能作为隔离候选：可尝试删除不需要的构建缓存、旧 Python/Node 元数据和非运行时工具，但在漏洞清零、功能回归和出网边界复验前不得替换固定 digest，更不得进入生产 Compose。
-- 当前更稳妥的阶段0降级路径是：先使用现有 `backend/app/research/web.py` 的受控 HTTPS 单页读取器完成公开静态 HTML/RSS 的人工研究验证；它不支持依赖 JavaScript 渲染的页面，不能宣称等价于 Crawl4AI。Crawl4AI/RSSHub 仅保留为后续通过安全门禁或书面风险接受后的可选实验组件。
-- 该取舍不改变现行生产 MVP，也不自动放宽漏洞门禁；若采用降级路径，必须单独记录“未验证 JS 页面、未启动旁路容器、无 48 小时旁路浸泡”的限制，阶段0只能标记为“受控直连 Spike 完成”，不能标记为旁路研究能力上线。
+- 当前更稳妥的 ECS部署验证阶段0降级路径是：先使用现有 `backend/app/research/web.py` 的受控 HTTPS 单页读取器完成公开静态 HTML/RSS 的人工研究验证；它不支持依赖 JavaScript 渲染的页面，不能宣称等价于 Crawl4AI。Crawl4AI/RSSHub 仅保留为后续通过安全门禁或书面风险接受后的可选实验组件。
+- 该取舍不改变现行生产 MVP，也不自动放宽漏洞门禁；若采用降级路径，必须单独记录“未验证 JS 页面、未启动旁路容器、无 48 小时旁路浸泡”的限制，ECS部署验证阶段0只能标记为“受控直连 Spike 完成”，不能标记为旁路研究能力上线。
 
-### 阶段0固定镜像临时风险接受与启动授权（2026-08-14）
+### ECS部署验证阶段0固定镜像临时风险接受与启动授权（2026-08-14）
 
-- 负责人已明确接受当前 RSSHub（Critical `17` / High `53`）与 Crawl4AI（Critical `44` / High `604`）固定镜像的漏洞风险，仅授权用于本阶段0旁路 Spike；这不是生产长期放行，也不改变后续镜像必须固定、复扫和升级的要求。
+- 负责人已明确接受当前 RSSHub（Critical `17` / High `53`）与 Crawl4AI（Critical `44` / High `604`）固定镜像的漏洞风险，仅授权用于 ECS部署验证阶段0旁路 Spike；这不是生产长期放行，也不改变后续镜像必须固定、复扫和升级的要求。
 - 接受范围严格限制为本 ECS、`compose.stage0.yaml` 中既有两个固定 digest、内部 `internal` 网络、单实例与现有资源上限；不得新增宿主端口、privileged 权限、主机目录挂载、数据库写入权限或任意出网配置。
 - 运行期间不启动 `research-worker`、每日/每周调度、搜索 Provider、LLM 调用或批量采集；首轮只验证容器健康、内部网络边界、配置加载和整机资源，所有真实抓取/计费动作继续要求单独批准。
 - 观察期自实际启动时刻起 48 小时；任一容器异常退出、OOM、监控轨健康异常、宿主端口暴露、资源余量不足或发现未经批准的外部调用时，立即停止 `rsshub` 与 `crawl4ai`，保留 MVP 四服务不变。观察期结束、上游发布可用修复镜像或需要扩大功能范围时，必须重新评审。
 - 立即停止命令：`docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 -f compose.yaml -f compose.prod.yaml -f compose.stage0.yaml stop rsshub crawl4ai`。
 
-### 阶段0旁路启动与48小时观察起点（2026-08-14）
+### ECS部署验证阶段0旁路启动与48小时观察起点（2026-08-14）
 
 - 启动前复核：ECS MVP 的 App/PostgreSQL 为 healthy，Scheduler/Nginx 正常；根盘可用约 `26 GiB`，可用内存约 `2.3 GiB`，仅 Nginx 发布宿主 `80/443`。固定 RSSHub/Crawl4AI 镜像已在 ECS 缓存，未再次拉取。
 - 服务器侧创建 `deploy/.env.stage0`，权限 `600`；首次创建命令受 PowerShell 转义影响生成了非预期短值，已在任何验证流量前停止并重建 Crawl4AI。修复后的文件为 84 字节（变量名加 64 位十六进制随机 Token），Token 未输出、未同步到本地、未进入 Git。
@@ -221,7 +223,7 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 - RSSHub 最新工作流运行：<https://github.com/DIYgod/RSSHub/actions/runs/31563109839>
 - Crawl4AI v0.9.2 Release：<https://github.com/unclecode/crawl4ai/releases/tag/v0.9.2>
 
-阶段0启停命令（必须显式同时提供生产与阶段0环境文件）：
+ECS部署验证阶段0启停命令（必须显式同时提供生产与阶段0环境文件）：
 
 ```bash
 docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 \
@@ -244,7 +246,7 @@ docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 \
 - 2026-08-13 13:00 CST 真实重叠周期：中央任务处理 20 条信号，`nmc-weather` 独立任务记录一次“已有待处理信号批次运行，跳过本次重复处理”；部署后日志计数为唯一键冲突 0、锁跳过 1、处理失败 0、成功处理批次 1。
 - 最终状态：App healthy，PostgreSQL healthy，公网健康接口 HTTP 200 且返回 `{"status":"ok","database":"ok"}`，Alembic 为 `0027`；本阻断项关闭。
 
-### 阶段0前 ECS 现场基线复采（2026-08-13 18:00 CST）
+### ECS部署验证阶段0前 ECS 现场基线复采（2026-08-13 18:00 CST）
 
 - 生产 Compose 服务仍为 `postgres`、`app`、`nginx`、`scheduler` 四项；App/PostgreSQL 为 `healthy`，Nginx/Scheduler 正常运行。
 - `https://127.0.0.1/api/v1/system/health` 返回 HTTP `200`，响应为 `{"status":"ok","database":"ok"}`；Alembic 当前为 `0027`。
@@ -283,11 +285,11 @@ docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 \
 
 ## 下一步
 
-下一步完成发布范围审阅并冻结 commit/tag，再申请 ECS/ACR、证书和生产密钥等外部资源操作；PostGIS 按临时风险接受条件执行，并在补丁镜像可用或首次 ECS 上线后 30 天内复核。生产新库使用 `0027`，本地/阶段 0 使用默认 `head`。
+下一步完成发布范围审阅并冻结 commit/tag，再申请 ECS/ACR、证书和生产密钥等外部资源操作；PostGIS 按临时风险接受条件执行，并在补丁镜像可用或首次 ECS 上线后 30 天内复核。生产新库使用 `0027`，本地/研究轨开发阶段0使用默认 `head`。
 
-### 阶段0本机旁路真实读取与实机测试核对（2026-08-14）
+### ECS部署验证阶段0本机旁路真实读取与实机测试核对（2026-08-14）
 
-- 本机阶段0旁路仅以 Docker 内部服务方式验证，RSSHub 与 Crawl4AI 均没有宿主端口映射；本记录中的本机结果不替代 ECS 的 48 小时观察期、容量结论或生产验收。
+- 本机 ECS部署验证阶段0旁路仅以 Docker 内部服务方式验证，RSSHub 与 Crawl4AI 均没有宿主端口映射；本记录中的本机结果不替代 ECS 的 48 小时观察期、容量结论或生产验收。
 - RSSHub 从内部地址请求公开 GitHub 路由 `/github/issue/DIYgod/RSSHub`：HTTP `200`、`application/xml; charset=utf-8`、响应 `170180` 字节、耗时约 `5.20` 秒。该次只保存协议与体积证据，不保存正文。
 - Crawl4AI 使用容器内认证 Token 请求公开 `https://www.gov.cn/`：服务返回 `success=true`、HTTP `200`、Markdown `14841` 字符、耗时约 `6.61` 秒。Token 未输出；请求未经过研究 Worker、搜索 Provider、LLM 或平台数据库。
 - 抓取后 RSSHub 约 `209.7 MiB / 512 MiB`、Crawl4AI 约 `527.5 MiB / 1.5 GiB`；二者重启次数均为 `0`，Crawl4AI 仍为 Docker `healthy`。该内存快照仅反映一次单页读取后的本机环境。
@@ -299,4 +301,4 @@ docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 \
 - 前端显式启动的本机任务 `685` 已成功完成自动研究：搜索 `1` 次、候选 `6` 条、成功读取来源 `2` 条。随后生成报告草稿 `86`，模型为 `qwen3.6-plus`。
 - 任务账本记录模型 usage 为输入 `1407` Token、输出 `2709` Token；成本字段为 `0`，原因是当前尚未配置价格换算，不能据此认定外部模型调用无成本。
 - 报告为 `draft/pending`，包含 `2` 条事实、`1` 条推断和 `2` 条已回验引用；两条保存来源均为 HTTP 成功。审计链包含任务创建、显式开始、Worker 认领、报告草稿生成和任务完成。
-- 本机验收未写入风险信号、评分或自动转正，也不改变 ECS 阶段0观察结论；报告内容仍须人工审核后才能作为业务参考。
+- 本机验收未写入风险信号、评分或自动转正，也不改变 ECS部署验证阶段0观察结论；报告内容仍须人工审核后才能作为业务参考。

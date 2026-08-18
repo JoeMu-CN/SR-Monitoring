@@ -14,12 +14,17 @@ from app.config import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.database import engine, get_session
 from app.main import app
 from app.research.models import (
+    ResearchBatch,
     ResearchCitation,
     ResearchClaim,
     ResearchClaimCitation,
+    ResearchProviderQuotaPeriod,
     ResearchReport,
+    ResearchScheduleConfig,
     ResearchSource,
     ResearchTask,
+    ResearchTaskEvent,
+    ResearchWorkerHeartbeat,
 )
 from app.risks.models import (
     EventEntity,
@@ -54,6 +59,11 @@ def db_session() -> Generator[Session]:
     session.execute(delete(AIAnalysisRecord))
     session.execute(delete(RawSignal))
     session.execute(delete(CollectionRun))
+    session.execute(delete(ResearchTaskEvent))
+    session.execute(delete(ResearchWorkerHeartbeat))
+    session.execute(delete(ResearchScheduleConfig))
+    session.execute(delete(ResearchProviderQuotaPeriod))
+    session.execute(delete(ResearchBatch))
     session.execute(delete(ResearchReport))
     session.execute(delete(ResearchClaimCitation))
     session.execute(delete(ResearchCitation))
@@ -144,6 +154,7 @@ def workbook_factory() -> Callable[..., bytes]:
                 legal_name,
                 "CN",
                 "91310000TEST00001",
+                "上海市浦东新区测试登记路1号",
                 industry,
                 raw_materials,
                 "测试供应商;Test Supplier",
@@ -157,6 +168,7 @@ def workbook_factory() -> Callable[..., bytes]:
                 "CN",
                 "上海市",
                 "上海市",
+                "浦东新区",
                 "上海市浦东新区测试路1号",
                 latitude,
                 longitude,

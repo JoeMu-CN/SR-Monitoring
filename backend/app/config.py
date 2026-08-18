@@ -23,6 +23,15 @@ class SearchSettings:
     api_key: str
     base_url: str
     timeout_seconds: float
+    monthly_limit: int = 1000
+
+
+@dataclass(frozen=True)
+class Crawl4AISettings:
+    enabled: bool
+    base_url: str
+    api_token: str
+    timeout_seconds: float
 
 
 def get_ai_settings() -> AISettings:
@@ -43,6 +52,18 @@ def get_search_settings() -> SearchSettings:
         api_key=os.getenv("SEARCH_API_KEY", "").strip(),
         base_url=os.getenv("SEARCH_BASE_URL", "").strip(),
         timeout_seconds=_float_env("SEARCH_TIMEOUT_SECONDS", 15, minimum=1, maximum=60),
+        monthly_limit=_int_env("SEARCH_MONTHLY_LIMIT", 1000, minimum=1, maximum=100000),
+    )
+
+
+def get_crawl4ai_settings() -> Crawl4AISettings:
+    """读取受控单页 Crawl4AI 回退配置；默认关闭，避免隐式启动浏览器出网。"""
+    return Crawl4AISettings(
+        enabled=os.getenv("RESEARCH_CRAWL4AI_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"},
+        base_url=os.getenv("RESEARCH_CRAWL4AI_BASE_URL", "http://crawl4ai:11235").strip(),
+        api_token=os.getenv("RESEARCH_CRAWL4AI_API_TOKEN", "").strip(),
+        timeout_seconds=_float_env("RESEARCH_CRAWL4AI_TIMEOUT_SECONDS", 120, minimum=5, maximum=180),
     )
 
 
@@ -60,6 +81,17 @@ def _int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
     except ValueError:
         return default
     return value if minimum <= value <= maximum else default
+
+
+RESEARCH_BOCHA_MONTHLY_BATCH_LIMIT = _int_env(
+    "RESEARCH_BOCHA_MONTHLY_BATCH_LIMIT", 450, minimum=0, maximum=100000
+)
+RESEARCH_BOCHA_MANUAL_RESERVE = _int_env(
+    "RESEARCH_BOCHA_MANUAL_RESERVE", 300, minimum=0, maximum=100000
+)
+RESEARCH_BOCHA_SAFETY_RESERVE = _int_env(
+    "RESEARCH_BOCHA_SAFETY_RESERVE", 250, minimum=0, maximum=100000
+)
 
 
 # Agent 编排
@@ -155,6 +187,22 @@ RESEARCH_DAILY_CRON = os.getenv("RESEARCH_DAILY_CRON", "0 8 * * *").strip()
 RESEARCH_DAILY_TOPIC = os.getenv("RESEARCH_DAILY_TOPIC", "").strip()
 RESEARCH_WEEKLY_CRON = os.getenv("RESEARCH_WEEKLY_CRON", "30 8 * * mon").strip()
 RESEARCH_WEEKLY_TOPIC = os.getenv("RESEARCH_WEEKLY_TOPIC", "").strip()
+RESEARCH_MONTHLY_ENABLED = os.getenv("RESEARCH_MONTHLY_ENABLED", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+RESEARCH_MONTHLY_CRON = os.getenv("RESEARCH_MONTHLY_CRON", "0 9 1 * *").strip()
+RESEARCH_MONTHLY_TOPIC = os.getenv("RESEARCH_MONTHLY_TOPIC", "").strip()
+RESEARCH_MONTHLY_SUPPLIER_SCOPE = os.getenv(
+    "RESEARCH_MONTHLY_SUPPLIER_SCOPE", "limited"
+).strip().lower()
+if RESEARCH_MONTHLY_SUPPLIER_SCOPE not in {"limited", "all"}:
+    raise RuntimeError("RESEARCH_MONTHLY_SUPPLIER_SCOPE 仅支持 limited 或 all")
+RESEARCH_MONTHLY_SUPPLIER_LIMIT = _int_env(
+    "RESEARCH_MONTHLY_SUPPLIER_LIMIT", 100, minimum=1, maximum=100
+)
 # 本地研究 Worker 默认关闭。当前仅提供不访问外网/Provider/模型的生命周期测试模式。
 RESEARCH_WORKER_ENABLED = os.getenv("RESEARCH_WORKER_ENABLED", "false").strip().lower() in {
     "1",
@@ -163,11 +211,23 @@ RESEARCH_WORKER_ENABLED = os.getenv("RESEARCH_WORKER_ENABLED", "false").strip().
     "on",
 }
 RESEARCH_WORKER_MODE = os.getenv("RESEARCH_WORKER_MODE", "local_lifecycle_test").strip()
+RESEARCH_ORCHESTRATOR = os.getenv("RESEARCH_ORCHESTRATOR", "legacy").strip().lower()
+if RESEARCH_ORCHESTRATOR not in {"legacy", "langgraph"}:
+    raise RuntimeError("RESEARCH_ORCHESTRATOR 仅支持 legacy 或 langgraph")
 RESEARCH_WORKER_POLL_SECONDS = _float_env(
     "RESEARCH_WORKER_POLL_SECONDS", 5, minimum=0.1, maximum=60
 )
 RESEARCH_WORKER_LEASE_SECONDS = _int_env(
     "RESEARCH_WORKER_LEASE_SECONDS", 300, minimum=30, maximum=3600
+)
+RESEARCH_WORKER_HEARTBEAT_INTERVAL_SECONDS = _int_env(
+    "RESEARCH_WORKER_HEARTBEAT_INTERVAL_SECONDS", 15, minimum=5, maximum=300
+)
+RESEARCH_WORKER_HEARTBEAT_STALE_SECONDS = _int_env(
+    "RESEARCH_WORKER_HEARTBEAT_STALE_SECONDS", 60, minimum=10, maximum=900
+)
+RESEARCH_TOOL_RUN_STALE_SECONDS = _int_env(
+    "RESEARCH_TOOL_RUN_STALE_SECONDS", 1800, minimum=60, maximum=86400
 )
 # 每次定时任务对积压信号执行 AI 解析的批大小；每条信号一次独立 LLM 调用
 SIGNAL_ANALYZE_BATCH = _int_env(

@@ -26,4 +26,19 @@ services:
     mem_limit: 1536m
     cpus: 1.00
     shm_size: 256m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11235/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
+
+  research-worker:
+    depends_on:
+      crawl4ai:
+        condition: service_healthy

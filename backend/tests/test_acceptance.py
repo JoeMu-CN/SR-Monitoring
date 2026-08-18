@@ -73,7 +73,17 @@ def _build_workbook(
 ) -> bytes:
     workbook = load_workbook(BytesIO(create_template()))
     workbook[SHEET_SUPPLIERS].append(
-        [supplier_code, legal_name, "CN", registry_no, None, None, "", True]
+        [
+            supplier_code,
+            legal_name,
+            "CN",
+            registry_no,
+            "上海市浦东新区华辰登记路1号",
+            None,
+            None,
+            "",
+            True,
+        ]
     )
     workbook[SHEET_SITES].append(
         [
@@ -82,6 +92,7 @@ def _build_workbook(
             "CN",
             "上海市",
             "上海市",
+            "浦东新区",
             "上海市浦东新区华辰路1号",
             31.2304,
             121.4737,
@@ -94,6 +105,7 @@ def _build_workbook(
             "CN",
             "江苏省",
             "苏州市",
+            "昆山市",
             "昆山市华辰工业园2号",
             31.385,
             120.981,

@@ -102,6 +102,7 @@ class EventLocation(Base):
     country_code: Mapped[str | None] = mapped_column(Text)
     region: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
+    district: Mapped[str | None] = mapped_column(Text)
     latitude: Mapped[float | None] = mapped_column(Float)
     longitude: Mapped[float | None] = mapped_column(Float)
     radius_km: Mapped[float | None] = mapped_column(Float)

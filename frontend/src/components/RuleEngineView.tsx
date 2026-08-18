@@ -37,7 +37,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [sandboxOrganization, setSandboxOrganization] = useState('');
   const [sandboxRegistryNo, setSandboxRegistryNo] = useState('');
   const [sandboxLocation, setSandboxLocation] = useState('');
+  const [sandboxRegion, setSandboxRegion] = useState('');
+  const [sandboxCity, setSandboxCity] = useState('');
   const [sandboxCountryCode, setSandboxCountryCode] = useState('');
+  const [sandboxDistrict, setSandboxDistrict] = useState('');
   const [sandboxProducts, setSandboxProducts] = useState('');
   const [sandboxIndustries, setSandboxIndustries] = useState('');
   const [sandboxCredibility, setSandboxCredibility] = useState(80);
@@ -98,7 +101,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         event_subtype: sandboxEventSubtype || null,
         severity: sandboxSeverity,
         organizations: sandboxOrganization.trim() ? [{name: sandboxOrganization.trim(), aliases: [], registry_no: sandboxRegistryNo.trim() || null}] : [],
-        locations: sandboxLocation.trim() ? [{name: sandboxLocation.trim(), country_code: countryCode || null}] : [],
+        locations: sandboxLocation.trim() ? [{name: sandboxLocation.trim(), country_code: countryCode || null, region: sandboxRegion.trim() || null, city: sandboxCity.trim() || null, district: sandboxDistrict.trim() || null}] : [],
         affected_products: splitValues(sandboxProducts),
         affected_industries: splitValues(sandboxIndustries),
         summary: `规则沙箱：${sandboxOptions.event_types.find((item) => item.value === sandboxEventType)?.label ?? sandboxEventType}`,
@@ -457,9 +460,27 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </div>
 
               <div>
+                <label className="text-[12px] font-bold text-slate-500">省州地区</label>
+                <input value={sandboxRegion} onChange={(e) => setSandboxRegion(e.target.value)} placeholder="如：上海市"
+                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] mt-1" />
+              </div>
+
+              <div>
+                <label className="text-[12px] font-bold text-slate-500">城市</label>
+                <input value={sandboxCity} onChange={(e) => setSandboxCity(e.target.value)} placeholder="如：上海市"
+                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] mt-1" />
+              </div>
+
+              <div>
                 <label className="text-[12px] font-bold text-slate-500">国家/地区代码</label>
                 <input value={sandboxCountryCode} onChange={(e) => setSandboxCountryCode(e.target.value)} maxLength={2} placeholder="如：CN"
                   className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] font-mono mt-1" />
+              </div>
+
+              <div>
+                <label className="text-[12px] font-bold text-slate-500">区县</label>
+                <input value={sandboxDistrict} onChange={(e) => setSandboxDistrict(e.target.value)} placeholder="如：浦东新区"
+                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] mt-1" />
               </div>
 
               <div>

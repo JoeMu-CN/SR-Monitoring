@@ -66,7 +66,12 @@ export interface Supplier {
   code: string; // e.g. VND-88392
   legalName: string; // 法人主体
   registrationNo: string; // 注册号
+  registrationAddress?: string; // 工商注册地址
   productionLocation: string; // 生产地点
+  productionAddress?: string;
+  productionRegion?: string;
+  productionCity?: string;
+  productionDistrict?: string;
   countryRegion?: string;
   tier: string;
   category: string; // e.g. 微电子元件, 特种溶剂

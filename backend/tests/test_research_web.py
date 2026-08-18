@@ -46,6 +46,7 @@ def test_read_public_page_records_redirect_chain_and_visible_excerpt() -> None:
     assert result.status_code == 200
     assert result.content_type == "text/html"
     assert result.excerpt == "官方公告 供应链信息正常"
+    assert result.reader == "direct_http"
     assert "secret" not in result.excerpt
 
 
@@ -123,3 +124,69 @@ def test_read_public_page_rejects_redirect_limit() -> None:
         )
 
     assert exc_info.value.error_kind == "redirect_limit"
+
+
+def test_read_public_page_falls_back_to_crawl4ai_for_empty_static_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_ENABLED", "true")
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_BASE_URL", "http://crawl4ai:11235")
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_API_TOKEN", "test-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "crawl4ai":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "url": "https://official.example/dynamic",
+                            "status_code": 200,
+                            "markdown": "动态页面已渲染：官方公告正文。",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/html"},
+            content=b"<html><body><div id='app'></div><script>render()</script></body></html>",
+        )
+
+    result = _run(
+        read_public_page(
+            "https://official.example/dynamic",
+            transport=httpx.MockTransport(handler),
+        )
+    )
+
+    assert result.content_type == "text/markdown"
+    assert result.excerpt == "动态页面已渲染：官方公告正文。"
+    assert result.reader == "crawl4ai"
+
+
+def test_read_public_page_does_not_use_crawl4ai_to_bypass_waf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_ENABLED", "true")
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_BASE_URL", "http://crawl4ai:11235")
+    monkeypatch.setenv("RESEARCH_CRAWL4AI_API_TOKEN", "test-token")
+    crawler_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal crawler_calls
+        if request.url.host == "crawl4ai":
+            crawler_calls += 1
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(403, text="WAF blocked")
+
+    with pytest.raises(SourceRequestFailed) as exc_info:
+        _run(
+            read_public_page(
+                "https://official.example/blocked",
+                transport=httpx.MockTransport(handler),
+            )
+        )
+
+    assert exc_info.value.error_kind == "access_blocked"
+    assert crawler_calls == 0

@@ -40,6 +40,7 @@ class Supplier(Base):
     legal_name: Mapped[str] = mapped_column(Text)
     country_code: Mapped[str] = mapped_column(Text)
     registry_no: Mapped[str | None] = mapped_column(Text)
+    registration_address: Mapped[str | None] = mapped_column(Text)
     industry: Mapped[str | None] = mapped_column(Text)
     raw_materials: Mapped[list[str]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
@@ -108,6 +109,7 @@ class SupplierSite(Base):
     country_code: Mapped[str] = mapped_column(Text)
     region: Mapped[str | None] = mapped_column(Text)
     city: Mapped[str | None] = mapped_column(Text)
+    district: Mapped[str | None] = mapped_column(Text)
     address: Mapped[str] = mapped_column(Text)
     latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))

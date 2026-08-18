@@ -36,6 +36,7 @@ SUPPLIER_COLUMNS = [
     ("法人主体", "legal_name", True, "供应商法人主体全称"),
     ("国家代码", "country_code", True, "ISO 两位国家代码，例如 CN、US"),
     ("注册编号", "registry_no", False, "统一社会信用代码或境外注册编号"),
+    ("注册地址", "registration_address", False, "供应商工商登记的详细地址"),
     ("行业", "industry", False, "行业标签，例如 电梯配件、钣金加工；用于宏观行业匹配"),
     (
         "关键原材料",
@@ -52,6 +53,7 @@ SITE_COLUMNS = [
     ("国家代码", "country_code", True, "ISO 两位国家代码，例如 CN、US"),
     ("省州地区", "region", False, "省、州或一级行政区"),
     ("城市", "city", False, "城市"),
+    ("区县", "district", False, "区、县、旗或同级行政区"),
     ("详细地址", "address", True, "实际生产或履约地址"),
     ("纬度", "latitude", False, "-90 到 90；必须与经度同时填写"),
     ("经度", "longitude", False, "-180 到 180；必须与纬度同时填写"),
@@ -80,14 +82,19 @@ def create_template() -> bytes:
     if active_sheet is not None:
         workbook.remove(active_sheet)
     _add_template_sheet(
-        workbook, SHEET_SUPPLIERS, SUPPLIER_COLUMNS, [20, 34, 14, 24, 20, 26, 36, 14]
+        workbook,
+        SHEET_SUPPLIERS,
+        SUPPLIER_COLUMNS,
+        [20, 34, 14, 24, 34, 20, 26, 36, 14],
     )
-    _add_template_sheet(workbook, SHEET_SITES, SITE_COLUMNS, [20, 24, 14, 20, 18, 42, 14, 14])
+    _add_template_sheet(
+        workbook, SHEET_SITES, SITE_COLUMNS, [20, 24, 14, 20, 18, 18, 42, 14, 14]
+    )
     _add_template_sheet(workbook, SHEET_PRODUCTS, PRODUCT_COLUMNS, [20, 28, 42])
 
     enabled_validation = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
     workbook[SHEET_SUPPLIERS].add_data_validation(enabled_validation)
-    enabled_validation.add("F2:F5000")
+    enabled_validation.add("I2:I5000")
 
     output = BytesIO()
     workbook.save(output)
@@ -181,6 +188,7 @@ def parse_workbook(data: bytes) -> ImportPlan:
             "legal_name": row.get("legal_name"),
             "country_code": row.get("country_code"),
             "registry_no": row.get("registry_no"),
+            "registration_address": row.get("registration_address"),
             "industry": clean_optional_text(row.get("industry")),
             "raw_materials": _split_values(clean_optional_text(row.get("raw_materials"))),
             "enabled": _parse_bool(
@@ -253,6 +261,7 @@ def parse_workbook(data: bytes) -> ImportPlan:
                     "country_code": row.get("country_code"),
                     "region": row.get("region"),
                     "city": row.get("city"),
+                    "district": row.get("district"),
                     "address": row.get("address"),
                     "latitude": latitude,
                     "longitude": longitude,

@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from app.config import Crawl4AISettings, get_crawl4ai_settings
 from app.signals.declarative import validate_public_https_url
 from app.signals.request_control import (
     HostLease,
@@ -22,6 +23,7 @@ from app.signals.request_control import (
     complete_host_lease,
     release_host_lease,
 )
+from app.signals.sources import SourceFetchError
 
 MAX_RESEARCH_PAGE_BYTES = 1024 * 1024
 MAX_RESEARCH_REDIRECTS = 3
@@ -36,6 +38,7 @@ class ResearchPageRead:
     status_code: int
     content_type: str
     excerpt: str
+    reader: str = "direct_http"
 
 
 class _VisibleTextParser(HTMLParser):
@@ -57,7 +60,7 @@ class _VisibleTextParser(HTMLParser):
             self.parts.append(data)
 
 
-async def read_public_page(
+async def _read_public_page_direct(
     url: str,
     *,
     maximum_bytes: int = MAX_RESEARCH_PAGE_BYTES,
@@ -105,14 +108,18 @@ async def read_public_page(
                 redirect_chain.append(target)
                 current_url = target
                 continue
-            return ResearchPageRead(
+            page = ResearchPageRead(
                 requested_url=requested_url,
                 final_url=current_url,
                 redirect_chain=tuple(redirect_chain),
                 status_code=response.status_code,
                 content_type=content_type or "application/octet-stream",
                 excerpt=_visible_excerpt(response.content, content_type),
+                reader="direct_http",
             )
+            if not page.excerpt:
+                raise SourceRequestFailed("研究页面正文为空", error_kind="empty_content")
+            return page
         raise SourceRequestFailed(
             f"重定向次数超过 {maximum_redirects} 次",
             error_kind="redirect_limit",
@@ -120,6 +127,137 @@ async def read_public_page(
     finally:
         if active_lease:
             release_host_lease(active_lease)
+
+
+def _crawl4ai_result(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    results = payload.get("results")
+    if isinstance(results, list) and results and isinstance(results[0], dict):
+        return results[0]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    return payload
+
+
+async def read_public_page_with_crawl4ai(
+    url: str,
+    *,
+    settings: Crawl4AISettings | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ResearchPageRead:
+    """通过已认证 Crawl4AI 读取单页；不允许深爬、脚本注入或任意配置透传。"""
+    current = settings or get_crawl4ai_settings()
+    if not current.enabled or not current.api_token:
+        raise SourceRequestFailed("Crawl4AI 回退未配置", error_kind="crawler_unavailable")
+    await validate_public_https_url(url, resolve_dns=False)
+    endpoint = f"{current.base_url.rstrip('/')}/crawl"
+    payload = {
+        "urls": [url],
+        "browser_config": {"headless": True},
+        "crawler_config": {
+            "cache_mode": "bypass",
+            "word_count_threshold": 1,
+            "excluded_tags": ["script", "style", "noscript", "template"],
+        },
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=current.timeout_seconds,
+            transport=transport,
+            trust_env=False,
+            headers={
+                "Authorization": f"Bearer {current.api_token}",
+                "Content-Type": "application/json",
+            },
+        ) as client:
+            response = await client.post(endpoint, json=payload)
+    except httpx.HTTPError as exc:
+        raise SourceRequestFailed(
+            "Crawl4AI 网络请求失败", error_kind="crawler_network_error"
+        ) from exc
+    if response.status_code >= 400:
+        raise SourceRequestFailed(
+            "Crawl4AI 读取失败",
+            error_kind="crawler_http_error",
+            status_code=response.status_code,
+        )
+    try:
+        result = _crawl4ai_result(response.json())
+    except ValueError as exc:
+        raise SourceRequestFailed(
+            "Crawl4AI 返回非 JSON", error_kind="crawler_invalid_response"
+        ) from exc
+    if result is None:
+        raise SourceRequestFailed("Crawl4AI 没有返回页面结果", error_kind="crawler_empty_result")
+    excerpt = str(
+        result.get("markdown")
+        or result.get("cleaned_markdown")
+        or result.get("fit_markdown")
+        or result.get("raw_markdown")
+        or result.get("html")
+        or ""
+    ).strip()
+    if "<html" in excerpt.lower() or "<body" in excerpt.lower():
+        excerpt = _visible_excerpt(excerpt.encode("utf-8"), "text/html")
+    else:
+        excerpt = " ".join(excerpt.split())[:MAX_RESEARCH_EXCERPT_CHARS]
+    if not excerpt:
+        raise SourceRequestFailed("Crawl4AI 返回空正文", error_kind="empty_content")
+    final_url = str(result.get("url") or result.get("final_url") or url)
+    status_value = result.get("status_code") or result.get("status") or 200
+    try:
+        status_code = int(status_value) if isinstance(status_value, (int, str)) else 200
+    except (TypeError, ValueError):
+        status_code = 200
+    return ResearchPageRead(
+        requested_url=url,
+        final_url=final_url,
+        redirect_chain=(),
+        status_code=status_code,
+        content_type="text/markdown",
+        excerpt=excerpt,
+        reader="crawl4ai",
+    )
+
+
+async def read_public_page(
+    url: str,
+    *,
+    maximum_bytes: int = MAX_RESEARCH_PAGE_BYTES,
+    maximum_redirects: int = MAX_RESEARCH_REDIRECTS,
+    transport: httpx.AsyncBaseTransport | None = None,
+    use_crawl4ai_fallback: bool = True,
+) -> ResearchPageRead:
+    """先直连读取，失败时按配置回退到 Crawl4AI 单页渲染。"""
+    try:
+        return await _read_public_page_direct(
+            url,
+            maximum_bytes=maximum_bytes,
+            maximum_redirects=maximum_redirects,
+            transport=transport,
+        )
+    except (SourceRequestFailed, SourceFetchError, ValueError, RuntimeError) as error:
+        settings = get_crawl4ai_settings()
+        if (
+            not use_crawl4ai_fallback
+            or not settings.enabled
+            or not settings.api_token
+            or not _crawl4ai_fallback_allowed(error)
+        ):
+            raise
+        return await read_public_page_with_crawl4ai(
+            url,
+            settings=settings,
+            transport=transport,
+        )
+
+
+def _crawl4ai_fallback_allowed(error: BaseException) -> bool:
+    """仅对网络/上游故障或空正文回退，不用浏览器绕过 WAF、限流和认证。"""
+    error_kind = getattr(error, "error_kind", None)
+    return error_kind in {"network_error", "upstream_error", "empty_content"}
 
 
 @dataclass(frozen=True)

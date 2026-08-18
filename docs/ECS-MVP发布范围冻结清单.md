@@ -16,8 +16,8 @@
 | 候选镜像 digest | `sha256:c51702ff7ed8eb8768cd1ef30bab91f779fb0b2b3dcdf7100b934414c1062e14` |
 | Nginx 镜像 | `nginx:1.30-alpine-slim@sha256:45c3810793fe3e982fb614c67e1b696816aff3ec742620e1ef7cd9d3184185ef`；Scout Critical/High `0/0` |
 | PostgreSQL/PostGIS 镜像 | `postgis/postgis:16-3.5-alpine@sha256:d2fe6296c8ed5b21b31a426f51b9176b4d89f80a0a380632a7a833d604951273`；Scout Critical/High `1/17`，仍阻断发布 |
-| 生产迁移目标 | `0027` |
-| 本地/阶段 0 迁移目标 | `head`（当前为 `0028`） |
+| 生产迁移目标 | `0033` |
+| 本地/研究轨开发阶段0迁移目标 | `head`（当前为 `0035`） |
 | 生产研究开关 | `RESEARCH_TRACK_ENABLED=false` |
 | Scout 结果 | app `0/0`；Nginx `0/0`；PostGIS `1/17`，已按条件临时接受并限期复核 |
 
@@ -28,13 +28,13 @@
 - `Dockerfile` 的 Alpine 运行层和可配置 Alembic 迁移目标。
 - `compose.yaml`、`compose.prod.yaml` 的四服务生产编排：`postgres`、`app`、`scheduler`、`nginx`。
 - `deploy/.env.production.example` 的生产占位配置；真实 `.env`、密钥和证书不进入 Git。
-- 监控轨迁移 `0027`；完整研究迁移链不作为生产升级目标。
+- 监控轨迁移 `0027`、地址与区级校验补丁 `0033`；完整研究迁移链不作为生产升级目标。
 - 发布台账、SBOM 和部署清单等不含密钥的审计文档。
 
 ## 明确排除首次 ECS 发布的内容
 
 - `backend/app/research/`、`frontend/src/components/ResearchView.tsx` 及研究测试：本次不启用、不作为生产验收能力。
-- 研究迁移 `0022`～`0026`、合并节点 `0028`：生产新库只执行到 `0027`。
+- 研究迁移 `0022`～`0026`、`0031`～`0032`、`0035`、合并节点 `0034`：生产新库只执行到 `0033`。
 - RSSHub、Crawl4AI、搜索 Provider、research-worker、自动日报/周报。
 - `.env`、`deploy/.env.production`、真实 API Key、数据库密码、Session 密钥、证书和私有配置。
 - `backend/app/static/`、`backend/*.egg-info/`、`backend/data/` 等本地构建/运行生成物；生产镜像在 Docker 构建阶段生成前端静态文件。
@@ -73,7 +73,7 @@
 ```text
 服务：postgres / app / scheduler / nginx
 RESEARCH_TRACK_ENABLED=false
-ALEMBIC_UPGRADE_TARGET=0027
+ALEMBIC_UPGRADE_TARGET=0033
 PostgreSQL、app、scheduler 不映射公网端口
 ```
 

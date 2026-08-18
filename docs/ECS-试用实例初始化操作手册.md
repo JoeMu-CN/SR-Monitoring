@@ -5,11 +5,11 @@
 ## 0. 先确认的边界
 
 - 不在 ECS 上从当前混合工作区构建生产镜像。
-- 生产新库迁移目标固定为 `0027`。
+- 生产新库迁移目标固定为 `0033`。
 - `RESEARCH_TRACK_ENABLED=false`。
 - 只有 Nginx 对外；PostgreSQL、app、Scheduler 不映射宿主端口。
 - 不把密码、API Key、Session 密钥、证书私钥写进 Git 或聊天记录。
-- 当前 2 vCPU/4 GiB 只承诺 MVP 基线和低并发验证；研究轨需要单独阶段 0 容量测试。
+- 当前 2 vCPU/4 GiB 只承诺 MVP 基线和低并发验证；研究轨需要单独执行 ECS部署验证阶段0容量测试。
 - 技术验证阶段不要求先购买正式域名；可使用 ECS 公网 IP 加临时自签名 HTTPS 证书登录验证。正式域名和受信任证书留到生产上线阶段。
 
 ## 0.1 为什么生产配置需要域名
@@ -153,7 +153,7 @@ sudo -u deploy editor /opt/supplier-risk-monitoring/deploy/.env.production
 - `AI_PROVIDER`、`AI_BASE_URL`、`AI_MODEL`、`AI_API_KEY`
 - `RESEARCH_TRACK_ENABLED=false`
 - `SEARCH_PROVIDER=none`
-- `ALEMBIC_UPGRADE_TARGET=0027`
+- `ALEMBIC_UPGRADE_TARGET=0033`
 
 首次初始化管理员时才临时设置 `BOOTSTRAP_ADMIN_USERNAME` 和 `BOOTSTRAP_ADMIN_PASSWORD`。登录验证成功后立即清空这两个变量并重建 app。
 
@@ -178,7 +178,7 @@ cd /opt/supplier-risk-monitoring
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml config
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml pull app scheduler
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml up -d postgres
-docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml run --rm --no-build app alembic upgrade 0027
+docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml run --rm app alembic upgrade 0033
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml up -d --no-build app nginx
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml up -d --no-build scheduler
 docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod.yaml ps
@@ -188,7 +188,7 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 
 - `postgres`、`app`、`scheduler`、`nginx` 均为 healthy/running；
 - 只有 Nginx 有宿主端口；
-- app 和 scheduler 日志显示迁移目标 `0027`；
+- app 和 scheduler 日志显示迁移目标 `0033`；
 - 研究 API 不出现在 OpenAPI；
 - `/api/v1/system/health` 返回数据库正常。
 

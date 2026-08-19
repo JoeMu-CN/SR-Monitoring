@@ -79,8 +79,8 @@ def _source_limits(source: DataSource | None) -> tuple[int, int]:
         else {}
     )
     return (
-        _limit_value(values.get("daily_limit"), daily_default, 1000),
-        _limit_value(values.get("monthly_limit"), monthly_default, 10000),
+        _limit_value(values.get("daily_limit"), daily_default, 100000),
+        _limit_value(values.get("monthly_limit"), monthly_default, 1000000),
     )
 
 

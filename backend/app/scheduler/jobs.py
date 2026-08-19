@@ -111,6 +111,98 @@ def collect_source_job(source_id: int) -> None:
         logger.exception("数据源 %s 独立调度异常: %s", source_id, exc)
 
 
+def collect_tyc_for_suppliers_job() -> None:
+    """每日批量核查启用的供应商：调用天眼查 MCP 并把结果写入信号池。
+
+    只对 suppliers.enabled=true 的供应商执行；受天眼查每日/每月额度控制
+    （get_tyc_usage.allowed），额度耗尽即停止。结果写入 raw_signals，
+    随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
+    """
+    try:
+        import asyncio as _asyncio
+
+        from app.agent.budget import get_tyc_usage
+        from app.agent.supplier_tyc import upsert_supplier_tyc_signal
+        from app.agent.tyc_gateway import build_tyc_gateway
+
+        with SessionLocal() as session:
+            usage = get_tyc_usage(session)
+            if not usage.enabled:
+                logger.warning("天眼查未启用，跳过供应商批量核查")
+                return
+            if not usage.allowed:
+                logger.warning(
+                    "天眼查额度不足（今日 %d/%d，本月 %d/%d），跳过供应商批量核查",
+                    usage.daily_used, usage.daily_limit,
+                    usage.monthly_used, usage.monthly_limit,
+                )
+                return
+            suppliers = list(
+                session.scalars(
+                    select(Supplier)
+                    .where(Supplier.enabled.is_(True))
+                    .order_by(Supplier.supplier_code)
+                )
+            )
+        if not suppliers:
+            logger.info("无启用供应商，跳过天眼查批量核查")
+            return
+        gateway = build_tyc_gateway()
+        created = 0
+        skipped = 0
+        failed = 0
+        for supplier in suppliers:
+            with SessionLocal() as session:
+                if not get_tyc_usage(session).allowed:
+                    logger.warning("天眼查额度耗尽，提前停止供应商批量核查")
+                    break
+                try:
+                    result = _asyncio.run(gateway.verify(supplier.legal_name))
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    logger.warning("天眼查核查 %s 失败: %s", supplier.legal_name, exc)
+                    continue
+                if result.get("status") != "success":
+                    skipped += 1
+                    continue
+                title = f"天眼查核查：{supplier.legal_name}"
+                content = _format_tyc_content(result)
+                _, is_created = upsert_supplier_tyc_signal(
+                    session,
+                    supplier=supplier,
+                    title=title,
+                    content=content,
+                    url=None,
+                    raw_payload=result,
+                )
+                if is_created:
+                    created += 1
+                session.commit()
+        logger.info(
+            "天眼查批量核查完成: 供应商=%d 新增信号=%d 跳过=%d 失败=%d",
+            len(suppliers), created, skipped, failed,
+        )
+        if created:
+            _process_pending_signals()
+    except Exception as exc:
+        logger.exception("天眼查批量核查异常: %s", exc)
+
+
+def _format_tyc_content(result: dict[str, object]) -> str:
+    """把天眼查 verify 结果转成信号正文（含可回溯字段）。"""
+    parts = [f"企业：{result.get('company_name', '')}"]
+    if result.get("credit_code"):
+        parts.append(f"统一社会信用代码：{result['credit_code']}")
+    if result.get("reg_status"):
+        parts.append(f"登记状态：{result['reg_status']}")
+    candidates = result.get("candidates") or []
+    if isinstance(candidates, list):
+        for idx, cand in enumerate(candidates[:3], start=1):
+            if isinstance(cand, dict) and cand.get("name"):
+                parts.append(f"候选{idx}：{cand.get('name')}")
+    return "；".join(parts)
+
+
 def _process_pending_signals(limit: int | None = None) -> int:
     """对尚无成功 AI 解析的信号执行解析与全链路处理，返回处理条数。
 

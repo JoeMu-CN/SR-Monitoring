@@ -145,12 +145,17 @@ class QueryCurrentAlertsTool:
 
 
 class VerifyCompanyTool:
-    """清单外企业一次性核查（受预算控制器管控）。"""
+    """企业风险核查（受预算控制器管控）。
+
+    路由规则：
+    - 清单内（enabled 供应商）：只读已入库的最新天眼查信号，不调 MCP、不消耗额度；
+    - 清单外企业：实时调用天眼查 MCP（走每日/每月额度，计入账本）。
+    """
 
     name = "verify_company"
     description = (
-        "对任意企业做一次性风险核查（工商、司法、经营异常）。"
-        "只读，受每日/每月调用额度限制。"
+        "对任意企业做风险核查（工商、司法、经营异常）。清单内供应商返回已入库最新信息；"
+        "清单外企业实时调用天眼查，受每日/每月调用额度限制。只读。"
     )
     parameters: dict[str, object] = {
         "type": "object",
@@ -168,6 +173,31 @@ class VerifyCompanyTool:
         if not name:
             return {"status": "error", "message": "company_name 不能为空"}
 
+        # 清单内供应商：读已入库最新信号，不触发实时天眼查
+        supplier = session.scalar(
+            select(Supplier).where(
+                Supplier.enabled.is_(True),
+                Supplier.legal_name == name,
+            )
+        )
+        if supplier is not None:
+            from app.agent.supplier_tyc import (
+                format_tyc_signal_result,
+                latest_tyc_signals_for_supplier,
+            )
+
+            signals = latest_tyc_signals_for_supplier(session, supplier)
+            if signals:
+                return format_tyc_signal_result(signals[0])
+            return {
+                "status": "empty",
+                "source": "database",
+                "message": "该供应商暂无已入库的天眼查核查记录（定时核查尚未执行或未命中）",
+                "supplier_id": supplier.id,
+                "supplier_code": supplier.supplier_code,
+            }
+
+        # 清单外企业：实时调用（受预算控制器管控）
         usage = get_tyc_usage(session)
         if not usage.enabled:
             return {

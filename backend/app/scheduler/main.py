@@ -32,6 +32,7 @@ from app.scheduler.jobs import (
     cleanup_job,
     collect_job,
     collect_source_job,
+    collect_tyc_for_suppliers_job,
     create_monthly_research_batch_job,
     create_research_task_job,
     create_weekly_research_batch_job,
@@ -147,6 +148,13 @@ def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
+    )
+    # 供应商主体维度：每日批量天眼查核查（额度 10000/天，100000/月），结果落信号池
+    scheduler.add_job(
+        collect_tyc_for_suppliers_job,
+        _trigger("0 6 * * *"),
+        id="tyc-suppliers-daily",
+        name="天眼查供应商批量核查",
     )
     _register_source_jobs(scheduler)
     _register_weekly_research_job(scheduler)

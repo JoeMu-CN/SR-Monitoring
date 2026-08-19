@@ -125,9 +125,10 @@ RESEARCH_BOCHA_SAFETY_RESERVE = _int_env(
 # Agent 编排
 AGENT_MAX_STEPS = _int_env("AGENT_MAX_STEPS", 6, minimum=1, maximum=20)
 # 以下四项只保留开发环境旧配置兼容；生产运行时从天眼查数据源记录读取。
-AGENT_TYC_DAILY_LIMIT = _int_env("AGENT_TYC_DAILY_LIMIT", 80, minimum=1, maximum=1000)
+# 2026-08-18 确认：天眼查 API 额度为 10000 次/天、100000 次/月。
+AGENT_TYC_DAILY_LIMIT = _int_env("AGENT_TYC_DAILY_LIMIT", 10000, minimum=1, maximum=100000)
 AGENT_TYC_MONTHLY_LIMIT = _int_env(
-    "AGENT_TYC_MONTHLY_LIMIT", 900, minimum=1, maximum=10000
+    "AGENT_TYC_MONTHLY_LIMIT", 100000, minimum=1, maximum=1000000
 )
 # 天眼查 MCP 网关（与 AI 平台控制台 API Key 相同，tyc_ 开头）。
 # 生产环境只从数据源控制台读取加密密钥；TYC_API_KEY 仅保留开发环境兼容回退。

@@ -870,3 +870,71 @@ def test_agent_status_endpoint(
     assert body["llm_configured"] is False  # Fake 引擎视为未配置真实模型
     assert body["tyc_enabled"] is False
     assert body["max_steps"] >= 1
+
+
+def test_verify_company_serves_latest_signal_for_registered_supplier(
+    clean_agent_tables: Session, enable_tyc: None
+) -> None:
+    """清单内供应商：只读已入库最新天眼查信号，不调 MCP、不消耗额度。"""
+    from app.agent.supplier_tyc import upsert_supplier_tyc_signal
+    from app.signals.models import RawSignal
+
+    supplier = Supplier(
+        supplier_code="SUP-001",
+        legal_name="上海华美精密机械有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    external_id, created = upsert_supplier_tyc_signal(
+        clean_agent_tables,
+        supplier=supplier,
+        title="天眼查核查：上海华美精密机械有限公司",
+        content="企业：上海华美精密机械有限公司；登记状态：存续",
+        raw_payload={"status": "success", "company_name": "上海华美精密机械有限公司"},
+    )
+    assert created is True
+    clean_agent_tables.flush()
+
+    gateway = FakeTycGateway(status="success")
+    tool = VerifyCompanyTool(gateway=gateway)
+    result = asyncio.run(
+        tool.execute({"company_name": "上海华美精密机械有限公司"}, clean_agent_tables)
+    )
+    assert result["status"] == "success"
+    assert result["source"] == "database"  # type: ignore[index]
+    assert "存续" in str(result["content"])  # type: ignore[index]
+    # 不消耗额度：网关未被调用
+    assert gateway.calls == []
+    assert get_tyc_usage(clean_agent_tables).daily_used == 0
+    # 信号仍在库中
+    stored = clean_agent_tables.scalar(
+        select(RawSignal).where(RawSignal.external_id == external_id)
+    )
+    assert stored is not None
+
+
+def test_verify_company_registered_supplier_without_signal_returns_empty(
+    clean_agent_tables: Session, enable_tyc: None
+) -> None:
+    """清单内供应商但无已入库信号：返回 empty（database），不调 MCP。"""
+    supplier = Supplier(
+        supplier_code="SUP-002",
+        legal_name="宁波鸿腾精密有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    gateway = FakeTycGateway(status="success")
+    tool = VerifyCompanyTool(gateway=gateway)
+    result = asyncio.run(
+        tool.execute({"company_name": "宁波鸿腾精密有限公司"}, clean_agent_tables)
+    )
+    assert result["status"] == "empty"
+    assert result["source"] == "database"  # type: ignore[index]
+    assert gateway.calls == []
+    assert get_tyc_usage(clean_agent_tables).daily_used == 0

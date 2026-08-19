@@ -300,6 +300,157 @@ class OfacSdnAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条制裁条目")
 
 
+class EuOfficialJournalAdapter(PullSourceAdapter):
+    """欧盟官方公报（EUR-Lex CELLAR SPARQL）法规目录适配器。
+
+    直连 publications.europa.eu/webapi/rdf/sparql（SPARQL GET，JSON 结果），
+    查询最近发布的法规类（CELEX 以 3 开头）条目，含标题/日期/CELEX。
+    不依赖浏览器渲染（EUR-Lex 网页被 CloudFront 202 JS 挑战拦截，SPARQL 可直连）。
+    """
+
+    source_code = "eu-official-journal"
+    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
+    _DEFAULT_LOOKBACK_DAYS = 7
+    _MAX_ITEMS = 50
+    _SPARQL_PREFIX = (
+        "PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>"
+        "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>"
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+        self._lookback_days = lookback_days
+
+    def _build_query(self, since_date: str) -> str:
+        """生成 SPARQL：最近 lookback 天内发布的法规类条目（含标题/日期/CELEX）。"""
+        return f"""
+{self._SPARQL_PREFIX}
+select distinct ?celex ?date ?title where{{
+  ?work cdm:work_has_resource-type ?type.
+  ?work cdm:resource_legal_id_celex ?celex.
+  ?work cdm:work_date_document ?date.
+  ?work cdm:work_title ?title.
+  FILTER(lang(?title) = 'en')
+  FILTER not exists{{?work cdm:do_not_index "true"^^xsd:boolean}}.
+  FILTER(STRSTARTS(STR(?celex), "3"))
+  FILTER(?date >= "{since_date}"^^xsd:date)
+}} ORDER BY DESC(?date) LIMIT {self._MAX_ITEMS}
+"""
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        since = (datetime.now(UTC) - timedelta(days=self._lookback_days)).date().isoformat()
+        query = self._build_query(since)
+        params = {"query": query, "format": "json"}
+        url = self.endpoint
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en;q=0.9",
+            "Accept": "application/sparql-results+json,application/json,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            # 测试/自定义 transport：直接调用（受控模式与声明式信源不同，
+            # EUR-Lex 是官方只读 SPARQL，请求体为 GET 参数，无写操作）。
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(url, params=params, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("EUR-Lex SPARQL 网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            from urllib.parse import urlencode
+
+            request_url = f"{url}?{urlencode(params)}"
+            try:
+                controlled = await controlled_get(
+                    request_url,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=5 * 1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"EUR-Lex SPARQL 请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SourceFetchError("EUR-Lex SPARQL 返回不是有效 JSON") from exc
+        bindings = (
+            payload.get("results", {}).get("bindings", [])
+            if isinstance(payload, dict)
+            else []
+        )
+        items: list[RawSourceItem] = []
+        seen: set[str] = set()
+        for row in bindings:
+            if not isinstance(row, dict):
+                continue
+            celex = _binding(row, "celex")
+            title = _binding(row, "title")
+            date = _binding(row, "date")
+            if not celex or not title or celex in seen:
+                continue
+            seen.add(celex)
+            items.append(
+                RawSourceItem(
+                    external_id=f"euoj-{celex}",
+                    title=title,
+                    content=(
+                        f"CELEX：{celex}；发布日期：{date or '未知'}"
+                    ),
+                    url=f"https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:{celex}",
+                    extra={"celex": celex, "published_date": date},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="EUR-Lex 最近无法规条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条法规")
+
+
 def _parse_nmc_time(value: object) -> datetime | None:
     """解析中央气象台发布时间，如 '2026/08/07 22:30'（东八区，无时区）。"""
     if not isinstance(value, str):
@@ -311,4 +462,14 @@ def _parse_nmc_time(value: object) -> datetime | None:
         except ValueError:
             continue
         return naive.replace(tzinfo=timezone(timedelta(hours=8)))
+    return None
+
+
+def _binding(row: dict[str, object], key: str) -> str | None:
+    """从 SPARQL JSON 结果行提取绑定值（row = {"celex": {"type": "...", "value": "..."}}）。"""
+    cell = row.get(key)
+    if isinstance(cell, dict):
+        value = cell.get("value")
+        if isinstance(value, str) and value:
+            return value
     return None

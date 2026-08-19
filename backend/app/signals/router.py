@@ -56,6 +56,7 @@ from app.signals.schemas import (
 from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
 from app.signals.sources import (
+    EuOfficialJournalAdapter,
     NmcWeatherAdapter,
     OfacSdnAdapter,
     PullSourceAdapter,
@@ -202,6 +203,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return NmcWeatherAdapter()
     if source_code == OfacSdnAdapter.source_code:
         return OfacSdnAdapter()
+    if source_code == EuOfficialJournalAdapter.source_code:
+        return EuOfficialJournalAdapter()
     if isinstance(source, DataSource) and source.adapter_status == "published":
         try:
             spec = AdapterSpec.model_validate(source.adapter_config)

@@ -27,6 +27,7 @@ async def read_public_page_with_crawl4ai_for_monitor(
     *,
     settings: MonitorCrawl4AISettings | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    allow_http_hosts: set[str] | frozenset[str] | None = None,
 ) -> str:
     """通过 Crawl4AI 抓取单个 URL 并返回 Markdown 文本。
 
@@ -48,8 +49,10 @@ async def read_public_page_with_crawl4ai_for_monitor(
             "监控轨 Crawl4AI 回退未配置", error_kind="crawler_unavailable"
         )
     # 同样要走公网 URL 校验：避免 Crawl4AI 出私网。
+    # allow_http_hosts：极少数源站仅支持 HTTP 明文（如海关总署 WAF 反爬），
+    # 显式放行域名走 HTTP；默认保持 HTTPS-only。
     try:
-        await validate_public_https_url(url, resolve_dns=False)
+        await validate_public_https_url(url, resolve_dns=False, allow_http_hosts=allow_http_hosts)
     except SourceFetchError as exc:
         raise SourceRequestFailed(
             f"监控轨 Crawl4AI 回退目标 URL 非法: {exc}",
@@ -93,12 +96,20 @@ async def read_public_page_with_crawl4ai_for_monitor(
             "监控轨 Crawl4AI 返回非 JSON",
             error_kind="crawler_unavailable",
         ) from exc
-    # Crawl4AI /crawl 返回 {"results": [{"markdown": "..."}]} 或相似结构
-    markdown = (
-        (payload_obj.get("results") or [{}])[0].get("markdown")
-        or payload_obj.get("markdown")
-        or ""
-    )
+    # Crawl4AI /crawl 返回 {"results": [{"markdown": ...}]}。
+    # 旧版 markdown 为 str；新版为 dict（含 raw_markdown / fit_markdown / ...），
+    # 取 raw_markdown 为正文（含完整页面文本）。
+    first_result = (payload_obj.get("results") or [{}])[0]
+    if isinstance(first_result, dict):
+        markdown_obj = first_result.get("markdown") or payload_obj.get("markdown")
+    else:
+        markdown_obj = payload_obj.get("markdown")
+    if isinstance(markdown_obj, dict):
+        markdown = markdown_obj.get("raw_markdown") or ""
+    elif isinstance(markdown_obj, str):
+        markdown = markdown_obj
+    else:
+        markdown = ""
     if not markdown.strip():
         raise SourceRequestFailed(
             "监控轨 Crawl4AI 返回空 Markdown",

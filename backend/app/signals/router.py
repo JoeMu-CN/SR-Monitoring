@@ -56,11 +56,17 @@ from app.signals.schemas import (
 from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
 from app.signals.sources import (
+    CustomsAnnouncementAdapter,
     EuOfficialJournalAdapter,
+    FmprcPressAdapter,
+    FxRatesAdapter,
+    MofcomEntityDetailAdapter,
     NmcWeatherAdapter,
     OfacSdnAdapter,
     PullSourceAdapter,
     SourceFetchError,
+    SseShippingAdapter,
+    WtoNewsAdapter,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["风险信号"])
@@ -205,6 +211,18 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return OfacSdnAdapter()
     if source_code == EuOfficialJournalAdapter.source_code:
         return EuOfficialJournalAdapter()
+    if source_code == WtoNewsAdapter.source_code:
+        return WtoNewsAdapter()
+    if source_code == CustomsAnnouncementAdapter.source_code:
+        return CustomsAnnouncementAdapter()
+    if source_code == MofcomEntityDetailAdapter.source_code:
+        return MofcomEntityDetailAdapter()
+    if source_code == FxRatesAdapter.source_code:
+        return FxRatesAdapter()
+    if source_code == SseShippingAdapter.source_code:
+        return SseShippingAdapter()
+    if source_code == FmprcPressAdapter.source_code:
+        return FmprcPressAdapter()
     if isinstance(source, DataSource) and source.adapter_status == "published":
         try:
             spec = AdapterSpec.model_validate(source.adapter_config)

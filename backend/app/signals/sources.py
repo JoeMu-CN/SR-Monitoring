@@ -15,6 +15,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
@@ -449,6 +450,777 @@ select distinct ?celex ?date ?title where{{
         if not items:
             return SourceHealth(ok=False, message="EUR-Lex 最近无法规条目")
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条法规")
+
+
+class CustomsAnnouncementAdapter(PullSourceAdapter):
+    """海关总署公告（P2 进出口政策 / E5 关税与禁限）。
+
+    官网 www.customs.gov.cn 仅 HTTP 明文可达（HTTPS 504）；且直连连续请求
+    触发 WAF 412（限频）。故走 Crawl4AI 浏览器渲染（对 WAF 容忍度高），
+    解析首页"海关总署公告"条目（标题 + 日期 + 原文链接）。
+    """
+
+    source_code = "customs-announcement"
+    endpoint = "http://www.customs.gov.cn/"
+    _MAX_ITEMS = 30
+    _HTTP_ALLOW_HOSTS = frozenset({"www.customs.gov.cn"})
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
+
+        if self._transport is None:
+            markdown = await read_public_page_with_crawl4ai_for_monitor(
+                self.endpoint, allow_http_hosts=self._HTTP_ALLOW_HOSTS
+            )
+        else:
+            # 测试：用 transport 直连（测试桩返回 markdown 结构）
+            import httpx as _httpx
+
+            try:
+                async with _httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint)
+            except _httpx.HTTPError as exc:
+                raise SourceFetchError("海关总署网络请求失败") from exc
+            markdown = raw_response.text
+        return _parse_customs_markdown(markdown, limit=self._MAX_ITEMS)
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="海关总署公告无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条公告")
+
+
+class FxRatesAdapter(PullSourceAdapter):
+    """国际汇率（E1 汇率 / E3 成本维度）。
+
+    数据源：open.er-api.com（免费、无 key、JSON 直达，166 币种实时汇率）。
+    以 USD 为基准取关键币种（CNY/EUR/JPY/GBP），生成汇率信号，
+    供供应商成本/结算货币风险匹配。
+    """
+
+    source_code = "fx-rates"
+    endpoint = "https://open.er-api.com/v6/latest/USD"
+    _KEY_CURRENCIES = ("CNY", "EUR", "JPY", "GBP")
+    _MAX_ITEMS = 10
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        if self._transport is not None:
+            async with httpx.AsyncClient(
+                timeout=self._timeout_seconds, transport=self._transport
+            ) as client:
+                raw_response = await client.get(self.endpoint, headers=headers)
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    self.endpoint,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"汇率接口请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SourceFetchError("汇率接口返回不是有效 JSON") from exc
+        if payload.get("result") != "success":
+            raise SourceFetchError("汇率接口返回异常状态")
+        rates = payload.get("rates") or {}
+        updated = payload.get("time_last_update_utc") or ""
+        items: list[RawSourceItem] = []
+        for code in self._KEY_CURRENCIES:
+            value = rates.get(code)
+            if not isinstance(value, (int, float)):
+                continue
+            items.append(
+                RawSourceItem(
+                    external_id=f"fx-{code}-{updated}",
+                    title=f"汇率：USD/{code} = {value:.4f}",
+                    content=(
+                        f"1 美元兑 {code}：{value:.4f}；"
+                        f"更新时间：{updated}"
+                    ),
+                    url=self.endpoint,
+                    extra={"currency": code, "rate": value, "updated": updated},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="汇率接口无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条汇率")
+
+
+class SseShippingAdapter(PullSourceAdapter):
+    """上海航运交易所集装箱运价指数（I4 航运 / E3 物流成本维度）。
+
+    数据源：CCFI 单期查询页（www.sse.net.cn），数据经 JS 渲染，
+    走 Crawl4AI 渲染后解析 markdown 表格（综合指数 + 分航线上期/本期/涨跌）。
+    """
+
+    source_code = "sse-shipping"
+    endpoint = "https://www.sse.net.cn/index/singleIndex?indexType=ccfi"
+    _MAX_ITEMS = 30
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
+
+        if self._transport is None:
+            markdown = await read_public_page_with_crawl4ai_for_monitor(self.endpoint)
+        else:
+            import httpx as _httpx
+
+            try:
+                async with _httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint)
+            except _httpx.HTTPError as exc:
+                raise SourceFetchError("上海航交所网络请求失败") from exc
+            markdown = raw_response.text
+        return _parse_sse_shipping(markdown, limit=self._MAX_ITEMS)
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="上海航交所无有效指数")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条指数信号")
+
+
+def _parse_sse_shipping(markdown: str, *, limit: int = 30) -> list[RawSourceItem]:
+    """解析 CCFI markdown 表格（综合指数 + 分航线）。
+
+    实测结构（2026-08-20）：
+        中国出口集装箱运价综合指数 | 1839.61 | 1846.96 | 0.4
+        日本航线 (JAPAN SERVICE) | 941.44 | 896.71 | -4.8
+    """
+    lines = [ln.strip() for ln in markdown.splitlines() if "|" in ln]
+    items: list[RawSourceItem] = []
+    for line in lines:
+        cells = [c.strip() for c in line.split("|")]
+        # markdown 表格行: ['', '航线', '上期', '本期', '涨跌(%)', '']
+        cells = [c for c in cells if c]
+        if len(cells) < 4:
+            continue
+        name = cells[0]
+        if name in ("航线", "上期", "---") or not re.search(r"[A-Z\u4e00-\u9fa5]", name):
+            continue
+        prev, curr = cells[1], cells[2]
+        change = cells[3] if len(cells) > 3 else ""
+        if not re.match(r"^\d+(\.\d+)?$", prev) or not re.match(r"^\d+(\.\d+)?$", curr):
+            continue
+        external_id = "sse-" + hashlib.sha256(
+            f"{name}|{curr}".encode()
+        ).hexdigest()[:16]
+        items.append(
+            RawSourceItem(
+                external_id=external_id,
+                title=f"CCFI 运价指数：{name}",
+                content=(
+                    f"航线：{name}；上期 {prev} → 本期 {curr}"
+                    f"（涨跌 {change}%）；来源：上海航运交易所 CCFI"
+                ),
+                url="https://www.sse.net.cn/index/singleIndex?indexType=ccfi",
+                extra={"route": name, "previous": prev, "current": curr, "change_pct": change},
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+class FmprcPressAdapter(PullSourceAdapter):
+    """外交部例行记者会（G4 双边关系与外交事件）。
+
+    数据源：外交部发言人栏目（直连 200），列表页含最近记者会标题 + 日期 + 详情 URL。
+    信号标题含"发言人主持例行记者会"；AI 相关性过滤负责精筛制裁/贸易/出口管制话题。
+    """
+
+    source_code = "fmprc-press"
+    endpoint = "https://www.mfa.gov.cn/web/wjdt_674879/fyrbt_674889/"
+    _MAX_ITEMS = 10
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("外交部记者会网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    self.endpoint,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=5 * 1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"外交部记者会请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        html = body_bytes.decode("utf-8", "ignore")
+        items: list[RawSourceItem] = []
+        # 列表项: ./202608/t20260820_12007399.shtml + 记者会标题（含日期）
+        _list_pat = r'<a[^>]*?href="(\./202\d{3}/t\d+_\d+\.shtml)"[^>]*>([^<]{10,80})</a>'
+        for href, title in re.findall(_list_pat, html):
+            title = title.strip()
+            if "例行记者会" not in title or "发言" not in title:
+                continue
+            url = self.endpoint.rstrip("/") + "/" + href.lstrip("./")
+            # 标题含日期（2026-08-20）
+            m_date = re.search(r"(20\d{2}-\d{2}-\d{2})", title)
+            published_at = None
+            if m_date:
+                try:
+                    published_at = datetime.strptime(
+                        m_date.group(1), "%Y-%m-%d"
+                    ).replace(tzinfo=UTC)
+                except ValueError:
+                    published_at = None
+            items.append(
+                RawSourceItem(
+                    external_id="fmprc-" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16],
+                    title=title,
+                    content=(
+                        f"日期：{published_at.date().isoformat() if published_at else '未知'}；"
+                        f"来源：外交部例行记者会"
+                    ),
+                    url=url,
+                    published_at=published_at,
+                )
+            )
+            if len(items) >= self._MAX_ITEMS:
+                break
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="外交部记者会无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条记者会")
+
+
+class MofcomEntityDetailAdapter(PullSourceAdapter):
+    """商务部实体名单详情解析（G2 制裁：出口管制管控名单 / 不可靠实体清单）。
+
+    列表页（mofcom-entity-control，声明式）只产出公告标题+URL；本适配器对
+    每条"实体/名单"公告详情页做 Crawl4AI 渲染，提取被列入的具体实体
+    （如"拉法特集团等14家欧盟实体"），每个实体生成一条信号，
+    供供应商主体匹配（F2 司法 / G2 制裁命中）。
+    """
+
+    source_code = "mofcom-entity-detail"
+    _LIST_URL = "http://aqygzj.mofcom.gov.cn/"
+    _HTTP_ALLOW_HOSTS = frozenset({"aqygzj.mofcom.gov.cn"})
+    _MAX_ENTITIES = 200  # 单次采集实体信号上限（防爆炸）
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
+
+        # 1. 抓列表页拿公告标题+URL（复用声明式解析）
+        if self._transport is not None:
+            # 测试：transport 直连列表页 + 详情页（桩响应）
+            return await self._fetch_test_mode()
+        list_items = await _fetch_mofcom_list(self._transport)
+        # 2. 只挑实体/名单类公告（标题含"列入""管控名单""不可靠实体清单"）
+        detail_urls = [
+            (it.title, it.url)
+            for it in list_items
+            if it.url
+            and any(k in it.title for k in ("列入", "管控名单", "不可靠实体", "反制措施"))
+        ]
+        items: list[RawSourceItem] = []
+        for title, url in detail_urls[:8]:  # 每轮最多 8 条详情页
+            try:
+                md = await read_public_page_with_crawl4ai_for_monitor(
+                    url, allow_http_hosts=self._HTTP_ALLOW_HOSTS
+                )
+            except SourceFetchError:
+                continue
+            entities = _extract_entities_from_detail(md)
+            for entity_name in entities:
+                if len(items) >= self._MAX_ENTITIES:
+                    break
+                items.append(
+                    RawSourceItem(
+                        external_id="mofcom-entity-"
+                        + hashlib.sha256(
+                            f"{url}|{entity_name}".encode()
+                        ).hexdigest()[:16],
+                        title=f"出口管制名单新增：{entity_name}",
+                        content=(
+                            f"来源公告：{title}；"
+                            f"原文：{url}"
+                        ),
+                        url=url,
+                    )
+                )
+        return items
+
+    async def _fetch_test_mode(self) -> list[RawSourceItem]:
+        # 测试桩：直接解析详情页 markdown（transport 场景只测详情解析）
+        import httpx as _httpx
+
+        async with _httpx.AsyncClient(
+            timeout=self._timeout_seconds, transport=self._transport
+        ) as client:
+            raw_response = await client.get(self._LIST_URL)
+        md = raw_response.text
+        entities = _extract_entities_from_detail(md)
+        return [
+            RawSourceItem(
+                external_id="mofcom-entity-"
+                + hashlib.sha256(f"test|{name}".encode()).hexdigest()[:16],
+                title=f"出口管制名单新增：{name}",
+                content=f"来源公告：测试公告；原文：{self._LIST_URL}",
+                url=self._LIST_URL,
+            )
+            for name in entities
+        ]
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="商务部实体名单无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条实体信号")
+
+
+async def _fetch_mofcom_list(
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> list[RawSourceItem]:
+    """复用 mofcom-entity-control 的声明式配置抓列表页。"""
+    from sqlalchemy import select
+
+    from app.database import SessionLocal
+    from app.signals.declarative import AdapterSpec, DeclarativeSourceAdapter
+    from app.signals.models import DataSource
+
+    with SessionLocal() as session:
+        source = session.scalar(
+            select(DataSource).where(DataSource.code == "mofcom-entity-control")
+        )
+        if source is None or not source.adapter_config:
+            return []
+        spec = AdapterSpec.model_validate(source.adapter_config)
+        adapter = DeclarativeSourceAdapter(
+            "mofcom-entity-control",
+            spec,
+            auth_type=source.auth_type,
+            credential_ref=source.credential_ref,
+            login_config=source.login_config,
+            transport=transport,
+        )
+        return await adapter.fetch()
+
+
+def _extract_entities_from_detail(markdown: str) -> list[str]:
+    """从公告详情页 markdown 提取被列入实体名称。
+
+    附件名单实测结构（2026-08-20）：
+        1.斯凯迪奥公司（Skydio Inc.）
+        2.BRINC无人机公司（BRINC Drones,Inc.）
+        ...
+    也兼容纯文本行 "N.名称（English Name）"。
+    """
+    entities: list[str] = []
+    for line in markdown.splitlines():
+        line = line.strip()
+        # 编号.实体名（英文名） 或 编号.实体名
+        _ent_pat = (
+            r"^\d{1,3}[\.、]\s*([\u4e00-\u9fa5A-Za-z0-9]"
+            r"[^（）()\n]{1,80}?)(?:（[^）]*）)?$"
+        )
+        m = re.match(_ent_pat, line)
+        if m:
+            name = m.group(1).strip()
+            if len(name) >= 3 and name not in entities:
+                entities.append(name)
+    return entities
+
+
+def _parse_customs_markdown(markdown: str, *, limit: int = 30) -> list[RawSourceItem]:
+    """解析 Crawl4AI 渲染后的海关总署首页公告条目。
+
+    实测结构（2026-08-20）：
+        [海关总署公告2026年第121号（关于修改海关总署公告2019年第170号...）](http://www.customs.gov.cn/customs/2026-08/19/article_xxx.html)
+        2026-08-12
+    """
+    items: list[RawSourceItem] = []
+    # markdown 链接 [标题](url) 或 [标题](url "title")，允许列表项 * 前缀
+    _link_pat = r"\[\s*([^\]]*(?:海关总署公告)[^\]]*)\]\s*\((https?://[^\s)]+)(?:\s+\"[^\"]*\")?\)"
+    links = re.findall(_link_pat, markdown)
+    seen: set[str] = set()
+    for title, url in links:
+        title = title.strip()
+        if not title.startswith("海关总署公告") or title in seen:
+            continue
+        seen.add(title)
+        # 找标题后第一个 YYYY-MM-DD（公告行后紧跟日期；URL 中也可能含年份数字，
+        # 因此用"日期模式 + 前缀校验"而非排除数字）
+        published_at = None
+        m_date = re.search(
+            rf"{re.escape(title)}[\s\S]{{0,300}}?(\d{{4}}-\d{{2}}-\d{{2}})",
+            markdown,
+        )
+        if m_date:
+            try:
+                published_at = datetime.strptime(
+                    m_date.group(1), "%Y-%m-%d"
+                ).replace(tzinfo=UTC)
+            except ValueError:
+                published_at = None
+        items.append(
+            RawSourceItem(
+                external_id="customs-" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16],
+                title=title,
+                content=f"公告日期：{published_at.date().isoformat() if published_at else '未知'}",
+                url=url,
+                published_at=published_at,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+class WtoNewsAdapter(PullSourceAdapter):
+    """WTO 新闻（E5 贸易摩擦：关税/反倾销/保障措施/争端）。
+
+    官网 news_e.htm 文章列表为 JS 渲染（直连只有导航壳），
+    走 Crawl4AI 渲染获取 markdown；解析 ``### 标题 + 日期 + 摘要 + [News item](url)``
+    结构生成信号。
+    """
+
+    source_code = "wto-news"
+    endpoint = "https://www.wto.org/english/news_e/news_e.htm"
+    _MAX_ITEMS = 20
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
+
+        if self._transport is None:
+            markdown = await read_public_page_with_crawl4ai_for_monitor(self.endpoint)
+        else:
+            # 测试：用 transport 直连（测试桩返回 markdown 结构，不走真实 Crawl4AI）
+            import httpx as _httpx
+
+            try:
+                async with _httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint)
+            except _httpx.HTTPError as exc:
+                raise SourceFetchError("WTO 网络请求失败") from exc
+            markdown = raw_response.text
+        return _parse_wto_markdown(markdown, limit=self._MAX_ITEMS)
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="WTO 新闻无有效条目")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条新闻")
+
+
+def _parse_wto_markdown(markdown: str, *, limit: int = 20) -> list[RawSourceItem]:
+    """解析 Crawl4AI 渲染后的 WTO news markdown。
+
+    条目结构（实测 2026-08-20）：
+        ###  {标题}
+        {日期，如 5 August 2026}
+        {摘要文本}
+          * [News item](https://www.wto.org/english/news_e/news26_e/xxx_e.htm)
+    """
+    import datetime as _dt
+
+    items: list[RawSourceItem] = []
+    # 按 H3 标题切块
+    blocks = re.split(r"\n###\s+", markdown)
+    for block in blocks[1:]:  # 第一块是 H3 之前的导航
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines:
+            continue
+        title = lines[0]
+        _skip_titles = {
+            "archives", "share", "latest video", "latest photo", "media newsroom",
+        }
+        if len(title) < 10 or title.lower() in _skip_titles:
+            continue
+        # 日期行：尝试解析常见英文日期格式
+        published_at: datetime | None = None
+        for line in lines[1:4]:
+            try:
+                parsed = _dt.datetime.strptime(line, "%d %B %Y")
+                published_at = parsed.replace(tzinfo=UTC)
+                break
+            except ValueError:
+                continue
+        # 提取 News item 链接
+        url = None
+        m = re.search(r"\[[^\]]*\]\((https?://www\.wto\.org[^)]+\.htm)\)", block)
+        if m:
+            url = m.group(1)
+        # 摘要：标题与 [News item] 之间的非空文本（去图片/日期）
+        date_str = published_at.strftime("%d %B %Y") if published_at else None
+        summary_lines = []
+        for line in lines:
+            if line == title or (date_str and line == date_str):
+                continue
+            if line.startswith("* [") or line.startswith("!["):
+                continue
+            summary_lines.append(line)
+        summary = " ".join(summary_lines)[:400]
+        date_text = published_at.date().isoformat() if published_at else "未知"
+        content = f"日期：{date_text}；{summary}" if summary else f"日期：{date_text}"
+        external_id = "wto-" + hashlib.sha256(title.encode("utf-8")).hexdigest()[:16]
+        items.append(
+            RawSourceItem(
+                external_id=external_id,
+                title=title,
+                content=content,
+                url=url or "https://www.wto.org/english/news_e/news_e.htm",
+                published_at=published_at,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
 
 
 def _parse_nmc_time(value: object) -> datetime | None:

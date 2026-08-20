@@ -93,6 +93,34 @@ def test_fallback_raises_on_empty_markdown() -> None:
         _run("https://official.example/", settings=_settings(), handler=handler)
 
 
+def test_fallback_parses_new_markdown_dict_shape() -> None:
+    """Crawl4AI 新版返回 markdown 为 dict（raw_markdown 键），需兼容解析。"""
+    body = (
+        b'{"results":[{"markdown":{'
+        b'"raw_markdown":"# raw heading\\n\\nraw body",'
+        b'"fit_markdown":"# fit",'
+        b'"markdown_with_citations":""}}]}'
+    )
+
+    def handler(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    result = _run("https://official.example/page", settings=_settings(), handler=handler)
+    assert "raw heading" in result
+    assert "raw body" in result
+
+
+def test_fallback_dict_markdown_missing_raw_falls_back_to_fit() -> None:
+    """新版 dict 若缺 raw_markdown 返回空并报错（不产生半成品）。"""
+    body = b'{"results":[{"markdown":{"fit_markdown":"# fit only"}}]}'
+
+    def handler(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    with pytest.raises(SourceRequestFailed, match="空 Markdown"):
+        _run("https://official.example/", settings=_settings(), handler=handler)
+
+
 def test_fallback_rejects_http_scheme() -> None:
     """回退路径同样要求 https，避免 Crawl4AI 出私网。"""
     settings = _settings()

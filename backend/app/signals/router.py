@@ -57,6 +57,7 @@ from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
 from app.signals.sources import (
     CustomsAnnouncementAdapter,
+    EuComplianceAdapter,
     EuOfficialJournalAdapter,
     FmprcPressAdapter,
     FxRatesAdapter,
@@ -66,6 +67,7 @@ from app.signals.sources import (
     PullSourceAdapter,
     SourceFetchError,
     SseShippingAdapter,
+    UflpaEntityAdapter,
     WtoNewsAdapter,
 )
 
@@ -211,6 +213,10 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return OfacSdnAdapter()
     if source_code == EuOfficialJournalAdapter.source_code:
         return EuOfficialJournalAdapter()
+    if source_code == EuComplianceAdapter.source_code:
+        return EuComplianceAdapter()
+    if source_code == UflpaEntityAdapter.source_code:
+        return UflpaEntityAdapter()
     if source_code == WtoNewsAdapter.source_code:
         return WtoNewsAdapter()
     if source_code == CustomsAnnouncementAdapter.source_code:

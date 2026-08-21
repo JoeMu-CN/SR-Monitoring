@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import html
 import io
 import json
 import re
@@ -313,6 +314,8 @@ class EuOfficialJournalAdapter(PullSourceAdapter):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     _DEFAULT_LOOKBACK_DAYS = 7
     _MAX_ITEMS = 50
+    # 关键词过滤（空 = 抓全部法规；子类覆盖为供应链合规关键词）
+    _KEYWORDS: tuple[str, ...] = ()
     _SPARQL_PREFIX = (
         "PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>"
         "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>"
@@ -330,7 +333,17 @@ class EuOfficialJournalAdapter(PullSourceAdapter):
         self._lookback_days = lookback_days
 
     def _build_query(self, since_date: str) -> str:
-        """生成 SPARQL：最近 lookback 天内发布的法规类条目（含标题/日期/CELEX）。"""
+        """生成 SPARQL：最近 lookback 天内发布的法规类条目（含标题/日期/CELEX）。
+
+        关键词过滤在 SPARQL 层完成（CONTAINS + LCASE），避免 LIMIT 截断后
+        Python 侧过滤的漏检（欧盟法规日发布量大，50 条截断覆盖不到合规类）。
+        """
+        keyword_filter = ""
+        if self._KEYWORDS:
+            conds = " || ".join(
+                f'CONTAINS(LCASE(STR(?title)), "{kw}")' for kw in self._KEYWORDS
+            )
+            keyword_filter = f"  FILTER({conds})\n"
         return f"""
 {self._SPARQL_PREFIX}
 select distinct ?celex ?date ?title where{{
@@ -342,7 +355,7 @@ select distinct ?celex ?date ?title where{{
   FILTER not exists{{?work cdm:do_not_index "true"^^xsd:boolean}}.
   FILTER(STRSTARTS(STR(?celex), "3"))
   FILTER(?date >= "{since_date}"^^xsd:date)
-}} ORDER BY DESC(?date) LIMIT {self._MAX_ITEMS}
+{keyword_filter}}} ORDER BY DESC(?date) LIMIT {self._MAX_ITEMS}
 """
 
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
@@ -450,6 +463,144 @@ select distinct ?celex ?date ?title where{{
         if not items:
             return SourceHealth(ok=False, message="EUR-Lex 最近无法规条目")
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条法规")
+
+
+class EuComplianceAdapter(EuOfficialJournalAdapter):
+    """供应链合规法规（P3：CBAM / CSDDD / 强迫劳动等）关键词过滤版。
+
+    复用 EuOfficialJournalAdapter 的 SPARQL 直连链路，仅在标题层按
+    合规关键词过滤（英文标题）。用于监控 EU 碳边境调节机制（CBAM）、
+    企业可持续发展尽职调查指令（CSDDD）、强迫劳动/供应链人权等法规变更。
+    """
+
+    source_code = "eu-compliance"
+    # 标题命中任一关键词即保留（小写匹配）。UFLPA 属美国法律，由 DHS 信源覆盖。
+    _KEYWORDS: tuple[str, ...] = (
+        "carbon border",
+        "cbam",
+        "forced labour",
+        "forced labor",
+        "due diligence",
+        "supply chain",
+        "human rights",
+        "conflict minerals",
+        "sustainable corporate governance",
+    )
+
+
+class UflpaEntityAdapter(PullSourceAdapter):
+    """美国 UFLPA 实体清单（P3 供应链合规：涉疆强迫劳动执法名单）。
+
+    直连 DHS 官方实体清单页（dhs.gov/uflpa-entity-list，HTML 表格，137KB
+    可直连），解析 "<tr><td>实体名</td><td>生效日期</td></tr>" 结构。
+    每条实体生成一条信号（external_id=uflpa-{sha256(实体名)[:16]}，指纹稳定
+    可去重），可匹配清单内供应商及产业链上下游（原材料/产地涉疆）。
+    全量清单每次抓取返回全部实体，增量靠指纹去重。
+    """
+
+    source_code = "uflpa-entity-list"
+    endpoint = "https://www.dhs.gov/uflpa-entity-list"
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("UFLPA 实体清单网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    self.endpoint,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=5 * 1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"UFLPA 实体清单请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        try:
+            page_html = body_bytes.decode("utf-8", "ignore")
+        except Exception as exc:  # noqa: BLE001
+            raise SourceFetchError("UFLPA 实体清单响应解码失败") from exc
+        # 实体行: <tr><td>Name</td><td>June 21, 2022</td></tr>
+        rows = re.findall(r"<tr><td>([^<]+)</td><td>([^<]+)</td></tr>", page_html)
+        items: list[RawSourceItem] = []
+        for name, date_text in rows:
+            name = html.unescape(name.strip())
+            if not name or name.lower() == "name of entity":
+                continue
+            published_at = _parse_uflpa_date(date_text.strip())
+            items.append(
+                RawSourceItem(
+                    external_id="uflpa-"
+                    + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16],
+                    title=name,
+                    content=(
+                        f"生效日期：{date_text.strip()}；依据：UFLPA"
+                        "（Uyghur Forced Labor Prevention Act）"
+                    ),
+                    url=self.endpoint,
+                    published_at=published_at,
+                    extra={"effective_date": date_text.strip()},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="UFLPA 实体清单为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 个实体")
 
 
 class CustomsAnnouncementAdapter(PullSourceAdapter):
@@ -1235,6 +1386,18 @@ def _parse_nmc_time(value: object) -> datetime | None:
             continue
         return naive.replace(tzinfo=timezone(timedelta(hours=8)))
     return None
+
+
+def _parse_uflpa_date(value: object) -> datetime | None:
+    """解析 UFLPA 实体清单生效日期，如 'June 21, 2022'（UTC）。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    try:
+        naive = datetime.strptime(text, "%B %d, %Y")
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=UTC)
 
 
 def _binding(row: dict[str, object], key: str) -> str | None:

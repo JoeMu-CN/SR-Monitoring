@@ -742,6 +742,162 @@ class BisEntityListAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 个实体")
 
 
+class CommodityFuturesAdapter(PullSourceAdapter):
+    """大宗商品期货行情（E3 关键原材料价格/短缺）。
+
+    免费 JSON 直连（新浪期货行情接口 hq.sinajs.cn，需 Referer，GBK 编码），
+    取核心 15 个品种主力连续合约（铜/铝/锌/镍/锡/铅/金/银/原油/燃料油/
+    螺纹钢/不锈钢/PTA/天然橡胶/棉花）。每条品种生成一条信号（含最新价与
+    较昨结算涨跌幅），可匹配供应商关键原材料成本波动。external_id=
+    fut-{code}-{YYYYMMDD}（每日一条，指纹稳定可去重）。
+    """
+
+    source_code = "commodity-futures"
+    endpoint = "https://hq.sinajs.cn/list="
+    # 品种代码 → (中文名, 单位)：主力连续合约
+    _SYMBOLS: tuple[tuple[str, str, str], ...] = (
+        ("nf_CU0", "沪铜", "元/吨"),
+        ("nf_AL0", "沪铝", "元/吨"),
+        ("nf_ZN0", "沪锌", "元/吨"),
+        ("nf_NI0", "沪镍", "元/吨"),
+        ("nf_SN0", "沪锡", "元/吨"),
+        ("nf_PB0", "沪铅", "元/吨"),
+        ("nf_AU0", "沪金", "元/克"),
+        ("nf_AG0", "沪银", "元/千克"),
+        ("nf_SC0", "原油", "元/桶"),
+        ("nf_FU0", "燃料油", "元/吨"),
+        ("nf_RB0", "螺纹钢", "元/吨"),
+        ("nf_SS0", "不锈钢", "元/吨"),
+        ("nf_TA0", "PTA", "元/吨"),
+        ("nf_RU0", "天然橡胶", "元/吨"),
+        ("nf_CF0", "棉花", "元/吨"),
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        url = self.endpoint + ",".join(code for code, _name, _unit in self._SYMBOLS)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Referer": "https://finance.sina.com.cn/",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("大宗商品行情网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    url,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=2 * 1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"大宗商品行情请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        try:
+            body = body_bytes.decode("gbk", "ignore")
+        except Exception as exc:  # noqa: BLE001
+            raise SourceFetchError("大宗商品行情响应解码失败") from exc
+        today = datetime.now(UTC).date().isoformat()
+        items: list[RawSourceItem] = []
+        for code, cname, unit in self._SYMBOLS:
+            m = re.search(
+                rf'hq_str_{re.escape(code)}="([^"]*)"', body
+            )
+            if not m:
+                continue
+            fields = m.group(1).split(",")
+            if len(fields) < 9:
+                continue
+            try:
+                last_price = float(fields[6])
+                prev_settle = float(fields[2])
+                open_price = float(fields[3])
+            except ValueError:
+                continue
+            change_pct = (
+                (last_price - prev_settle) / prev_settle * 100
+                if prev_settle
+                else 0.0
+            )
+            items.append(
+                RawSourceItem(
+                    external_id=f"fut-{code}-{today}",
+                    title=f"{cname}主力 {last_price:.0f} {unit}"
+                    f"（{change_pct:+.2f}%）",
+                    content=(
+                        f"最新价：{last_price:.1f} {unit}；较昨结算："
+                        f"{change_pct:+.2f}%；昨结算：{prev_settle:.1f}；"
+                        f"今开：{open_price:.1f}"
+                    ),
+                    url=(
+                        "https://finance.sina.com.cn/futures/quotes/"
+                        + code[3:]
+                        + ".shtml"
+                    ),
+                    extra={
+                        "symbol": code,
+                        "last_price": last_price,
+                        "change_pct": round(change_pct, 2),
+                    },
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="大宗商品行情为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 个品种")
+
+
 class CustomsAnnouncementAdapter(PullSourceAdapter):
     """海关总署公告（P2 进出口政策 / E5 关税与禁限）。
 

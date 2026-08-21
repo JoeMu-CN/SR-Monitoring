@@ -57,6 +57,7 @@ from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
 from app.signals.sources import (
     BisEntityListAdapter,
+    CommodityFuturesAdapter,
     CustomsAnnouncementAdapter,
     EuComplianceAdapter,
     EuOfficialJournalAdapter,
@@ -220,6 +221,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return UflpaEntityAdapter()
     if source_code == BisEntityListAdapter.source_code:
         return BisEntityListAdapter()
+    if source_code == CommodityFuturesAdapter.source_code:
+        return CommodityFuturesAdapter()
     if source_code == WtoNewsAdapter.source_code:
         return WtoNewsAdapter()
     if source_code == CustomsAnnouncementAdapter.source_code:

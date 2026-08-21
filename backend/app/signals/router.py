@@ -63,6 +63,7 @@ from app.signals.sources import (
     EuOfficialJournalAdapter,
     FmprcPressAdapter,
     FxRatesAdapter,
+    MeeAnnouncementAdapter,
     MofcomEntityDetailAdapter,
     NmcWeatherAdapter,
     OfacSdnAdapter,
@@ -229,6 +230,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return PbcLprAdapter()
     if source_code == StatsPmiAdapter.source_code:
         return StatsPmiAdapter()
+    if source_code == MeeAnnouncementAdapter.source_code:
+        return MeeAnnouncementAdapter()
     if source_code == WtoNewsAdapter.source_code:
         return WtoNewsAdapter()
     if source_code == CustomsAnnouncementAdapter.source_code:

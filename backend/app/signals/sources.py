@@ -1198,6 +1198,149 @@ class StatsPmiAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条 PMI")
 
 
+class MeeAnnouncementAdapter(PullSourceAdapter):
+    """生态环境部公告（P1 行业监管：环评/标准/督察/名录）。
+
+    直连生态环境部首页（mee.gov.cn，176KB 可直连），提取全部公告链接
+    （约 150 条/次），按监管关键词过滤（环评/审批/督察/处罚/标准/名录/
+    污染/停产/辐射）。每条公告生成一条信号，external_id=mee-{sha256(URL)}
+    指纹稳定可去重。环保监管是供应商整改/停产/准入风险的直接触发源。
+    """
+
+    source_code = "mee-announcement"
+    endpoint = "https://www.mee.gov.cn/"
+    # 监管类关键词（标题命中任一即保留）
+    _KEYWORDS: tuple[str, ...] = (
+        "环评",
+        "环境影响评价",
+        "审批",
+        "督察",
+        "处罚",
+        "标准",
+        "名录",
+        "污染",
+        "停产",
+        "辐射",
+        "排污",
+        "预警",
+        "整治",
+    )
+    _LINK_RE = re.compile(
+        r'href=[\'"]([^\'"]*20\d{4}/t\d+_\d+\.(?:shtml|html))[\'"]'
+        r"[^>]*>([^<]{10,80})</a>"
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("生态环境部网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    self.endpoint,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=5 * 1024 * 1024,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"生态环境部请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        page_html = body_bytes.decode("utf-8", "ignore")
+        items: list[RawSourceItem] = []
+        seen: set[str] = set()
+        for href, title in self._LINK_RE.findall(page_html):
+            title = html.unescape(title.strip())
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            if not any(k in title for k in self._KEYWORDS):
+                continue
+            url = "https://www.mee.gov.cn" + href.lstrip(".")
+            # 日期从 URL 提取（t20260821 → 2026-08-21）
+            published_at = None
+            m_date = re.search(r"/t(20\d{6})_", href)
+            if m_date:
+                try:
+                    published_at = datetime.strptime(
+                        m_date.group(1), "%Y%m%d"
+                    ).replace(tzinfo=UTC)
+                except ValueError:
+                    published_at = None
+            items.append(
+                RawSourceItem(
+                    external_id="mee-"
+                    + hashlib.sha256(url.encode("utf-8")).hexdigest()[:16],
+                    title=title,
+                    content=(
+                        "来源：生态环境部；发布于 "
+                        f"{published_at.date() if published_at else '未知'}"
+                    ),
+                    url=url,
+                    published_at=published_at,
+                    extra={"published_date": m_date.group(1) if m_date else None},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="生态环境部无监管公告")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条公告")
+
+
 class CustomsAnnouncementAdapter(PullSourceAdapter):
     """海关总署公告（P2 进出口政策 / E5 关税与禁限）。
 

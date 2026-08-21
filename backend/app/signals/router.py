@@ -70,6 +70,7 @@ from app.signals.sources import (
     PullSourceAdapter,
     SourceFetchError,
     SseShippingAdapter,
+    StatsPmiAdapter,
     UflpaEntityAdapter,
     WtoNewsAdapter,
 )
@@ -226,6 +227,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return CommodityFuturesAdapter()
     if source_code == PbcLprAdapter.source_code:
         return PbcLprAdapter()
+    if source_code == StatsPmiAdapter.source_code:
+        return StatsPmiAdapter()
     if source_code == WtoNewsAdapter.source_code:
         return WtoNewsAdapter()
     if source_code == CustomsAnnouncementAdapter.source_code:

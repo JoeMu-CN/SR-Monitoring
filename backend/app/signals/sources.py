@@ -1048,6 +1048,156 @@ class PbcLprAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条 LPR 报价")
 
 
+class StatsPmiAdapter(PullSourceAdapter):
+    """国家统计局制造业 PMI（E1 宏观经济需求端）。
+
+    直连统计局数据发布栏目（sj/zxfb，月度发布列表），取最新"中国采购经理
+    指数运行情况"，解析制造业 PMI 数值与环比变化（>50 扩张 / <50 收缩）。
+    external_id=stats-pmi-{YYYYMM}（每月一条，指纹稳定可去重）。
+    PMI 直接反映订单/需求萎缩 → 供应商订单减少的传导路径（E1）。
+    """
+
+    source_code = "stats-pmi"
+    endpoint = "https://www.stats.gov.cn/sj/zxfb/"
+    _LIST_RE = re.compile(
+        r'href="(\./\d{6}/t\d+_\d+\.html)"[^>]*>([^<]*中国采购经理指数运行情况)'
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def _clean_text(raw: str) -> str:
+        text = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", "", raw)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    async def _get(
+        self, url: str, headers: dict[str, str]
+    ) -> bytes:
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    resp = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("统计局 PMI 网络请求失败") from exc
+            return resp.content
+        try:
+            controlled = await controlled_get(
+                url,
+                headers=headers,
+                timeout=self._timeout_seconds,
+                maximum_bytes=5 * 1024 * 1024,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"统计局 PMI 请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        return controlled.content
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        list_html = (await self._get(self.endpoint, headers)).decode(
+            "utf-8", "ignore"
+        )
+        m = self._LIST_RE.search(list_html)
+        if not m:
+            raise SourceFetchError("统计局数据发布栏目未找到 PMI 公告")
+        detail_url = "https://www.stats.gov.cn/sj/zxfb/" + m.group(1).lstrip("./")
+        # 受控链路同域名请求最小间隔 10 秒（MIN_REQUEST_INTERVAL）
+        await asyncio.sleep(11)
+        detail_html = (await self._get(detail_url, headers)).decode(
+            "utf-8", "ignore"
+        )
+        text = self._clean_text(detail_html)
+        # 7 月份，制造业采购经理指数（ PMI ）为 49.2%，比上月下降 1.1 个百分点
+        pmi_m = re.search(
+            r"制造业采购经理指数[（(]?\s*PMI\s*[）)]?为\s*([0-9.]+)%", text
+        )
+        change_m = re.search(r"比上月(下降|上升|持平)\s*([0-9.]+)?\s*个百分点", text)
+        if not pmi_m:
+            raise SourceFetchError("统计局 PMI 公告未解析到数值")
+        # 月度标识：详情页标题/URL 中的 2026年7月 / 202607
+        month_m = re.search(r"(20\d{2})年(\d{1,2})月", text) or re.search(
+            r"(20\d{2})年(\d{1,2})月", m.group(2)
+        )
+        if month_m:
+            month_key = f"{month_m.group(1)}-{int(month_m.group(2)):02d}"
+        else:
+            month_key = datetime.now(UTC).strftime("%Y-%m")
+        pmi_val = pmi_m.group(1)
+        if change_m:
+            direction = change_m.group(1)
+            amount = change_m.group(2) or "0"
+            change_desc = f"环比{direction}{amount}个百分点"
+        else:
+            change_desc = "环比持平"
+        return [
+            RawSourceItem(
+                external_id=f"stats-pmi-{month_key}",
+                title=f"制造业 PMI {pmi_val}%（{month_key}，{change_desc}）",
+                content=(
+                    f"制造业采购经理指数（PMI）：{pmi_val}%（{month_key}）；"
+                    f"{change_desc}；50 为荣枯线（>50 扩张 / <50 收缩）"
+                ),
+                url=detail_url,
+                extra={
+                    "pmi": pmi_val,
+                    "month": month_key,
+                    "change_desc": change_desc,
+                },
+            )
+        ]
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="统计局 PMI 公告为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条 PMI")
+
+
 class CustomsAnnouncementAdapter(PullSourceAdapter):
     """海关总署公告（P2 进出口政策 / E5 关税与禁限）。
 

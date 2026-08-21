@@ -603,6 +603,145 @@ class UflpaEntityAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 个实体")
 
 
+class BisEntityListAdapter(PullSourceAdapter):
+    """美国商务部 BIS 实体清单（I2 技术断供：芯片管制/出口管制实体）。
+
+    直连 bis.gov/regulations/ear/744（Entity List 所在法规页，16.5MB HTML
+    表格），解析 "Country | Entity | License requirement | License review
+    policy | Federal Register citation" 列结构。每条实体生成一条信号
+    （external_id=bis-{sha256(实体名)[:16]}，指纹稳定可去重）。
+    全量清单每次抓取返回全部实体，增量靠指纹去重。
+    """
+
+    source_code = "bis-entity-list"
+    # /entity-list 307 重定向到 EAR 744 法规页（含 Entity List 表格），
+    # 直接配置最终官方地址（受控链路将重定向视为错误，遵循 SSRF 防护设计）。
+    endpoint = "https://www.bis.gov/regulations/ear/744"
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def _clean_cell(raw: str) -> str:
+        """去 HTML 标签 + 解码实体 + 压缩水平空白（保留换行）。"""
+        text = re.sub(r"<br\s*/?>", "\n", raw)  # 保留换行以切分名称/地址
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"[ \t]+", " ", text)
+        return text.strip()
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    raw_response = await client.get(self.endpoint, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("BIS 实体清单网络请求失败") from exc
+            body_bytes = raw_response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    self.endpoint,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=25 * 1024 * 1024,  # 页面约 16.5MB
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"BIS 实体清单请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        page_html = body_bytes.decode("utf-8", "ignore")
+        # 表格行: <tr...><td>Country</td><td>Entity 名+别名+地址</td><td>License...</td>...
+        items: list[RawSourceItem] = []
+        seen: set[str] = set()
+        for row in re.findall(r"<tr[^>]*>([\s\S]{0,4000}?)</tr>", page_html):
+            tds = re.findall(r"<td[^>]*>([\s\S]{0,2500}?)</td>", row)
+            if len(tds) < 2:
+                continue
+            country = self._clean_cell(tds[0])
+            entity_raw = self._clean_cell(tds[1])
+            license_req = self._clean_cell(tds[2]) if len(tds) > 2 else ""
+            review_policy = self._clean_cell(tds[3]) if len(tds) > 3 else ""
+            if not entity_raw or len(entity_raw) < 4:
+                continue
+            if entity_raw.lower().startswith(("entity", "name of entity", "country")):
+                continue  # 表头
+            # 实体名 = 第一行（含 a.k.a. 别名信息）；地址在换行后
+            name = entity_raw.split("\n")[0].strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            content_parts = []
+            if country and country.lower() != "country":
+                content_parts.append(f"国家：{country}")
+            content_parts.append(f"实体：{entity_raw}")
+            if license_req and license_req.lower() != "license requirement":
+                content_parts.append(f"许可要求：{license_req}")
+            if review_policy and review_policy.lower() != "license review policy":
+                content_parts.append(f"许可审查政策：{review_policy}")
+            items.append(
+                RawSourceItem(
+                    external_id="bis-"
+                    + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16],
+                    title=name[:200],
+                    content="；".join(content_parts),
+                    url=self.endpoint,
+                    extra={"country": country, "license_requirement": license_req},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="BIS 实体清单为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 个实体")
+
+
 class CustomsAnnouncementAdapter(PullSourceAdapter):
     """海关总署公告（P2 进出口政策 / E5 关税与禁限）。
 

@@ -11,6 +11,7 @@ manual-json 是文件上传式（见 adapter.py），本模块实现 HTTP 拉取
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import html
@@ -896,6 +897,155 @@ class CommodityFuturesAdapter(PullSourceAdapter):
         if not items:
             return SourceHealth(ok=False, message="大宗商品行情为空")
         return SourceHealth(ok=True, message=f"返回 {len(items)} 个品种")
+
+
+class PbcLprAdapter(PullSourceAdapter):
+    """中国人民银行 LPR 报价（E4 货币政策：融资成本基准）。
+
+    直连央行 LPR 栏目页（zhengcehuobisi/125207/125213/125440，月度公告列表），
+    取最新一条"贷款市场报价利率（LPR）公告"，解析 1 年期 / 5 年期以上 LPR。
+    external_id=pbc-lpr-{YYYY-MM-DD}（每月一条，指纹稳定可去重）。
+    LPR 直接反映企业融资成本，可匹配供应商资金链压力（E4 传导路径）。
+    """
+
+    source_code = "pbc-lpr"
+    endpoint = (
+        "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125440/index.html"
+    )
+    _DETAIL_RE = re.compile(
+        r'href="(/zhengcehuobisi/125207/125213/125440/'
+        r"\d+/20\d{12,}/index\.html)\"[^>]*>([^<]*贷款市场报价利率[^<]*)"
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def _clean_text(raw: str) -> str:
+        text = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", "", raw)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    async def _get(
+        self, url: str, headers: dict[str, str]
+    ) -> bytes:
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    resp = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("央行 LPR 网络请求失败") from exc
+            return resp.content
+        try:
+            controlled = await controlled_get(
+                url,
+                headers=headers,
+                timeout=self._timeout_seconds,
+                maximum_bytes=5 * 1024 * 1024,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"央行 LPR 请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        return controlled.content
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        try:
+            list_html = (await self._get(self.endpoint, headers)).decode(
+                "utf-8", "ignore"
+            )
+        except UnicodeDecodeError as exc:
+            raise SourceFetchError("央行 LPR 列表解码失败") from exc
+        # 最新一条 LPR 公告
+        m = self._DETAIL_RE.search(list_html)
+        if not m:
+            raise SourceFetchError("央行 LPR 栏目未找到公告")
+        detail_url = "https://www.pbc.gov.cn" + m.group(1)
+        # 受控链路同域名请求最小间隔 10 秒（MIN_REQUEST_INTERVAL），
+        # 列表页与详情页之间需等待，否则触发"请求过于频繁"。
+        await asyncio.sleep(11)
+        try:
+            detail_html = (await self._get(detail_url, headers)).decode(
+                "utf-8", "ignore"
+            )
+        except UnicodeDecodeError as exc:
+            raise SourceFetchError("央行 LPR 详情解码失败") from exc
+        text = self._clean_text(detail_html)
+        # 公告日期：标题/正文中的 20XX年X月X日
+        date_m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text)
+        lpr1_m = re.search(r"1年期LPR为([0-9.]+)%", text)
+        lpr5_m = re.search(r"5年期(?:以上)?LPR为([0-9.]+)%", text)
+        if not lpr1_m or not lpr5_m:
+            raise SourceFetchError("央行 LPR 公告未解析到数值")
+        if date_m:
+            pub_date = (
+                f"{date_m.group(1)}-{int(date_m.group(2)):02d}-"
+                f"{int(date_m.group(3)):02d}"
+            )
+        else:
+            pub_date = datetime.now(UTC).date().isoformat()
+        lpr1, lpr5 = lpr1_m.group(1), lpr5_m.group(1)
+        return [
+            RawSourceItem(
+                external_id=f"pbc-lpr-{pub_date}",
+                title=f"LPR 报价：1年期 {lpr1}%、5年期以上 {lpr5}%（{pub_date}）",
+                content=(
+                    f"1年期 LPR：{lpr1}%；5年期以上 LPR：{lpr5}%；"
+                    f"发布于 {pub_date}，下一次发布前有效"
+                ),
+                url=detail_url,
+                extra={"lpr_1y": lpr1, "lpr_5y": lpr5, "date": pub_date},
+            )
+        ]
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="央行 LPR 公告为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条 LPR 报价")
 
 
 class CustomsAnnouncementAdapter(PullSourceAdapter):

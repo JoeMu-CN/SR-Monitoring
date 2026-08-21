@@ -66,6 +66,7 @@ from app.signals.sources import (
     MofcomEntityDetailAdapter,
     NmcWeatherAdapter,
     OfacSdnAdapter,
+    PbcLprAdapter,
     PullSourceAdapter,
     SourceFetchError,
     SseShippingAdapter,
@@ -223,6 +224,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return BisEntityListAdapter()
     if source_code == CommodityFuturesAdapter.source_code:
         return CommodityFuturesAdapter()
+    if source_code == PbcLprAdapter.source_code:
+        return PbcLprAdapter()
     if source_code == WtoNewsAdapter.source_code:
         return WtoNewsAdapter()
     if source_code == CustomsAnnouncementAdapter.source_code:

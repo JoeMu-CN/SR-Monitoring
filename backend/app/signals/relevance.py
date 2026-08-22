@@ -136,6 +136,111 @@ _HIGH_IMPACT_KEYWORDS = frozenset(
 )
 
 
+# 全量实体清单类信源：每次采集返回全量清单（指纹去重后不重复入库），
+# 分析链无需对每条实体调用 LLM——仅当实体命中供应商名时才进入分析。
+# 默认集合（可通过 signal-filter 配置覆盖）。
+_LIST_SOURCE_CODES = frozenset(
+    {
+        "ofac-sdn",
+        "bis-entity-list",
+        "uflpa-entity-list",
+        "mofcom-entity-detail",
+        "mofcom-entity-control",
+    }
+)
+
+
+@dataclass(frozen=True)
+class FilterRules:
+    """信号过滤规则（DB 配置合并代码默认值）。"""
+
+    high_impact: frozenset[str]
+    priority_countries: frozenset[str]
+    list_sources: frozenset[str]
+
+
+FILTER_CONFIG_KEY = "signal-filter"
+_RULES_TTL_SECONDS = 60.0
+_rules_cache_until: float = 0.0
+_rules_cache: FilterRules | None = None
+
+
+def _default_rules() -> FilterRules:
+    return FilterRules(
+        high_impact=_HIGH_IMPACT_KEYWORDS,
+        priority_countries=PRIORITY_COUNTRIES,
+        list_sources=_LIST_SOURCE_CODES,
+    )
+
+
+def load_filter_rules(session: Session) -> FilterRules:
+    """读取信号过滤规则（DB 覆盖 + 代码默认兜底），TTL 60 秒缓存热更新。
+
+    配置存储于 rule_dimension_configs（key=signal-filter）JSONB：
+    {"high_impact": [...], "priority_countries": [...], "list_sources": [...]}。
+    未配置的键沿用代码默认值；删除配置行即回退默认。
+    """
+    import time
+
+    global _rules_cache_until, _rules_cache
+    now = time.monotonic()
+    if _rules_cache is not None and now < _rules_cache_until:
+        return _rules_cache
+    defaults = _default_rules()
+    rules = defaults
+    try:
+        from app.risks.models import RuleDimensionConfig
+
+        row = session.scalar(
+            select(RuleDimensionConfig).where(RuleDimensionConfig.key == FILTER_CONFIG_KEY)
+        )
+        if row is not None and isinstance(row.config, dict) and row.enabled:
+            cfg = row.config
+
+            def _frozenset_of(
+                value: object,
+                fallback: frozenset[str],
+                *,
+                upper: bool = False,
+            ) -> frozenset[str]:
+                """提取配置列表为 frozenset；空/非法回退默认。upper 用于 ISO 国家码。"""
+                if isinstance(value, (list, tuple)):
+                    cleaned = frozenset(
+                        str(k).strip().upper() if upper else str(k).strip()
+                        for k in value
+                        if isinstance(k, str) and k.strip()
+                    )
+                    if cleaned:
+                        return cleaned
+                return fallback
+
+            rules = FilterRules(
+                high_impact=_frozenset_of(
+                    cfg.get("high_impact"), defaults.high_impact
+                ),
+                priority_countries=_frozenset_of(
+                    cfg.get("priority_countries"),
+                    defaults.priority_countries,
+                    upper=True,
+                ),
+                list_sources=_frozenset_of(
+                    cfg.get("list_sources"), defaults.list_sources
+                ),
+            )
+    except Exception:  # noqa: BLE001 —— 配置读取失败回退默认（保守安全侧）
+        rules = defaults
+    _rules_cache = rules
+    _rules_cache_until = now + _RULES_TTL_SECONDS
+    return rules
+
+
+def invalidate_filter_rules_cache() -> None:
+    """配置更新后立即失效缓存（下次读取重载）。"""
+    global _rules_cache_until, _rules_cache
+    _rules_cache = None
+    _rules_cache_until = 0.0
+
+
 @dataclass(frozen=True)
 class RelevanceDecision:
     relevant: bool
@@ -147,7 +252,8 @@ def assess_signal_relevance(
 ) -> RelevanceDecision:
     """对原始信号文本做确定性相关性判定。relevant=False 表示明确不相关可跳过 LLM。"""
     text = normalize_alias(f"{title} {content}")
-    if any(keyword in text for keyword in _HIGH_IMPACT_KEYWORDS):
+    rules = load_filter_rules(session)
+    if any(keyword in text for keyword in rules.high_impact):
         return RelevanceDecision(True, "命中高影响主题，强制放行复核")
     suppliers = list(
         session.scalars(select(Supplier).where(Supplier.enabled.is_(True)))
@@ -173,7 +279,7 @@ def assess_signal_relevance(
     #    （海外供应链重点关注国家例外：即使暂无该国供应商也放行）
     foreign = _foreign_countries(text, f"{title} {content}")
     if foreign and not (foreign & supplier_countries):
-        priority_hit = foreign & PRIORITY_COUNTRIES
+        priority_hit = foreign & rules.priority_countries
         if priority_hit:
             return RelevanceDecision(
                 True,

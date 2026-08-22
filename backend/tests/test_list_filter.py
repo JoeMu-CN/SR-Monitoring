@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.scheduler.jobs import _LIST_SOURCE_CODES, _matches_any_supplier
+from app.scheduler.jobs import _matches_any_supplier
+from app.signals.relevance import _LIST_SOURCE_CODES
 from app.suppliers.models import Supplier, SupplierAlias
 
 

@@ -192,3 +192,25 @@ class AdapterPreviewRequest(BaseModel):
 class AdapterPreviewResponse(BaseModel):
     fetched_count: int
     items: list[ManualSignalInput]
+
+
+class SignalFilterConfigRead(BaseModel):
+    """信号过滤规则（DB 覆盖 + 代码默认合并后的生效值）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    high_impact: list[str]
+    priority_countries: list[str]
+    list_sources: list[str]
+    source: Literal["default", "configured"] = "default"
+    updated_at: datetime | None = None
+
+
+class SignalFilterConfigUpdate(BaseModel):
+    """信号过滤规则更新（仅更新提供的键；空列表=清空该项回退默认）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    high_impact: list[str] | None = None
+    priority_countries: list[str] | None = None
+    list_sources: list[str] | None = None

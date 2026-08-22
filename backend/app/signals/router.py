@@ -15,6 +15,7 @@ from app.auth.models import User
 from app.auth.security import (
     PERM_BUSINESS_AUDIT_VIEW,
     PERM_COLLECTION_TRIGGER,
+    PERM_RULE_MANAGE,
     PERM_SIGNAL_IMPORT,
     PERM_SOURCE_MANAGE,
     PERM_SOURCE_STATUS_VIEW,
@@ -40,6 +41,11 @@ from app.signals.models import (
     RawSignal,
     SourceHostAccess,
 )
+from app.signals.relevance import (
+    FILTER_CONFIG_KEY,
+    invalidate_filter_rules_cache,
+    load_filter_rules,
+)
 from app.signals.schemas import (
     AdapterPreviewRequest,
     AdapterPreviewResponse,
@@ -51,6 +57,8 @@ from app.signals.schemas import (
     DataSourceSummaryRead,
     DataSourceUpdate,
     DataSourceWrite,
+    SignalFilterConfigRead,
+    SignalFilterConfigUpdate,
     SignalImportSummary,
 )
 from app.signals.secret_store import decrypt_secret, encrypt_secret
@@ -83,6 +91,7 @@ SourceManage = Annotated[User, Depends(require_permission(PERM_SOURCE_MANAGE))]
 CollectionTrigger = Annotated[User, Depends(require_permission(PERM_COLLECTION_TRIGGER))]
 SignalImport = Annotated[User, Depends(require_permission(PERM_SIGNAL_IMPORT))]
 BusinessAuditView = Annotated[User, Depends(require_permission(PERM_BUSINESS_AUDIT_VIEW))]
+RuleManage = Annotated[User, Depends(require_permission(PERM_RULE_MANAGE))]
 CsrfGuard = Annotated[None, Depends(verify_csrf)]
 adapter: SourceAdapter = ManualJsonAdapter()
 
@@ -724,3 +733,108 @@ def run_source_collection(
             detail=f"采集失败: {exc}",
         ) from exc
     return run
+
+
+# ---- 信号过滤规则配置（signal-filter，运营可自主维护） ----
+
+@router.get("/signals/filter-config", response_model=SignalFilterConfigRead)
+def get_filter_config(
+    session: SessionDependency, _user: SourceStatusView
+) -> SignalFilterConfigRead:
+    """读取生效中的信号过滤规则（DB 覆盖合并代码默认值）。"""
+    from app.risks.models import RuleDimensionConfig
+
+    rules = load_filter_rules(session)
+    row = session.scalar(
+        select(RuleDimensionConfig).where(
+            RuleDimensionConfig.key == FILTER_CONFIG_KEY
+        )
+    )
+    return SignalFilterConfigRead(
+        high_impact=sorted(rules.high_impact),
+        priority_countries=sorted(rules.priority_countries),
+        list_sources=sorted(rules.list_sources),
+        source="configured" if row is not None else "default",
+        updated_at=row.updated_at if row is not None else None,
+    )
+
+
+@router.put("/signals/filter-config", response_model=SignalFilterConfigRead)
+def update_filter_config(
+    payload: SignalFilterConfigUpdate,
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
+) -> SignalFilterConfigRead:
+    """更新信号过滤规则；空列表=清空该项回退代码默认。更新后立即生效。"""
+    from app.risks.models import RuleDimensionConfig
+
+    _validate_filter_country_codes(payload.priority_countries)
+    row = session.scalar(
+        select(RuleDimensionConfig).where(
+            RuleDimensionConfig.key == FILTER_CONFIG_KEY
+        )
+    )
+    if row is None:
+        row = RuleDimensionConfig(
+            key=FILTER_CONFIG_KEY,
+            label="信号过滤规则（高影响关键词/重点关注国家/清单类信源）",
+            enabled=True,
+            config={},
+        )
+        session.add(row)
+    merged = dict(row.config or {})
+    if payload.high_impact is not None:
+        merged["high_impact"] = _clean_list(payload.high_impact)
+    if payload.priority_countries is not None:
+        merged["priority_countries"] = [
+            c.strip().upper() for c in _clean_list(payload.priority_countries)
+        ]
+    if payload.list_sources is not None:
+        merged["list_sources"] = _clean_list(payload.list_sources)
+    if not merged:
+        # 全部清空：删除配置行回退代码默认
+        session.delete(row)
+    else:
+        row.config = merged
+    session.commit()
+    invalidate_filter_rules_cache()
+    session.expire_all()
+    return get_filter_config(session, _user)
+
+
+@router.delete("/signals/filter-config", status_code=status.HTTP_204_NO_CONTENT)
+def reset_filter_config(
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
+) -> None:
+    """删除信号过滤配置，回退代码默认值。"""
+    from app.risks.models import RuleDimensionConfig
+
+    row = session.scalar(
+        select(RuleDimensionConfig).where(
+            RuleDimensionConfig.key == FILTER_CONFIG_KEY
+        )
+    )
+    if row is not None:
+        session.delete(row)
+        session.commit()
+    invalidate_filter_rules_cache()
+
+
+def _clean_list(values: list[str]) -> list[str]:
+    return [v.strip() for v in values if v and v.strip()]
+
+
+def _validate_filter_country_codes(countries: list[str] | None) -> None:
+    """重点关注国家须为 ISO 3166-1 alpha-2 两字母码（容错小写）。"""
+    if countries is None:
+        return
+    for code in countries:
+        cleaned = code.strip().upper()
+        if len(cleaned) != 2 or not cleaned.isalpha():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"重点关注国家须为 ISO 3166-1 alpha-2 两字母码：{code!r}",
+            )

@@ -54,27 +54,13 @@ from app.research.service import (
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
-from app.signals.relevance import assess_signal_relevance
+from app.signals.relevance import assess_signal_relevance, load_filter_rules
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 from app.suppliers.models import Supplier
 from app.suppliers.schemas import normalize_alias
 
 logger = logging.getLogger("scheduler")
-
-
-# 全量实体清单类信源：每次采集返回全量清单（指纹去重后不重复入库），
-# 分析链无需对每条实体调用 LLM——仅当实体命中供应商名时才进入分析，
-# 其余写 filtered 记录跳过（存量 2.3 万条 → LLM 消耗降至个位数）。
-_LIST_SOURCE_CODES = frozenset(
-    {
-        "ofac-sdn",
-        "bis-entity-list",
-        "uflpa-entity-list",
-        "mofcom-entity-detail",
-        "mofcom-entity-control",
-    }
-)
 
 
 def _matches_any_supplier(session: Session, text: str) -> bool:
@@ -287,8 +273,10 @@ def _process_pending_signals(limit: int | None = None) -> int:
                         filtered += 1
                         continue
                 # 清单类信源（全量实体清单）：未命中任何供应商名则跳过 LLM
+                # （清单集合来自 signal-filter 配置，TTL 缓存热更新）
+                list_sources = load_filter_rules(session).list_sources
                 if (
-                    source_code in _LIST_SOURCE_CODES
+                    source_code in list_sources
                     and not _matches_any_supplier(
                         session, f"{signal.title} {signal.content}"
                     )

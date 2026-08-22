@@ -310,6 +310,20 @@ export interface SandboxResult {
   candidates: SandboxCandidate[];
 }
 
+export interface SignalFilterConfig {
+  high_impact: string[];
+  priority_countries: string[];
+  list_sources: string[];
+  source: 'default' | 'configured';
+  updated_at?: string | null;
+}
+
+export interface SignalFilterConfigUpdate {
+  high_impact?: string[];
+  priority_countries?: string[];
+  list_sources?: string[];
+}
+
 export interface ToolCallRead {
   name: string;
   arguments: Record<string, unknown>;
@@ -474,6 +488,13 @@ export const api = {
   testRuleEngine: (payload: SandboxRequest) => request<SandboxResult>('/api/v1/rule-engine/test', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),
+  filterConfig: {
+    get: () => request<SignalFilterConfig>('/api/v1/signals/filter-config'),
+    update: (payload: SignalFilterConfigUpdate) => request<SignalFilterConfig>('/api/v1/signals/filter-config', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    }),
+    reset: () => request<void>('/api/v1/signals/filter-config', {method: 'DELETE'}),
+  },
   health: () => request<SystemHealth>('/api/v1/system/health'),
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
   aiReviewSummary: () => request<AIReviewSummary>('/api/v1/ai-review-summary'),

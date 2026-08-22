@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
 import {api, RuleEngineOptions, SandboxResult} from '../api';
 import { MonitoringDimension } from '../types';
+import {SignalFilterSection} from './SignalFilterSection';
 
 interface RuleEngineViewProps {
   dimensions: MonitoringDimension[];
@@ -385,6 +386,8 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </div>
             </div>
           </div>
+
+          <SignalFilterSection role={role} />
 
           <AnimatePresence initial={false}>
           {sandboxOpen && (

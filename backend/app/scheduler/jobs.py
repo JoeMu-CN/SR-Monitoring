@@ -58,8 +58,38 @@ from app.signals.relevance import assess_signal_relevance
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 from app.suppliers.models import Supplier
+from app.suppliers.schemas import normalize_alias
 
 logger = logging.getLogger("scheduler")
+
+
+# 全量实体清单类信源：每次采集返回全量清单（指纹去重后不重复入库），
+# 分析链无需对每条实体调用 LLM——仅当实体命中供应商名时才进入分析，
+# 其余写 filtered 记录跳过（存量 2.3 万条 → LLM 消耗降至个位数）。
+_LIST_SOURCE_CODES = frozenset(
+    {
+        "ofac-sdn",
+        "bis-entity-list",
+        "uflpa-entity-list",
+        "mofcom-entity-detail",
+        "mofcom-entity-control",
+    }
+)
+
+
+def _matches_any_supplier(session: Session, text: str) -> bool:
+    """供应商主体/别名是否命中文本（与相关性过滤同款匹配）。"""
+    normalized = normalize_alias(text)
+    for supplier in session.scalars(
+        select(Supplier).where(Supplier.enabled.is_(True))
+    ):
+        if normalize_alias(supplier.legal_name) in normalized:
+            return True
+        for alias in supplier.aliases:
+            if alias.normalized_alias and alias.normalized_alias in normalized:
+                return True
+    return False
+
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # ponytail: 当前生产仅单 Scheduler 进程；扩为多副本前改用数据库级原子领取或 advisory lock。
 _pending_signal_processing_lock = Lock()
@@ -220,8 +250,8 @@ def _process_pending_signals(limit: int | None = None) -> int:
     try:
         with SessionLocal() as session:
             signal_ids = list(
-                session.scalars(
-                    select(RawSignal.id)
+                session.execute(
+                    select(RawSignal.id, DataSource.code)
                     .join(DataSource, DataSource.id == RawSignal.source_id)
                     .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
                     .where(DataSource.enabled.is_(True))
@@ -229,7 +259,7 @@ def _process_pending_signals(limit: int | None = None) -> int:
                     .limit(batch)
                 )
             )
-            for signal_id in signal_ids:
+            for signal_id, source_code in signal_ids:
                 signal = session.get(RawSignal, signal_id)
                 if signal is None:
                     continue
@@ -256,6 +286,31 @@ def _process_pending_signals(limit: int | None = None) -> int:
                         session.commit()
                         filtered += 1
                         continue
+                # 清单类信源（全量实体清单）：未命中任何供应商名则跳过 LLM
+                if (
+                    source_code in _LIST_SOURCE_CODES
+                    and not _matches_any_supplier(
+                        session, f"{signal.title} {signal.content}"
+                    )
+                ):
+                    session.add(
+                        AIAnalysisRecord(
+                            signal_id=signal.id,
+                            provider="deterministic-filter",
+                            model="entity-list-v1",
+                            prompt_version="entity-list-v1",
+                            status="succeeded",
+                            finished_at=datetime.now(UTC),
+                            duration_ms=0,
+                            result=None,
+                            error="filtered: 清单类信号未命中任何供应商",
+                            needs_review=True,
+                            review_reason="实体清单未命中任何供应商，跳过 LLM",
+                        )
+                    )
+                    session.commit()
+                    filtered += 1
+                    continue
                 try:
                     analysis = asyncio.run(analyze_raw_signal(session, signal))
                     if analysis.status != "succeeded" or analysis.result is None:

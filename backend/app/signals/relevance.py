@@ -7,6 +7,8 @@
 1. 命中供应商主体/别名 → 放行（最强相关信号）
 2. 命中中国地名且存在中国供应商 → 放行
 3. 命中国外地理（国家全名/美国州）且这些国家均无供应商 → 过滤
+   （例外：海外供应链重点关注国家（PRIORITY_COUNTRIES，默认日韩）即使
+     暂无该国供应商也放行，避免误滤海外供应链风险信号）
 4. 其余（无地理线索、拿不准）→ 放行
 
 注意：raw_data 是标准化信号（不含原始 item 的经纬度），故本轮只做文本地理粗筛；
@@ -19,6 +21,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import PRIORITY_COUNTRIES
 from app.suppliers.models import Supplier
 from app.suppliers.schemas import normalize_alias
 
@@ -150,8 +153,15 @@ def assess_signal_relevance(
         # 中国事件但无中国供应商：不直接过滤，交给后续国外判断/保守放行
 
     # 3. 国外地理命中，且命中国家均无供应商 → 明确不相关
+    #    （海外供应链重点关注国家例外：即使暂无该国供应商也放行）
     foreign = _foreign_countries(text, f"{title} {content}")
     if foreign and not (foreign & supplier_countries):
+        priority_hit = foreign & PRIORITY_COUNTRIES
+        if priority_hit:
+            return RelevanceDecision(
+                True,
+                f"命中重点关注国家 {sorted(priority_hit)}，海外供应链风险放行",
+            )
         return RelevanceDecision(
             False, f"事件地理 {sorted(foreign)} 均无供应商，明确不相关"
         )

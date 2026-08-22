@@ -115,3 +115,54 @@ def test_high_impact_topic_is_forced_through_even_without_matching_country(
     )
     assert decision.relevant is True
     assert "强制放行" in decision.reason
+
+
+def test_priority_country_japan_not_filtered_without_supplier(
+    db_session: Session,
+) -> None:
+    """日本事件（无日本供应商）→ 放行（海外供应链重点关注国家，默认 JP/KR）。"""
+    _add_supplier(db_session, "SUP-11", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session,
+        "M 6.2 - near the east coast of Honshu, Japan",
+        "No tsunami warning issued.",
+    )
+    assert decision.relevant is True
+    assert "重点关注" in decision.reason
+
+
+def test_priority_country_korea_not_filtered_without_supplier(
+    db_session: Session,
+) -> None:
+    """韩国事件（无韩国供应商）→ 放行（海外供应链重点关注国家）。"""
+    _add_supplier(db_session, "SUP-12", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session, "韩国港口工人罢工", "釜山港作业停滞，船期延误风险。"
+    )
+    assert decision.relevant is True
+    assert "重点关注" in decision.reason
+
+
+def test_non_priority_country_still_filtered_without_supplier(
+    db_session: Session,
+) -> None:
+    """非重点关注国家（巴西）事件且无供应商 → 仍被过滤（规则不回归）。"""
+    _add_supplier(db_session, "SUP-13", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session, "Brazil initiates dispute", "regarding additional tariffs"
+    )
+    assert decision.relevant is False
+
+
+def test_priority_country_with_mixed_foreign_hit_is_relevant(
+    db_session: Session,
+) -> None:
+    """混合命中（日本+美国）且都无供应商 → 因含重点关注国家放行。"""
+    _add_supplier(db_session, "SUP-14", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session,
+        "M 5.1 - near the coast of Honshu, Japan",
+        "Region: USGS network, M 5.1, Japan.",
+    )
+    assert decision.relevant is True
+    assert "重点关注" in decision.reason

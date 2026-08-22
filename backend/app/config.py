@@ -266,6 +266,14 @@ SIGNAL_ANALYZE_BATCH = _int_env(
 SIGNAL_RELEVANCE_FILTER_ENABLED = os.getenv(
     "SIGNAL_RELEVANCE_FILTER_ENABLED", "true"
 ).strip().lower() in {"1", "true", "yes", "on"}
+# 海外供应链重点关注国家（ISO 3166-1 alpha-2，逗号分隔）。
+# 即使供应商清单尚未导入该国供应商，命中这些国家的事件也不被相关性过滤
+# 跳过（避免误滤海外供应链风险信号），并在放行理由中标记。
+PRIORITY_COUNTRIES = frozenset(
+    code.strip().upper()
+    for code in os.getenv("SIGNAL_PRIORITY_COUNTRIES", "JP,KR").split(",")
+    if code.strip()
+)
 
 
 @dataclass(frozen=True)

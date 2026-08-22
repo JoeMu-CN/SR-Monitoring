@@ -166,3 +166,56 @@ def test_priority_country_with_mixed_foreign_hit_is_relevant(
     )
     assert decision.relevant is True
     assert "重点关注" in decision.reason
+
+
+def test_eu_compliance_english_title_high_impact(db_session: Session) -> None:
+    """EU 合规英文标题（CBAM）命中高影响词放行。"""
+    _add_supplier(db_session, "SUP-15", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session,
+        "Commission Implementing Regulation (EU) 2026/1200 on the carbon border adjustment mechanism transitional rules",  # noqa: E501
+        "CBAM transitional reporting for importers.",
+    )
+    assert decision.relevant is True
+    assert "高影响" in decision.reason
+
+
+def test_uflpa_xinjiang_entity_high_impact(db_session: Session) -> None:
+    """UFLPA 涉疆实体（含 Xinjiang + forced labor）命中高影响词。"""
+    _add_supplier(db_session, "SUP-16", "苏州美渡机电科技有限公司", "CN")
+    decision = assess_signal_relevance(
+        db_session,
+        "Xinjiang East Hope Nonferrous Metals Co., Ltd.",
+        "Identified for forced labor under UFLPA.",
+    )
+    assert decision.relevant is True
+    assert "高影响" in decision.reason
+
+
+def test_lpr_and_pmi_high_impact(db_session: Session) -> None:
+    """LPR 报价与 PMI 运行情况命中高影响词（宏观风险信号）。"""
+    _add_supplier(db_session, "SUP-17", "苏州美渡机电科技有限公司", "CN")
+    lpr = assess_signal_relevance(
+        db_session, "LPR 报价：1年期 3.0%", "贷款利率市场报价"
+    )
+    assert lpr.relevant is True
+    assert "高影响" in lpr.reason
+    pmi = assess_signal_relevance(
+        db_session, "制造业 PMI 49.2%（2026-07）", "采购经理指数运行情况"
+    )
+    assert pmi.relevant is True
+    assert "高影响" in pmi.reason
+
+
+def test_mee_regulatory_announcement_high_impact(db_session: Session) -> None:
+    """生态环境部监管公告（环评/督察/排污/黑名单）命中高影响词。"""
+    _add_supplier(db_session, "SUP-18", "苏州美渡机电科技有限公司", "CN")
+    for title in (
+        "中央生态环境保护督察通报典型案例",
+        "关于2025年下半年环评信用管理对象列入黑名单情况的通报",
+        "江西省寻乌县鑫鼎汇矿业有限公司违法排污致断面镉浓度超标调查结果",
+        "机动车排放检验领域第三方机构专项整治涉刑典型问题通报",
+    ):
+        decision = assess_signal_relevance(db_session, title, "生态环境部公告")
+        assert decision.relevant is True
+        assert "高影响" in decision.reason, f"未命中高影响: {title}"

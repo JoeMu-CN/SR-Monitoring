@@ -157,6 +157,7 @@ class FilterRules:
     high_impact: frozenset[str]
     priority_countries: frozenset[str]
     list_sources: frozenset[str]
+    commodity_threshold_pct: float = 5.0
 
 
 FILTER_CONFIG_KEY = "signal-filter"
@@ -170,6 +171,7 @@ def _default_rules() -> FilterRules:
         high_impact=_HIGH_IMPACT_KEYWORDS,
         priority_countries=PRIORITY_COUNTRIES,
         list_sources=_LIST_SOURCE_CODES,
+        commodity_threshold_pct=5.0,
     )
 
 
@@ -214,6 +216,20 @@ def load_filter_rules(session: Session) -> FilterRules:
                         return cleaned
                 return fallback
 
+            def _threshold_float(value: object, fallback: float) -> float:
+                """提取非负浮点阈值；非法/负数回退默认。"""
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if value >= 0:
+                        return float(value)
+                if isinstance(value, str):
+                    try:
+                        parsed = float(value.strip())
+                    except ValueError:
+                        return fallback
+                    if parsed >= 0:
+                        return parsed
+                return fallback
+
             rules = FilterRules(
                 high_impact=_frozenset_of(
                     cfg.get("high_impact"), defaults.high_impact
@@ -225,6 +241,10 @@ def load_filter_rules(session: Session) -> FilterRules:
                 ),
                 list_sources=_frozenset_of(
                     cfg.get("list_sources"), defaults.list_sources
+                ),
+                commodity_threshold_pct=_threshold_float(
+                    cfg.get("commodity_threshold_pct"),
+                    defaults.commodity_threshold_pct,
                 ),
             )
     except Exception:  # noqa: BLE001 —— 配置读取失败回退默认（保守安全侧）
@@ -308,3 +328,35 @@ def _foreign_countries(normalized_text: str, raw_text: str) -> set[str]:
             found.add("US")
             break
     return found
+
+
+# 结构化宏观信号分级：commodity-futures 等价格信号按涨跌幅阈值免 LLM。
+# 低于阈值（正常波动，无风险信息量）→ 跳过；达到阈值 → 进分析链。
+_PCT_RE = re.compile(r"较昨结算：\s*([+-]?\d+(?:\.\d+)?)\s*%")
+_COMMODITY_SOURCE = "commodity-futures"
+
+
+def grade_structured_signal(
+    source_code: str, title: str, content: str, rules: FilterRules
+) -> str | None:
+    """对结构化宏观信号做确定性分级。
+
+    返回 None=放行进入分析链；返回 reason=跳过（写 filtered 记录，不耗 LLM）。
+    当前仅 commodity-futures 按涨跌幅阈值分级；其余宏观信源频率低，保持全分析。
+    """
+    if source_code != _COMMODITY_SOURCE:
+        return None
+    m = _PCT_RE.search(f"{title} {content}")
+    if not m:
+        return None  # 解析不到涨跌幅 → 保守放行
+    try:
+        pct = abs(float(m.group(1)))
+    except ValueError:
+        return None
+    threshold = rules.commodity_threshold_pct
+    if pct < threshold:
+        return (
+            f"大宗商品涨跌幅 {m.group(1)}% 低于阈值 {threshold:g}%，"
+            "正常波动免 LLM 分析"
+        )
+    return None

@@ -54,7 +54,7 @@ from app.research.service import (
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
-from app.signals.relevance import assess_signal_relevance, load_filter_rules
+from app.signals.relevance import assess_signal_relevance, grade_structured_signal, load_filter_rules
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 from app.suppliers.models import Supplier
@@ -294,6 +294,30 @@ def _process_pending_signals(limit: int | None = None) -> int:
                             error="filtered: 清单类信号未命中任何供应商",
                             needs_review=True,
                             review_reason="实体清单未命中任何供应商，跳过 LLM",
+                        )
+                    )
+                    session.commit()
+                    filtered += 1
+                    continue
+                # 结构化宏观信号分级：commodity 涨跌幅低于阈值 → 免 LLM
+                rules = load_filter_rules(session)
+                grade_reason = grade_structured_signal(
+                    source_code, signal.title, signal.content, rules
+                )
+                if grade_reason is not None:
+                    session.add(
+                        AIAnalysisRecord(
+                            signal_id=signal.id,
+                            provider="deterministic-filter",
+                            model="structured-grade-v1",
+                            prompt_version="structured-grade-v1",
+                            status="succeeded",
+                            finished_at=datetime.now(UTC),
+                            duration_ms=0,
+                            result=None,
+                            error=f"filtered: {grade_reason}",
+                            needs_review=True,
+                            review_reason=f"结构化分级跳过：{grade_reason}",
                         )
                     )
                     session.commit()

@@ -754,6 +754,7 @@ def get_filter_config(
         high_impact=sorted(rules.high_impact),
         priority_countries=sorted(rules.priority_countries),
         list_sources=sorted(rules.list_sources),
+        commodity_threshold_pct=rules.commodity_threshold_pct,
         source="configured" if row is not None else "default",
         updated_at=row.updated_at if row is not None else None,
     )
@@ -792,6 +793,8 @@ def update_filter_config(
         ]
     if payload.list_sources is not None:
         merged["list_sources"] = _clean_list(payload.list_sources)
+    if payload.commodity_threshold_pct is not None:
+        merged["commodity_threshold_pct"] = payload.commodity_threshold_pct
     if not merged:
         # 全部清空：删除配置行回退代码默认
         session.delete(row)

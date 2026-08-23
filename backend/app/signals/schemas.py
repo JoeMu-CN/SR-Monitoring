@@ -202,6 +202,7 @@ class SignalFilterConfigRead(BaseModel):
     high_impact: list[str]
     priority_countries: list[str]
     list_sources: list[str]
+    commodity_threshold_pct: float = 5.0
     source: Literal["default", "configured"] = "default"
     updated_at: datetime | None = None
 
@@ -214,3 +215,6 @@ class SignalFilterConfigUpdate(BaseModel):
     high_impact: list[str] | None = None
     priority_countries: list[str] | None = None
     list_sources: list[str] | None = None
+    commodity_threshold_pct: float | None = Field(
+        None, ge=0, le=100, description="大宗商品涨跌幅阈值（%），低于则免 LLM"
+    )

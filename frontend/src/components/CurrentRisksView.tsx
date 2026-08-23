@@ -3,16 +3,207 @@ import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
 import type {RiskItem} from '../types';
 
-interface CurrentRisksViewProps {riskItems: RiskItem[]; onSelectRisk: (item: RiskItem) => void;}
+interface CurrentRisksViewProps {
+  riskItems: RiskItem[];
+  onSelectRisk: (item: RiskItem) => void;
+}
 
 export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLevel, setSelectedLevel] = useState('all');
+  const [selectedSource, setSelectedSource] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'valid' | 'invalid'>('valid');
-  const counts = useMemo(() => Object.fromEntries(['P1', 'P2', 'P3', 'P4'].map((level) => [level, riskItems.filter((item) => item.level === level).length])) as Record<string, number>, [riskItems]);
-  const filtered = riskItems.filter((item) => {const query = searchTerm.trim().toLowerCase(); const matchesQuery = !query || [item.companyName, item.riskType, item.summary, item.location ?? ''].some((value) => value.toLowerCase().includes(query)); return matchesQuery && (selectedLevel === 'all' || item.level === selectedLevel) && item.status === statusFilter;});
-  const reset = () => {setSearchTerm(''); setSelectedLevel('all'); setStatusFilter('valid');};
-  return <div className="space-y-5 pb-20 lg:pb-8"><div><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全网风险监控中心</h1><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">实时深度追踪当前有效风险提醒及可追溯证据</p></div><section className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"><div className="flex flex-col gap-3 md:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"/><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="搜索供应商主体、风险事件或国家地区..." className="w-full rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 pl-9 pr-3 text-[13px] outline-none focus:ring-2 focus:ring-[#185fa5]/30 dark:border-slate-700/60 dark:bg-slate-900/60"/></div><button type="button" onClick={reset} className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100 px-3 py-2 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-200/70 dark:border-slate-700/80 dark:bg-slate-700/60 dark:text-slate-300"><RotateCcw className="h-3.5 w-3.5"/>重置筛选</button></div><div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 text-[12px] dark:border-slate-800"><label className="flex items-center gap-1.5 text-slate-500">风险等级<select value={selectedLevel} onChange={(event) => setSelectedLevel(event.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"><option value="all">全部</option><option value="P1">P1 严重</option><option value="P2">P2 高风险</option><option value="P3">P3 中度</option><option value="P4">P4 轻微</option></select></label><div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">{(['valid', 'invalid'] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} className={`rounded-md px-2.5 py-1 font-semibold ${statusFilter === status ? 'bg-white text-[#185fa5] shadow-sm dark:bg-slate-700' : 'text-slate-500'}`}>{status === 'valid' ? '当前有效' : '已失效'}</button>)}</div></div></section><section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"><div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800"><span className="text-[13px] font-semibold text-slate-600 dark:text-slate-300">当前风险概览</span><span className="font-mono text-[13px] font-bold text-[#185fa5]">共 {riskItems.length} 条</span></div><div className="grid grid-cols-2 divide-x pt-3 dark:divide-slate-800 sm:grid-cols-4"><LevelSummary label="P1 严重" value={counts.P1} color="text-[#C92A2A]"/><LevelSummary label="P2 高风险" value={counts.P2} color="text-[#D97706]"/><LevelSummary label="P3 中度" value={counts.P3} color="text-[#2563EB]"/><LevelSummary label="P4 轻微" value={counts.P4} color="text-[#64748B]"/></div></section><AnimatePresence mode="popLayout">{filtered.length === 0 ? <motion.div initial={{opacity: 0, scale: 0.98}} animate={{opacity: 1, scale: 1}} className="rounded-2xl border border-slate-200/80 bg-white/80 p-12 text-center shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60"><SearchX className="mx-auto h-10 w-10 text-slate-300"/><h3 className="mt-3 text-[15px] font-bold text-slate-700 dark:text-slate-300">未找到匹配的风险预警记录</h3><p className="mt-1 text-xs text-slate-400">请调整关键词或重置筛选条件。</p></motion.div> : <div className="space-y-2">{filtered.map((item) => <motion.button type="button" key={item.id} layout initial={{opacity: 0, y: 8}} animate={{opacity: 1, y: 0}} onClick={() => onSelectRisk(item)} className="group w-full rounded-2xl border border-slate-200/80 bg-white/80 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#185fa5]/60 hover:shadow-md dark:border-slate-700/60 dark:bg-slate-800/60"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><RiskBadge level={item.level} name={item.levelName}/><span className="truncate text-[15px] font-bold text-slate-900 group-hover:text-[#185fa5] dark:text-white">{item.companyName}</span></div>{item.location && <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500"><MapPin className="h-3.5 w-3.5"/>{item.location}</div>}</div><span className="whitespace-nowrap text-[11px] font-mono text-slate-400">{item.updatedTime}</span></div><p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{item.summary}</p><div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] dark:border-slate-800"><div className="flex flex-wrap items-center gap-1.5">{item.tags?.map((tag) => <span key={tag} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-[#185fa5] dark:border-slate-700 dark:bg-slate-900">{tag}</span>)}<span className="font-mono text-slate-400">AI 置信度 {item.aiConfidence}%</span></div><span className="flex items-center gap-1 font-bold text-[#185fa5]">查看详情<ChevronRight className="h-3.5 w-3.5"/></span></div></motion.button>)}</div>}</AnimatePresence><div className="border-t border-slate-200/80 pt-3 text-[12px] text-slate-500 dark:border-slate-800">显示 {filtered.length} 条，共 {riskItems.length} 条已加载结果</div></div>;
+
+  const counts = useMemo(
+    () => Object.fromEntries(
+      ['P1', 'P2', 'P3', 'P4'].map((level) => [level, riskItems.filter((item) => item.level === level).length]),
+    ) as Record<string, number>,
+    [riskItems],
+  );
+
+  const sourceOptions = useMemo(
+    () => Array.from(new Set(riskItems.map((item) => item.source).filter((s): s is string => Boolean(s)))).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    [riskItems],
+  );
+
+  const filtered = riskItems.filter((item) => {
+    const query = searchTerm.trim().toLowerCase();
+    const matchesQuery = !query || [item.companyName, item.riskType, item.summary, item.location ?? '', item.source ?? ''].some((value) => value.toLowerCase().includes(query));
+    const matchesSource = selectedSource === 'all' || item.source === selectedSource;
+    return matchesQuery && (selectedLevel === 'all' || item.level === selectedLevel) && matchesSource && item.status === statusFilter;
+  });
+
+  const reset = () => {
+    setSearchTerm('');
+    setSelectedLevel('all');
+    setSelectedSource('all');
+    setStatusFilter('valid');
+  };
+
+  return (
+    <div className="space-y-5 pb-20 lg:pb-8">
+      <div>
+        <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全网风险监控中心</h1>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">实时深度追踪当前有效风险提醒及可追溯证据</p>
+      </div>
+
+      <section className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+        <div className="flex flex-col gap-3 md:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="搜索供应商主体、风险事件、信源或国家地区..."
+              className="w-full rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 pl-9 pr-3 text-[13px] outline-none focus:ring-2 focus:ring-[#185fa5]/30 dark:border-slate-700/60 dark:bg-slate-900/60"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={reset}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 bg-slate-100 px-3 py-2 text-[12px] font-semibold text-slate-700 transition hover:bg-slate-200/70 dark:border-slate-700/80 dark:bg-slate-700/60 dark:text-slate-300"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            重置筛选
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 text-[12px] dark:border-slate-800">
+          <label className="flex items-center gap-1.5 text-slate-500">
+            风险等级
+            <select
+              value={selectedLevel}
+              onChange={(event) => setSelectedLevel(event.target.value)}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"
+            >
+              <option value="all">全部</option>
+              <option value="P1">P1 严重</option>
+              <option value="P2">P2 高风险</option>
+              <option value="P3">P3 中度</option>
+              <option value="P4">P4 轻微</option>
+            </select>
+          </label>
+          {sourceOptions.length > 1 && (
+            <label className="flex items-center gap-1.5 text-slate-500">
+              信源
+              <select
+                value={selectedSource}
+                onChange={(event) => setSelectedSource(event.target.value)}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"
+              >
+                <option value="all">全部信源（{riskItems.length}）</option>
+                {sourceOptions.map((source) => (
+                  <option key={source} value={source}>
+                    {source}（{riskItems.filter((item) => item.source === source).length}）
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-900">
+            {(['valid', 'invalid'] as const).map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setStatusFilter(status)}
+                className={`rounded-md px-2.5 py-1 font-semibold ${statusFilter === status ? 'bg-white text-[#185fa5] shadow-sm dark:bg-slate-700' : 'text-slate-500'}`}
+              >
+                {status === 'valid' ? '当前有效' : '已失效'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+          <span className="text-[13px] font-semibold text-slate-600 dark:text-slate-300">当前风险概览</span>
+          <span className="font-mono text-[13px] font-bold text-[#185fa5]">共 {riskItems.length} 条</span>
+        </div>
+        <div className="grid grid-cols-2 divide-x pt-3 dark:divide-slate-800 sm:grid-cols-4">
+          <LevelSummary label="P1 严重" value={counts.P1} color="text-[#C92A2A]" />
+          <LevelSummary label="P2 高风险" value={counts.P2} color="text-[#D97706]" />
+          <LevelSummary label="P3 中度" value={counts.P3} color="text-[#2563EB]" />
+          <LevelSummary label="P4 轻微" value={counts.P4} color="text-[#64748B]" />
+        </div>
+      </section>
+
+      <AnimatePresence mode="popLayout">
+        {filtered.length === 0 ? (
+          <motion.div
+            initial={{opacity: 0, scale: 0.98}}
+            animate={{opacity: 1, scale: 1}}
+            className="rounded-2xl border border-slate-200/80 bg-white/80 p-12 text-center shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60"
+          >
+            <SearchX className="mx-auto h-10 w-10 text-slate-300" />
+            <h3 className="mt-3 text-[15px] font-bold text-slate-700 dark:text-slate-300">未找到匹配的风险预警记录</h3>
+            <p className="mt-1 text-xs text-slate-400">请调整关键词或重置筛选条件。</p>
+          </motion.div>
+        ) : (
+          <div className="space-y-2">
+            {filtered.map((item) => (
+              <motion.button
+                type="button"
+                key={item.id}
+                layout
+                initial={{opacity: 0, y: 8}}
+                animate={{opacity: 1, y: 0}}
+                onClick={() => onSelectRisk(item)}
+                className="group w-full rounded-2xl border border-slate-200/80 bg-white/80 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#185fa5]/60 hover:shadow-md dark:border-slate-700/60 dark:bg-slate-800/60"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <RiskBadge level={item.level} name={item.levelName} />
+                      <span className="truncate text-[15px] font-bold text-slate-900 group-hover:text-[#185fa5] dark:text-white">{item.companyName}</span>
+                    </div>
+                    {item.location && (
+                      <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {item.location}
+                      </div>
+                    )}
+                  </div>
+                  <span className="whitespace-nowrap text-[11px] font-mono text-slate-400">{item.updatedTime}</span>
+                </div>
+                <p className="mt-2 line-clamp-2 text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">{item.summary}</p>
+                <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] dark:border-slate-800">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {item.source && <SourceBadge name={item.source} />}
+                    {item.tags?.map((tag) => (
+                      <span key={tag} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-[#185fa5] dark:border-slate-700 dark:bg-slate-900">{tag}</span>
+                    ))}
+                    <span className="font-mono text-slate-400">AI 置信度 {item.aiConfidence}%</span>
+                  </div>
+                  <span className="flex items-center gap-1 font-bold text-[#185fa5]">查看详情<ChevronRight className="h-3.5 w-3.5" /></span>
+                </div>
+              </motion.button>
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
+
+      <div className="border-t border-slate-200/80 pt-3 text-[12px] text-slate-500 dark:border-slate-800">
+        显示 {filtered.length} 条，共 {riskItems.length} 条已加载结果
+      </div>
+    </div>
+  );
 };
-const LevelSummary = ({label, value, color}: {label: string; value: number; color: string}) => <div className="text-center"><div className={`font-mono text-xl font-black ${color}`}>{value}</div><div className="text-[11px] text-slate-500">{label}</div></div>;
-const RiskBadge = ({level, name}: {level: RiskItem['level']; name: string}) => <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold text-white ${level === 'P1' ? 'bg-[#C92A2A]' : level === 'P2' ? 'bg-[#D97706]' : level === 'P3' ? 'bg-[#2563EB]' : 'bg-[#64748B]'}`}>{level} {name}</span>;
+
+const LevelSummary = ({label, value, color}: {label: string; value: number; color: string}) => (
+  <div className="text-center">
+    <div className={`font-mono text-xl font-black ${color}`}>{value}</div>
+    <div className="text-[11px] text-slate-500">{label}</div>
+  </div>
+);
+
+const RiskBadge = ({level, name}: {level: RiskItem['level']; name: string}) => (
+  <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold text-white ${level === 'P1' ? 'bg-[#C92A2A]' : level === 'P2' ? 'bg-[#D97706]' : level === 'P3' ? 'bg-[#2563EB]' : 'bg-[#64748B]'}`}>
+    {level} {name}
+  </span>
+);
+
+const SourceBadge = ({name}: {name: string}) => (
+  <span className="inline-flex items-center gap-1 rounded-full border border-[#185fa5]/30 bg-[#185fa5]/5 px-2 py-0.5 font-mono font-semibold text-[#185fa5] dark:border-blue-400/30 dark:bg-blue-400/10 dark:text-blue-300">
+    {name}
+  </span>
+);

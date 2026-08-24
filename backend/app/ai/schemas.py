@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -96,9 +96,12 @@ class SignalAnalysisResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self) -> Self:
-        for field_name, value in (("start_at", self.start_at), ("end_at", self.end_at)):
-            if value is not None and value.tzinfo is None:
-                raise ValueError(f"{field_name} 必须包含时区")
+        # 模型输出的时间可能不带时区（如 deepseek-v4-flash 返回
+        # "2026-07-15T10:08:00"），按 UTC 补时区保证一致性（保守默认）。
+        if self.start_at is not None and self.start_at.tzinfo is None:
+            self.start_at = self.start_at.replace(tzinfo=UTC)
+        if self.end_at is not None and self.end_at.tzinfo is None:
+            self.end_at = self.end_at.replace(tzinfo=UTC)
         if self.start_at and self.end_at and self.end_at < self.start_at:
             raise ValueError("end_at 不能早于 start_at")
         allowed_subtypes: dict[str, set[str]] = {

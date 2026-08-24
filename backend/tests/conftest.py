@@ -13,6 +13,7 @@ from app.auth.security import create_session, csrf_token_for_session
 from app.config import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 from app.database import engine, get_session
 from app.main import app
+from app.notification.models import NotificationDelivery, NotificationSubscription
 from app.research.models import (
     ResearchBatch,
     ResearchCitation,
@@ -50,6 +51,8 @@ def db_session() -> Generator[Session]:
     connection = engine.connect()
     outer_transaction = connection.begin()
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    session.execute(delete(NotificationDelivery))
+    session.execute(delete(NotificationSubscription))
     session.execute(delete(RiskAlert))
     session.execute(delete(SupplierEventMatch))
     session.execute(delete(RiskEventSignal))

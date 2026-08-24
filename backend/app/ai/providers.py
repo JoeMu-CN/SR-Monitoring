@@ -288,6 +288,7 @@ def system_prompt() -> str:
         "affected_products 与 affected_industries 必须分别提取，不得混用。"
         "locations 中应尽量分别填写 country_code、region、city、district；"
         "district 仅在原文明确支持区、县、旗或同级行政区时填写，不得根据城市名称猜测。"
+        "start_at 与 end_at 必须使用带时区的 ISO 8601 格式（如 2026-07-15T10:08:00Z 或带偏移）；"
         "只返回符合以下 JSON Schema 的 JSON 对象，不要返回 Markdown：" + schema
     )
 

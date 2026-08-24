@@ -342,3 +342,51 @@ def test_provider_failure_is_recorded(
     assert record is not None
     assert record.status == "failed"
     assert record.error == "模拟模型超时"
+
+
+def test_signal_analysis_result_accepts_naive_datetime() -> None:
+    """模型返回无时区时间（deepseek-v4-flash 变体）→ 自动补 UTC 不报错。"""
+    result = SignalAnalysisResult.model_validate(
+        {
+            "event_type": "weather",
+            "event_subtype": "weather_alert",
+            "suggested_severity": "medium",
+            "organizations": [],
+            "locations": [{"name": "吉林", "country_code": "CN"}],
+            "affected_activities": ["operations"],
+            "affected_products": [],
+            "affected_industries": [],
+            "start_at": "2026-07-15T10:08:00",
+            "end_at": None,
+            "summary_zh": "测试摘要",
+            "evidence_sentences": ["证据一"],
+            "confidence": 0.9,
+        }
+    )
+    assert result.start_at is not None
+    assert result.start_at.tzinfo is not None
+    assert result.start_at.utcoffset().total_seconds() == 0  # 按 UTC 补时区
+
+
+def test_signal_analysis_result_naive_end_at_follows_start() -> None:
+    """start_at 带时区、end_at 无时区 → 补 UTC 后保持时序校验。"""
+    result = SignalAnalysisResult.model_validate(
+        {
+            "event_type": "other",
+            "event_subtype": "other",
+            "suggested_severity": "low",
+            "organizations": [],
+            "locations": [],
+            "affected_activities": [],
+            "affected_products": [],
+            "affected_industries": [],
+            "start_at": "2026-08-05T09:00:00+08:00",
+            "end_at": "2026-08-05T10:00:00",
+            "summary_zh": "测试摘要",
+            "evidence_sentences": ["证据一"],
+            "confidence": 0.5,
+        }
+    )
+    assert result.end_at is not None
+    assert result.end_at.tzinfo is not None
+    assert result.end_at > result.start_at

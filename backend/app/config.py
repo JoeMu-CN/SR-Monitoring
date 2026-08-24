@@ -199,6 +199,83 @@ def validate_auth_config() -> None:
         raise RuntimeError("生产环境 ALLOWED_ORIGINS 必须配置为 HTTPS 来源")
 
 
+@dataclass(frozen=True)
+class NotificationSettings:
+    """风险提醒外部通知配置（见《风险预警手机推送接入方案.md》）。
+
+    密钥只存环境变量；订阅级别/免打扰等业务配置在 notification_subscriptions 表。
+    """
+
+    enabled: bool
+    push_levels: tuple[str, ...]
+    scan_interval_seconds: int
+    dingtalk_enabled: bool
+    dingtalk_webhook_url: str
+    dingtalk_secret: str
+    feishu_enabled: bool
+    feishu_webhook_url: str
+    feishu_secret: str
+    serverchan_enabled: bool
+    serverchan_send_key: str
+    pushplus_enabled: bool
+    pushplus_token: str
+    frontend_url: str
+    hourly_limit: int
+    merge_window_minutes: int
+    quiet_start: str
+    quiet_end: str
+    retry_attempts: int
+    timeout_seconds: float
+
+
+def _bool_env(name: str, default: bool = False) -> bool:
+    return os.getenv(name, "true" if default else "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _csv_env(name: str, default: str) -> tuple[str, ...]:
+    return tuple(
+        item.strip()
+        for item in os.getenv(name, default).split(",")
+        if item.strip()
+    )
+
+
+def get_notification_settings() -> NotificationSettings:
+    """读取通知配置；默认全部渠道关闭，避免隐式外发。"""
+    return NotificationSettings(
+        enabled=_bool_env("NOTIFY_ENABLED"),
+        push_levels=_csv_env("NOTIFY_PUSH_LEVELS", "P1,P2"),
+        scan_interval_seconds=_int_env(
+            "NOTIFY_SCAN_INTERVAL_SECONDS", 60, minimum=10, maximum=3600
+        ),
+        dingtalk_enabled=_bool_env("NOTIFY_DINGTALK_ENABLED"),
+        dingtalk_webhook_url=os.getenv("NOTIFY_DINGTALK_WEBHOOK_URL", "").strip(),
+        dingtalk_secret=os.getenv("NOTIFY_DINGTALK_SECRET", "").strip(),
+        feishu_enabled=_bool_env("NOTIFY_FEISHU_ENABLED"),
+        feishu_webhook_url=os.getenv("NOTIFY_FEISHU_WEBHOOK_URL", "").strip(),
+        feishu_secret=os.getenv("NOTIFY_FEISHU_SECRET", "").strip(),
+        serverchan_enabled=_bool_env("NOTIFY_SERVERCHAN_ENABLED"),
+        serverchan_send_key=os.getenv("NOTIFY_SERVERCHAN_SEND_KEY", "").strip(),
+        pushplus_enabled=_bool_env("NOTIFY_PUSHPLUS_ENABLED"),
+        pushplus_token=os.getenv("NOTIFY_PUSHPLUS_TOKEN", "").strip(),
+        frontend_url=os.getenv("NOTIFY_FRONTEND_URL", "").strip(),
+        hourly_limit=_int_env("NOTIFY_HOURLY_LIMIT", 20, minimum=1, maximum=1000),
+        merge_window_minutes=_int_env(
+            "NOTIFY_MERGE_WINDOW_MINUTES", 15, minimum=1, maximum=120
+        ),
+        quiet_start=os.getenv("NOTIFY_QUIET_START", "22:00").strip(),
+        quiet_end=os.getenv("NOTIFY_QUIET_END", "08:00").strip(),
+        retry_attempts=_int_env("NOTIFY_RETRY_ATTEMPTS", 3, minimum=0, maximum=5),
+        timeout_seconds=_float_env("NOTIFY_TIMEOUT_SECONDS", 10, minimum=1, maximum=60),
+    )
+
+
+
 # Scheduler 定时任务配置（cron 表达式，5 段：分 时 日 月 周）
 SCHEDULER_COLLECT_CRON = os.getenv("SCHEDULER_COLLECT_CRON", "*/30 * * * *").strip()
 SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()

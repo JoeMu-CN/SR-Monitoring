@@ -12,6 +12,7 @@ from app.auth.router import router as auth_router
 from app.auth.security import ensure_bootstrap_admin
 from app.config import RESEARCH_TRACK_ENABLED, validate_auth_config
 from app.database import SessionLocal, engine
+from app.notification.router import router as notification_router
 from app.research.router import router as research_router
 from app.risks.router import router as risks_router
 from app.risks.workbench_router import router as workbench_router
@@ -33,6 +34,7 @@ app.include_router(source_agent_router)
 app.include_router(workbench_router)
 if RESEARCH_TRACK_ENABLED:
     app.include_router(research_router)
+app.include_router(notification_router)
 app.include_router(auth_router)
 
 

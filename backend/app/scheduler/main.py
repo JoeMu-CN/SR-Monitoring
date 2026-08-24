@@ -24,8 +24,10 @@ from app.config import (
     SCHEDULER_CLEANUP_CRON,
     SCHEDULER_COLLECT_CRON,
     SCHEDULER_EXPIRE_CRON,
+    get_notification_settings,
 )
 from app.database import SessionLocal
+from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
 from app.scheduler.jobs import (
     _cron_to_apscheduler,
@@ -184,6 +186,15 @@ def main() -> None:
     scheduler.add_job(
         expire_job, _trigger(SCHEDULER_EXPIRE_CRON), id="expire", name="提醒失效"
     )
+    _notification_settings = get_notification_settings()
+    if _notification_settings.enabled:
+        scheduler.add_job(
+            notify_job,
+            "interval",
+            seconds=_notification_settings.scan_interval_seconds,
+            id="notify",
+            name="风险提醒推送",
+        )
     scheduler.add_job(
         cleanup_job, _trigger(SCHEDULER_CLEANUP_CRON), id="cleanup", name="保留清理"
     )
@@ -209,7 +220,7 @@ def main() -> None:
         )
     logger.info(
         "Scheduler 启动: collect=%s expire=%s cleanup=%s research_daily=%s "
-        "research_weekly=%s research_monthly=%s",
+        "research_weekly=%s research_monthly=%s notify=%s",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
@@ -227,6 +238,11 @@ def main() -> None:
                 and RESEARCH_SCHEDULE_OWNER_USERNAME
                 and RESEARCH_MONTHLY_TOPIC
             )
+            else "disabled"
+        ),
+        (
+            f"{_notification_settings.scan_interval_seconds}s"
+            if _notification_settings.enabled
             else "disabled"
         ),
     )

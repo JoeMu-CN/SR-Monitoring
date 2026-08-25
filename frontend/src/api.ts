@@ -240,6 +240,22 @@ export interface CollectionRunRead {
   error: string | null;
 }
 
+export interface RunAllSourcesItem {
+  source_id: number;
+  code: string;
+  status: 'succeeded' | 'failed' | 'skipped' | 'error';
+  created_count: number;
+  reason?: string | null;
+}
+
+export interface RunAllSourcesResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  items: RunAllSourcesItem[];
+}
+
 export interface DimensionRead {
   key: string;
   label: string;
@@ -537,6 +553,7 @@ export const api = {
   }),
   deleteSupplier: (id: number) => request<void>(`/api/v1/suppliers/${id}`, {method: 'DELETE'}),
   runSource: (id: number) => request<CollectionRunRead>(`/api/v1/sources/${id}/run`, {method: 'POST'}),
+  runAllSources: () => request<RunAllSourcesResult>('/api/v1/sources/run-all', {method: 'POST'}),
   toggleDimension: (key: string, enabled: boolean) => request<DimensionRead>(`/api/v1/rule-engine/dimensions/${key}/toggle`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
   }),

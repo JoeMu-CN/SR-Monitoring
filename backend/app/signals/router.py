@@ -1,6 +1,6 @@
 import hashlib
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -57,6 +57,8 @@ from app.signals.schemas import (
     DataSourceSummaryRead,
     DataSourceUpdate,
     DataSourceWrite,
+    RunAllSourcesItem,
+    RunAllSourcesResult,
     SignalFilterConfigRead,
     SignalFilterConfigUpdate,
     SignalImportSummary,
@@ -733,6 +735,85 @@ def run_source_collection(
             detail=f"采集失败: {exc}",
         ) from exc
     return run
+
+
+@router.post("/sources/run-all", response_model=RunAllSourcesResult)
+def run_all_sources_collection(
+    session: SessionDependency,
+    _user: CollectionTrigger,
+    _csrf: CsrfGuard,
+) -> RunAllSourcesResult:
+    """全量刷新所有可采集数据源（启用的 HTTP 拉取式）。
+
+    串行触发；跳过外部工具（按需核查）与 manual-json（非联网），
+    以及 5 分钟内已成功采集的信源（避免重复）；每源独立容错，
+    单个失败不影响其余。返回每源结果与汇总。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    import app.signals.router as _router
+    del _router  # 保持模块内函数引用清晰
+
+    now = datetime.now(UTC)
+    recent_window = now - timedelta(minutes=5)
+    items: list[RunAllSourcesItem] = []
+    sources = session.scalars(
+        select(DataSource)
+        .where(DataSource.enabled.is_(True))
+        .order_by(DataSource.id)
+    )
+    for source in sources:
+        if source.source_type == "external_tool" or source.code == "manual-json":
+            continue
+        recent_success = session.scalar(
+            select(CollectionRun).where(
+                CollectionRun.source_id == source.id,
+                CollectionRun.status == "succeeded",
+                CollectionRun.started_at >= recent_window,
+            )
+        )
+        if recent_success is not None:
+            items.append(
+                RunAllSourcesItem(
+                    source_id=source.id,
+                    code=source.code,
+                    status="skipped",
+                    reason="5 分钟内已成功采集",
+                )
+            )
+            continue
+        try:
+            adapter = build_pull_adapter(source)
+            run = collect_source(session, source, adapter)
+            run_status: Literal["succeeded", "failed"] = (
+                "succeeded" if run.status == "succeeded" else "failed"
+            )
+            items.append(
+                RunAllSourcesItem(
+                    source_id=source.id,
+                    code=source.code,
+                    status=run_status,
+                    created_count=run.created_count,
+                    reason=run.error if run.error else None,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 —— 单源失败不阻塞全量
+            session.rollback()
+            items.append(
+                RunAllSourcesItem(
+                    source_id=source.id,
+                    code=source.code,
+                    status="error",
+                    reason=str(exc)[:200],
+                )
+            )
+    return RunAllSourcesResult(
+        total=len(items),
+        succeeded=sum(1 for it in items if it.status == "succeeded"),
+        failed=sum(1 for it in items if it.status in {"failed", "error"}),
+        skipped=sum(1 for it in items if it.status == "skipped"),
+        items=items,
+    )
 
 
 # ---- 信号过滤规则配置（signal-filter，运营可自主维护） ----

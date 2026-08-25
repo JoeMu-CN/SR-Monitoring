@@ -218,3 +218,27 @@ class SignalFilterConfigUpdate(BaseModel):
     commodity_threshold_pct: float | None = Field(
         None, ge=0, le=100, description="大宗商品涨跌幅阈值（%），低于则免 LLM"
     )
+
+
+class RunAllSourcesItem(BaseModel):
+    """全量刷新单个数据源的结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: int
+    code: str
+    status: Literal["succeeded", "failed", "skipped", "error"]
+    created_count: int = 0
+    reason: str | None = None
+
+
+class RunAllSourcesResult(BaseModel):
+    """全量刷新所有可采集数据源的汇总。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total: int
+    succeeded: int
+    failed: int
+    skipped: int
+    items: list[RunAllSourcesItem]

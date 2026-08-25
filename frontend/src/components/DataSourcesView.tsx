@@ -43,6 +43,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [showAudit, setShowAudit] = useState(false);
   const [auditText, setAuditText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [runAllLoading, setRunAllLoading] = useState(false);
+  const [runAllMsg, setRunAllMsg] = useState<{type: 'ok' | 'err'; text: string} | null>(null);
 
   // 编辑表单状态
   const [showForm, setShowForm] = useState(false);
@@ -139,6 +141,24 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '保存数据源失败');
     }
+  };
+
+  const handleRunAll = async () => {
+    if (!window.confirm('确认全量刷新所有数据源？将依次触发各信源采集（跳过 5 分钟内已成功的），可能需要 1-3 分钟。')) return;
+    setRunAllLoading(true);
+    setRunAllMsg(null);
+    try {
+      const result = await api.runAllSources();
+      const failedItems = result.items.filter((item) => item.status === 'failed' || item.status === 'error');
+      setRunAllMsg({
+        type: 'ok',
+        text: `刷新完成：成功 ${result.succeeded}，失败 ${result.failed}，跳过 ${result.skipped}` + (failedItems.length ? `（${failedItems.map((item) => item.code).join('、')}）` : ''),
+      });
+      await onRefreshSources();
+    } catch (caught) {
+      setRunAllMsg({type: 'err', text: caught instanceof Error ? caught.message : '全量刷新失败'});
+    }
+    setRunAllLoading(false);
   };
 
   const handleToggleSource = async (source: DataSource) => {
@@ -256,6 +276,25 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           </div>
         </div>
       </div>
+
+      {role === 'admin' && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            onClick={() => void handleRunAll()}
+            disabled={runAllLoading}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-[#004782] bg-white/80 px-4 py-2 text-[12px] font-bold text-[#004782] shadow-sm backdrop-blur-md transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-400 dark:bg-slate-800/60 dark:text-blue-300"
+          >
+            <span className={`material-symbols-outlined text-[16px] ${runAllLoading ? 'animate-spin' : ''}`}>{runAllLoading ? 'sync' : 'refresh'}</span>
+            {runAllLoading ? '全量刷新中…（串行采集，请稍候）' : '全量刷新所有数据源'}
+          </button>
+          {runAllMsg && (
+            <span role="status" className={`text-[12px] rounded-lg px-3 py-1.5 ${runAllMsg.type === 'ok' ? 'text-emerald-700 bg-emerald-50 border border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-900' : 'text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/30 dark:border-red-900'}`}>
+              {runAllMsg.text}
+            </span>
+          )}
+        </div>
+      )}
 
       <div
         className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"

@@ -1,16 +1,16 @@
 import React from 'react';
 import {motion} from 'motion/react';
-import {LayoutDashboard, AlertTriangle, Bot, Building2, Compass, Database, SlidersHorizontal} from 'lucide-react';
+import {LayoutDashboard, AlertTriangle, Bot, Building2, Database, SlidersHorizontal} from 'lucide-react';
 import type {ActiveTab} from '../types';
 
-interface MobileNavProps { activeTab: ActiveTab; setActiveTab: (tab: ActiveTab) => void; p1RiskCount: number; canUseRiskAssistant: boolean; canUseResearch: boolean; }
+interface MobileNavProps { activeTab: ActiveTab; setActiveTab: (tab: ActiveTab) => void; p1RiskCount: number; canUseRiskAssistant: boolean; }
 
-export const MobileNav: React.FC<MobileNavProps> = ({activeTab, setActiveTab, p1RiskCount, canUseRiskAssistant, canUseResearch}) => {
+// 与桌面侧栏保持一致：智能研究功能暂停，移动端"研究"入口同步移除。
+export const MobileNav: React.FC<MobileNavProps> = ({activeTab, setActiveTab, p1RiskCount, canUseRiskAssistant}) => {
   const tabs: {id: ActiveTab; label: string; icon: React.ReactNode; badge?: number}[] = [
     {id: 'overview', label: '总览', icon: <LayoutDashboard className="h-5 w-5"/>},
     {id: 'current-risks', label: '风险', icon: <AlertTriangle className="h-5 w-5"/>, badge: p1RiskCount},
     ...(canUseRiskAssistant ? [{id: 'risk-assistant' as ActiveTab, label: '助手', icon: <Bot className="h-5 w-5"/>}] : []),
-    ...(canUseResearch ? [{id: 'research' as ActiveTab, label: '研究', icon: <Compass className="h-5 w-5"/>}] : []),
     {id: 'suppliers', label: '供应商', icon: <Building2 className="h-5 w-5"/>},
     {id: 'data-sources', label: '数据', icon: <Database className="h-5 w-5"/>},
     {id: 'rules', label: '规则', icon: <SlidersHorizontal className="h-5 w-5"/>},

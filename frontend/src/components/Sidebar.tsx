@@ -7,45 +7,35 @@ import {
   Building2,
   Database,
   SlidersHorizontal,
-  Download,
   Settings,
   HelpCircle,
-  Workflow,
-  Compass,
 } from 'lucide-react';
 import type {ActiveTab} from '../types';
 
 interface SidebarProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
-  onOpenExportModal: () => void;
   onOpenSettingsModal: () => void;
   p1RiskCount: number;
   canUseRiskAssistant: boolean;
-  canManage: boolean;
-  canUseResearch: boolean;
 }
 
+// "智能研究" 与 "数据源接入助手" 功能已暂停，入口暂时隐藏；导出风险报告按钮也同步隐藏。
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
-  onOpenExportModal,
   onOpenSettingsModal,
   p1RiskCount,
   canUseRiskAssistant,
-  canManage,
-  canUseResearch,
 }) => {
   const mainItems: {id: ActiveTab; label: string; icon: React.ReactNode; badge?: number}[] = [
     {id: 'overview', label: '风险总览', icon: <LayoutDashboard className="h-[18px] w-[18px]"/>},
     {id: 'current-risks', label: '当前风险监控', icon: <ShieldAlert className="h-[18px] w-[18px]"/>, badge: p1RiskCount},
     ...(canUseRiskAssistant ? [{id: 'risk-assistant' as ActiveTab, label: '风险查询助手', icon: <Bot className="h-[18px] w-[18px]"/>}] : []),
-    ...(canUseResearch ? [{id: 'research' as ActiveTab, label: '智能研究', icon: <Compass className="h-[18px] w-[18px]"/>}] : []),
     {id: 'suppliers', label: '供应商名录', icon: <Building2 className="h-[18px] w-[18px]"/>},
   ];
   const systemItems: {id: ActiveTab; label: string; icon: React.ReactNode}[] = [
-    {id: 'data-sources', label: '数据源同步', icon: <Database className="h-[18px] w-[18px]"/>},
-    ...(canManage ? [{id: 'source-agent' as ActiveTab, label: '数据源接入助手', icon: <Workflow className="h-[18px] w-[18px]"/>}] : []),
+    {id: 'data-sources', label: '数据源列表', icon: <Database className="h-[18px] w-[18px]"/>},
     {id: 'rules', label: '规则引擎', icon: <SlidersHorizontal className="h-[18px] w-[18px]"/>},
   ];
 
@@ -80,18 +70,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto pr-0.5">
         <div className="space-y-1">
-          <div className="mb-1 px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">核心监控 MONITORS</div>
           {mainItems.map(renderItem)}
         </div>
         <div className="space-y-1">
-          <div className="mb-1 px-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">系统与服务 SYSTEM</div>
           {systemItems.map(renderItem)}
         </div>
       </div>
 
       <div className="mt-auto flex flex-col gap-1 border-t border-slate-200/80 pt-3 dark:border-slate-800">
-        <motion.button type="button" onClick={onOpenExportModal} whileTap={{scale: 0.97}} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#004782] px-3 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-[#185fa5]"><Download className="h-4 w-4"/><span>导出风险报告</span></motion.button>
-        <div className="mt-1 grid grid-cols-2 gap-1">
+        <div className="grid grid-cols-2 gap-1">
           <button type="button" onClick={onOpenSettingsModal} className="flex items-center justify-center gap-1.5 rounded-lg p-1.5 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"><Settings className="h-[15px] w-[15px]"/><span>设置</span></button>
           <button type="button" onClick={() => alert('如需技术支持，请联系 SR 风险监控团队 support@srmonitoring.com')} className="flex items-center justify-center gap-1.5 rounded-lg p-1.5 text-[12px] font-medium text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"><HelpCircle className="h-[15px] w-[15px]"/><span>帮助</span></button>
         </div>

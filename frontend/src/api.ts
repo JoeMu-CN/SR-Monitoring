@@ -434,6 +434,8 @@ export interface SupplierCreatePayload {
   products: Array<{name: string; keywords: string[]}>;
 }
 
+export type SupplierUpdatePayload = Omit<SupplierCreatePayload, 'supplier_code'>;
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   const method = (options.method ?? 'GET').toUpperCase();
@@ -530,6 +532,10 @@ export const api = {
   toggleSupplier: (id: number, enabled: boolean) => request<SupplierRead>(`/api/v1/suppliers/${id}/enabled`, {
     method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
   }),
+  updateSupplier: (id: number, payload: SupplierUpdatePayload) => request<SupplierRead>(`/api/v1/suppliers/${id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+  }),
+  deleteSupplier: (id: number) => request<void>(`/api/v1/suppliers/${id}`, {method: 'DELETE'}),
   runSource: (id: number) => request<CollectionRunRead>(`/api/v1/sources/${id}/run`, {method: 'POST'}),
   toggleDimension: (key: string, enabled: boolean) => request<DimensionRead>(`/api/v1/rule-engine/dimensions/${key}/toggle`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),

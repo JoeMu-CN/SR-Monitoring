@@ -1,10 +1,11 @@
 from collections.abc import Callable, Generator
 from io import BytesIO
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
@@ -76,6 +77,30 @@ def db_session() -> Generator[Session]:
     session.execute(delete(Supplier))
     session.execute(delete(RuleDimensionConfig))
     session.flush()
+
+    # 测试不依赖 prod 种子：缺失时 seed 必要的 DataSource（事务回滚，prod 库不被污染）。
+    # 当前仅 signals/import 端点需要 manual-json。生产已下线此信道，测试保留。
+    if not session.scalar(select(DataSource.id).where(DataSource.code == "manual-json")):
+        now = datetime.now(UTC)
+        session.add(
+            DataSource(
+                id=1_000_000,
+                code="manual-json",
+                name="标准 JSON 手工导入",
+                source_type="manual",
+                credibility=50,
+                enabled=True,
+                adapter_status="builtin",
+                adapter_version=0,
+                auth_type="none",
+                login_config={},
+                adapter_config={},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.flush()
+
     try:
         yield session
     finally:

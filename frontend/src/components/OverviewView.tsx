@@ -1,33 +1,148 @@
 import {useMemo, useState} from 'react';
-import {AlertTriangle, ChevronRight, Info, Radio, ShieldCheck, X} from 'lucide-react';
+import {ChevronRight, Info, ShieldCheck} from 'lucide-react';
 import {motion} from 'motion/react';
-import type {DataSource, RiskItem, Supplier} from '../types';
+import type {RiskItem, Supplier} from '../types';
 
-interface OverviewViewProps { riskItems: RiskItem[]; suppliers: Supplier[]; dataSources: DataSource[]; onSelectRisk: (item: RiskItem) => void; onViewAllRisks: () => void; }
+interface OverviewViewProps { riskItems: RiskItem[]; suppliers: Supplier[]; onSelectRisk: (item: RiskItem) => void; onViewAllRisks: () => void; }
 
-export const OverviewView = ({riskItems, suppliers, dataSources, onSelectRisk, onViewAllRisks}: OverviewViewProps) => {
-  const [warningDismissed, setWarningDismissed] = useState(false);
+// 顶部"全网风险严重程度分布"条+最近风险提醒是核心，"风险类型分布/数据源节点"与"数据源运行提示"
+// 已迁出或并入"数据源清单"页面，避免在风险总览上堆叠太多维护性信息。
+export const OverviewView = ({riskItems, suppliers, onSelectRisk, onViewAllRisks}: OverviewViewProps) => {
   const [timeRange, setTimeRange] = useState('30');
   const counts = useMemo(() => Object.fromEntries(['P1', 'P2', 'P3', 'P4'].map((level) => [level, riskItems.filter((item) => item.level === level).length])) as Record<string, number>, [riskItems]);
   const activeSuppliers = suppliers.filter((supplier) => supplier.monitoringStatus !== 'paused').length;
-  const delayedSources = dataSources.filter((source) => source.status !== 'normal');
   const recentRisks = riskItems.slice(0, 5);
-  const typeCounts = Object.entries(riskItems.reduce<Record<string, number>>((result, item) => {result[item.riskType] = (result[item.riskType] ?? 0) + 1; return result;}, {})).sort((a, b) => b[1] - a[1]).slice(0, 3);
   const sourceCounts = Object.entries(riskItems.reduce<Record<string, number>>((result, item) => {const key = item.source || '来源未披露'; result[key] = (result[key] ?? 0) + 1; return result;}, {})).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   return <div className="space-y-5 pb-20 lg:pb-8">
-    <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center"><div><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全网供应链风险概览</h1><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">当前有效风险、重点供应商与数据源运行状态</p></div><div className="flex items-center gap-3"><div className="flex items-center rounded-xl border border-black/5 bg-slate-200/70 p-1 text-xs font-semibold text-slate-700 dark:border-white/5 dark:bg-slate-800/80 dark:text-slate-300">{['7', '30', '90'].map((range) => <button key={range} type="button" onClick={() => setTimeRange(range)} className={`rounded-lg px-3 py-1 transition ${timeRange === range ? 'bg-white font-bold text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white' : 'hover:text-slate-900 dark:hover:text-white'}`}>{range} 天</button>)}</div><span className="hidden text-[11px] font-mono text-slate-400 md:inline">最后更新：{riskItems[0]?.updatedTime ?? '暂无数据'}</span></div></div>
+    <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
+      <div>
+        <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全网供应链风险概览</h1>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">当前有效风险与重点供应商分级</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="flex items-center rounded-xl border border-black/5 bg-slate-200/70 p-1 text-xs font-semibold text-slate-700 dark:border-white/5 dark:bg-slate-800/80 dark:text-slate-300">
+          {['7', '30', '90'].map((range) => (
+            <button key={range} type="button" onClick={() => setTimeRange(range)} className={`rounded-lg px-3 py-1 transition ${timeRange === range ? 'bg-white font-bold text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white' : 'hover:text-slate-900 dark:hover:text-white'}`}>{range} 天</button>
+          ))}
+        </div>
+        <span className="hidden text-[11px] font-mono text-slate-400 md:inline">最后更新：{riskItems[0]?.updatedTime ?? '暂无数据'}</span>
+      </div>
+    </div>
 
-    {!warningDismissed && delayedSources.length > 0 && <motion.div initial={{opacity: 0, y: -6}} animate={{opacity: 1, y: 0}} className="flex items-start justify-between gap-3 rounded-2xl border border-amber-300/80 bg-amber-500/10 p-3.5 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40"><div className="flex items-start gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-[#D97706]"/><div><h4 className="text-[13px] font-bold text-amber-900 dark:text-amber-200">数据源运行提示</h4><p className="mt-0.5 text-[12px] leading-relaxed text-amber-800/90 dark:text-amber-300/80">{delayedSources.map((source) => `${source.name}：${source.latency}`).join('；')}</p></div></div><button type="button" onClick={() => setWarningDismissed(true)} aria-label="关闭警告" className="rounded-lg p-1 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"><X className="h-4 w-4"/></button></motion.div>}
+    <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      <Metric label="活跃供应商" value={activeSuppliers} tone="blue" suffix="监控中"/>
+      <Metric label="高危预警 (P1)" value={counts.P1} tone="red" suffix="当前有效"/>
+      <Metric label="高风险 (P2)" value={counts.P2} tone="amber" suffix="当前有效"/>
+      <Metric label="当前风险总计" value={riskItems.length} tone="slate" suffix="只读提醒"/>
+    </div>
 
-    <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4"><Metric label="活跃供应商" value={activeSuppliers} tone="blue" suffix="监控中"/><Metric label="高危预警 (P1)" value={counts.P1} tone="red" suffix="当前有效"/><Metric label="高风险 (P2)" value={counts.P2} tone="amber" suffix="当前有效"/><Metric label="当前风险总计" value={riskItems.length} tone="slate" suffix="只读提醒"/></div>
+    <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-[15px] font-bold text-slate-900 dark:text-white">全网风险严重程度分布</h2>
+        <span className="text-[11px] font-mono text-slate-400">四级联动防护</span>
+      </div>
+      <div className="flex h-12 w-full overflow-hidden rounded-xl text-white shadow-sm">
+        {([['P1 严重', counts.P1, 'bg-[#C92A2A]'], ['P2 高风险', counts.P2, 'bg-[#D97706]'], ['P3 中度', counts.P3, 'bg-[#2563EB]'], ['P4 轻微关注', counts.P4, 'bg-[#64748B]']] as const).map(([label, count, color], index) => (
+          <div key={label} className={`flex min-w-0 items-center justify-center gap-2 border-white/20 px-2 font-mono ${color} ${index < 3 ? 'border-r' : ''}`} style={{flex: Math.max(1, count)}}>
+            <span className="truncate text-[10px] font-extrabold tracking-wider">{label}</span>
+            <span className="text-base font-black">{count}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex justify-between text-[12px] font-medium text-slate-500 dark:text-slate-400">
+        <span>总监控企业：<strong className="font-mono text-slate-900 dark:text-white">{suppliers.length}</strong> 家</span>
+        <span>当前风险提醒：<strong className="font-mono text-[#C92A2A]">{riskItems.length}</strong> 条</span>
+      </div>
+    </section>
 
-    <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:p-5"><div className="mb-3 flex items-center justify-between"><h2 className="text-[15px] font-bold text-slate-900 dark:text-white">全网风险严重程度分布</h2><span className="text-[11px] font-mono text-slate-400">四级联动防护</span></div><div className="flex h-12 w-full overflow-hidden rounded-xl text-white shadow-sm">{([['P1 严重', counts.P1, 'bg-[#C92A2A]'], ['P2 高风险', counts.P2, 'bg-[#D97706]'], ['P3 中度', counts.P3, 'bg-[#2563EB]'], ['P4 轻微关注', counts.P4, 'bg-[#64748B]']] as const).map(([label, count, color], index) => <div key={label} className={`flex min-w-0 items-center justify-center gap-2 border-white/20 px-2 font-mono ${color} ${index < 3 ? 'border-r' : ''}`} style={{flex: Math.max(1, count)}}><span className="truncate text-[10px] font-extrabold tracking-wider">{label}</span><span className="text-base font-black">{count}</span></div>)}</div><div className="mt-3 flex justify-between text-[12px] font-medium text-slate-500 dark:text-slate-400"><span>总监控企业：<strong className="font-mono text-slate-900 dark:text-white">{suppliers.length}</strong> 家</span><span>当前风险提醒：<strong className="font-mono text-[#C92A2A]">{riskItems.length}</strong> 条</span></div></section>
-
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-12"><section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:col-span-8"><div className="flex items-center justify-between border-b border-slate-200/80 bg-slate-50/60 p-3.5 dark:border-slate-700/60 dark:bg-slate-900/30"><div className="flex items-center gap-2"><h2 className="text-[15px] font-bold text-slate-900 dark:text-white">最近风险提醒</h2><span className="rounded-full bg-[#185fa5] px-2 py-0.5 text-[10px] font-extrabold text-white">{recentRisks.length} 条</span></div><button type="button" onClick={onViewAllRisks} className="flex items-center gap-0.5 text-[12px] font-bold text-[#185fa5] hover:underline">查看完整风险中心<ChevronRight className="h-4 w-4"/></button></div>{recentRisks.length === 0 ? <div className="my-auto flex flex-col items-center justify-center p-10 text-center"><div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-[#185fa5] dark:border-slate-700 dark:bg-slate-800"><ShieldCheck className="h-7 w-7"/></div><h3 className="text-[15px] font-bold text-slate-900 dark:text-white">暂无当前风险提醒</h3><p className="mt-1 max-w-sm text-[12px] text-slate-500">完成数据源采集后，新的风险信号会显示在这里。</p></div> : <div className="overflow-x-auto"><table className="w-full border-collapse text-left"><thead className="border-b border-slate-200/80 bg-slate-100/70 text-[11px] font-bold uppercase text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/80 dark:text-slate-400"><tr><th className="p-3 pl-4">供应商主体</th><th className="p-3">级别</th><th className="p-3">风险类型</th><th className="p-3 text-right">AI 置信度</th><th className="p-3">更新时间</th><th className="p-3 pr-4 text-center">详情</th></tr></thead><tbody className="divide-y divide-slate-100 text-[13px] dark:divide-slate-800/60">{recentRisks.map((item) => <tr key={item.id} onClick={() => onSelectRisk(item)} className="cursor-pointer transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-700/40"><td className="p-3 pl-4 font-bold text-slate-900 dark:text-white"><span className="block max-w-[180px] truncate sm:max-w-none">{item.companyName}</span></td><td className="p-3"><RiskBadge level={item.level}/></td><td className="p-3 font-medium text-slate-600 dark:text-slate-300">{item.riskType}</td><td className="p-3 text-right font-mono font-bold text-[#185fa5] dark:text-blue-400">{item.aiConfidence}%</td><td className="p-3 text-[12px] font-mono text-slate-400">{item.updatedTime}</td><td className="p-3 pr-4 text-center"><button type="button" title="查看详情" onClick={(event) => {event.stopPropagation(); onSelectRisk(item);}} className="rounded-lg p-1 text-[#185fa5] hover:bg-blue-100/60"><Info className="h-4 w-4"/></button></td></tr>)}</tbody></table></div>}</section><div className="space-y-5 lg:col-span-4"><section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"><h3 className="mb-3 text-[14px] font-bold text-slate-900 dark:text-white">风险类型分布</h3><div className="space-y-3">{typeCounts.length === 0 ? <div className="text-[12px] text-slate-400">暂无当前风险分布</div> : typeCounts.map(([type, count], index) => {const percent = Math.round((count / Math.max(1, riskItems.length)) * 100); return <div key={type}><div className="mb-1 flex justify-between text-[12px] font-medium"><span>{type}</span><span className="font-mono font-bold text-[#185fa5]">{percent}%</span></div><div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700"><div className={`h-full rounded-full ${['bg-[#185fa5]', 'bg-[#64748B]', 'bg-[#D97706]'][index]}`} style={{width: `${percent}%`}}/></div></div>;})}</div></section><section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"><div className="mb-3 flex items-center justify-between"><h3 className="text-[14px] font-bold text-slate-900 dark:text-white">数据源节点</h3><Radio className="h-4 w-4 text-slate-400"/></div><div className="space-y-2">{dataSources.slice(0, 3).map((source) => <div key={source.id} className={`flex items-center justify-between rounded-xl border p-2.5 text-[12px] font-medium ${source.status === 'normal' ? 'border-slate-200/80 bg-slate-50/50 dark:border-slate-700 dark:bg-slate-900/40' : 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200'}`}><div className="flex min-w-0 items-center gap-2"><span className={`h-2 w-2 flex-shrink-0 rounded-full ${source.status === 'normal' ? 'bg-emerald-500' : 'bg-[#D97706]'}`}/><span className="truncate">{source.name}</span></div><span className="ml-2 whitespace-nowrap font-mono text-[11px] text-slate-500 dark:text-slate-400">{source.latency}</span></div>)}</div></section>
-<section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"><h3 className="mb-3 text-[14px] font-bold text-slate-900 dark:text-white">风险信源分布</h3><div className="space-y-3">{sourceCounts.length === 0 ? <div className="text-[12px] text-slate-400">暂无信源分布数据</div> : sourceCounts.map(([source, count], index) => {const percent = Math.round((count / Math.max(1, riskItems.length)) * 100); return <div key={source}><div className="mb-1 flex justify-between text-[12px] font-medium"><span className="truncate">{source}</span><span className="font-mono font-bold text-[#185fa5]">{count} 条 · {percent}%</span></div><div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700"><div className={`h-full rounded-full ${['bg-[#185fa5]', 'bg-[#64748B]', 'bg-[#D97706]', 'bg-[#C92A2A]', 'bg-[#2563EB]'][index % 5]}`} style={{width: `${percent}%`}}/></div></div>;})}</div></section></div></div>
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-12">
+      <section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:col-span-8">
+        <div className="flex items-center justify-between border-b border-slate-200/80 bg-slate-50/60 p-3.5 dark:border-slate-700/60 dark:bg-slate-900/30">
+          <div className="flex items-center gap-2">
+            <h2 className="text-[15px] font-bold text-slate-900 dark:text-white">最近风险提醒</h2>
+            <span className="rounded-full bg-[#185fa5] px-2 py-0.5 text-[10px] font-extrabold text-white">{recentRisks.length} 条</span>
+          </div>
+          <button type="button" onClick={onViewAllRisks} className="flex items-center gap-0.5 text-[12px] font-bold text-[#185fa5] hover:underline">查看完整风险中心<ChevronRight className="h-4 w-4"/></button>
+        </div>
+        {recentRisks.length === 0 ? (
+          <div className="my-auto flex flex-col items-center justify-center p-10 text-center">
+            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-[#185fa5] dark:border-slate-700 dark:bg-slate-800"><ShieldCheck className="h-7 w-7"/></div>
+            <h3 className="text-[15px] font-bold text-slate-900 dark:text-white">暂无当前风险提醒</h3>
+            <p className="mt-1 max-w-sm text-[12px] text-slate-500">完成数据源采集后，新的风险信号会显示在这里。</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left">
+              <thead className="border-b border-slate-200/80 bg-slate-100/70 text-[11px] font-bold uppercase text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/80 dark:text-slate-400">
+                <tr>
+                  <th className="p-3 pl-4">供应商主体</th>
+                  <th className="p-3">级别</th>
+                  <th className="p-3">风险类型</th>
+                  <th className="p-3 text-right">AI 置信度</th>
+                  <th className="p-3">更新时间</th>
+                  <th className="p-3 pr-4 text-center">详情</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-[13px] dark:divide-slate-800/60">
+                {recentRisks.map((item) => (
+                  <tr key={item.id} onClick={() => onSelectRisk(item)} className="cursor-pointer transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-700/40">
+                    <td className="p-3 pl-4 font-bold text-slate-900 dark:text-white"><span className="block max-w-[180px] truncate sm:max-w-none">{item.companyName}</span></td>
+                    <td className="p-3"><RiskBadge level={item.level}/></td>
+                    <td className="p-3 font-medium text-slate-600 dark:text-slate-300">{item.riskType}</td>
+                    <td className="p-3 text-right font-mono font-bold text-[#185fa5] dark:text-blue-400">{item.aiConfidence}%</td>
+                    <td className="p-3 text-[12px] font-mono text-slate-400">{item.updatedTime}</td>
+                    <td className="p-3 pr-4 text-center">
+                      <button type="button" title="查看详情" onClick={(event) => { event.stopPropagation(); onSelectRisk(item); }} className="rounded-lg p-1 text-[#185fa5] hover:bg-blue-100/60"><Info className="h-4 w-4"/></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:col-span-4">
+        <h3 className="mb-3 text-[14px] font-bold text-slate-900 dark:text-white">风险信源分布</h3>
+        <div className="space-y-3">
+          {sourceCounts.length === 0 ? (
+            <div className="text-[12px] text-slate-400">暂无信源分布数据</div>
+          ) : sourceCounts.map(([source, count], index) => {
+            const percent = Math.round((count / Math.max(1, riskItems.length)) * 100);
+            return (
+              <div key={source}>
+                <div className="mb-1 flex items-center gap-2 text-[12px] font-medium">
+                  <span className="min-w-0 flex-1 truncate">{source}</span>
+                  <span className="shrink-0 font-mono font-bold text-[#185fa5]">{count} 条</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+                  <div className={`h-full rounded-full ${['bg-[#185fa5]', 'bg-[#64748B]', 'bg-[#D97706]', 'bg-[#C92A2A]', 'bg-[#2563EB]'][index % 5]}`} style={{width: `${percent}%`}}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
   </div>;
 };
 
-const Metric = ({label, value, tone, suffix}: {label: string; value: number; tone: 'blue' | 'red' | 'amber' | 'slate'; suffix: string}) => {const styles = {blue: 'text-[#185fa5] border-slate-200/80', red: 'text-[#C92A2A] border-red-200/80', amber: 'text-[#D97706] border-amber-200/80', slate: 'text-slate-900 dark:text-white border-slate-200/80'}; return <motion.div whileHover={{y: -2}} className={`rounded-2xl border bg-white/80 p-4 shadow-sm backdrop-blur-md dark:bg-slate-800/60 ${styles[tone]}`}><div className="flex items-center justify-between"><span className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">{label}</span><span className={`h-2 w-2 rounded-full ${tone === 'red' ? 'bg-[#C92A2A]' : tone === 'amber' ? 'bg-[#D97706]' : tone === 'blue' ? 'bg-[#185fa5]' : 'bg-slate-400'}`}/></div><div className="mt-2 flex items-baseline gap-2"><span className={`font-mono text-2xl font-black lg:text-3xl ${styles[tone].split(' ')[0]}`}>{value}</span><span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-500 dark:bg-slate-700">{suffix}</span></div></motion.div>;};
-const RiskBadge = ({level}: {level: RiskItem['level']}) => <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold text-white shadow-sm ${level === 'P1' ? 'bg-[#C92A2A]' : level === 'P2' ? 'bg-[#D97706]' : level === 'P3' ? 'bg-[#2563EB]' : 'bg-[#64748B]'}`}>{level}</span>;
+const Metric = ({label, value, tone, suffix}: {label: string; value: number; tone: 'blue' | 'red' | 'amber' | 'slate'; suffix: string}) => {
+  const styles = {blue: 'text-[#185fa5] border-slate-200/80', red: 'text-[#C92A2A] border-red-200/80', amber: 'text-[#D97706] border-amber-200/80', slate: 'text-slate-900 dark:text-white border-slate-200/80'};
+  return (
+    <motion.div whileHover={{y: -2}} className={`rounded-2xl border bg-white/80 p-4 shadow-sm backdrop-blur-md dark:bg-slate-800/60 ${styles[tone]}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-semibold text-slate-500 dark:text-slate-400">{label}</span>
+        <span className={`h-2 w-2 rounded-full ${tone === 'red' ? 'bg-[#C92A2A]' : tone === 'amber' ? 'bg-[#D97706]' : tone === 'blue' ? 'bg-[#185fa5]' : 'bg-slate-400'}`}/>
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className={`font-mono text-2xl font-black lg:text-3xl ${styles[tone].split(' ')[0]}`}>{value}</span>
+        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-500 dark:bg-slate-700">{suffix}</span>
+      </div>
+    </motion.div>
+  );
+};
+
+const RiskBadge = ({level}: {level: RiskItem['level']}) => (
+  <span className={`rounded-md px-2 py-0.5 text-[10px] font-bold text-white shadow-sm ${level === 'P1' ? 'bg-[#C92A2A]' : level === 'P2' ? 'bg-[#D97706]' : level === 'P3' ? 'bg-[#2563EB]' : 'bg-[#64748B]'}`}>{level}</span>
+);

@@ -188,3 +188,41 @@ def test_supplier_monitoring_toggle_requires_admin(client: TestClient, auth_as) 
     )
     assert admin.status_code == 200
     assert admin.json()["enabled"] is False
+
+
+def test_delete_supplier_requires_admin_and_cascades(
+    client: TestClient, auth_as: Callable[[str, str], None]
+) -> None:
+    payload = {
+        "supplier_code": "SUP-DEL-1",
+        "legal_name": "删除测试供应商",
+        "country_code": "CN",
+        "registry_no": None,
+        "enabled": True,
+        "aliases": [{"alias": "delalias", "language": None}],
+        "sites": [{
+            "site_name": "工厂A", "country_code": "CN",
+            "region": "广东省", "city": "深圳市", "district": "南山区",
+            "address": "科技园1号", "latitude": None, "longitude": None,
+        }],
+        "products": [{"name": "测试产品", "keywords": []}],
+    }
+    created = client.post("/api/v1/suppliers", json=payload)
+    assert created.status_code == 201
+    supplier_id = created.json()["id"]
+
+    # viewer 无权删除
+    auth_as("viewer", "del-viewer")
+    forbidden = client.delete(f"/api/v1/suppliers/{supplier_id}")
+    assert forbidden.status_code == 403
+    assert client.get(f"/api/v1/suppliers/{supplier_id}").status_code == 200
+
+    # admin 可删除，返回 204，资源消失
+    auth_as("risk_admin", "del-admin")
+    ok = client.delete(f"/api/v1/suppliers/{supplier_id}")
+    assert ok.status_code == 204
+    assert client.get(f"/api/v1/suppliers/{supplier_id}").status_code == 404
+
+    # 重复删除返回 404
+    again = client.delete(f"/api/v1/suppliers/{supplier_id}")
+    assert again.status_code == 404

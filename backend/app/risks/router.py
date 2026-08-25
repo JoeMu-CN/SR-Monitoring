@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -65,7 +66,17 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
 
     items: list[RiskAlertRead] = []
     for alert, match, event, supplier in rows:
-        signal = signals_by_event[event.id]
+        # event 仍可能存在但 risk_event_signals 已被 CASCADE 清空（历史信号删除），
+        # 此时用安全默认值兜底，避免 500 拖垮整个列表。
+        signal = signals_by_event.get(event.id)
+        if signal is None:
+            source_title = "信号源已失效"
+            source_url: str | None = None
+            published_at: datetime | None = None
+        else:
+            source_title = signal.title
+            source_url = signal.url
+            published_at = signal.published_at
         items.append(
             RiskAlertRead(
                 id=alert.id,
@@ -85,9 +96,9 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
                 match_type=match.match_type,
                 match_reasons=match.reasons,
                 match_evidence=match.evidence,
-                source_title=signal.title,
-                source_url=signal.url,
-                published_at=signal.published_at,
+                source_title=source_title,
+                source_url=source_url,
+                published_at=published_at,
                 updated_at=alert.updated_at,
             )
         )

@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Supplier } from '../types';
 
 interface SuppliersViewProps {
   suppliers: Supplier[];
   onOpenImportModal: () => void;
-  onSelectSupplier: (supplier: Supplier) => void;
+  onEditSupplier: (supplier: Supplier) => void;
   onToggleStatus: (supplierId: string) => void;
   onAskAssistant: (query: string) => void;
   role: 'viewer' | 'admin';
@@ -13,7 +13,7 @@ interface SuppliersViewProps {
 export const SuppliersView: React.FC<SuppliersViewProps> = ({
   suppliers,
   onOpenImportModal,
-  onSelectSupplier,
+  onEditSupplier,
   onToggleStatus,
   onAskAssistant,
   role,
@@ -21,7 +21,13 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'high_risk' | 'paused'>('all');
 
-  const filteredSuppliers = suppliers.filter((sup) => {
+  // 按供应商编码升序展示，搜索/状态过滤不影响最终排序。
+  const sortedSuppliers = useMemo(
+    () => [...suppliers].sort((a, b) => a.code.localeCompare(b.code, 'zh-Hans-CN', {numeric: true, sensitivity: 'base'})),
+    [suppliers],
+  );
+
+  const filteredSuppliers = sortedSuppliers.filter((sup) => {
     const matchesSearch =
       sup.legalName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       sup.code.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -32,6 +38,8 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
     return matchesSearch && matchesStatus;
   });
+
+  const canManage = role === 'admin';
 
   return (
     <div className="space-y-5 pb-20 lg:pb-8">
@@ -48,7 +56,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
 
         <button
           onClick={onOpenImportModal}
-          disabled={role !== 'admin'}
+          disabled={!canManage}
           className="flex items-center gap-2 rounded-xl bg-[#185fa5] px-4 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-[#004782] disabled:opacity-40"
         >
           <span className="material-symbols-outlined text-[18px]">upload_file</span>
@@ -113,8 +121,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                   return (
                     <tr
                       key={sup.id}
-                      onClick={() => onSelectSupplier(sup)}
-                      className="cursor-pointer transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/60"
+                      className="transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/60"
                     >
                       <td className="p-3.5 pl-4 font-mono font-bold text-[#101d28] dark:text-white">
                         {sup.code}
@@ -154,39 +161,45 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
                       <td className="p-3.5 pr-4 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               onAskAssistant(`请查询供应商【${sup.legalName}】（编码 ${sup.code}）的完整工商风险、司法记录与供应链合规评级。`);
                             }}
-                            className="p-1.5 text-[#004782] dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 text-[12px] font-bold"
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-[#004782]"
                             title="询问风险助手"
                           >
-                            <span className="material-symbols-outlined text-[18px]">smart_toy</span>
-                            <span className="hidden xl:inline">问助手</span>
+                            <span className="material-symbols-outlined text-[18px] leading-none">smart_toy</span>
                           </button>
 
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               onToggleStatus(sup.id);
                             }}
-                            disabled={role !== 'admin'}
-                            className="p-1.5 text-slate-600 hover:text-[#004782] hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                            title={role === 'admin' ? (sup.monitoringStatus === 'paused' ? '恢复监控' : '暂停监控') : '仅管理员可操作监控启停'}
+                            disabled={!canManage}
+                            className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-[#004782] disabled:cursor-not-allowed disabled:opacity-40"
+                            title={canManage ? (sup.monitoringStatus === 'paused' ? '恢复监控' : '暂停监控') : '仅管理员可操作监控启停'}
                           >
-                            <span className="material-symbols-outlined text-[18px]">
+                            <span className="material-symbols-outlined text-[18px] leading-none">
                               {sup.monitoringStatus === 'paused' ? 'play_arrow' : 'pause'}
                             </span>
                           </button>
 
-                          <button
-                            onClick={(e) => e.stopPropagation()}
-                            disabled
-                            className="p-1.5 text-slate-300 rounded-lg cursor-not-allowed"
-                            title="当前版本不提供删除供应商"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">delete</span>
-                          </button>
+                          {canManage && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditSupplier(sup);
+                              }}
+                              className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-[#004782]"
+                              title="编辑供应商信息"
+                            >
+                              <span className="material-symbols-outlined text-[18px] leading-none">edit</span>
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

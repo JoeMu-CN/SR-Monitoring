@@ -238,7 +238,8 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
 
         try:
             markdown = await read_public_page_with_crawl4ai_for_monitor(
-                self.spec.request.url
+                self.spec.request.url,
+                allow_http_hosts=self.spec.request.allow_http_hosts,
             )
         except SourceRequestFailed as exc:
             raise SourceFetchError(

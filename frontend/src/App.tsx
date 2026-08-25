@@ -10,8 +10,6 @@ import {
   updateDimensionConfig,
   type AuthMeResponse,
   type AgentStatusRead,
-  type AIReviewSummary,
-  type AIReviewItem,
   type SystemHealth,
 } from './api';
 import type {ActiveTab, DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
@@ -45,8 +43,6 @@ export function App() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [dimensions, setDimensions] = useState<MonitoringDimension[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatusRead | null>(null);
-  const [aiReviewSummary, setAiReviewSummary] = useState<AIReviewSummary | null>(null);
-  const [aiReviewItems, setAiReviewItems] = useState<AIReviewItem[]>([]);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
@@ -57,6 +53,7 @@ export function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const canManage = auth?.permissions.includes('source_manage') ?? false;
   const consoleRole: 'viewer' | 'admin' = canManage ? 'admin' : 'viewer';
@@ -85,8 +82,8 @@ export function App() {
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse, aiReviewResponse, aiReviewItemsResponse] = await Promise.all([
-        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(), api.aiReviewSummary(), api.aiReviewItems(),
+      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
+        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
       ]);
       const mappedRisks = alertsResponse.items.map(mapRiskAlert);
       const strongestRisk = new Map<number, {level: RiskLevel; score: number}>();
@@ -105,8 +102,6 @@ export function App() {
       setDimensions(dimensionResponse.map(mapDimension));
       setHealth(healthResponse);
       setAgentStatus(agentResponse);
-      setAiReviewSummary(aiReviewResponse);
-      setAiReviewItems(aiReviewItemsResponse);
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
         setAuth(null);
@@ -214,6 +209,69 @@ export function App() {
     }
   };
 
+  const handleEditSupplier = (supplier: Supplier) => {
+    setEditingSupplier(supplier);
+    setIsNewSupplierModalOpen(true);
+  };
+
+  // NewSupplierModal 在 create/edit 模式共用的 onSave：根据当前 modal 模式分发到 create / update。
+  const handleSaveSupplier = async (supplier: Supplier) => {
+    if (editingSupplier) {
+      // edit 分支
+      const countryCode = /^[A-Za-z]{2}$/.test(supplier.countryRegion ?? '')
+        ? String(supplier.countryRegion).toUpperCase()
+        : 'CN';
+      try {
+        const updated = await api.updateSupplier(Number(editingSupplier.id), {
+          legal_name: supplier.legalName,
+          country_code: countryCode,
+          registry_no: supplier.registrationNo || null,
+          registration_address: supplier.registrationAddress?.trim() || null,
+          industry: supplier.category || null,
+          raw_materials: [],
+          enabled: true,
+          aliases: [],
+          sites: supplier.productionLocation ? [{
+            site_name: supplier.productionLocation,
+            country_code: countryCode,
+            region: supplier.productionRegion?.trim() || null,
+            city: supplier.productionCity?.trim() || null,
+            district: supplier.productionDistrict?.trim() || null,
+            address: supplier.productionAddress?.trim() || supplier.productionLocation,
+            latitude: null,
+            longitude: null,
+          }] : [],
+          products: supplier.suppliedProduct ? [{name: supplier.suppliedProduct, keywords: []}] : [],
+        });
+        const risk = riskItems.find((item) => item.vendorId === String(updated.id));
+        const next = mapSupplier(updated, risk?.level, risk?.overallScore);
+        setSuppliers((current) => current.map((item) => item.id === next.id ? next : item));
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : '供应商修改失败');
+        throw caught;
+      }
+    } else {
+      await handleAddSupplier(supplier);
+    }
+  };
+
+  const handleDeleteSupplier = async (supplierId: string) => {
+    try {
+      await api.deleteSupplier(Number(supplierId));
+      setSuppliers((current) => current.filter((item) => item.id !== supplierId));
+      setEditingSupplier(null);
+      setIsNewSupplierModalOpen(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '供应商删除失败');
+      throw caught;
+    }
+  };
+
+  const closeSupplierModal = () => {
+    setIsNewSupplierModalOpen(false);
+    setEditingSupplier(null);
+  };
+
   const handleToggleDimension = async (dimensionId: string) => {
     const dimension = dimensions.find((item) => item.id === dimensionId);
     if (!dimension) return;
@@ -237,33 +295,13 @@ export function App() {
     }
   };
 
-  const handleTriggerDataSync = async () => {
-    const runnable = dataSources.filter((source) => source.type !== 'external_tool' && !source.type.toLowerCase().includes('file'));
-    const results = await Promise.allSettled(runnable.map((source) => api.runSource(Number(source.id))));
-    if (results.some((result) => result.status === 'rejected')) {
-      setError('部分数据源采集失败，请查看数据源运行状态。');
-    }
-    const [sourcesResponse, runsResponse] = await Promise.all([canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
-    setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
-  };
-
   const refreshSources = async () => {
     const [sourcesResponse, runsResponse] = await Promise.all([canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
   };
 
-  const handleCreateSource = async (payload: Parameters<typeof api.createSource>[0]) => {
-    await api.createSource(payload);
-    await refreshSources();
-  };
-
-  const handleUpdateSource = async (id: string, payload: Partial<Parameters<typeof api.createSource>[0]>) => {
+  const handleUpdateSource = async (id: string, payload: Parameters<typeof api.updateSource>[1]) => {
     await api.updateSource(Number(id), payload);
-    await refreshSources();
-  };
-
-  const handleDeleteSource = async (id: string) => {
-    await api.deleteSource(Number(id));
     await refreshSources();
   };
 
@@ -277,12 +315,9 @@ export function App() {
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenExportModal={() => { setReportRisk(null); setIsExportModalOpen(true); }}
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         p1RiskCount={p1RiskCount}
         canUseRiskAssistant={canUseRiskAssistant}
-        canManage={canManage}
-        canUseResearch={canUseResearch}
       />
 
       <div className="lg:pl-[240px] flex-1 flex flex-col min-w-0 transition-all">
@@ -290,9 +325,6 @@ export function App() {
           activeTab={activeTab}
           unreadCount={p1RiskCount}
           riskItems={riskItems}
-          health={health}
-          agentStatus={agentStatus}
-          onSearch={handleAskAssistant}
           user={auth.user}
           onLogout={() => void handleLogout()}
         />
@@ -302,14 +334,6 @@ export function App() {
             <div className="mb-4 bg-[#ffdad6] border border-[#ba1a1a] text-[#93000a] rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-[13px]">
               <span>{error}</span>
               <button className="font-bold hover:underline" onClick={() => void loadData()}>重新加载</button>
-            </div>
-          )}
-          {aiReviewSummary && aiReviewSummary.needs_review > 0 && (
-            <div className="mb-4 rounded-xl border border-amber-300/80 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
-              <div>有 {aiReviewSummary.needs_review} 条信号需要复核，其中 {aiReviewSummary.filtered} 条曾被相关性预过滤；“暂无风险提醒”不代表没有待确认信息。</div>
-              {aiReviewItems.length > 0 && <div className="mt-2 space-y-1 text-[12px]">
-                {aiReviewItems.map((item) => <div key={item.id} className="truncate">· {item.title}：{item.review_reason ?? '需要人工确认'}</div>)}
-              </div>}
             </div>
           )}
           {loading ? (
@@ -328,7 +352,7 @@ export function App() {
                 className="w-full h-full"
               >
                 {activeTab === 'overview' && (
-                  <OverviewView riskItems={riskItems} suppliers={suppliers} dataSources={dataSources}
+                  <OverviewView riskItems={riskItems} suppliers={suppliers}
                     onSelectRisk={setSelectedRisk} onViewAllRisks={() => setActiveTab('current-risks')} />
                 )}
                 {activeTab === 'current-risks' && <CurrentRisksView riskItems={riskItems} onSelectRisk={setSelectedRisk} />}
@@ -344,15 +368,13 @@ export function App() {
                 )}
                 {activeTab === 'suppliers' && (
                   <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
-                    onSelectSupplier={handleSelectSupplier} onToggleStatus={(id) => void handleToggleSupplierStatus(id)}
+                    onEditSupplier={handleEditSupplier}
+                    onToggleStatus={(id) => void handleToggleSupplierStatus(id)}
                     onAskAssistant={handleAskAssistant} role={consoleRole} />
                 )}
                 {activeTab === 'data-sources' && (
-                  <DataSourcesView dataSources={dataSources} onTriggerSync={handleTriggerDataSync}
-                    role={consoleRole}
-                    onCreateSource={handleCreateSource} onUpdateSource={handleUpdateSource}
-                    onDeleteSource={handleDeleteSource} onRefreshSources={refreshSources}
-                    onOpenSourceAgent={(draftId) => { setSourceAgentDraftId(draftId ?? null); setActiveTab('source-agent'); }} />
+                  <DataSourcesView dataSources={dataSources} role={consoleRole}
+                    onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />
                 )}
                 {activeTab === 'rules' && (
                   <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}
@@ -362,25 +384,15 @@ export function App() {
             </AnimatePresence>
           )}
         </main>
-
-        <footer className="hidden items-center justify-between border-t border-slate-200/80 bg-slate-100/90 px-6 py-1.5 text-[11px] font-mono text-slate-500 backdrop-blur-xl dark:border-slate-800/80 dark:bg-[#0c1420]/90 dark:text-slate-400 lg:flex">
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300"><span className="h-2 w-2 rounded-full bg-[#007aff]"/>SR Risk Studio · 本地实时控制台</span>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            <span>活跃供应商：{suppliers.filter((supplier) => supplier.monitoringStatus === 'normal').length} / {suppliers.length}</span>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
-            <span className="font-bold text-[#ff3b30]">P1 紧急风险：{p1RiskCount} 个</span>
-          </div>
-          <span className={`font-medium ${health?.status === 'ok' && health.database === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>{health?.status === 'ok' && health.database === 'ok' ? '系统服务正常' : '系统状态待确认'}</span>
-        </footer>
       </div>
 
-      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} canUseResearch={canUseResearch} />
+      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} />
       <RiskDetailModal risk={selectedRisk} onClose={() => setSelectedRisk(null)}
         onExportReport={(risk) => { setReportRisk(risk); setSelectedRisk(null); setIsExportModalOpen(true); }} onAskAssistant={handleAskAssistant} />
       <ExportReportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} selectedRisk={reportRisk} riskItems={riskItems} />
-      <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={() => setIsNewSupplierModalOpen(false)}
-        onAddSupplier={handleAddSupplier} />
+      <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={closeSupplierModal}
+        mode={editingSupplier ? 'edit' : 'create'} initialSupplier={editingSupplier ?? undefined}
+        onSave={handleSaveSupplier} onDelete={handleDeleteSupplier} />
       <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} />
       <AnimatePresence>
         {(!splashFinished || loading) && <SystemSplashScreen onComplete={completeSplash} />}

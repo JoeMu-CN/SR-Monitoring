@@ -279,3 +279,16 @@ def update_supplier_enabled(
     supplier.updated_at = datetime.now(UTC)
     commit_or_conflict(session)
     return get_supplier_or_404(session, supplier.id)
+
+
+@router.delete("/{supplier_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_supplier(
+    supplier_id: int,
+    session: SessionDependency,
+    _user: SupplierManage,
+    _csrf: CsrfGuard,
+) -> None:
+    """硬删除供应商。已建立的 supplier_event_matches / 子表通过 ondelete CASCADE 一并清理。"""
+    supplier = get_supplier_or_404(session, supplier_id)
+    session.delete(supplier)
+    session.commit()

@@ -2,7 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.ai import service as ai_service
@@ -502,6 +502,42 @@ def test_risk_alert_detail_contains_evidence_and_score(
 
     missing = client.get("/api/v1/risk-alerts/999999")
     assert missing.status_code == 404
+
+
+def test_list_risk_alerts_handles_orphan_event_without_signal(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """事件仍存在但 risk_event_signals 已被 CASCADE 清空（信号删除场景），
+    列表接口应正常返回并使用降级字段，不应 500。"""
+    from app.risks.models import RiskEventSignal
+
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_supplier(client)
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+    assert client.post(f"/api/v1/signals/{signal_id}/process").status_code == 200
+    # 模拟 raw_signal 删除触发 risk_event_signals CASCADE 清空
+    deleted = db_session.execute(
+        delete(RiskEventSignal).where(RiskEventSignal.signal_id == signal_id)
+    )
+    db_session.commit()
+    assert deleted.rowcount >= 1
+
+    response = client.get("/api/v1/risk-alerts")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert items, "至少应有一条历史提醒"
+    fallback = next(
+        (item for item in items if item["source_title"] == "信号源已失效"),
+        None,
+    )
+    assert fallback is not None, "孤儿事件应回退到 source_title='信号源已失效'"
+    assert fallback["source_url"] is None
+    assert fallback["published_at"] is None
 
 
 def test_event_detail_contains_signals_entities_locations(

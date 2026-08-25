@@ -3,8 +3,14 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", sans-serif;
   color-scheme: light;
+}
+
+/* 覆盖 Tailwind 的 font-mono：中文字符 fallback 到无衬线中文，避免浏览器默认回退到 SimSun 宋体。 */
+.font-mono,
+[class*="font-mono"] {
+  font-family: "IBM Plex Mono", "JetBrains Mono", "Menlo", "Consolas", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", monospace !important;
 }
 
 body {

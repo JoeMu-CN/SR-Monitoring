@@ -29,9 +29,6 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     content: `您好！我是 **SR 风险查询助手**。我可以帮助您查询当前启用的重点供应商、生产地点、供应产品，以及筛选当前有效的 P1–P4 风险提醒。天眼查网关启用后，还可发起清单外企业一次性工商核查并查询调用额度。
 
 💡 **只读提示**：本助手为**只读查询助手**，不具备新增/修改业务数据、更改监控状态或自动触发处置的权限。`,
-    data: {
-      riskCards: riskItems.filter((r) => r.level === 'P1').slice(0, 2),
-    },
   });
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => [welcomeMessage()]);
@@ -205,9 +202,9 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   };
 
   return (
-    <div className="flex w-full flex-col gap-5 lg:h-[calc(100vh-120px)] lg:min-h-[600px] lg:flex-row">
-      {/* LEFT COLUMN: Main Chat Assistant (72% on desktop) */}
-      <div className="flex h-[calc(100dvh-150px)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101d28] lg:h-full lg:w-[72%]">
+    <div className="flex w-full flex-col gap-5 lg:h-[calc(100vh-120px)] lg:min-h-[600px]">
+      {/* MAIN COLUMN: Chat Assistant (full width) */}
+      <div className="flex h-[calc(100dvh-150px)] min-h-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-[#101d28] lg:h-full">
         {/* Assistant Top Banner */}
         <div className="bg-[#ecf4ff] dark:bg-slate-900/80 px-4 py-3 border-b border-[#c2c6d2] dark:border-slate-800 flex items-center justify-between gap-3 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -230,34 +227,6 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* AI Model Status Light */}
-            <span className={`hidden md:inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg border ${agentStatus?.llm_configured ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' : 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800'}`}>
-              <div className="relative flex items-center justify-center w-2 h-2">
-                <motion.span
-                  className={`absolute inline-flex h-full w-full rounded-full ${agentStatus?.llm_configured ? 'bg-emerald-500/60' : 'bg-amber-500/60'}`}
-                  animate={{ scale: [1, 2.4, 1], opacity: [0.85, 0, 0.85] }}
-                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
-                />
-                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${agentStatus?.llm_configured ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.8)]' : 'bg-amber-500'}`} />
-              </div>
-              <span className="text-slate-500 dark:text-slate-400">模型状态:</span>
-              {agentStatus?.llm_configured ? agentStatus.model : '未配置'}
-            </span>
-
-            {/* External Check TianYanCha Status Light */}
-            <span className={`hidden sm:inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg border ${agentStatus?.tyc_enabled ? 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800' : 'text-[#424751] dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
-              <div className="relative flex items-center justify-center w-2 h-2">
-                <motion.span
-                  className="absolute inline-flex h-full w-full rounded-full bg-blue-500/60"
-                  animate={{ scale: [1, 2.4, 1], opacity: [0.85, 0, 0.85] }}
-                  transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.8)]" />
-              </div>
-              <span className="text-slate-500 dark:text-slate-400">外部核查:</span>
-              {agentStatus?.tyc_enabled ? '天眼查已启用' : '未启用'}
-            </span>
-
             <button
               onClick={() => {
                 setMessages([welcomeMessage()]);
@@ -656,22 +625,6 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           <div ref={chatEndRef} />
         </div>
 
-        {/* Quick Presets Prompt Bar */}
-        <div className="p-2.5 bg-slate-50 dark:bg-slate-900 border-t border-[#c2c6d2]/50 dark:border-slate-800 flex items-center gap-2 overflow-x-auto no-scrollbar flex-shrink-0">
-          <span className="text-[11px] font-bold text-[#424751] dark:text-slate-400 whitespace-nowrap pl-2">
-            快捷提问:
-          </span>
-          {presetQueries.map((query, idx) => (
-            <button
-              key={idx}
-              onClick={() => handleSend(query)}
-              className="px-3 py-1 bg-white dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 hover:border-[#004782] dark:hover:border-blue-400 hover:bg-[#ecf4ff] dark:hover:bg-slate-700 rounded-full text-[12px] text-[#101d28] dark:text-slate-200 transition-all whitespace-nowrap flex-shrink-0"
-            >
-              {query}
-            </button>
-          ))}
-        </div>
-
         {/* Chat Input Bar */}
         <div className="p-3 bg-white dark:bg-[#101d28] border-t border-[#c2c6d2] dark:border-slate-800 flex-shrink-0">
           <form
@@ -681,18 +634,13 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
             }}
             className="flex items-center gap-2"
           >
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="请输入自然语言查询，如：'查询深圳的高危供应商'，'核查【杭州智造】'..."
-                className="w-full bg-[#f7f9ff] dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 rounded-xl px-4 py-2.5 text-[14px] text-[#101d28] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#004782] transition-all pr-24"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-[#004782] dark:text-blue-300 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
-                只读检索
-              </span>
-            </div>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="请输入自然语言对话查询"
+              className="flex-1 bg-[#f7f9ff] dark:bg-slate-800 border border-[#c2c6d2] dark:border-slate-700 rounded-xl px-4 py-2.5 text-[14px] text-[#101d28] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#004782] transition-all"
+            />
 
             <button
               type="submit"
@@ -703,143 +651,6 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
               <span className="material-symbols-outlined text-[18px]">send</span>
             </button>
           </form>
-        </div>
-      </div>
-
-      {/* RIGHT COLUMN: Context Panel & Capabilities Scope (28% on desktop) */}
-      <div className="flex h-auto flex-col gap-4 overflow-visible lg:h-full lg:w-[28%] lg:overflow-y-auto lg:pr-1">
-        {/* Quick System Status Card */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
-          <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-[#004782]">analytics</span>
-            <span>核心监控数据概览</span>
-          </h3>
-
-          <div className="grid grid-cols-2 gap-2 text-[12px]">
-            <div className="p-2.5 rounded-xl bg-[#ecf4ff] dark:bg-slate-800 border border-[#c2c6d2]/50">
-              <span className="text-[#424751] dark:text-slate-400 block text-[11px]">重点供应商</span>
-              <span className="font-bold text-[18px] text-[#004782] dark:text-blue-300">
-                {suppliers.length} 家
-              </span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900">
-              <span className="text-red-700 dark:text-red-300 block text-[11px]">P1 严重风险</span>
-              <span className="font-bold text-[18px] text-[#C92A2A] dark:text-red-400">
-                {riskItems.filter((r) => r.level === 'P1').length} 条
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* TianYanCha Quota Quick Widget */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-              <span className="material-symbols-outlined text-[18px] text-blue-600">domain</span>
-              <span>天眼查接口额度</span>
-            </h3>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${agentStatus?.tyc_enabled ? 'text-emerald-700 bg-emerald-50' : 'text-[#424751] bg-slate-100'}`}>
-              {agentStatus?.tyc_enabled ? (quota?.status === 'exceeded' ? '额度已用尽' : '已启用') : '未启用'}
-            </span>
-          </div>
-
-          <div className="space-y-2 text-[12px]">
-            <div>
-              <div className="flex justify-between text-slate-500 text-[11px]">
-                <span>今日使用</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">
-                  {quota ? `${quota.dailyUsed} / ${quota.dailyLimit} 次` : '查询后显示'}
-                </span>
-              </div>
-              <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
-                <div
-                  className="h-full bg-[#185fa5] rounded-full"
-                  style={{width: `${quota && quota.dailyLimit > 0 ? (quota.dailyUsed / quota.dailyLimit) * 100 : 0}%`}}
-                ></div>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between text-slate-500 text-[11px]">
-                <span>本月使用</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200">
-                  {quota ? `${quota.monthlyUsed} / ${quota.monthlyLimit} 次` : '查询后显示'}
-                </span>
-              </div>
-              <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
-                <div
-                  className="h-full bg-indigo-500 rounded-full"
-                  style={{width: `${quota && quota.monthlyLimit > 0 ? (quota.monthlyUsed / quota.monthlyLimit) * 100 : 0}%`}}
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={() => handleSend('查询天眼查 API 调用额度')}
-            className="w-full py-1.5 bg-[#f7f9ff] dark:bg-slate-800 hover:bg-[#ecf4ff] border border-[#c2c6d2] dark:border-slate-700 rounded-xl text-[12px] text-[#004782] dark:text-blue-300 font-bold transition-all"
-          >
-            刷新额度卡片
-          </button>
-        </div>
-
-        {/* Quick Action Shortcuts */}
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#101d28] border border-[#c2c6d2] dark:border-slate-800 shadow-xs space-y-2.5">
-          <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-[18px] text-[#004782]">tune</span>
-            <span>快捷风险指令</span>
-          </h3>
-
-          <div className="space-y-1.5 text-[12px]">
-            <button
-              onClick={() => handleSend('查询当前所有 P1 严重风险提醒')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
-            >
-              <span>查看全部 P1 极高风险</span>
-              <span className="material-symbols-outlined text-[16px] text-[#C92A2A]">
-                arrow_forward
-              </span>
-            </button>
-
-            <button
-              onClick={() => handleSend('查询供应【微电子元件】的重点供应商')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
-            >
-              <span>按微电子品类检索供应商</span>
-              <span className="material-symbols-outlined text-[16px] text-[#004782]">
-                arrow_forward
-              </span>
-            </button>
-
-            <button
-              onClick={() => handleSend('核查【杭州智造科技有限公司】的工商登记信息（清单外）')}
-              className="w-full text-left p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-all font-medium text-[#101d28] dark:text-slate-200 flex items-center justify-between"
-            >
-              <span>清单外企业工商核查示例</span>
-              <span className="material-symbols-outlined text-[16px] text-blue-600">
-                arrow_forward
-              </span>
-            </button>
-          </div>
-        </div>
-
-        {/* Capability Boundaries Notice Card */}
-        <div className="p-4 rounded-2xl bg-[#ecf4ff]/70 dark:bg-slate-900 border border-blue-200 dark:border-blue-900 text-[12px] space-y-2">
-          <div className="flex items-center gap-1.5 font-bold text-[#004782] dark:text-blue-300">
-            <span className="material-symbols-outlined text-[18px]">verified_user</span>
-            <span>能力与只读边界说明</span>
-          </div>
-
-          <div className="space-y-1.5 text-[#424751] dark:text-slate-300 leading-relaxed text-[11px]">
-            <div className="flex items-start gap-1">
-              <span className="text-emerald-600 font-bold">✓ 支持：</span>
-              <span>检索启用供应商、查询生产地点与产品、按风险等级与城市筛选提醒、清单外天眼查核查、额度查询。</span>
-            </div>
-            <div className="flex items-start gap-1">
-              <span className="text-red-600 font-bold">✕ 禁止：</span>
-              <span>新增或删除供应商、改动监控状态、手动重置风险得分或触发一键处置。</span>
-            </div>
-          </div>
         </div>
       </div>
     </div>

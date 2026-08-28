@@ -1,11 +1,11 @@
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -211,6 +211,36 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
                 ),
             }
         )
+    if session is not None:
+        total_signals = session.scalar(
+            select(func.count()).select_from(RawSignal).where(
+                RawSignal.source_id == source.id
+            )
+        ) or 0
+        # 有效信号数：按信源级有效期过滤（NULL=永久有效，等于总数）。
+        valid_signals = total_signals
+        if source.signal_validity_days is not None:
+            cutoff = datetime.now(UTC) - timedelta(
+                days=source.signal_validity_days
+            )
+            valid_signals = session.scalar(
+                select(func.count()).select_from(RawSignal).where(
+                    RawSignal.source_id == source.id,
+                    or_(
+                        RawSignal.published_at >= cutoff,
+                        and_(
+                            RawSignal.published_at.is_(None),
+                            RawSignal.collected_at >= cutoff,
+                        ),
+                    ),
+                )
+            ) or 0
+        payload = payload.model_copy(
+            update={
+                "total_signal_count": int(total_signals),
+                "valid_signal_count": int(valid_signals),
+            }
+        )
     return payload
 
 
@@ -393,6 +423,7 @@ def create_source(
         adapter_config=spec.model_dump(mode="json") if spec else {},
         adapter_status="draft" if spec else "unconfigured",
         enabled=payload.enabled,
+        signal_validity_days=payload.signal_validity_days,
         **_api_key_fields(payload.api_key),
     )
     session.add(source)

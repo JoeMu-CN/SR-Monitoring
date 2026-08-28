@@ -32,7 +32,7 @@ const emptyForm: DataSourceWritePayload = {
   code: '', name: '', source_type: 'official_api', credibility: 90,
   schedule: '*/30 * * * *', endpoint_url: null, auth_type: 'none',
   login_config: {}, credential_ref: null, description: null,
-  adapter_config: adapterTemplate, enabled: false,
+  adapter_config: adapterTemplate, enabled: false, signal_validity_days: null,
 };
 
 export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
@@ -77,7 +77,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       endpoint_url: source.endpointUrl, auth_type: source.authType,
       login_config: source.loginConfig, credential_ref: source.credentialRef,
       description: source.description, adapter_config: source.adapterConfig,
-      enabled: source.enabled,
+      enabled: source.enabled, signal_validity_days: source.signalValidityDays,
     });
     setAdapterText(Object.keys(source.adapterConfig).length
       ? JSON.stringify(source.adapterConfig, null, 2) : '');
@@ -305,7 +305,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <div className="col-span-4">数据源名称与类型</div>
           <div className="col-span-2">连通状态 / 延迟</div>
           <div className="col-span-2">最近同步时间</div>
-          <div className="col-span-2">已采集记录数</div>
+          <div className="col-span-2">有效记录数</div>
           <div className="col-span-2 text-right">节点与操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
@@ -313,8 +313,16 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             <div className="p-10 text-center text-sm text-slate-500">暂无数据源配置</div>
           )}
           {dataSources.map((source) => {
-            const isWarning = source.status === 'warning' || source.status === 'error';
             const isExternalTool = source.type === 'external_tool';
+            // 状态配色映射：disabled (灰停用) / running (蓝执行) / error (红失败) /
+            //               warning (橙异常) / normal (绿正常)
+            const statusStyle = ({
+              disabled: { row: 'bg-slate-100/40 dark:bg-slate-800/30', icon: 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400', pill: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300', dot: 'bg-slate-500/60', dotCore: 'bg-slate-600', ringDur: 2, pulse: 'bg-slate-400' },
+              running: { row: 'bg-blue-50/40 dark:bg-blue-950/10', icon: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300', pill: 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300', dot: 'bg-blue-500/60', dotCore: 'bg-blue-600', ringDur: 1.2, pulse: 'bg-blue-400' },
+              error: { row: 'bg-red-50/30 dark:bg-red-950/10', icon: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300', pill: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300', dot: 'bg-red-500/60', dotCore: 'bg-[#ba1a1a]', ringDur: 1.2, pulse: 'bg-red-400' },
+              warning: { row: 'bg-orange-50/40 dark:bg-orange-950/10', icon: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300', pill: 'bg-orange-100 text-orange-700 dark:bg-orange-950/80 dark:text-orange-300', dot: 'bg-orange-500/60', dotCore: 'bg-orange-600', ringDur: 1.6, pulse: 'bg-orange-400' },
+              normal: { row: '', icon: 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300', pill: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300', dot: 'bg-emerald-500/60', dotCore: 'bg-emerald-600', ringDur: 2, pulse: 'bg-emerald-400' },
+            } as const)[source.status];
             const canToggle = source.adapterStatus === 'builtin' || source.adapterStatus === 'published' || isExternalTool;
             const isToggling = togglingId === source.id;
             const typeLabel = isExternalTool ? '按需外部核查' : source.type === 'official_api' ? '官方 API' : source.type.replaceAll('_', ' ');
@@ -322,11 +330,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <motion.div
                 key={source.id}
                 role="listitem"
-                className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${isWarning ? 'bg-red-50/30 dark:bg-red-950/10' : ''}`}
+                className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${statusStyle.row}`}
               >
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 items-center">
                   <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
-                    <div className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300' : 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300'}`}>
+                    <div className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${statusStyle.icon}`}>
                       <span className="material-symbols-outlined text-[20px]">
                         {source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}
                       </span>
@@ -344,14 +352,14 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     </div>
                   </div>
                   <div className="col-span-6 md:col-span-2 flex items-center gap-2">
-                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${isWarning ? 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300'}`}>
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${statusStyle.pill}`}>
                       <span className="relative flex items-center justify-center w-2 h-2">
                         <motion.span
-                          className={`absolute inline-flex h-full w-full rounded-full ${isWarning ? 'bg-red-500/60' : 'bg-emerald-500/60'}`}
+                          className={`absolute inline-flex h-full w-full rounded-full ${statusStyle.dot}`}
                           animate={{scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8]}}
-                          transition={{duration: isWarning ? 1.2 : 2, repeat: Infinity, ease: 'easeInOut'}}
+                          transition={{duration: statusStyle.ringDur, repeat: Infinity, ease: 'easeInOut'}}
                         />
-                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isWarning ? 'bg-[#ba1a1a]' : 'bg-emerald-600'}`} />
+                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${statusStyle.dotCore}`} />
                       </span>
                       {source.latency}
                     </span>
@@ -361,8 +369,18 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     {source.lastSyncTime}
                   </div>
                   <div className="col-span-6 md:col-span-2 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400">
-                    <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">记录:</span>
-                    {source.itemCount.toLocaleString()} <span className="text-[11px] font-normal text-slate-500">条</span>
+                    <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">有效:</span>
+                    {source.validSignalCount.toLocaleString()} <span className="text-[11px] font-normal text-slate-500">条</span>
+                    {source.totalSignalCount > source.validSignalCount && (
+                      <span className="ml-1.5 text-[10px] font-mono font-normal text-slate-500 dark:text-slate-400" title="累计历史存量（含已过期）">
+                        （累计 {source.totalSignalCount.toLocaleString()}）
+                      </span>
+                    )}
+                    {source.signalValidityDays != null && (
+                      <span className="ml-1 text-[10px] font-normal text-slate-400" title="信息记录有效期">
+                        有效期 {source.signalValidityDays} 天
+                      </span>
+                    )}
                   </div>
                   <div className="col-span-6 md:col-span-2 flex flex-wrap items-center justify-end gap-2 text-right">
                     <span className="text-[11px] font-mono text-slate-500 hidden xl:inline-block">
@@ -430,6 +448,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               </label>
               <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}
                 <input disabled={isExternalForm} value={isExternalForm ? '按需调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
+              </label>
+              <label className="text-xs font-bold" title="信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录、风险提醒按该时长失效">
+                信息记录有效期（天）
+                <input type="number" min="1" max="3650" placeholder="留空=永久有效" value={form.signal_validity_days ?? ''} onChange={(event) => update('signal_validity_days', event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
               </label>
               <label className="text-xs font-bold">认证方式
                 <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">

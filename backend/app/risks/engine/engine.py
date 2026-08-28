@@ -154,9 +154,19 @@ def _persist_event_facts(
             )
 
 
-def _compute_expires_at(event: RiskEvent, scoring: ScoringSettings) -> datetime:
+def _compute_expires_at(
+    event: RiskEvent,
+    scoring: ScoringSettings,
+    source_validity_days: int | None = None,
+) -> datetime:
+    """提醒过期时间：信源级有效期优先，未配置回落全局 alert_expiry_days。"""
     base = event.end_at or datetime.now(UTC)
-    return base + timedelta(days=scoring.alert_expiry_days)
+    days = (
+        source_validity_days
+        if source_validity_days is not None
+        else scoring.alert_expiry_days
+    )
+    return base + timedelta(days=days)
 
 
 def expire_alerts(session: Session) -> int:
@@ -325,7 +335,9 @@ def process_event(
                 score_detail,
                 event_subtype=result.event_subtype,
             )
-            expires_at = _compute_expires_at(event, scoring)
+            expires_at = _compute_expires_at(
+                event, scoring, source_validity_days=source.signal_validity_days
+            )
             alert = session.scalar(
                 select(RiskAlert).where(
                     RiskAlert.match_id == match.id,

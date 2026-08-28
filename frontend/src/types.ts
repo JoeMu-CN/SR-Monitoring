@@ -105,10 +105,13 @@ export interface DataSource {
   accessLastHttpStatus: number | null;
   accessLastErrorKind: string | null;
   enabled: boolean;
-  status: 'normal' | 'warning' | 'error';
-  latency: string; // e.g. "正常运行", "延迟 2h"
+  status: 'normal' | 'running' | 'warning' | 'error' | 'disabled';
+  latency: string; // e.g. "正常运行", "运行中", "延迟 2h"
   lastSyncTime: string;
-  itemCount: number;
+  itemCount: number; // 最近一次采集新增数
+  totalSignalCount: number; // 累计信号数（历史存量）
+  validSignalCount: number; // 有效期内信号数
+  signalValidityDays: number | null; // 信源级信号有效期（天），null=永久
 }
 
 export interface MonitoringDimension {

@@ -65,6 +65,12 @@ class DataSourceRead(BaseModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
+    # 累计信号数（raw_signals 历史存量，用于前端展示与最近采集新增区分）。
+    total_signal_count: int = 0
+    # 有效期内信号数（按信源 signal_validity_days 过滤；永久有效=全部）。
+    valid_signal_count: int = 0
+    # 信源级信号有效期（天）：None=永久有效。
+    signal_validity_days: int | None = None
 
 
 class DataSourceSummaryRead(BaseModel):
@@ -97,6 +103,8 @@ class DataSourceWrite(BaseModel):
     description: str | None = None
     adapter_config: dict[str, object] | None = None
     enabled: bool = False
+    # 信源级信号有效期（天）：None=永久有效；>=1 整数=信号 N 天后过期。
+    signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("schedule", "credential_ref", "description", mode="before")
     @classmethod
@@ -122,6 +130,8 @@ class DataSourceUpdate(BaseModel):
     description: str | None = None
     adapter_config: dict[str, object] | None = None
     enabled: bool | None = None
+    # 信源级信号有效期（天）：None=永久；>=1=信号 N 天后过期（仅留库不生效）。
+    signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("schedule", "credential_ref", "description", mode="before")
     @classmethod

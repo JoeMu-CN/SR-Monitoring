@@ -189,6 +189,9 @@ export interface DataSourceRead {
   enabled: boolean;
   created_at?: string;
   updated_at?: string;
+  total_signal_count?: number;
+  valid_signal_count?: number;
+  signal_validity_days?: number | null;
 }
 
 export interface DataSourceAuditLogRead {
@@ -215,6 +218,7 @@ export interface DataSourceWritePayload {
   description: string | null;
   adapter_config?: Record<string, unknown> | null;
   enabled: boolean;
+  signal_validity_days?: number | null;
 }
 
 export interface AdapterPreviewResponse {
@@ -637,12 +641,23 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
   const lastRun = runs.filter((run) => run.source_id === source.id).sort((a, b) => b.id - a.id)[0];
   const isExternalTool = source.source_type === 'external_tool';
   const accessStatus = source.access_status ?? 'ready';
-  const status = accessStatus !== 'ready'
+  // 状态判定：disabled (停用) > running (正在跑) > error (失败) >
+  //           warning (冷却/限流/尚未运行) > normal (正常)；外部工具/冷却单独处理
+  const status: DataSource['status'] = !source.enabled
+    ? 'disabled'
+    : accessStatus !== 'ready'
     ? 'warning'
     : isExternalTool
-    ? source.enabled && source.api_key_configured ? 'normal' : 'warning'
-    : !source.enabled || !lastRun ? 'warning'
-    : lastRun.status === 'failed' ? 'error' : lastRun.status === 'succeeded' ? 'normal' : 'warning';
+    ? source.api_key_configured ? 'normal' : 'warning'
+    : !lastRun
+    ? 'warning'
+    : lastRun.status === 'running'
+    ? 'running'
+    : lastRun.status === 'failed'
+    ? 'error'
+    : lastRun.status === 'succeeded'
+    ? 'normal'
+    : 'warning';
   return {
     id: String(source.id), name: source.name, type: source.source_type, status,
     latency: accessStatus === 'cooldown'
@@ -651,9 +666,12 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
       : accessStatus === 'throttled' ? '域名请求间隔保护中'
       : !source.enabled ? '已停用' : isExternalTool
       ? source.api_key_configured ? '按需核查可用' : '运行密钥未配置'
-      : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : '运行中',
+      : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : lastRun.status === 'running' ? '运行中' : '运行中',
     lastSyncTime: isExternalTool ? '按需调用' : lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
     itemCount: lastRun?.created_count ?? 0,
+    totalSignalCount: source.total_signal_count ?? 0,
+    validSignalCount: source.valid_signal_count ?? source.total_signal_count ?? 0,
+    signalValidityDays: source.signal_validity_days ?? null,
     code: source.code, credibility: source.credibility, schedule: source.schedule,
     endpointUrl: source.endpoint_url ?? null, authType: source.auth_type ?? 'none',
     loginConfig: source.login_config ?? {}, credentialRef: source.credential_ref ?? null,

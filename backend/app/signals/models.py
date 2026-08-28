@@ -52,6 +52,9 @@ class DataSource(Base):
     adapter_version: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     adapter_published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    # 信源级信号有效期（天）：NULL=永久有效；正整数=信号自发生起 N 天内有效，
+    # 过期后仅留库，不再计入有效记录、风险提醒按该时长失效。
+    signal_validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

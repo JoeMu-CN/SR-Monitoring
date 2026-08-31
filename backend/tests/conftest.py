@@ -1,12 +1,13 @@
 from collections.abc import Callable, Generator
-from io import BytesIO
 from datetime import UTC, datetime
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from test_stack_guard import UnsafeTestDatabaseError, require_test_database_url
 
 from app.ai.models import AIAnalysisRecord
 from app.auth.models import User
@@ -37,7 +38,7 @@ from app.risks.models import (
     RuleDimensionConfig,
     SupplierEventMatch,
 )
-from app.signals.models import CollectionRun, RawSignal
+from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.suppliers.importer import (
     SHEET_PRODUCTS,
     SHEET_SITES,
@@ -45,6 +46,14 @@ from app.suppliers.importer import (
     create_template,
 )
 from app.suppliers.models import Supplier
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    del session
+    try:
+        require_test_database_url(str(engine.url))
+    except UnsafeTestDatabaseError as error:
+        raise pytest.UsageError(str(error)) from None
 
 
 @pytest.fixture

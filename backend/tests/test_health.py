@@ -1,11 +1,10 @@
 from fastapi.testclient import TestClient
-
-from app.main import app
-
-client = TestClient(app)
+from pytest import MonkeyPatch
 
 
-def test_health_returns_ok_when_database_is_available(monkeypatch) -> None:
+def test_health_returns_ok_when_database_is_available(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
     monkeypatch.setattr("app.main.check_database", lambda: None)
 
     response = client.get("/api/v1/system/health")
@@ -14,7 +13,9 @@ def test_health_returns_ok_when_database_is_available(monkeypatch) -> None:
     assert response.json() == {"status": "ok", "database": "ok"}
 
 
-def test_health_returns_503_when_database_is_unavailable(monkeypatch) -> None:
+def test_health_returns_503_when_database_is_unavailable(
+    client: TestClient, monkeypatch: MonkeyPatch
+) -> None:
     def fail() -> None:
         raise RuntimeError("database unavailable")
 

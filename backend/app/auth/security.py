@@ -10,9 +10,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
-import secrets
 import time
 from collections import deque
 from collections.abc import Callable
@@ -20,22 +18,52 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Annotated
 
-import bcrypt
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.models import AuthSession, SecurityAuditEvent, User
+from app.auth.passwords import hash_password as hash_password
+from app.auth.passwords import validate_password_strength as validate_password_strength
+from app.auth.passwords import verify_password as verify_password
+from app.auth.permissions import PERM_ANALYSIS_RUN as PERM_ANALYSIS_RUN
+from app.auth.permissions import PERM_AUTH_CONFIG_MANAGE as PERM_AUTH_CONFIG_MANAGE
+from app.auth.permissions import PERM_BUSINESS_AUDIT_VIEW as PERM_BUSINESS_AUDIT_VIEW
+from app.auth.permissions import PERM_COLLECTION_TRIGGER as PERM_COLLECTION_TRIGGER
+from app.auth.permissions import PERM_EXTERNAL_VERIFICATION as PERM_EXTERNAL_VERIFICATION
+from app.auth.permissions import PERM_REPORT_EXPORT as PERM_REPORT_EXPORT
+from app.auth.permissions import PERM_RESEARCH_CLAIM_PROMOTE as PERM_RESEARCH_CLAIM_PROMOTE
+from app.auth.permissions import PERM_RESEARCH_PROVIDER_MANAGE as PERM_RESEARCH_PROVIDER_MANAGE
+from app.auth.permissions import PERM_RESEARCH_SCHEDULE_MANAGE as PERM_RESEARCH_SCHEDULE_MANAGE
+from app.auth.permissions import PERM_RESEARCH_TASK_CREATE as PERM_RESEARCH_TASK_CREATE
+from app.auth.permissions import PERM_RISK_QUERY_USE as PERM_RISK_QUERY_USE
+from app.auth.permissions import PERM_RISK_VIEW as PERM_RISK_VIEW
+from app.auth.permissions import PERM_RULE_MANAGE as PERM_RULE_MANAGE
+from app.auth.permissions import PERM_RULE_SUMMARY_VIEW as PERM_RULE_SUMMARY_VIEW
+from app.auth.permissions import PERM_SECURITY_AUDIT_VIEW as PERM_SECURITY_AUDIT_VIEW
+from app.auth.permissions import PERM_SESSION_REVOKE as PERM_SESSION_REVOKE
+from app.auth.permissions import PERM_SIGNAL_IMPORT as PERM_SIGNAL_IMPORT
+from app.auth.permissions import PERM_SOURCE_AGENT_USE as PERM_SOURCE_AGENT_USE
+from app.auth.permissions import PERM_SOURCE_MANAGE as PERM_SOURCE_MANAGE
+from app.auth.permissions import PERM_SOURCE_STATUS_VIEW as PERM_SOURCE_STATUS_VIEW
+from app.auth.permissions import PERM_SUPPLIER_MANAGE as PERM_SUPPLIER_MANAGE
+from app.auth.permissions import PERM_SUPPLIER_VIEW as PERM_SUPPLIER_VIEW
+from app.auth.permissions import PERM_USER_MANAGE as PERM_USER_MANAGE
+from app.auth.permissions import ROLE_PERMISSIONS as ROLE_PERMISSIONS
+from app.auth.permissions import role_permissions as role_permissions
+from app.auth.tokens import csrf_token_for_session as csrf_token_for_session
+from app.auth.tokens import generate_session_token as generate_session_token
+from app.auth.tokens import mask_ip as mask_ip
+from app.auth.tokens import mask_user_agent as mask_user_agent
+from app.auth.tokens import session_token_hash as session_token_hash
 from app.config import (
     ALLOWED_ORIGINS,
     BOOTSTRAP_ADMIN_PASSWORD,
     BOOTSTRAP_ADMIN_USERNAME,
     CSRF_COOKIE_NAME,
-    RESEARCH_TRACK_ENABLED,
     SESSION_ABSOLUTE_TIMEOUT_HOURS,
     SESSION_COOKIE_NAME,
     SESSION_IDLE_TIMEOUT_MINUTES,
-    SESSION_SECRET,
 )
 from app.database import get_session
 
@@ -47,203 +75,6 @@ _LOGIN_FAILURE_WINDOW_SECONDS = 300
 # ponytail: 当前部署只有一个 Uvicorn 进程；扩展到多进程/多副本时改用共享 Redis 限流。
 _login_failures: dict[str, deque[float]] = {}
 _login_failure_lock = Lock()
-
-
-# ---------------------------------------------------------------------------
-# 权限矩阵（角色权限累加：低级角色包含高级角色的全部权限）
-# ---------------------------------------------------------------------------
-PERM_RISK_VIEW = "risk_view"
-PERM_SUPPLIER_VIEW = "supplier_view"
-PERM_SOURCE_STATUS_VIEW = "source_status_view"
-PERM_RULE_SUMMARY_VIEW = "rule_summary_view"
-PERM_RISK_QUERY_USE = "risk_query_use"
-PERM_EXTERNAL_VERIFICATION = "external_verification"
-PERM_REPORT_EXPORT = "report_export"
-PERM_SUPPLIER_MANAGE = "supplier_manage"
-PERM_SIGNAL_IMPORT = "signal_import"
-PERM_ANALYSIS_RUN = "analysis_run"
-PERM_SOURCE_MANAGE = "source_manage"
-PERM_COLLECTION_TRIGGER = "collection_trigger"
-PERM_SOURCE_AGENT_USE = "source_agent_use"
-PERM_RULE_MANAGE = "rule_manage"
-PERM_BUSINESS_AUDIT_VIEW = "business_audit_view"
-PERM_USER_MANAGE = "user_manage"
-PERM_SESSION_REVOKE = "session_revoke"
-PERM_SECURITY_AUDIT_VIEW = "security_audit_view"
-PERM_AUTH_CONFIG_MANAGE = "auth_config_manage"
-PERM_RESEARCH_TASK_CREATE = "research_task_create"
-PERM_RESEARCH_SCHEDULE_MANAGE = "research_schedule_manage"
-PERM_RESEARCH_CLAIM_PROMOTE = "research_claim_promote"
-PERM_RESEARCH_PROVIDER_MANAGE = "research_provider_manage"
-
-ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "viewer": {
-        PERM_RISK_VIEW,
-        PERM_SUPPLIER_VIEW,
-        PERM_SOURCE_STATUS_VIEW,
-        PERM_RULE_SUMMARY_VIEW,
-    },
-    "risk_analyst": {
-        PERM_RISK_VIEW,
-        PERM_SUPPLIER_VIEW,
-        PERM_SOURCE_STATUS_VIEW,
-        PERM_RULE_SUMMARY_VIEW,
-        PERM_RISK_QUERY_USE,
-        PERM_EXTERNAL_VERIFICATION,
-        PERM_REPORT_EXPORT,
-        PERM_RESEARCH_TASK_CREATE,
-    },
-    "risk_admin": {
-        PERM_RISK_VIEW,
-        PERM_SUPPLIER_VIEW,
-        PERM_SOURCE_STATUS_VIEW,
-        PERM_RULE_SUMMARY_VIEW,
-        PERM_RISK_QUERY_USE,
-        PERM_EXTERNAL_VERIFICATION,
-        PERM_REPORT_EXPORT,
-        PERM_RESEARCH_TASK_CREATE,
-        PERM_RESEARCH_SCHEDULE_MANAGE,
-        PERM_RESEARCH_CLAIM_PROMOTE,
-        PERM_SUPPLIER_MANAGE,
-        PERM_SIGNAL_IMPORT,
-        PERM_ANALYSIS_RUN,
-        PERM_SOURCE_MANAGE,
-        PERM_COLLECTION_TRIGGER,
-        PERM_SOURCE_AGENT_USE,
-        PERM_RULE_MANAGE,
-        PERM_BUSINESS_AUDIT_VIEW,
-    },
-    "platform_admin": {
-        PERM_RISK_VIEW,
-        PERM_SUPPLIER_VIEW,
-        PERM_SOURCE_STATUS_VIEW,
-        PERM_RULE_SUMMARY_VIEW,
-        PERM_RISK_QUERY_USE,
-        PERM_EXTERNAL_VERIFICATION,
-        PERM_REPORT_EXPORT,
-        PERM_SUPPLIER_MANAGE,
-        PERM_SIGNAL_IMPORT,
-        PERM_ANALYSIS_RUN,
-        PERM_SOURCE_MANAGE,
-        PERM_COLLECTION_TRIGGER,
-        PERM_SOURCE_AGENT_USE,
-        PERM_RULE_MANAGE,
-        PERM_BUSINESS_AUDIT_VIEW,
-        PERM_USER_MANAGE,
-        PERM_SESSION_REVOKE,
-        PERM_SECURITY_AUDIT_VIEW,
-        PERM_AUTH_CONFIG_MANAGE,
-        PERM_RESEARCH_TASK_CREATE,
-        PERM_RESEARCH_SCHEDULE_MANAGE,
-        PERM_RESEARCH_CLAIM_PROMOTE,
-        PERM_RESEARCH_PROVIDER_MANAGE,
-    },
-}
-
-
-def role_permissions(role: str) -> list[str]:
-    permissions = set(ROLE_PERMISSIONS.get(role, set()))
-    if not RESEARCH_TRACK_ENABLED:
-        permissions.difference_update(
-            {
-                PERM_RESEARCH_TASK_CREATE,
-                PERM_RESEARCH_SCHEDULE_MANAGE,
-                PERM_RESEARCH_CLAIM_PROMOTE,
-                PERM_RESEARCH_PROVIDER_MANAGE,
-            }
-        )
-    return sorted(permissions)
-
-
-# ---------------------------------------------------------------------------
-# 密码
-# ---------------------------------------------------------------------------
-_WEAK_PASSWORDS = {
-    "password",
-    "12345678",
-    "abcdefgh",
-    "qwerty12",
-    "admin123",
-    "letmein1",
-    "welcome1",
-    "password1",
-    "123456789",
-    "changeme1",
-}
-
-
-def hash_password(password: str) -> str:
-    hashed: bytes = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-    return hashed.decode("utf-8")
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return bool(
-            bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-        )
-    except (ValueError, TypeError):
-        return False
-
-
-def validate_password_strength(password: str) -> None:
-    """弱口令与基本强度校验；不满足时抛出 400。"""
-    if len(password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="密码长度至少 8 位"
-        )
-    if password.strip().lower() in _WEAK_PASSWORDS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="密码过于常见，请更换"
-        )
-    if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="密码需同时包含字母和数字",
-        )
-
-
-# ---------------------------------------------------------------------------
-# 会话令牌
-# ---------------------------------------------------------------------------
-def generate_session_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def session_token_hash(token: str) -> str:
-    return hmac.new(
-        SESSION_SECRET.encode("utf-8"), token.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-
-
-def csrf_token_for_session(token: str) -> str:
-    return hmac.new(
-        SESSION_SECRET.encode("utf-8"),
-        f"csrf:{token}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def mask_ip(ip: str | None) -> str | None:
-    """IP 脱敏：IPv4 末段置 0，IPv6 取前 4 段后截断。"""
-    if not ip:
-        return None
-    ip = ip.strip()
-    if "." in ip:
-        parts = ip.split(".")
-        if len(parts) == 4:
-            return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-    if ":" in ip:
-        parts = ip.split(":")
-        if len(parts) >= 4:
-            return ":".join(parts[:4]) + "::"
-    return "unknown"
-
-
-def mask_user_agent(user_agent: str | None) -> str | None:
-    if not user_agent:
-        return None
-    return hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16]
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +257,6 @@ def revoke_user_sessions(session: Session, user_id: int) -> int:
     for record in records:
         record.revoked_at = now
         count += 1
-    session.commit()
     return count
 
 

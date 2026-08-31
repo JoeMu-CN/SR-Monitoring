@@ -141,16 +141,6 @@ export interface RuleEngineConfig {
   dimensions: MonitoringDimension[];
 }
 
-export type ActiveTab =
-  | 'overview'
-  | 'current-risks'
-  | 'risk-assistant'
-  | 'research'
-  | 'source-agent'
-  | 'suppliers'
-  | 'data-sources'
-  | 'rules';
-
 export interface ToolCall {
   id: string;
   toolName: string; // e.g. "query_suppliers_database", "external_check_tianyancha"

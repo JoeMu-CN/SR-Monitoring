@@ -1,10 +1,9 @@
 import {useState} from 'react';
 import {Bell} from 'lucide-react';
 import type {AuthUser} from '../api';
-import type {ActiveTab, RiskItem} from '../types';
+import type {RiskItem} from '../types';
 
 interface HeaderProps {
-  activeTab: ActiveTab;
   unreadCount: number;
   riskItems: RiskItem[];
   user: AuthUser;

@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
+import {useLocation, useNavigate} from 'react-router-dom';
 import {
   api,
   ApiError,
@@ -12,32 +13,32 @@ import {
   type AgentStatusRead,
   type SystemHealth,
 } from './api';
-import type {ActiveTab, DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
-import {CurrentRisksView} from './components/CurrentRisksView';
-import {DataSourcesView} from './components/DataSourcesView';
+import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
+import {AppRoutes, type RouteViews} from './AppRoutes';
+import {RiskRouteView} from './RiskRouteView';
 import {ExportReportModal} from './components/ExportReportModal';
 import {Header} from './components/Header';
 import {MobileNav} from './components/MobileNav';
 import {NewSupplierModal} from './components/NewSupplierModal';
-import {OverviewView} from './components/OverviewView';
-import {RiskAssistantView} from './components/RiskAssistantView';
-import {ResearchView} from './components/ResearchView';
-import {SourceOnboardingAgentView} from './components/SourceOnboardingAgentView';
-import {RiskDetailModal} from './components/RiskDetailModal';
-import {RuleEngineView} from './components/RuleEngineView';
 import {SettingsModal} from './components/SettingsModal';
 import {Sidebar} from './components/Sidebar';
-import {SuppliersView} from './components/SuppliersView';
 import {SystemSplashScreen} from './components/SystemSplashScreen';
 import {LoginView} from './components/LoginView';
+import {DataSourcesView} from './components/DataSourcesView';
+import {OverviewView} from './components/OverviewView';
+import {RiskAssistantView} from './components/RiskAssistantView';
+import {RuleEngineView} from './components/RuleEngineView';
+import {SuppliersView} from './components/SuppliersView';
+import {riskDetailPath, routePaths, routePermissions} from './routes';
 
 const riskRank: Record<RiskLevel, number> = {P1: 4, P2: 3, P3: 2, P4: 1};
 
 export function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [riskItems, setRiskItems] = useState<RiskItem[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
@@ -47,18 +48,17 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [splashFinished, setSplashFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedRisk, setSelectedRisk] = useState<RiskItem | null>(null);
   const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
-  const [sourceAgentDraftId, setSourceAgentDraftId] = useState<number | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const canManage = auth?.permissions.includes('source_manage') ?? false;
-  const consoleRole: 'viewer' | 'admin' = canManage ? 'admin' : 'viewer';
-  const canUseRiskAssistant = auth?.permissions.includes('risk_query_use') ?? false;
-  const canUseResearch = auth?.permissions.includes('research_task_create') ?? false;
+  const permissions = auth?.permissions ?? [];
+  const canManageSources = permissions.includes(routePermissions.sourceManage);
+  const canManageSuppliers = permissions.includes(routePermissions.supplierManage);
+  const canManageRules = permissions.includes(routePermissions.ruleManage);
+  const canUseRiskAssistant = permissions.includes(routePermissions.riskQueryUse);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('sr-theme') ?? 'light';
@@ -83,7 +83,7 @@ export function App() {
     setError(null);
     try {
       const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
-        api.alerts(), api.suppliers(), canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
+        api.alerts(), api.suppliers(), canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
       ]);
       const mappedRisks = alertsResponse.items.map(mapRiskAlert);
       const strongestRisk = new Map<number, {level: RiskLevel; score: number}>();
@@ -112,7 +112,7 @@ export function App() {
     } finally {
       setLoading(false);
     }
-  }, [canManage]);
+  }, [canManageSources]);
 
   useEffect(() => { if (auth) void loadData(); }, [auth, loadData]);
 
@@ -149,16 +149,15 @@ export function App() {
       setError('当前账号没有使用风险查询助手的权限');
       return;
     }
-    setSelectedRisk(null);
     setPendingAssistantQuery(query);
-    setActiveTab('risk-assistant');
+    navigate(routePaths.assistant);
   };
 
   const handleSelectSupplier = (supplier: Supplier) => {
     const matchingRisk = riskItems.find(
       (risk) => risk.companyName === supplier.legalName || risk.vendorId === supplier.id,
     );
-    if (matchingRisk) setSelectedRisk(matchingRisk);
+    if (matchingRisk) navigate(riskDetailPath(matchingRisk.id));
     else handleAskAssistant(`查询供应商【${supplier.legalName}】当前是否存在有效风险，并列出生产地点与供应产品。`);
   };
 
@@ -296,13 +295,34 @@ export function App() {
   };
 
   const refreshSources = async () => {
-    const [sourcesResponse, runsResponse] = await Promise.all([canManage ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
+    const [sourcesResponse, runsResponse] = await Promise.all([canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
   };
 
   const handleUpdateSource = async (id: string, payload: Parameters<typeof api.updateSource>[1]) => {
     await api.updateSource(Number(id), payload);
     await refreshSources();
+  };
+
+  const selectRisk = (risk: RiskItem) => navigate(riskDetailPath(risk.id));
+  const handleDetailRequestError = useCallback((caught: ApiError) => {
+    if (caught.status === 401) {
+      setAuth(null);
+      setAuthError('登录已失效，请重新登录');
+      return;
+    }
+    if (caught.status === 403) setError(caught.message);
+  }, []);
+  const riskRouteView = <RiskRouteView riskItems={riskItems} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
+  const routeViews: RouteViews = {
+    overview: <OverviewView riskItems={riskItems} suppliers={suppliers} onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} />,
+    risks: riskRouteView,
+    riskDetail: riskRouteView,
+    assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
+    suppliers: <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)} onEditSupplier={handleEditSupplier} onToggleStatus={(id) => void handleToggleSupplierStatus(id)} onAskAssistant={handleAskAssistant} role={canManageSuppliers ? 'admin' : 'viewer'} />,
+    sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />,
+    rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,
+    userSettings: <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-start justify-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60"><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">用户管理</h1><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">用户管理功能将在后续任务中提供。</p></section>,
   };
 
   if (authLoading) {
@@ -313,23 +333,20 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-100/90 font-sans text-[#101d28] antialiased dark:bg-[#0b131e] dark:text-slate-100">
       <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        permissions={permissions}
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
         p1RiskCount={p1RiskCount}
-        canUseRiskAssistant={canUseRiskAssistant}
       />
 
       <div className="lg:pl-[240px] flex-1 flex flex-col min-w-0 transition-all">
         <Header
-          activeTab={activeTab}
           unreadCount={p1RiskCount}
           riskItems={riskItems}
           user={auth.user}
           onLogout={() => void handleLogout()}
         />
 
-        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-hidden p-4 pb-24 sm:p-6 sm:pb-24 lg:p-6">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-hidden p-4 pb-28 sm:p-6 sm:pb-24 lg:p-6">
           {error && (
             <div className="mb-4 bg-[#ffdad6] border border-[#ba1a1a] text-[#93000a] rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-[13px]">
               <span>{error}</span>
@@ -344,51 +361,22 @@ export function App() {
           ) : (
             <AnimatePresence mode="wait">
               <motion.div
-                key={activeTab}
+                key={location.pathname}
                 initial={{opacity: 0, y: 12}}
                 animate={{opacity: 1, y: 0}}
                 exit={{opacity: 0, y: -12}}
                 transition={{duration: 0.2, ease: 'easeOut'}}
-                className="w-full h-full"
+                className="h-full w-full"
+                data-testid="route-content"
               >
-                {activeTab === 'overview' && (
-                  <OverviewView riskItems={riskItems} suppliers={suppliers}
-                    onSelectRisk={setSelectedRisk} onViewAllRisks={() => setActiveTab('current-risks')} />
-                )}
-                {activeTab === 'current-risks' && <CurrentRisksView riskItems={riskItems} onSelectRisk={setSelectedRisk} />}
-                {activeTab === 'risk-assistant' && (
-                  <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus}
-                    onSelectRisk={setSelectedRisk} onSelectSupplier={handleSelectSupplier}
-                    pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />
-                )}
-                {activeTab === 'research' && <ResearchView canCreate={canUseResearch} />}
-                {activeTab === 'source-agent' && (
-                  <SourceOnboardingAgentView agentStatus={agentStatus} role={consoleRole}
-                    initialDraftId={sourceAgentDraftId} />
-                )}
-                {activeTab === 'suppliers' && (
-                  <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)}
-                    onEditSupplier={handleEditSupplier}
-                    onToggleStatus={(id) => void handleToggleSupplierStatus(id)}
-                    onAskAssistant={handleAskAssistant} role={consoleRole} />
-                )}
-                {activeTab === 'data-sources' && (
-                  <DataSourcesView dataSources={dataSources} role={consoleRole}
-                    onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />
-                )}
-                {activeTab === 'rules' && (
-                  <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension}
-                    onUpdateDimension={handleUpdateDimension} role={consoleRole} />
-                )}
+                <AppRoutes permissions={permissions} views={routeViews} />
               </motion.div>
             </AnimatePresence>
           )}
         </main>
       </div>
 
-      <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} p1RiskCount={p1RiskCount} canUseRiskAssistant={canUseRiskAssistant} />
-      <RiskDetailModal risk={selectedRisk} onClose={() => setSelectedRisk(null)}
-        onExportReport={(risk) => { setReportRisk(risk); setSelectedRisk(null); setIsExportModalOpen(true); }} onAskAssistant={handleAskAssistant} />
+      <MobileNav permissions={permissions} p1RiskCount={p1RiskCount} />
       <ExportReportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} selectedRisk={reportRisk} riskItems={riskItems} />
       <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={closeSupplierModal}
         mode={editingSupplier ? 'edit' : 'create'} initialSupplier={editingSupplier ?? undefined}

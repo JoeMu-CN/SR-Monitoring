@@ -5,11 +5,9 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
-from sqlalchemy.orm.interfaces import ORMOption
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.orm import Session
 
 from app.auth.models import User
 from app.auth.security import (
@@ -26,6 +24,12 @@ from app.suppliers.importer import (
     parse_workbook,
 )
 from app.suppliers.models import Supplier, SupplierAlias, SupplierProduct, SupplierSite
+from app.suppliers.queries import (
+    SupplierListQuery,
+    find_supplier,
+    supplier_options,
+)
+from app.suppliers.queries import list_suppliers as query_suppliers
 from app.suppliers.schemas import (
     COUNTRY_CODE_PATTERN,
     EnabledUpdate,
@@ -44,18 +48,8 @@ SupplierManage = Annotated[User, Depends(require_permission(PERM_SUPPLIER_MANAGE
 CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 
-def supplier_options() -> tuple[ORMOption, ORMOption, ORMOption]:
-    return (
-        selectinload(Supplier.aliases),
-        selectinload(Supplier.sites),
-        selectinload(Supplier.products),
-    )
-
-
 def get_supplier_or_404(session: Session, supplier_id: int) -> Supplier:
-    supplier = session.scalar(
-        select(Supplier).where(Supplier.id == supplier_id).options(*supplier_options())
-    )
+    supplier = find_supplier(session, supplier_id)
     if supplier is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="供应商不存在")
     return supplier
@@ -186,48 +180,28 @@ def list_suppliers(
     _user: SupplierView,
     q: Annotated[str | None, Query(max_length=100)] = None,
     country_code: Annotated[str | None, Query(min_length=2, max_length=2)] = None,
-    enabled: bool | None = None,
+    enabled: Annotated[bool | None, Query()] = None,
+    has_current_alert: Annotated[bool | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SupplierListResponse:
-    filters: list[ColumnElement[bool]] = []
-    if q:
-        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"%{escaped}%"
-        filters.append(
-            or_(
-                Supplier.supplier_code.ilike(pattern, escape="\\"),
-                Supplier.legal_name.ilike(pattern, escape="\\"),
-                Supplier.aliases.any(SupplierAlias.alias.ilike(pattern, escape="\\")),
-            )
-        )
-    if country_code:
-        normalized_country = country_code.upper()
+    normalized_country = country_code.upper() if country_code else None
+    if normalized_country:
         if not COUNTRY_CODE_PATTERN.fullmatch(normalized_country):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="国家代码必须是两个英文字母",
             )
-        filters.append(Supplier.country_code == normalized_country)
-    if enabled is not None:
-        filters.append(Supplier.enabled == enabled)
-
-    total = session.scalar(select(func.count()).select_from(Supplier).where(*filters)) or 0
-    items = list(
-        session.scalars(
-            select(Supplier)
-            .where(*filters)
-            .options(*supplier_options())
-            .order_by(Supplier.updated_at.desc(), Supplier.id.desc())
-            .limit(limit)
-            .offset(offset)
-        ).unique()
-    )
-    return SupplierListResponse(
-        items=[SupplierRead.model_validate(item) for item in items],
-        total=total,
-        limit=limit,
-        offset=offset,
+    return query_suppliers(
+        session,
+        SupplierListQuery(
+            q=q,
+            country_code=normalized_country,
+            enabled=enabled,
+            has_current_alert=has_current_alert,
+            limit=limit,
+            offset=offset,
+        ),
     )
 
 

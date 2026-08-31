@@ -201,8 +201,13 @@ class SupplierRead(BaseModel):
     products: list[ProductRead]
 
 
+class SupplierListItem(SupplierRead):
+    current_risk_level: str | None
+    current_risk_score: int | None
+
+
 class SupplierListResponse(BaseModel):
-    items: list[SupplierRead]
+    items: list[SupplierListItem]
     total: int
     limit: int
     offset: int

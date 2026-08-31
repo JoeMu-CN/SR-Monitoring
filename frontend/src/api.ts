@@ -135,6 +135,47 @@ export interface RiskAlertRead {
   updated_at: string;
 }
 
+export interface EventSignalEvidence {
+  readonly signal_id: number;
+  readonly title: string;
+  readonly content: string;
+  readonly url: string | null;
+  readonly published_at: string | null;
+}
+
+export interface EventEntityEvidence {
+  readonly name: string;
+  readonly normalized_name: string | null;
+  readonly registry_no: string | null;
+}
+
+export interface EventLocationEvidence {
+  readonly name: string;
+  readonly country_code: string | null;
+  readonly region: string | null;
+  readonly city: string | null;
+  readonly district: string | null;
+  readonly latitude: number | null;
+  readonly longitude: number | null;
+  readonly radius_km: number | null;
+}
+
+export interface EventDetailRead {
+  readonly id: number;
+  readonly dedup_key: string;
+  readonly event_type: string;
+  readonly event_subtype: string | null;
+  readonly severity: string;
+  readonly summary: string;
+  readonly start_at: string | null;
+  readonly end_at: string | null;
+  readonly confidence: number;
+  readonly created_at: string;
+  readonly signals: readonly EventSignalEvidence[];
+  readonly entities: readonly EventEntityEvidence[];
+  readonly locations: readonly EventLocationEvidence[];
+}
+
 interface RiskAlertListResponse { items: RiskAlertRead[]; total: number }
 
 export interface SupplierRead {
@@ -481,6 +522,8 @@ export const api = {
     logout: () => request<{detail: string}>('/api/v1/auth/logout', {method: 'POST'}),
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
+  alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
+  event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
   sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),

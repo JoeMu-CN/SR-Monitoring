@@ -45,6 +45,12 @@ class PasswordChange(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class MeResponse(BaseModel):
     user: UserRead
     permissions: list[str]

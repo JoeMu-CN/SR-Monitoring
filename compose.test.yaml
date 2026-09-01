@@ -34,7 +34,6 @@ services:
   app-test:
     image: supplierriskmonitoring-app
     environment: *test-environment
-    volumes: *test-volumes
     command:
       - sh
       - -c

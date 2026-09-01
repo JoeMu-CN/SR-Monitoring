@@ -58,10 +58,10 @@ const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetai
   ...overrides,
 });
 
-const renderAt = (path: string) => render(
+const renderAt = (path: string, onRequestError = vi.fn()) => render(
   <MemoryRouter initialEntries={[path]}>
     <Routes>
-      <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={vi.fn()} />} />
+      <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={onRequestError} />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -133,6 +133,28 @@ describe('RiskDetailView', () => {
 
     expect(await screen.findByText('风险提醒不存在')).toBeInTheDocument();
     expect(screen.getByRole('button', {name: '返回风险列表'})).toBeInTheDocument();
+  });
+
+  it('提醒请求返回 401 时转交全局鉴权错误处理', async () => {
+    const onRequestError = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response({detail: '登录已失效'}, 401)));
+
+    renderAt('/risks/7', onRequestError);
+
+    expect(await screen.findByText('风险提醒加载失败')).toBeInTheDocument();
+    expect(onRequestError).toHaveBeenCalledWith(expect.objectContaining({status: 401}));
+  });
+
+  it('事件请求返回 403 时转交全局权限错误处理', async () => {
+    const onRequestError = vi.fn();
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response({detail: '无权查看事件证据'}, 403)));
+
+    renderAt('/risks/7', onRequestError);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('事件详情加载失败');
+    expect(onRequestError).toHaveBeenCalledWith(expect.objectContaining({status: 403}));
   });
 
   it('事件详情失败后只重试事件请求', async () => {

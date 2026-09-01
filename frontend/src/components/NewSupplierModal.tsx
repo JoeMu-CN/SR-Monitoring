@@ -126,8 +126,8 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
     }
   };
 
-  const titleText = isEdit ? `编辑供应商 · ${initialSupplier?.code ?? ''}` : '导入 / 新建供应商';
-  const submitText = isSaving ? '正在保存…' : isEdit ? '保存修改' : '确认导入并开启监控';
+  const titleText = isEdit ? `编辑供应商 · ${initialSupplier?.code ?? ''}` : '新增供应商';
+  const submitText = isSaving ? '正在保存…' : isEdit ? '保存修改' : '新增并开启监控';
   const hintText = isEdit
     ? '保存后将立即生效。监控启停仍由「启停监控」按钮统一控制，删除供应商会同时清理其事件匹配记录。'
     : '保存后该供应商将开启监控；风险信号由当前已配置的数据源及其采集计划提供。';

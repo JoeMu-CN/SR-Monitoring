@@ -18,6 +18,7 @@ interface SuppliersViewProps {
   readonly role: 'viewer' | 'admin';
   readonly refreshToken: number;
   readonly onOpenImportModal: () => void;
+  readonly onOpenNewSupplierModal: () => void;
   readonly onEditSupplier: (supplier: Supplier) => void;
   readonly onToggleStatus: (supplier: Supplier) => void;
   readonly onAskAssistant: (query: string) => void;
@@ -28,6 +29,7 @@ export const SuppliersView = ({
   role,
   refreshToken,
   onOpenImportModal,
+  onOpenNewSupplierModal,
   onEditSupplier,
   onToggleStatus,
   onAskAssistant,
@@ -125,15 +127,26 @@ export const SuppliersView = ({
           <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">供应商管理</h1>
           <p className="mt-0.5 text-xs text-[#424751] dark:text-slate-400">全网一级供应商主表及实时风险监控状态</p>
         </div>
-        <button
-          type="button"
-          onClick={onOpenImportModal}
-          disabled={!canManage}
-          className="flex items-center gap-2 rounded-xl bg-[#185fa5] px-4 py-2 text-[13px] font-bold text-white shadow-sm transition-all hover:bg-[#004782] disabled:opacity-40"
-        >
-          <span aria-hidden="true" className="material-symbols-outlined text-[18px]">upload_file</span>
-          <span>导入供应商</span>
-        </button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <button
+            type="button"
+            onClick={onOpenNewSupplierModal}
+            disabled={!canManage}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#c2c6d2] bg-white px-4 text-[13px] font-bold text-[#007aff] hover:bg-[#eef6ff] focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[18px]">add_business</span>
+            <span>新增供应商</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenImportModal}
+            disabled={!canManage}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#007aff] px-4 text-[13px] font-bold text-white shadow-sm hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff] focus:ring-offset-2 disabled:opacity-40"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[18px]">upload_file</span>
+            <span>导入供应商</span>
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md sm:flex-row dark:border-slate-700/60 dark:bg-slate-800/60">

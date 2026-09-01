@@ -26,6 +26,7 @@ import {SystemSplashScreen} from './components/SystemSplashScreen';
 import {LoginView} from './components/LoginView';
 import {DataSourcesView} from './components/DataSourcesView';
 import {SourceSignalsView} from './components/SourceSignalsView';
+import {SupplierImportModal} from './components/SupplierImportModal';
 import {OverviewView} from './components/OverviewView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
@@ -52,6 +53,7 @@ export function App() {
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [supplierRefreshToken, setSupplierRefreshToken] = useState(0);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
+  const [isSupplierImportModalOpen, setIsSupplierImportModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const permissions = auth?.permissions ?? [];
@@ -205,6 +207,11 @@ export function App() {
     setIsNewSupplierModalOpen(true);
   };
 
+  const openNewSupplierModal = () => {
+    setEditingSupplier(null);
+    setIsNewSupplierModalOpen(true);
+  };
+
   // NewSupplierModal 在 create/edit 模式共用的 onSave：根据当前 modal 模式分发到 create / update。
   const handleSaveSupplier = async (supplier: Supplier) => {
     if (editingSupplier) {
@@ -309,7 +316,7 @@ export function App() {
     risks: riskRouteView,
     riskDetail: riskRouteView,
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
-    suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsNewSupplierModalOpen(true)} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
+    suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />,
     sourceSignals: <SourceSignalsView onRequestError={handleDetailRequestError} />,
     rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,
@@ -372,6 +379,12 @@ export function App() {
       <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={closeSupplierModal}
         mode={editingSupplier ? 'edit' : 'create'} initialSupplier={editingSupplier ?? undefined}
         onSave={handleSaveSupplier} onDelete={handleDeleteSupplier} />
+      <SupplierImportModal
+        isOpen={isSupplierImportModalOpen}
+        onClose={() => setIsSupplierImportModalOpen(false)}
+        onImported={refreshSuppliers}
+        onRequestError={handleDetailRequestError}
+      />
       <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} />
       <AnimatePresence>
         {(!splashFinished || loading) && <SystemSplashScreen onComplete={completeSplash} />}

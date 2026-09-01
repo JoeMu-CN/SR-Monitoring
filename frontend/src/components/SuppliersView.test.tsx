@@ -47,6 +47,7 @@ interface RenderOptions {
 const renderView = (path: string, options: RenderOptions = {}) => {
   const handlers = {
     onOpenImportModal: vi.fn(),
+    onOpenNewSupplierModal: vi.fn(),
     onEditSupplier: options.onEditSupplier ?? vi.fn(),
     onToggleStatus: options.onToggleStatus ?? vi.fn(),
     onAskAssistant: vi.fn(),
@@ -194,15 +195,29 @@ describe('供应商服务端分页清单', () => {
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
   });
 
-  it('只读账号看不到编辑入口且导入与启停被禁用', async () => {
+  it('只读账号看不到编辑入口且新增、导入与启停被禁用', async () => {
     vi.spyOn(api, 'supplierPage').mockResolvedValue(makePage(0, 1, 1));
 
     renderView('/suppliers', {role: 'viewer'});
 
     expect(await screen.findByText('供应商 001')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '新增供应商'})).toBeDisabled();
     expect(screen.getByRole('button', {name: '导入供应商'})).toBeDisabled();
     expect(screen.getByRole('button', {name: '暂停监控：供应商 001'})).toBeDisabled();
     expect(screen.queryByRole('button', {name: '编辑供应商：供应商 001'})).not.toBeInTheDocument();
+  });
+
+  it('管理员的单条新增与 Excel 导入使用独立入口', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'supplierPage').mockResolvedValue(makePage(0, 1, 1));
+    const handlers = renderView('/suppliers');
+    await screen.findByText('供应商 001');
+
+    await user.click(screen.getByRole('button', {name: '新增供应商'}));
+    await user.click(screen.getByRole('button', {name: '导入供应商'}));
+
+    expect(handlers.onOpenNewSupplierModal).toHaveBeenCalledTimes(1);
+    expect(handlers.onOpenImportModal).toHaveBeenCalledTimes(1);
   });
 
   it('管理员启停按钮回传当前行的供应商', async () => {

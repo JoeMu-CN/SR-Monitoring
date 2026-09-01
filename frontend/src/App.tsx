@@ -7,13 +7,13 @@ import {
   mapDataSource,
   mapDimension,
   mapRiskAlert,
-  mapSupplier,
+  mapSupplierListItem,
   updateDimensionConfig,
   type AuthMeResponse,
   type AgentStatusRead,
   type SystemHealth,
 } from './api';
-import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
+import type {DataSource, MonitoringDimension, RiskItem, Supplier} from './types';
 import {AppRoutes, type RouteViews} from './AppRoutes';
 import {RiskRouteView} from './RiskRouteView';
 import {ExportReportModal} from './components/ExportReportModal';
@@ -31,8 +31,6 @@ import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
 import {SuppliersView} from './components/SuppliersView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
-
-const riskRank: Record<RiskLevel, number> = {P1: 4, P2: 3, P3: 2, P4: 1};
 
 export function App() {
   const location = useLocation();
@@ -52,6 +50,7 @@ export function App() {
   const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
+  const [supplierRefreshToken, setSupplierRefreshToken] = useState(0);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -86,19 +85,8 @@ export function App() {
       const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
         api.alerts(), api.suppliers(), canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
       ]);
-      const mappedRisks = alertsResponse.items.map(mapRiskAlert);
-      const strongestRisk = new Map<number, {level: RiskLevel; score: number}>();
-      for (const alert of alertsResponse.items) {
-        const current = strongestRisk.get(alert.supplier_id);
-        if (!current || riskRank[alert.level] > riskRank[current.level]) {
-          strongestRisk.set(alert.supplier_id, {level: alert.level, score: alert.score});
-        }
-      }
-      setRiskItems(mappedRisks);
-      setSuppliers(suppliersResponse.items.map((supplier) => {
-        const risk = strongestRisk.get(supplier.id);
-        return mapSupplier(supplier, risk?.level, risk?.score);
-      }));
+      setRiskItems(alertsResponse.items.map(mapRiskAlert));
+      setSuppliers(suppliersResponse.items.map(mapSupplierListItem));
       setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
       setDimensions(dimensionResponse.map(mapDimension));
       setHealth(healthResponse);
@@ -162,14 +150,17 @@ export function App() {
     else handleAskAssistant(`查询供应商【${supplier.legalName}】当前是否存在有效风险，并列出生产地点与供应产品。`);
   };
 
-  const handleToggleSupplierStatus = async (supplierId: string) => {
-    const supplier = suppliers.find((item) => item.id === supplierId);
-    if (!supplier) return;
+  // 供应商清单已改为服务端分页，任何写操作后统一重查，避免前端拼接出与当前页码不符的列表。
+  const refreshSuppliers = useCallback(async () => {
+    const response = await api.suppliers();
+    setSuppliers(response.items.map(mapSupplierListItem));
+    setSupplierRefreshToken((value) => value + 1);
+  }, []);
+
+  const handleToggleSupplierStatus = async (supplier: Supplier) => {
     try {
-      const updated = await api.toggleSupplier(Number(supplierId), supplier.monitoringStatus === 'paused');
-      setSuppliers((current) => current.map((item) => item.id === supplierId
-        ? mapSupplier(updated, item.riskLevel, item.riskScore)
-        : item));
+      await api.toggleSupplier(Number(supplier.id), supplier.monitoringStatus === 'paused');
+      await refreshSuppliers();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '供应商监控状态更新失败');
     }
@@ -180,7 +171,7 @@ export function App() {
       ? String(supplier.countryRegion).toUpperCase()
       : 'CN';
     try {
-      const created = await api.createSupplier({
+      await api.createSupplier({
         supplier_code: supplier.code,
         legal_name: supplier.legalName,
         country_code: countryCode,
@@ -202,7 +193,7 @@ export function App() {
         }] : [],
         products: supplier.suppliedProduct ? [{name: supplier.suppliedProduct, keywords: []}] : [],
       });
-      setSuppliers((current) => [mapSupplier(created), ...current]);
+      await refreshSuppliers();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '新增供应商失败');
       throw caught;
@@ -222,7 +213,7 @@ export function App() {
         ? String(supplier.countryRegion).toUpperCase()
         : 'CN';
       try {
-        const updated = await api.updateSupplier(Number(editingSupplier.id), {
+        await api.updateSupplier(Number(editingSupplier.id), {
           legal_name: supplier.legalName,
           country_code: countryCode,
           registry_no: supplier.registrationNo || null,
@@ -243,9 +234,7 @@ export function App() {
           }] : [],
           products: supplier.suppliedProduct ? [{name: supplier.suppliedProduct, keywords: []}] : [],
         });
-        const risk = riskItems.find((item) => item.vendorId === String(updated.id));
-        const next = mapSupplier(updated, risk?.level, risk?.overallScore);
-        setSuppliers((current) => current.map((item) => item.id === next.id ? next : item));
+        await refreshSuppliers();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : '供应商修改失败');
         throw caught;
@@ -258,7 +247,7 @@ export function App() {
   const handleDeleteSupplier = async (supplierId: string) => {
     try {
       await api.deleteSupplier(Number(supplierId));
-      setSuppliers((current) => current.filter((item) => item.id !== supplierId));
+      await refreshSuppliers();
       setEditingSupplier(null);
       setIsNewSupplierModalOpen(false);
     } catch (caught) {
@@ -320,7 +309,7 @@ export function App() {
     risks: riskRouteView,
     riskDetail: riskRouteView,
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
-    suppliers: <SuppliersView suppliers={suppliers} onOpenImportModal={() => setIsNewSupplierModalOpen(true)} onEditSupplier={handleEditSupplier} onToggleStatus={(id) => void handleToggleSupplierStatus(id)} onAskAssistant={handleAskAssistant} role={canManageSuppliers ? 'admin' : 'viewer'} />,
+    suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsNewSupplierModalOpen(true)} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />,
     sourceSignals: <SourceSignalsView onRequestError={handleDetailRequestError} />,
     rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,

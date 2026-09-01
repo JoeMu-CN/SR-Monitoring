@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event';
 import {MemoryRouter, useLocation, useNavigate} from 'react-router-dom';
 import {afterEach, describe, expect, it} from 'vitest';
 import {AppRoutes, type RouteViews} from './AppRoutes';
-import {allRoutePermissions, routeDefinitions} from './routes';
+import {
+  allRoutePermissions,
+  isSupplierStatusFilter,
+  routeDefinitions,
+  supplierSearchParams,
+  suppliersPath,
+} from './routes';
 
 const routeViews: RouteViews = {
   overview: <div>总览页面</div>,
@@ -137,5 +143,19 @@ describe('路由元数据', () => {
     ]);
     expect(routeDefinitions.find((route) => route.id === 'assistant')?.permission).toBe('risk_query_use');
     expect(routeDefinitions.find((route) => route.id === 'userSettings')?.permission).toBe('user_manage');
+  });
+
+  it('供应商清单地址省略默认值，只为非默认状态保留查询参数', () => {
+    expect(suppliersPath()).toBe('/suppliers');
+    expect(suppliersPath('', 'all', 1)).toBe('/suppliers');
+    expect(suppliersPath('钢材', 'paused', 3)).toBe('/suppliers?q=%E9%92%A2%E6%9D%90&status=paused&page=3');
+    expect(suppliersPath('', 'high_risk', 1)).toBe('/suppliers?status=high_risk');
+    expect(supplierSearchParams('钢材', 'all', 2).toString()).toBe('q=%E9%92%A2%E6%9D%90&page=2');
+  });
+
+  it('只接受四种监控状态筛选值', () => {
+    expect(['all', 'normal', 'high_risk', 'paused'].every(isSupplierStatusFilter)).toBe(true);
+    expect(isSupplierStatusFilter('bogus')).toBe(false);
+    expect(isSupplierStatusFilter(null)).toBe(false);
   });
 });

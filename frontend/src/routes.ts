@@ -105,6 +105,28 @@ export const sourceSignalsPath = (sourceId: string, scope: SourceSignalScope, pa
   `${routePaths.sources}/${sourceId}/signals?scope=${scope}&page=${page}`
 );
 
+export type SupplierStatusFilter = 'all' | 'normal' | 'high_risk' | 'paused';
+
+const supplierStatusFilters: readonly SupplierStatusFilter[] = ['all', 'normal', 'high_risk', 'paused'];
+
+export const isSupplierStatusFilter = (value: string | null): value is SupplierStatusFilter => (
+  value !== null && supplierStatusFilters.includes(value as SupplierStatusFilter)
+);
+
+/** 供应商清单的规范查询串：省略默认值，保证同一视图状态只有一个 URL。 */
+export const supplierSearchParams = (query: string, status: SupplierStatusFilter, page: number) => {
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  if (status !== 'all') params.set('status', status);
+  if (page > 1) params.set('page', String(page));
+  return params;
+};
+
+export const suppliersPath = (query = '', status: SupplierStatusFilter = 'all', page = 1) => {
+  const search = supplierSearchParams(query, status, page).toString();
+  return search ? `${routePaths.suppliers}?${search}` : routePaths.suppliers;
+};
+
 export const hasRoutePermission = (route: RouteDefinition, permissions: readonly string[]) => permissions.includes(route.permission);
 
 const isNavigationRoute = (route: RouteDefinition): route is NavigationRoute => route.navigation !== undefined;

@@ -203,7 +203,29 @@ export interface SupplierRead {
   products: Array<{id: number; name: string; keywords: string[]}>;
 }
 
-interface SupplierListResponse { items: SupplierRead[]; total: number }
+export interface SupplierListItem extends SupplierRead {
+  current_risk_level: RiskLevel | null;
+  current_risk_score: number | null;
+}
+
+export interface SupplierListResponse {
+  items: SupplierListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export type SupplierStatusFilter = 'all' | 'normal' | 'high_risk' | 'paused';
+
+export const SUPPLIER_PAGE_SIZE = 20;
+
+// 监控状态在后端只有 enabled 与 has_current_alert 两个维度，这里固定四种前端语义的映射。
+const supplierStatusFilterParams: Record<SupplierStatusFilter, ReadonlyArray<readonly [string, string]>> = {
+  all: [],
+  normal: [['enabled', 'true'], ['has_current_alert', 'false']],
+  high_risk: [['enabled', 'true'], ['has_current_alert', 'true']],
+  paused: [['enabled', 'false']],
+};
 
 export interface DataSourceRead {
   id: number;
@@ -548,6 +570,12 @@ export const api = {
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
+  supplierPage: (query: string, status: SupplierStatusFilter, offset: number) => {
+    const params = new URLSearchParams({limit: String(SUPPLIER_PAGE_SIZE), offset: String(offset)});
+    if (query) params.set('q', query);
+    for (const [key, value] of supplierStatusFilterParams[status]) params.set(key, value);
+    return request<SupplierListResponse>(`/api/v1/suppliers?${params.toString()}`);
+  },
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
   sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),
   sourceSignals: (sourceId: number, scope: 'valid' | 'all', offset: number) => request<SourceSignalListResponse>(
@@ -703,6 +731,14 @@ export function mapSupplier(supplier: SupplierRead, riskLevel?: RiskLevel, riskS
     suppliedProduct: supplier.products.map((item) => item.name).join('、') || '未登记',
     monitoringStatus: supplier.enabled ? (riskLevel === 'P1' || riskLevel === 'P2' ? 'high_risk' : 'normal') : 'paused',
     riskLevel, riskScore, lastUpdated: site ? `${site.country_code} · ${site.city ?? site.site_name}` : '当前数据',
+  };
+}
+
+/** 列表项已带服务端判定的当前有效风险，监控状态直接采用该口径，不再由前端按 P1/P2 推断。 */
+export function mapSupplierListItem(item: SupplierListItem): Supplier {
+  return {
+    ...mapSupplier(item, item.current_risk_level ?? undefined, item.current_risk_score ?? undefined),
+    monitoringStatus: !item.enabled ? 'paused' : item.current_risk_level !== null ? 'high_risk' : 'normal',
   };
 }
 

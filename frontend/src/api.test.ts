@@ -4,8 +4,10 @@ import {
   mapDataSource,
   mapRiskAlert,
   mapSupplier,
+  mapSupplierListItem,
   type DataSourceRead,
   type RiskAlertRead,
+  type SupplierListItem,
   type SupplierRead,
 } from './api';
 
@@ -102,6 +104,61 @@ describe('数据源采集记录 API 请求契约', () => {
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('limit=');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('供应商清单 API 请求契约', () => {
+  const supplierQueries: ReadonlyArray<readonly [Parameters<typeof api.supplierPage>[1], string]> = [
+    ['all', '/api/v1/suppliers?limit=20&offset=40'],
+    ['normal', '/api/v1/suppliers?limit=20&offset=40&enabled=true&has_current_alert=false'],
+    ['high_risk', '/api/v1/suppliers?limit=20&offset=40&enabled=true&has_current_alert=true'],
+    ['paused', '/api/v1/suppliers?limit=20&offset=40&enabled=false'],
+  ];
+
+  it.each(supplierQueries)('把监控状态 %s 翻译为固定 20 条的服务端查询', async (status, expected) => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.supplierPage('', status, 40);
+
+    expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({credentials: 'include'}));
+    vi.unstubAllGlobals();
+  });
+
+  it('对查询词做百分号编码且空查询词不进入请求', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.supplierPage('功率 & 100%', 'all', 0);
+    await api.supplierPage('', 'all', 0);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/suppliers?limit=20&offset=0&q=%E5%8A%9F%E7%8E%87+%26+100%25');
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain('q=');
+    vi.unstubAllGlobals();
+  });
+
+  it('列表项按服务端当前风险判定监控状态而不再按 P1/P2 推断', () => {
+    const base: SupplierListItem = {
+      id: 5,
+      supplier_code: 'SUP-0005',
+      legal_name: '测试供应商',
+      country_code: 'CN',
+      registry_no: null,
+      registration_address: null,
+      industry: null,
+      raw_materials: [],
+      enabled: true,
+      aliases: [],
+      sites: [],
+      products: [],
+      current_risk_level: 'P3',
+      current_risk_score: 55,
+    };
+
+    expect(mapSupplierListItem(base)).toMatchObject({monitoringStatus: 'high_risk', riskLevel: 'P3', riskScore: 55});
+    expect(mapSupplierListItem({...base, current_risk_level: null, current_risk_score: null}))
+      .toMatchObject({monitoringStatus: 'normal', riskLevel: undefined});
+    expect(mapSupplierListItem({...base, enabled: false})).toMatchObject({monitoringStatus: 'paused'});
   });
 });
 

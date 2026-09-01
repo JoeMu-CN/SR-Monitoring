@@ -12,6 +12,7 @@ const routeViews: RouteViews = {
   assistant: <div>助手页面</div>,
   suppliers: <div>供应商页面</div>,
   sources: <div>数据源页面</div>,
+  sourceSignals: <div>采集记录页面</div>,
   rules: <div>规则页面</div>,
   userSettings: <div>用户设置页面</div>,
 };
@@ -52,6 +53,7 @@ describe('显式路由白名单', () => {
     ['/assistant', '助手页面'],
     ['/suppliers', '供应商页面'],
     ['/sources', '数据源页面'],
+    ['/sources/17/signals?scope=valid&page=1', '采集记录页面'],
     ['/rules', '规则页面'],
     ['/settings/users', '用户设置页面'],
   ])('在拥有准确权限时渲染 %s', (path, page) => {
@@ -78,6 +80,7 @@ describe('显式路由白名单', () => {
     ['/risks', ['supplier_view']],
     ['/suppliers', ['risk_view']],
     ['/sources', ['rule_summary_view']],
+    ['/sources/17/signals?scope=all&page=2', ['rule_summary_view']],
     ['/rules', ['source_status_view']],
     ['/settings/users', ['source_manage']],
   ])('拒绝缺少准确权限的直接访问：%s', (path, permissions) => {
@@ -128,6 +131,7 @@ describe('路由元数据', () => {
       '/assistant',
       '/suppliers',
       '/sources',
+      '/sources/:sourceId/signals',
       '/rules',
       '/settings/users',
     ]);

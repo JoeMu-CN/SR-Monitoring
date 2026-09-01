@@ -87,6 +87,35 @@ class DataSourceSummaryRead(BaseModel):
     updated_at: datetime
 
 
+class SourceSignalSourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    name: str
+    signal_validity_days: int | None
+
+
+class SourceSignalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    external_id: str | None
+    title: str
+    content: str
+    url: str | None
+    published_at: datetime | None
+    collected_at: datetime
+
+
+class SourceSignalListResponse(BaseModel):
+    source: SourceSignalSourceRead
+    items: list[SourceSignalRead]
+    total: int
+    limit: int
+    offset: int
+
+
 class DataSourceWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

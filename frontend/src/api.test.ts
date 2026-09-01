@@ -89,6 +89,22 @@ describe('API 会话请求', () => {
   });
 });
 
+describe('数据源采集记录 API 请求契约', () => {
+  it('只发送范围与偏移量且不发送可变 limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.sourceSignals(17, 'all', 40);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/sources/17/signals?scope=all&offset=40',
+      expect.objectContaining({credentials: 'include'}),
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('limit=');
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('研究 API 请求契约', () => {
   it('使用只读请求读取任务列表、详情和报告草稿', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});

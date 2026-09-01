@@ -235,6 +235,29 @@ export interface DataSourceRead {
   signal_validity_days?: number | null;
 }
 
+export interface SourceSignalRead {
+  readonly id: number;
+  readonly external_id: string | null;
+  readonly title: string;
+  readonly content: string;
+  readonly url: string | null;
+  readonly published_at: string | null;
+  readonly collected_at: string;
+}
+
+export interface SourceSignalListResponse {
+  readonly source: {
+    readonly id: number;
+    readonly code: string;
+    readonly name: string;
+    readonly signal_validity_days: number | null;
+  };
+  readonly items: readonly SourceSignalRead[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
 export interface DataSourceAuditLogRead {
   id: number;
   source_id: number | null;
@@ -527,6 +550,9 @@ export const api = {
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
   sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),
+  sourceSignals: (sourceId: number, scope: 'valid' | 'all', offset: number) => request<SourceSignalListResponse>(
+    `/api/v1/sources/${sourceId}/signals?scope=${scope}&offset=${offset}`,
+  ),
   createSource: (payload: DataSourceWritePayload) => request<DataSourceRead>('/api/v1/sources', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),

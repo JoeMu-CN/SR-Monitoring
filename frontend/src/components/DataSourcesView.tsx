@@ -1,7 +1,9 @@
 import React, {useState} from 'react';
 import {motion} from 'motion/react';
 import {AlertTriangle, X} from 'lucide-react';
+import {Link} from 'react-router-dom';
 import {api, type DataSourceWritePayload} from '../api';
+import {sourceSignalsPath} from '../routes';
 import type {DataSource} from '../types';
 
 interface DataSourcesViewProps {
@@ -370,11 +372,23 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   </div>
                   <div className="col-span-6 md:col-span-2 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400">
                     <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">有效:</span>
-                    {source.validSignalCount.toLocaleString()} <span className="text-[11px] font-normal text-slate-500">条</span>
+                    <Link
+                      to={sourceSignalsPath(source.id, 'valid')}
+                      aria-label={`${source.name} 有效记录 ${source.validSignalCount} 条`}
+                      className="rounded-sm underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                      {source.validSignalCount.toLocaleString()}
+                    </Link>{' '}
+                    <span className="text-[11px] font-normal text-slate-500">条</span>
                     {source.totalSignalCount > source.validSignalCount && (
-                      <span className="ml-1.5 text-[10px] font-mono font-normal text-slate-500 dark:text-slate-400" title="累计历史存量（含已过期）">
+                      <Link
+                        to={sourceSignalsPath(source.id, 'all')}
+                        aria-label={`${source.name} 全部历史记录 ${source.totalSignalCount} 条`}
+                        className="ml-1.5 rounded-sm text-[10px] font-mono font-normal text-slate-500 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-400"
+                        title="累计历史存量（含已过期）"
+                      >
                         （累计 {source.totalSignalCount.toLocaleString()}）
-                      </span>
+                      </Link>
                     )}
                     {source.signalValidityDays != null && (
                       <span className="ml-1 text-[10px] font-normal text-slate-400" title="信息记录有效期">

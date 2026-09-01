@@ -9,6 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app import config
 from app.auth.models import User
@@ -62,6 +63,9 @@ from app.signals.schemas import (
     SignalFilterConfigRead,
     SignalFilterConfigUpdate,
     SignalImportSummary,
+    SourceSignalListResponse,
+    SourceSignalRead,
+    SourceSignalSourceRead,
 )
 from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
@@ -96,6 +100,7 @@ BusinessAuditView = Annotated[User, Depends(require_permission(PERM_BUSINESS_AUD
 RuleManage = Annotated[User, Depends(require_permission(PERM_RULE_MANAGE))]
 CsrfGuard = Annotated[None, Depends(verify_csrf)]
 adapter: SourceAdapter = ManualJsonAdapter()
+SOURCE_SIGNAL_PAGE_SIZE = 20
 
 
 def _validate_schedule(schedule: str | None) -> None:
@@ -219,20 +224,12 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
         ) or 0
         # 有效信号数：按信源级有效期过滤（NULL=永久有效，等于总数）。
         valid_signals = total_signals
-        if source.signal_validity_days is not None:
-            cutoff = datetime.now(UTC) - timedelta(
-                days=source.signal_validity_days
-            )
+        valid_condition = _valid_signal_condition(source)
+        if valid_condition is not None:
             valid_signals = session.scalar(
                 select(func.count()).select_from(RawSignal).where(
                     RawSignal.source_id == source.id,
-                    or_(
-                        RawSignal.published_at >= cutoff,
-                        and_(
-                            RawSignal.published_at.is_(None),
-                            RawSignal.collected_at >= cutoff,
-                        ),
-                    ),
+                    valid_condition,
                 )
             ) or 0
         payload = payload.model_copy(
@@ -242,6 +239,19 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
             }
         )
     return payload
+
+
+def _valid_signal_condition(source: DataSource) -> ColumnElement[bool] | None:
+    if source.signal_validity_days is None:
+        return None
+    cutoff = datetime.now(UTC) - timedelta(days=source.signal_validity_days)
+    return or_(
+        RawSignal.published_at >= cutoff,
+        and_(
+            RawSignal.published_at.is_(None),
+            RawSignal.collected_at >= cutoff,
+        ),
+    )
 
 
 def _serialize_source_summary(
@@ -358,6 +368,52 @@ def list_sources_admin(
         _serialize_source(source, session)
         for source in session.scalars(select(DataSource).order_by(DataSource.id))
     ]
+
+
+@router.get("/sources/{source_id}/signals", response_model=SourceSignalListResponse)
+def list_source_signals(
+    source_id: int,
+    session: SessionDependency,
+    _user: SourceStatusView,
+    scope: Annotated[Literal["valid", "all"], Query()] = "valid",
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> SourceSignalListResponse:
+    source = session.get(DataSource, source_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="数据源不存在",
+        )
+
+    filters: list[ColumnElement[bool]] = [RawSignal.source_id == source.id]
+    if scope == "valid":
+        valid_condition = _valid_signal_condition(source)
+        if valid_condition is not None:
+            filters.append(valid_condition)
+
+    total = session.scalar(
+        select(func.count()).select_from(RawSignal).where(*filters)
+    ) or 0
+    signals = list(
+        session.scalars(
+            select(RawSignal)
+            .where(*filters)
+            .order_by(
+                RawSignal.published_at.desc().nulls_last(),
+                RawSignal.collected_at.desc(),
+                RawSignal.id.desc(),
+            )
+            .limit(SOURCE_SIGNAL_PAGE_SIZE)
+            .offset(offset)
+        )
+    )
+    return SourceSignalListResponse(
+        source=SourceSignalSourceRead.model_validate(source),
+        items=[SourceSignalRead.model_validate(signal) for signal in signals],
+        total=int(total),
+        limit=SOURCE_SIGNAL_PAGE_SIZE,
+        offset=offset,
+    )
 
 
 @router.get("/sources/audit-logs", response_model=DataSourceAuditLogListResponse)

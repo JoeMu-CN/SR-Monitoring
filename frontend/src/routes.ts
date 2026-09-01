@@ -11,7 +11,7 @@ export const routePermissions = {
 } as const;
 
 export type RoutePermission = typeof routePermissions[keyof typeof routePermissions];
-export type RouteId = 'overview' | 'risks' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'rules' | 'userSettings';
+export type RouteId = 'overview' | 'risks' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'rules' | 'userSettings';
 export type NavigationSurface = 'desktop' | 'mobile';
 export type NavigationSection = 'main' | 'system';
 export type NavigationIcon = 'overview' | 'risks' | 'assistant' | 'suppliers' | 'sources' | 'rules' | 'userSettings';
@@ -43,6 +43,7 @@ export const routePaths = {
   assistant: '/assistant',
   suppliers: '/suppliers',
   sources: '/sources',
+  sourceSignals: '/sources/:sourceId/signals',
   rules: '/rules',
   userSettings: '/settings/users',
 } as const;
@@ -79,6 +80,7 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     permission: routePermissions.sourceStatusView,
     navigation: {surfaces: ['desktop', 'mobile'], section: 'system', desktopLabel: '数据源列表', mobileLabel: '数据', icon: 'sources', end: true},
   },
+  {id: 'sourceSignals', path: routePaths.sourceSignals, permission: routePermissions.sourceStatusView},
   {
     id: 'rules',
     path: routePaths.rules,
@@ -96,6 +98,12 @@ export const routeDefinitions: readonly RouteDefinition[] = [
 export const allRoutePermissions: readonly RoutePermission[] = Object.values(routePermissions);
 
 export const riskDetailPath = (alertId: string) => `${routePaths.risks}/${alertId}`;
+
+export type SourceSignalScope = 'valid' | 'all';
+
+export const sourceSignalsPath = (sourceId: string, scope: SourceSignalScope, page = 1) => (
+  `${routePaths.sources}/${sourceId}/signals?scope=${scope}&page=${page}`
+);
 
 export const hasRoutePermission = (route: RouteDefinition, permissions: readonly string[]) => permissions.includes(route.permission);
 

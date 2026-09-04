@@ -72,34 +72,51 @@ export const OverviewView = ({riskItems, suppliers, onSelectRisk, onViewAllRisks
             <p className="mt-1 max-w-sm text-[12px] text-slate-500">完成数据源采集后，新的风险信号会显示在这里。</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead className="border-b border-slate-200/80 bg-slate-100/70 text-[11px] font-bold uppercase text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/80 dark:text-slate-400">
-                <tr>
-                  <th className="p-3 pl-4">供应商主体</th>
-                  <th className="p-3">级别</th>
-                  <th className="p-3">风险类型</th>
-                  <th className="p-3 text-right">AI 置信度</th>
-                  <th className="p-3">更新时间</th>
-                  <th className="p-3 pr-4 text-center">详情</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-[13px] dark:divide-slate-800/60">
-                {recentRisks.map((item) => (
-                  <tr key={item.id} onClick={() => onSelectRisk(item)} className="cursor-pointer transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-700/40">
-                    <td className="p-3 pl-4 font-bold text-slate-900 dark:text-white"><span className="block max-w-[180px] truncate sm:max-w-none">{item.companyName}</span></td>
-                    <td className="p-3"><RiskBadge level={item.level}/></td>
-                    <td className="p-3 font-medium text-slate-600 dark:text-slate-300">{item.riskType}</td>
-                    <td className="p-3 text-right font-mono font-bold text-[#185fa5] dark:text-blue-400">{item.aiConfidence}%</td>
-                    <td className="p-3 text-[12px] font-mono text-slate-400">{item.updatedTime}</td>
-                    <td className="p-3 pr-4 text-center">
-                      <button type="button" title="查看详情" onClick={(event) => { event.stopPropagation(); onSelectRisk(item); }} className="rounded-lg p-1 text-[#185fa5] hover:bg-blue-100/60"><Info className="h-4 w-4"/></button>
-                    </td>
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full border-collapse text-left">
+                <thead className="border-b border-slate-200/80 bg-slate-100/70 text-[11px] font-bold uppercase text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/80 dark:text-slate-400">
+                  <tr>
+                    <th className="p-3 pl-4">供应商主体</th>
+                    <th className="p-3">级别</th>
+                    <th className="p-3">风险类型</th>
+                    <th className="p-3 text-right">AI 置信度</th>
+                    <th className="p-3">更新时间</th>
+                    <th className="p-3 pr-4 text-center">详情</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-[13px] dark:divide-slate-800/60">
+                  {recentRisks.map((item) => (
+                    <tr key={item.id} onClick={() => onSelectRisk(item)} className="cursor-pointer transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-700/40">
+                      <td className="p-3 pl-4 font-bold text-slate-900 dark:text-white"><span className="block max-w-[180px] truncate sm:max-w-none">{item.companyName}</span></td>
+                      <td className="p-3"><RiskBadge level={item.level}/></td>
+                      <td className="p-3 font-medium text-slate-600 dark:text-slate-300">{item.riskType}</td>
+                      <td className="p-3 text-right font-mono font-bold text-[#185fa5] dark:text-blue-400">{item.aiConfidence}%</td>
+                      <td className="p-3 text-[12px] font-mono text-slate-400">{item.updatedTime}</td>
+                      <td className="p-3 pr-4 text-center">
+                        <button type="button" title="查看详情" onClick={(event) => { event.stopPropagation(); onSelectRisk(item); }} className="rounded-lg p-1 text-[#185fa5] hover:bg-blue-100/60"><Info className="h-4 w-4"/></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="divide-y divide-slate-100 md:hidden dark:divide-slate-800/60">
+              {recentRisks.map((item) => (
+                <button key={item.id} type="button" onClick={() => onSelectRisk(item)} className="flex w-full flex-col gap-2 p-3.5 text-left transition-colors hover:bg-[#185fa5]/5 dark:hover:bg-slate-700/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-bold text-slate-900 dark:text-white">{item.companyName}</span>
+                    <RiskBadge level={item.level}/>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 text-[12px] text-slate-500 dark:text-slate-400">
+                    <span className="min-w-0 truncate">{item.riskType}</span>
+                    <span className="shrink-0 font-mono font-bold text-[#185fa5] dark:text-blue-400">AI {item.aiConfidence}%</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-slate-400">{item.updatedTime}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
       </section>
       <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 lg:col-span-4">

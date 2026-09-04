@@ -494,13 +494,17 @@ export interface AIReviewItem {
   review_reason: string | null;
 }
 
+export type UserRole = 'viewer' | 'risk_analyst' | 'risk_admin' | 'platform_admin';
+
+export type UserStatus = 'pending' | 'active' | 'disabled';
+
 export interface AuthUser {
   id: number;
   username: string;
   email: string | null;
   display_name: string | null;
-  role: 'viewer' | 'risk_analyst' | 'risk_admin' | 'platform_admin';
-  status: 'pending' | 'active' | 'disabled';
+  role: UserRole;
+  status: UserStatus;
   last_login_at: string | null;
   created_at: string;
 }
@@ -510,11 +514,46 @@ export interface AuthMeResponse {
   permissions: string[];
 }
 
+export interface UserCreatePayload {
+  readonly username: string;
+  readonly password: string;
+  readonly display_name?: string;
+  readonly email?: string;
+  readonly role?: UserRole;
+}
+
+export interface UserUpdatePayload {
+  readonly role?: UserRole;
+  readonly status?: UserStatus;
+  readonly display_name?: string;
+  readonly email?: string;
+}
+
+export interface PasswordResetPayload {
+  readonly new_password: string;
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+function formatDetail(raw: unknown, status: number): string {
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw)) {
+    const msgs = raw
+      .map((item) => {
+        if (typeof item === 'object' && item !== null && 'msg' in item) {
+          return typeof item.msg === 'string' ? item.msg : null;
+        }
+        return null;
+      })
+      .filter((m): m is string => m !== null);
+    if (msgs.length > 0) return msgs.join('；');
+  }
+  return `HTTP ${status}`;
 }
 
 export interface SupplierCreatePayload {
@@ -552,7 +591,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {...options, headers, credentials: 'include'});
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as {detail?: unknown} | null;
-    throw new ApiError(response.status, payload?.detail ? String(payload.detail) : `HTTP ${response.status}`);
+    throw new ApiError(response.status, formatDetail(payload?.detail, response.status));
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -565,6 +604,16 @@ export const api = {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password}),
     }),
     logout: () => request<{detail: string}>('/api/v1/auth/logout', {method: 'POST'}),
+    listUsers: () => request<readonly AuthUser[]>('/api/v1/auth/users'),
+    createUser: (payload: UserCreatePayload) => request<AuthUser>('/api/v1/auth/users', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    }),
+    updateUser: (id: number, payload: UserUpdatePayload) => request<AuthUser>(`/api/v1/auth/users/${id}`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    }),
+    resetPassword: (id: number, payload: PasswordResetPayload) => request<{detail: string}>(`/api/v1/auth/users/${id}/password-reset`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    }),
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),

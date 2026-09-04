@@ -32,9 +32,9 @@ DEFAULT_TEST_CONTENT = "这是一条测试消息：通知模块已接通，渠�
 
 @router.post("/test", response_model=list[schemas.TestSendResult])
 def send_test(
+    _: NotifyAdmin,
+    __: CsrfGuard,
     payload: schemas.TestSendRequest | None = None,
-    _: NotifyAdmin = None,
-    __: CsrfGuard = None,
 ) -> list[schemas.TestSendResult]:
     """向所有已启用渠道发送测试消息，返回逐渠道实时结果。"""
     settings = get_notification_settings()
@@ -64,7 +64,7 @@ def send_test(
 @router.get("/deliveries", response_model=schemas.DeliveryListResponse)
 def list_deliveries(
     session: SessionDependency,
-    _: NotifyAdmin = None,
+    _: NotifyAdmin,
     channel: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=200),
@@ -112,7 +112,7 @@ def list_deliveries(
 @router.get("/subscriptions", response_model=list[schemas.SubscriptionRead])
 def list_subscriptions(
     session: SessionDependency,
-    _: NotifyAdmin = None,
+    _: NotifyAdmin,
 ) -> list[schemas.SubscriptionRead]:
     """查看当前订阅配置（全局级别/免打扰 + 各渠道启停）。"""
     _global_subscription(session, get_notification_settings())
@@ -139,7 +139,7 @@ def list_subscriptions(
 def update_global_subscription(
     payload: schemas.SubscriptionUpsert,
     session: SessionDependency,
-    _: NotifyAdmin = None,
+    _: NotifyAdmin,
     __: CsrfGuard = None,
 ) -> schemas.SubscriptionRead:
     """更新全局订阅配置（推送级别 / 免打扰时段）。"""
@@ -177,7 +177,7 @@ def toggle_channel(
     channel: str,
     payload: schemas.ChannelToggle,
     session: SessionDependency,
-    _: NotifyAdmin = None,
+    _: NotifyAdmin,
     __: CsrfGuard = None,
 ) -> schemas.SubscriptionRead:
     """启停单个渠道的推送（不删除记录，便于恢复）。"""

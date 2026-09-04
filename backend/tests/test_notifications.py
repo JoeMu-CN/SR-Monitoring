@@ -156,16 +156,32 @@ def test_same_alert_not_resent(db_session: Session) -> None:
 
 def test_p2_merged_after_window(db_session: Session) -> None:
     """V4：P2 提醒 15 分钟窗口内合并为一条摘要。"""
-    make_alert(db_session, level="P2")
-    make_alert(db_session, level="P2")
+    first_alert = make_alert(db_session, level="P2")
+    second_alert = make_alert(db_session, level="P2")
     provider = FakeProvider()
     settings = make_settings(merge_window_minutes=15)
 
     scan_and_notify(db_session, settings, now=T0, providers=[provider])
     assert len(provider.calls) == 0  # P2 先入队，不立即发送
 
+    queued_deliveries = list(
+        db_session.scalars(
+            select(NotificationDelivery)
+            .where(
+                NotificationDelivery.alert_id.in_((first_alert.id, second_alert.id)),
+                NotificationDelivery.channel == provider.name,
+                NotificationDelivery.status == "queued",
+            )
+            .order_by(NotificationDelivery.id)
+        )
+    )
+    assert len(queued_deliveries) == 2
+    second_now = max(delivery.created_at for delivery in queued_deliveries) + timedelta(
+        minutes=16
+    )
+
     scan_and_notify(
-        db_session, settings, now=T0 + timedelta(minutes=16), providers=[provider]
+        db_session, settings, now=second_now, providers=[provider]
     )
     assert len(provider.calls) == 1
     title, _content = provider.calls[0]

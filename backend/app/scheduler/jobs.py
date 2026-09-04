@@ -54,7 +54,11 @@ from app.research.service import (
 from app.risks.service import expire_alerts, process_analysis
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
-from app.signals.relevance import assess_signal_relevance, grade_structured_signal, load_filter_rules
+from app.signals.relevance import (
+    assess_signal_relevance,
+    grade_structured_signal,
+    load_filter_rules,
+)
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionFailed, collect_source
 from app.suppliers.models import Supplier

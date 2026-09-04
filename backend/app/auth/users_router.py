@@ -85,6 +85,18 @@ async def update_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="用户不存在")
 
+    if admin.id == user_id:
+        self_identity_changes: list[str] = []
+        if payload.role is not None and payload.role != user.role:
+            self_identity_changes.append("角色")
+        if payload.status is not None and payload.status != user.status:
+            self_identity_changes.append("状态")
+        if self_identity_changes:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"不能修改本人的{'、'.join(self_identity_changes)}，以防自锁",
+            )
+
     changed: list[str] = []
     if payload.role is not None and payload.role != user.role:
         user.role = payload.role

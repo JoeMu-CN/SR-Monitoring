@@ -398,7 +398,7 @@ def test_pending_signal_processing_skips_overlapping_batch(monkeypatch) -> None:
     session_factory_calls = 0
 
     class _BlockingSession(_FakeSession):
-        def scalars(self, query: object) -> list[SimpleNamespace]:
+        def execute(self, query: object) -> list[SimpleNamespace]:
             del query
             entered.set()
             assert release.wait(timeout=2)

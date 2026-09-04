@@ -2,8 +2,8 @@ import json
 from datetime import UTC, datetime
 from typing import Final, TypedDict
 
-from sqlalchemy import select
 from e2e_source_signal_fixtures import add_source_signal_fixtures
+from sqlalchemy import select
 from test_stack_guard import require_test_database_url
 
 from app.auth.models import User

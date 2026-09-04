@@ -10,6 +10,7 @@ import {
   mapSupplierListItem,
   updateDimensionConfig,
   type AuthMeResponse,
+  type AuthUser,
   type AgentStatusRead,
   type SystemHealth,
 } from './api';
@@ -31,6 +32,7 @@ import {OverviewView} from './components/OverviewView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
 import {SuppliersView} from './components/SuppliersView';
+import {UsersManagementView} from './components/UsersManagementView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
 
 export function App() {
@@ -126,6 +128,10 @@ export function App() {
     setSuppliers([]);
     setDataSources([]);
     setDimensions([]);
+  };
+
+  const handleCurrentUserUpdated = (updatedUser: AuthUser) => {
+    setAuth((current) => current ? {...current, user: updatedUser} : current);
   };
 
   const completeSplash = useCallback(() => setSplashFinished(true), []);
@@ -320,7 +326,7 @@ export function App() {
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} />,
     sourceSignals: <SourceSignalsView onRequestError={handleDetailRequestError} />,
     rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,
-    userSettings: <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-start justify-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60"><h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">用户管理</h1><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">用户管理功能将在后续任务中提供。</p></section>,
+    userSettings: auth ? <UsersManagementView currentUser={auth.user} onRequestError={handleDetailRequestError} onCurrentUserUpdated={handleCurrentUserUpdated} /> : null,
   };
 
   if (authLoading) {

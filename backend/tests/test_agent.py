@@ -916,6 +916,48 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     assert stored is not None
 
 
+def test_tyc_signal_validity_when_published_at_is_missing_records_exact_anchor_fallback(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+) -> None:
+    # Given
+    from app.agent.supplier_tyc import upsert_supplier_tyc_signal
+    from app.signals.models import RawSignal
+
+    supplier = Supplier(
+        supplier_code="SUP-TYC-VALIDITY",
+        legal_name="天眼查锚点测试有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    # When
+    external_id, created = upsert_supplier_tyc_signal(
+        clean_agent_tables,
+        supplier=supplier,
+        title="天眼查核查：天眼查锚点测试有限公司",
+        content="企业登记状态：存续",
+        raw_payload={"status": "success", "company_name": supplier.legal_name},
+    )
+
+    # Then
+    assert created is True
+    stored = clean_agent_tables.scalar(
+        select(RawSignal).where(RawSignal.external_id == external_id)
+    )
+    assert stored is not None
+    assert stored.validity_state == "active"
+    assert stored.valid_from == stored.collected_at
+    assert stored.validity_reason == {
+        "code": "anchor_fallback",
+        "anchor_source": "collected_at",
+        "details": {"source": "tianyancha"},
+    }
+    assert stored.validity_policy_version is not None
+
+
 def test_verify_company_registered_supplier_without_signal_returns_empty(
     clean_agent_tables: Session, enable_tyc: None
 ) -> None:

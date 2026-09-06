@@ -20,6 +20,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
+LEGACY_VALIDITY_REASON = (
+    "'{\"code\":\"legacy_unmigrated\",\"anchor_source\":\"legacy\","
+    "\"details\":{}}'::jsonb"
+)
+VALIDITY_REASON_SHAPE = (
+    "jsonb_typeof(validity_reason) = 'object' AND "
+    "validity_reason ?& ARRAY['code','anchor_source','details'] AND "
+    "validity_reason - ARRAY['code','anchor_source','details'] = '{}'::jsonb AND "
+    "jsonb_typeof(validity_reason->'code') = 'string' AND "
+    "validity_reason->>'code' <> '' AND validity_reason->>'anchor_source' IN "
+    "('published_at','collected_at','official_valid_until','event_end','legacy') AND "
+    "jsonb_typeof(validity_reason->'details') = 'object'"
+)
+
 
 class RiskEvent(Base):
     __tablename__ = "risk_events"
@@ -28,6 +42,16 @@ class RiskEvent(Base):
         CheckConstraint(
             "severity IN ('critical', 'high', 'medium', 'low')",
             name="ck_risk_events_severity",
+        ),
+        CheckConstraint(
+            "validity_state IN ('active','expired','legacy')",
+            name="ck_risk_events_validity_state",
+        ),
+        CheckConstraint(VALIDITY_REASON_SHAPE, name="ck_risk_events_validity_reason"),
+        CheckConstraint(
+            f"validity_state <> 'legacy' OR "
+            f"(validity_policy_version IS NULL AND validity_reason = {LEGACY_VALIDITY_REASON})",
+            name="ck_risk_events_legacy_reason",
         ),
     )
 
@@ -41,6 +65,13 @@ class RiskEvent(Base):
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confidence: Mapped[float] = mapped_column(Float)
     facts: Mapped[dict[str, object]] = mapped_column(JSONB)
+    validity_state: Mapped[str] = mapped_column(Text, server_default=text("'legacy'"))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    validity_policy_version: Mapped[str | None] = mapped_column(Text)
+    validity_reason: Mapped[dict[str, object]] = mapped_column(
+        JSONB, server_default=text(LEGACY_VALIDITY_REASON)
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -145,6 +176,15 @@ class RiskAlert(Base):
         CheckConstraint(
             "status IN ('current', 'expired')", name="ck_risk_alerts_status"
         ),
+        CheckConstraint(
+            "expiry_kind IN ('finite','unbounded','legacy')",
+            name="ck_risk_alerts_expiry_kind",
+        ),
+        CheckConstraint(
+            "(expiry_kind = 'finite' AND expires_at IS NOT NULL) OR "
+            "(expiry_kind = 'unbounded' AND expires_at IS NULL) OR expiry_kind = 'legacy'",
+            name="ck_risk_alerts_expiry_value",
+        ),
         Index("ix_risk_alerts_status_updated", "status", "updated_at"),
     )
 
@@ -157,6 +197,7 @@ class RiskAlert(Base):
     score_detail: Mapped[dict[str, object]] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(Text)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expiry_kind: Mapped[str] = mapped_column(Text, server_default=text("'legacy'"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

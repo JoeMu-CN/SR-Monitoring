@@ -1,9 +1,129 @@
+# noqa: SIZE_OK — 本模块集中声明信号域 API 数据结构，保持既有公开导入路径兼容。
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from app.signals.validity import (
+    LifecycleAction,
+    SourceValidityPolicyConfig,
+    ValidityConfigurationError,
+    ValidityMode,
+    ValidityPolicy,
+    ValidityProfile,
+    ValidityState,
+    source_validity_policy_version,
+)
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class SourceValidityPolicy(BaseModel):
+    """信源级结构化有效期策略；profile 可由单条信号或 AI 分类补齐。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    profile: ValidityProfile | None = None
+    mode: ValidityMode
+    fixed_days: int | None = Field(default=None, ge=1, le=3650)
+    grace_days: int | None = Field(default=None, ge=1, le=3650)
+    critical_grace_days: int | None = Field(default=None, ge=1, le=3650)
+    review_days: int | None = Field(default=None, ge=1, le=3650)
+    review_required: bool = True
+
+    @model_validator(mode="after")
+    def validate_mode_parameters(self) -> Self:
+        try:
+            ValidityPolicy(
+                profile=self.profile or ValidityProfile.OTHER,
+                mode=self.mode,
+                fixed_days=self.fixed_days,
+                grace_days=self.grace_days,
+                critical_grace_days=self.critical_grace_days,
+                review_days=self.review_days,
+                review_required=self.review_required,
+            )
+        except ValidityConfigurationError as error:
+            raise ValueError(str(error)) from error
+        return self
+
+    def fingerprint_config(self) -> SourceValidityPolicyConfig:
+        """转换为领域层的稳定版本指纹输入。"""
+        return SourceValidityPolicyConfig(
+            profile=self.profile,
+            mode=self.mode,
+            fixed_days=self.fixed_days,
+            grace_days=self.grace_days,
+            critical_grace_days=self.critical_grace_days,
+            review_days=self.review_days,
+            review_required=self.review_required,
+        )
+
+    def fingerprint(self) -> str:
+        """返回规范化策略的 SHA-256 版本指纹。"""
+        return source_validity_policy_version(self.fingerprint_config())
+
+    def to_policy(self, profile: ValidityProfile | None) -> ValidityPolicy | None:
+        """将信源配置与单条信号 profile 合并为可计算的领域策略。"""
+        resolved_profile = self.profile or profile
+        if resolved_profile is None:
+            return None
+        return ValidityPolicy(
+            profile=resolved_profile,
+            mode=self.mode,
+            fixed_days=self.fixed_days,
+            grace_days=self.grace_days,
+            critical_grace_days=self.critical_grace_days,
+            review_days=self.review_days,
+            review_required=self.review_required,
+        )
+
+
+class SourceValidityPolicyRead(SourceValidityPolicy):
+    """持久化策略及服务端生成的不可伪造版本。"""
+
+    version: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class ValidityReasonRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: NonEmptyText
+    anchor_source: Literal[
+        "published_at",
+        "collected_at",
+        "official_valid_until",
+        "event_end",
+        "legacy",
+    ]
+    details: dict[str, object]
+
+
+def _normalize_validity_policy(
+    signal_validity_days: int | None,
+    validity_policy: SourceValidityPolicy | None,
+) -> SourceValidityPolicy | None:
+    if signal_validity_days is None:
+        return validity_policy
+    if validity_policy is None:
+        return SourceValidityPolicy(
+            mode=ValidityMode.FIXED_DAYS,
+            fixed_days=signal_validity_days,
+        )
+    if (
+        validity_policy.mode is not ValidityMode.FIXED_DAYS
+        or validity_policy.fixed_days != signal_validity_days
+    ):
+        raise ValueError("signal_validity_days 与 validity_policy 配置冲突")
+    return validity_policy
 
 
 class ManualSignalInput(BaseModel):
@@ -14,8 +134,21 @@ class ManualSignalInput(BaseModel):
     content: NonEmptyText
     url: HttpUrl | None = None
     published_at: datetime | None = None
+    valid_until: datetime | None = None
+    event_end_at: datetime | None = None
+    validity_profile: ValidityProfile | None = None
+    validity_key: str | None = None
+    lifecycle_action: LifecycleAction = LifecycleAction.ASSERT
+    target_signal_id: int | None = Field(default=None, gt=0)
+    lifecycle_reason: str | None = None
 
-    @field_validator("external_id", "url", mode="before")
+    @field_validator(
+        "external_id",
+        "url",
+        "validity_key",
+        "lifecycle_reason",
+        mode="before",
+    )
     @classmethod
     def clean_optional_text(cls, value: object) -> str | None:
         if value is None:
@@ -23,12 +156,35 @@ class ManualSignalInput(BaseModel):
         cleaned = str(value).strip()
         return cleaned or None
 
-    @field_validator("published_at")
+    @field_validator("published_at", "valid_until", "event_end_at")
     @classmethod
     def require_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.tzinfo is None:
             raise ValueError("必须包含时区，例如 2026-08-05T08:00:00+08:00")
         return value
+
+    @model_validator(mode="after")
+    def validate_validity_metadata(self) -> Self:
+        terminal_action = self.lifecycle_action in {
+            LifecycleAction.REVOKE,
+            LifecycleAction.SUPERSEDE,
+        }
+        if (
+            self.published_at is not None
+            and self.valid_until is not None
+            and self.valid_until < self.published_at
+            and not terminal_action
+        ):
+            raise ValueError("valid_until 不得早于 published_at")
+        if self.lifecycle_action is LifecycleAction.ASSERT:
+            if self.target_signal_id is not None or self.lifecycle_reason is not None:
+                raise ValueError("assert 动作不得携带生命周期目标或理由")
+            return self
+        if self.target_signal_id is None and self.validity_key is None:
+            raise ValueError("生命周期动作必须提供 target_signal_id 或 validity_key")
+        if self.lifecycle_reason is None:
+            raise ValueError("生命周期动作必须提供 lifecycle_reason")
+        return self
 
 
 class ManualSignalDocument(BaseModel):
@@ -71,6 +227,9 @@ class DataSourceRead(BaseModel):
     valid_signal_count: int = 0
     # 信源级信号有效期（天）：None=永久有效。
     signal_validity_days: int | None = None
+    validity_policy: SourceValidityPolicyRead | None = None
+    validity_policy_version: str | None = None
+    applies_to: Literal["new_signals_only"] = "new_signals_only"
 
 
 class DataSourceSummaryRead(BaseModel):
@@ -85,6 +244,8 @@ class DataSourceSummaryRead(BaseModel):
     access_cooldown_until: datetime | None = None
     enabled: bool
     updated_at: datetime
+    validity_policy_version: str | None = None
+    applies_to: Literal["new_signals_only"] = "new_signals_only"
 
 
 class SourceSignalSourceRead(BaseModel):
@@ -106,6 +267,16 @@ class SourceSignalRead(BaseModel):
     url: str | None
     published_at: datetime | None
     collected_at: datetime
+    validity_profile: ValidityProfile | None
+    validity_state: ValidityState
+    valid_from: datetime | None
+    valid_until: datetime | None
+    review_due_at: datetime | None
+    validity_mode: ValidityMode | None
+    validity_key: str | None
+    lifecycle_action: LifecycleAction
+    validity_policy_version: str | None
+    validity_reason: ValidityReasonRead
 
 
 class SourceSignalListResponse(BaseModel):
@@ -134,6 +305,14 @@ class DataSourceWrite(BaseModel):
     enabled: bool = False
     # 信源级信号有效期（天）：None=永久有效；>=1 整数=信号 N 天后过期。
     signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
+    validity_policy: SourceValidityPolicy | None = None
+
+    @model_validator(mode="after")
+    def normalize_legacy_validity_days(self) -> Self:
+        self.validity_policy = _normalize_validity_policy(
+            self.signal_validity_days, self.validity_policy
+        )
+        return self
 
     @field_validator("schedule", "credential_ref", "description", mode="before")
     @classmethod
@@ -161,6 +340,14 @@ class DataSourceUpdate(BaseModel):
     enabled: bool | None = None
     # 信源级信号有效期（天）：None=永久；>=1=信号 N 天后过期（仅留库不生效）。
     signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
+    validity_policy: SourceValidityPolicy | None = None
+
+    @model_validator(mode="after")
+    def normalize_legacy_validity_days(self) -> Self:
+        self.validity_policy = _normalize_validity_policy(
+            self.signal_validity_days, self.validity_policy
+        )
+        return self
 
     @field_validator("schedule", "credential_ref", "description", mode="before")
     @classmethod

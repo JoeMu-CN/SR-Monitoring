@@ -11,14 +11,19 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import TypeVar
 
-from sqlalchemy.dialects.postgresql import insert
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.signals.models import CollectionRun, DataSource, RawSignal
+from app.signals.ingestion import (
+    LifecycleAuthority,
+    SignalIngestion,
+    merge_source_metadata,
+    persist_signal_ingestions,
+)
+from app.signals.models import CollectionRun, DataSource
 from app.signals.sources import PullSourceAdapter, SourceFetchError
 
 _T = TypeVar("_T")
-_INSERT_BATCH_SIZE = 1000
 
 
 def asyncio_run[T](coro: Coroutine[object, object, T]) -> T:
@@ -58,44 +63,30 @@ async def collect_source_async(
         except SourceFetchError as exc:
             _fail_run(session, run.id, str(exc))
             raise CollectionFailed(str(exc)) from exc
-        rows: list[dict[str, object]] = []
+        ingestions: list[SignalIngestion] = []
+        collected_at = datetime.now(UTC)
         for item in items:
             try:
-                signal = adapter.normalize(item)
-            except SourceFetchError:
+                signal = merge_source_metadata(adapter.normalize(item), item)
+            except (SourceFetchError, ValidationError):
                 continue
-            rows.append(
-                {
-                    "source_id": source.id,
-                    "external_id": signal.external_id,
-                    "title": signal.title,
-                    "content": signal.content,
-                    "url": str(signal.url) if signal.url else None,
-                    "published_at": signal.published_at,
-                    "fingerprint": adapter.fingerprint(signal),
-                    "raw_data": signal.model_dump(mode="json"),
-                }
-            )
-        created = 0
-        if rows:
-            for start in range(0, len(rows), _INSERT_BATCH_SIZE):
-                batch = rows[start : start + _INSERT_BATCH_SIZE]
-                result = session.execute(
-                    insert(RawSignal)
-                    .values(batch)
-                    .on_conflict_do_nothing(
-                        index_elements=[RawSignal.source_id, RawSignal.fingerprint]
-                    )
-                    .returning(RawSignal.id)
+            ingestions.append(
+                SignalIngestion(
+                    source=source,
+                    signal=signal,
+                    fingerprint=adapter.fingerprint(signal),
+                    collected_at=collected_at,
+                    authority=LifecycleAuthority("adapter", adapter.source_code),
                 )
-                created += len(result.scalars().all())
+            )
+        created = persist_signal_ingestions(session, ingestions)
         stored_run = session.get(CollectionRun, run.id)
         assert stored_run is not None
         stored_run.status = "succeeded"
         stored_run.finished_at = datetime.now(UTC)
-        stored_run.fetched_count = len(rows)
+        stored_run.fetched_count = len(ingestions)
         stored_run.created_count = created
-        stored_run.duplicate_count = len(rows) - created
+        stored_run.duplicate_count = len(ingestions) - created
         session.commit()
     except Exception as exc:
         if isinstance(exc, CollectionFailed):

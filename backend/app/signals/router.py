@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -34,6 +33,12 @@ from app.signals.declarative import (
     AdapterSpec,
     DeclarativeSourceAdapter,
     preview_adapter,
+)
+from app.signals.ingestion import (
+    LifecycleAuthority,
+    SignalIngestion,
+    SignalIngestionError,
+    persist_signal_ingestions,
 )
 from app.signals.models import (
     CollectionRun,
@@ -66,6 +71,8 @@ from app.signals.schemas import (
     SourceSignalListResponse,
     SourceSignalRead,
     SourceSignalSourceRead,
+    SourceValidityPolicy,
+    SourceValidityPolicyRead,
 )
 from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
@@ -168,8 +175,35 @@ def _audit(
     )
 
 
+def _stored_validity_policy(
+    policy: SourceValidityPolicy | None,
+) -> dict[str, str | int | bool | None] | None:
+    """为任务 2 的受约束 JSONB 保存已规范化策略。"""
+    if policy is None:
+        return None
+    return policy.model_dump(mode="json", exclude_none=True)
+
+
+def _source_validity_policy_version(source: DataSource) -> str | None:
+    """读取存量策略版本；兼容任务 2 写入但尚未带版本的记录。"""
+    if source.validity_policy is None:
+        return None
+    stored = SourceValidityPolicyRead.model_validate(source.validity_policy)
+    return stored.version or stored.fingerprint()
+
+
 def _serialize_source(source: DataSource, session: Session | None = None) -> DataSourceRead:
     payload = DataSourceRead.model_validate(source)
+    policy_version = _source_validity_policy_version(source)
+    if payload.validity_policy is not None:
+        payload = payload.model_copy(
+            update={
+                "validity_policy": payload.validity_policy.model_copy(
+                    update={"version": policy_version}
+                ),
+                "validity_policy_version": policy_version,
+            }
+        )
     effective_endpoint = source.endpoint_url
     if source.code == NmcWeatherAdapter.source_code:
         effective_endpoint = NmcWeatherAdapter.endpoint
@@ -480,6 +514,7 @@ def create_source(
         adapter_status="draft" if spec else "unconfigured",
         enabled=payload.enabled,
         signal_validity_days=payload.signal_validity_days,
+        validity_policy=_stored_validity_policy(payload.validity_policy),
         **_api_key_fields(payload.api_key),
     )
     session.add(source)
@@ -489,7 +524,14 @@ def create_source(
         source_id=source.id,
         action="created",
         actor=user,
-        changes={"code": source.code, "name": source.name, "source_type": source.source_type},
+        changes={
+            "code": source.code,
+            "name": source.name,
+            "source_type": source.source_type,
+            "validity_policy": "configured" if source.validity_policy else "not_configured",
+            "validity_policy_version": _source_validity_policy_version(source),
+            "applies_to": "new_signals_only",
+        },
     )
     session.commit()
     session.refresh(source)
@@ -510,6 +552,11 @@ def update_source(
     _validate_schedule(payload.schedule)
     changes: dict[str, object] = {}
     update_values = payload.model_dump(exclude_unset=True, exclude={"api_key"})
+    validity_policy_requested = bool(
+        payload.model_fields_set & {"signal_validity_days", "validity_policy"}
+    )
+    if validity_policy_requested:
+        update_values["validity_policy"] = _stored_validity_policy(payload.validity_policy)
     if "adapter_config" in update_values and update_values["adapter_config"] is not None:
         spec = _adapter_spec(update_values["adapter_config"])
         assert spec is not None
@@ -562,6 +609,11 @@ def update_source(
             if key not in {"adapter_config", "api_key_encrypted"}:
                 changes[key] = value
             setattr(source, key, value)
+    if validity_policy_requested and "validity_policy" in changes:
+        policy_version = _source_validity_policy_version(source)
+        changes["validity_policy"] = "updated" if policy_version else "cleared"
+        changes["validity_policy_version"] = policy_version
+        changes["applies_to"] = "new_signals_only"
     if not changes:
         return _serialize_source(source, session)
     _audit(session, source_id=source.id, action="updated", actor=user, changes=changes)
@@ -729,7 +781,7 @@ def list_collection_runs(
 async def import_signals(
     session: SessionDependency,
     file: Annotated[UploadFile, File(description="标准 UTF-8 JSON 风险信号文件")],
-    _user: SignalImport,
+    user: SignalImport,
     _csrf: CsrfGuard,
 ) -> SignalImportSummary:
     source = get_manual_source(session)
@@ -742,28 +794,20 @@ async def import_signals(
             )
         data = await file.read(MAX_FILE_BYTES + 1)
         signals = adapter.parse(data)
-        rows = [
-            {
-                "source_id": source.id,
-                "external_id": signal.external_id,
-                "title": signal.title,
-                "content": signal.content,
-                "url": str(signal.url) if signal.url else None,
-                "published_at": signal.published_at,
-                "fingerprint": adapter.fingerprint(signal),
-                "raw_data": signal.model_dump(mode="json"),
-            }
-            for signal in signals
-        ]
-        result = session.execute(
-            insert(RawSignal)
-            .values(rows)
-            .on_conflict_do_nothing(
-                index_elements=[RawSignal.source_id, RawSignal.fingerprint]
-            )
-            .returning(RawSignal.id)
+        collected_at = datetime.now(UTC)
+        created = persist_signal_ingestions(
+            session,
+            [
+                SignalIngestion(
+                    source=source,
+                    signal=signal,
+                    fingerprint=adapter.fingerprint(signal),
+                    collected_at=collected_at,
+                    authority=LifecycleAuthority(user.role, str(user.id)),
+                )
+                for signal in signals
+            ],
         )
-        created = len(result.scalars().all())
         stored_run = session.get(CollectionRun, run.id)
         assert stored_run is not None
         stored_run.status = "succeeded"
@@ -772,11 +816,16 @@ async def import_signals(
         stored_run.created_count = created
         stored_run.duplicate_count = len(signals) - created
         session.commit()
-    except SignalFileValidationError as exc:
-        fail_run(session, run.id, str(exc.errors))
+    except (SignalFileValidationError, SignalIngestionError) as exc:
+        errors = (
+            exc.errors
+            if isinstance(exc, SignalFileValidationError)
+            else [{"path": "signals", "message": str(exc)}]
+        )
+        fail_run(session, run.id, str(errors))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"errors": exc.errors},
+            detail={"errors": errors},
         ) from exc
     except SQLAlchemyError as exc:
         fail_run(session, run.id, "数据库写入失败")

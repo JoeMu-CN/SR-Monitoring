@@ -1,4 +1,6 @@
+# noqa: SIZE_OK — 本模块是信号域 SQLAlchemy 表声明，约束必须与字段同处作为纯模式定义。
 from datetime import datetime
+from typing import Final
 
 from sqlalchemy import (
     BigInteger,
@@ -20,12 +22,39 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+LEGACY_VALIDITY_REASON: Final = (
+    "'{\"code\":\"legacy_unmigrated\",\"anchor_source\":\"legacy\","
+    "\"details\":{}}'::jsonb"
+)
+PENDING_VALIDITY_REASON: Final = (
+    "'{\"code\":\"pending_classification\",\"anchor_source\":\"collected_at\","
+    "\"details\":{}}'::jsonb"
+)
+VALIDITY_REASON_SHAPE: Final = (
+    "jsonb_typeof(validity_reason) = 'object' AND "
+    "validity_reason ?& ARRAY['code','anchor_source','details'] AND "
+    "validity_reason - ARRAY['code','anchor_source','details'] = '{}'::jsonb AND "
+    "jsonb_typeof(validity_reason->'code') = 'string' AND "
+    "validity_reason->>'code' <> '' AND validity_reason->>'anchor_source' IN "
+    "('published_at','collected_at','official_valid_until','event_end','legacy') AND "
+    "jsonb_typeof(validity_reason->'details') = 'object'"
+)
+
 
 class DataSource(Base):
     __tablename__ = "data_sources"
     __table_args__ = (
         CheckConstraint(
             "credibility BETWEEN 0 AND 100", name="ck_data_sources_credibility"
+        ),
+        CheckConstraint(
+            "validity_policy IS NULL OR (jsonb_typeof(validity_policy) = 'object' AND "
+            "validity_policy ? 'mode' AND validity_policy->>'mode' IN "
+            "('fixed_days','until_superseded','until_revoked','event_end_plus_grace',"
+            "'indefinite') AND (NOT validity_policy ? 'fixed_days' OR "
+            "(validity_policy->>'fixed_days' ~ '^[0-9]+$' AND "
+            "(validity_policy->>'fixed_days')::integer BETWEEN 1 AND 3650)))",
+            name="ck_data_sources_validity_policy",
         ),
     )
 
@@ -55,6 +84,11 @@ class DataSource(Base):
     # 信源级信号有效期（天）：NULL=永久有效；正整数=信号自发生起 N 天内有效，
     # 过期后仅留库，不再计入有效记录、风险提醒按该时长失效。
     signal_validity_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # none_as_null：显式 None 必须落为 SQL NULL；JSON null 会绕过
+    # ck_data_sources_validity_policy 的 IS NULL 分支。
+    validity_policy: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -153,6 +187,75 @@ class RawSignal(Base):
             "source_id", "fingerprint", name="uq_raw_signals_source_fingerprint"
         ),
         Index("ix_raw_signals_source_published", "source_id", "published_at"),
+        CheckConstraint(
+            "validity_profile IS NULL OR validity_profile IN "
+            "('weather_alert','geological_hazard','public_health_restriction',"
+            "'industrial_accident','regional_resource_constraint','transport_disruption',"
+            "'public_security','armed_conflict','political_instability','sanctions',"
+            "'export_control','trade_tariff','policy_draft','regulatory_change',"
+            "'compliance_violation','judicial_case','adverse_registry','corporate_distress',"
+            "'bankruptcy_proceeding','cyber_incident','market_price_point',"
+            "'raw_material_shortage','monthly_macro_indicator','industry_capacity_shift',"
+            "'reputation_event','supplier_performance_incident','other')",
+            name="ck_raw_signals_validity_profile",
+        ),
+        CheckConstraint(
+            "validity_state IN ('pending_classification','active','expired','superseded',"
+            "'revoked','conflicted','legacy')",
+            name="ck_raw_signals_validity_state",
+        ),
+        CheckConstraint(
+            "validity_mode IS NULL OR validity_mode IN ('fixed_days','until_superseded',"
+            "'until_revoked','event_end_plus_grace','indefinite')",
+            name="ck_raw_signals_validity_mode",
+        ),
+        CheckConstraint(
+            "lifecycle_action IN ('assert','confirm','revoke','supersede')",
+            name="ck_raw_signals_lifecycle_action",
+        ),
+        CheckConstraint(
+            "validity_state IN ('pending_classification','legacy') OR "
+            "(validity_profile IS NOT NULL AND validity_mode IS NOT NULL "
+            "AND valid_from IS NOT NULL AND validity_policy_version IS NOT NULL)",
+            name="ck_raw_signals_policy_snapshot",
+        ),
+        CheckConstraint(
+            "validity_state IN ('pending_classification','legacy') OR "
+            "(validity_mode IN ('fixed_days','until_superseded','event_end_plus_grace') "
+            "AND valid_until IS NOT NULL) OR validity_mode IN ('until_revoked','indefinite')",
+            name="ck_raw_signals_deadline_mode",
+        ),
+        CheckConstraint(
+            "validity_mode <> 'until_superseded' OR "
+            "(validity_key IS NOT NULL AND btrim(validity_key) <> '')",
+            name="ck_raw_signals_supersession_key",
+        ),
+        CheckConstraint(
+            "(valid_until IS NULL OR (valid_from IS NOT NULL AND valid_until >= valid_from)) "
+            "AND (review_due_at IS NULL OR "
+            "(valid_from IS NOT NULL AND review_due_at >= valid_from))",
+            name="ck_raw_signals_validity_times",
+        ),
+        CheckConstraint(VALIDITY_REASON_SHAPE, name="ck_raw_signals_validity_reason"),
+        CheckConstraint(
+            f"validity_state <> 'legacy' OR validity_reason = {LEGACY_VALIDITY_REASON}",
+            name="ck_raw_signals_legacy_reason",
+        ),
+        Index(
+            "ix_raw_signals_validity_queue",
+            "validity_state",
+            "valid_until",
+            "collected_at",
+        ),
+        Index(
+            "uq_raw_signals_active_supersession_key",
+            "source_id",
+            "validity_key",
+            unique=True,
+            postgresql_where=text(
+                "validity_state = 'active' AND validity_mode = 'until_superseded'"
+            ),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -169,5 +272,19 @@ class RawSignal(Base):
     )
     fingerprint: Mapped[str] = mapped_column(Text)
     raw_data: Mapped[dict[str, object]] = mapped_column(JSONB)
+    validity_profile: Mapped[str | None] = mapped_column(Text)
+    validity_state: Mapped[str] = mapped_column(
+        Text, server_default=text("'pending_classification'")
+    )
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    validity_mode: Mapped[str | None] = mapped_column(Text)
+    validity_key: Mapped[str | None] = mapped_column(Text)
+    lifecycle_action: Mapped[str] = mapped_column(Text, server_default=text("'assert'"))
+    validity_policy_version: Mapped[str | None] = mapped_column(Text)
+    validity_reason: Mapped[dict[str, object]] = mapped_column(
+        JSONB, server_default=text(PENDING_VALIDITY_REASON)
+    )
 
     source: Mapped[DataSource] = relationship(back_populates="signals")

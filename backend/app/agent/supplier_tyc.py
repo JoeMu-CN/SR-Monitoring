@@ -11,11 +11,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 
+from pydantic import HttpUrl
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.signals.models import RawSignal
+from app.signals.ingestion import (
+    LifecycleAuthority,
+    SignalIngestion,
+    persist_signal_ingestions,
+)
+from app.signals.models import DataSource, RawSignal
+from app.signals.schemas import ManualSignalInput
+from app.signals.validity import ValidityProfile
 from app.suppliers.models import Supplier
 
 TYC_SOURCE_CODE = "tianyancha"
@@ -57,43 +66,53 @@ def upsert_supplier_tyc_signal(
 
     external_id 带 supplier_code 前缀，便于按供应商回溯与指纹去重。
     """
-    import time
-
-    external_id = f"tyc-{supplier.supplier_code}-{int(time.time() * 1000)}"
+    collected_at = datetime.now(UTC)
+    external_id = f"tyc-{supplier.supplier_code}-{int(collected_at.timestamp() * 1000)}"
     fingerprint = _fingerprint(title, content, url)
+    source = _tyc_source(session)
     existing = session.scalar(
         select(RawSignal).where(
-            RawSignal.source_id == _tyc_source_id(session),
+            RawSignal.source_id == source.id,
             RawSignal.fingerprint == fingerprint,
         )
     )
     if existing is not None:
         return existing.external_id or external_id, False
-    session.add(
-        RawSignal(
-            source_id=_tyc_source_id(session),
-            external_id=external_id,
-            title=title,
-            content=content,
-            url=url,
-            published_at=None,
-            fingerprint=fingerprint,
-            raw_data=raw_payload,
-        )
+    signal_url: HttpUrl | None = HttpUrl(url) if url else None
+    signal = ManualSignalInput(
+        external_id=external_id,
+        title=title,
+        content=content,
+        url=signal_url,
+        validity_profile=ValidityProfile.ADVERSE_REGISTRY,
+    )
+    created = persist_signal_ingestions(
+        session,
+        [
+            SignalIngestion(
+                source=source,
+                signal=signal,
+                fingerprint=fingerprint,
+                collected_at=collected_at,
+                authority=LifecycleAuthority("adapter", TYC_SOURCE_CODE),
+                anchor_fallback_source=TYC_SOURCE_CODE,
+                raw_data=raw_payload,
+            )
+        ],
     )
     session.flush()
-    return external_id, True
+    return external_id, bool(created)
 
 
 def _tyc_source_id(session: Session) -> int:
-    from app.signals.models import DataSource
+    return _tyc_source(session).id
 
-    source = session.scalar(
-        select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
-    )
+
+def _tyc_source(session: Session) -> DataSource:
+    source = session.scalar(select(DataSource).where(DataSource.code == TYC_SOURCE_CODE))
     if source is None:
         raise RuntimeError("天眼查数据源未配置")
-    return source.id
+    return source
 
 
 def _fingerprint(title: str, content: str, url: str | None) -> str:

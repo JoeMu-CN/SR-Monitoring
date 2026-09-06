@@ -27,6 +27,7 @@ from pydantic import HttpUrl, ValidationError
 
 from app.signals.request_control import SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
+from app.signals.validity import LifecycleAction, ValidityProfile
 
 DEFAULT_TIMEOUT_SECONDS = 15.0
 MAX_ITEMS_PER_FETCH = 100
@@ -55,7 +56,7 @@ class SourceHealth:
         self.message = message
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RawSourceItem:
     """数据源返回的原始条目，未经过校验和标准化。"""
 
@@ -64,6 +65,13 @@ class RawSourceItem:
     content: str
     url: str | None = None
     published_at: datetime | None = None
+    valid_until: datetime | None = None
+    event_end_at: datetime | None = None
+    validity_profile: ValidityProfile | None = None
+    validity_key: str | None = None
+    lifecycle_action: LifecycleAction = LifecycleAction.ASSERT
+    target_signal_id: int | None = None
+    lifecycle_reason: str | None = None
     extra: dict[str, object] = field(default_factory=dict)
 
 
@@ -159,6 +167,7 @@ class NmcWeatherAdapter(PullSourceAdapter):
                     content=title,
                     url=self._absolute_url(str(row.get("url") or "")),
                     published_at=_parse_nmc_time(row.get("issuetime")),
+                    validity_profile=ValidityProfile.WEATHER_ALERT,
                     extra={"pic": str(row.get("pic") or "")},
                 )
             )
@@ -263,6 +272,7 @@ class OfacSdnAdapter(PullSourceAdapter):
                         title=f"OFAC SDN 制裁名单：{name}",
                         content="；".join(details),
                         url=self.endpoint,
+                        validity_profile=ValidityProfile.SANCTIONS,
                         extra={"entity_number": entity_number, "country": country},
                     )
                 )
@@ -859,6 +869,8 @@ class CommodityFuturesAdapter(PullSourceAdapter):
                         + code[3:]
                         + ".shtml"
                     ),
+                    validity_profile=ValidityProfile.MARKET_PRICE_POINT,
+                    validity_key=f"fut-{code}",
                     extra={
                         "symbol": code,
                         "last_price": last_price,
@@ -1013,6 +1025,8 @@ class PbcLprAdapter(PullSourceAdapter):
                     f"发布于 {pub_date}，下一次发布前有效"
                 ),
                 url=detail_url,
+                validity_profile=ValidityProfile.MONTHLY_MACRO_INDICATOR,
+                validity_key="pbc-lpr",
                 extra={"lpr_1y": lpr1, "lpr_5y": lpr5, "date": pub_date},
             )
         ]
@@ -1159,6 +1173,8 @@ class StatsPmiAdapter(PullSourceAdapter):
                     f"{change_desc}；50 为荣枯线（>50 扩张 / <50 收缩）"
                 ),
                 url=detail_url,
+                validity_profile=ValidityProfile.MONTHLY_MACRO_INDICATOR,
+                validity_key="stats-pmi",
                 extra={
                     "pmi": pmi_val,
                     "month": month_key,
@@ -1490,6 +1506,8 @@ class FxRatesAdapter(PullSourceAdapter):
                         f"更新时间：{updated}"
                     ),
                     url=self.endpoint,
+                    validity_profile=ValidityProfile.MARKET_PRICE_POINT,
+                    validity_key=f"fx-{code}",
                     extra={"currency": code, "rate": value, "updated": updated},
                 )
             )

@@ -35,6 +35,7 @@ from app.database import Base
 # - merged           已并入合并摘要（非首条）
 # - rate_limited     单渠道限频跳过（记录留痕）
 # - quiet_suppressed 免打扰时段跳过（记录留痕）
+# - expired_suppressed 有效期已结束，抑制发送并保留审计
 DELIVERY_STATUSES = (
     "success",
     "failed",
@@ -42,6 +43,7 @@ DELIVERY_STATUSES = (
     "merged",
     "rate_limited",
     "quiet_suppressed",
+    "expired_suppressed",
 )
 
 
@@ -70,7 +72,8 @@ class NotificationDelivery(Base):
     __table_args__ = (
         UniqueConstraint("alert_id", "channel", name="uq_notification_alert_channel"),
         CheckConstraint(
-            "status IN ('success','failed','queued','merged','rate_limited','quiet_suppressed')",
+            "status IN ('success','failed','queued','merged','rate_limited',"
+            "'quiet_suppressed','expired_suppressed')",
             name="ck_notification_deliveries_status",
         ),
         Index("ix_notification_deliveries_channel_created", "channel", "created_at"),

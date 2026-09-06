@@ -30,6 +30,7 @@ from pydantic import (
 from app.signals.request_control import PinnedIPTransport, SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError, SourceHealth
+from app.signals.validity import LifecycleAction, ValidityProfile
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,17 @@ _ENDPOINT_HINT = re.compile(
     re.IGNORECASE,
 )
 _MAX_ENDPOINT_HINTS = 12
-FingerprintField = Literal["external_id", "title", "content", "url", "published_at"]
+FingerprintField = Literal[
+    "external_id",
+    "title",
+    "content",
+    "url",
+    "published_at",
+    "valid_until",
+    "validity_profile",
+    "validity_key",
+    "lifecycle_action",
+]
 
 
 def _default_fingerprint_fields() -> list[FingerprintField]:
@@ -104,6 +115,13 @@ class SignalMapping(BaseModel):
     content: str = Field(min_length=1)
     url: str | None = None
     published_at: str | None = None
+    valid_until: str | None = None
+    event_end_at: str | None = None
+    validity_profile: str | None = None
+    validity_key: str | None = None
+    lifecycle_action: str | None = None
+    target_signal_id: str | None = None
+    lifecycle_reason: str | None = None
 
 
 class AdapterSpec(BaseModel):
@@ -290,6 +308,36 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
         external_id = _optional_text(read(mapping.external_id) if mapping.external_id else None)
         raw_url = _optional_text(read(mapping.url) if mapping.url else None)
         published = _optional_text(read(mapping.published_at) if mapping.published_at else None)
+        valid_until = _optional_text(read(mapping.valid_until) if mapping.valid_until else None)
+        event_end_at = _optional_text(read(mapping.event_end_at) if mapping.event_end_at else None)
+        validity_profile = _optional_text(
+            read(mapping.validity_profile) if mapping.validity_profile else None
+        )
+        validity_key = _optional_text(
+            read(mapping.validity_key) if mapping.validity_key else None
+        )
+        lifecycle_action = _optional_text(
+            read(mapping.lifecycle_action) if mapping.lifecycle_action else None
+        )
+        target_signal_id_text = _optional_text(
+            read(mapping.target_signal_id) if mapping.target_signal_id else None
+        )
+        try:
+            target_signal_id = (
+                int(target_signal_id_text) if target_signal_id_text is not None else None
+            )
+            if target_signal_id is not None and target_signal_id <= 0:
+                raise ValueError
+            parsed_profile = (
+                ValidityProfile(validity_profile)
+                if validity_profile is not None
+                else None
+            )
+            parsed_action = LifecycleAction(lifecycle_action or "assert")
+        except ValueError as exc:
+            if target_signal_id_text is not None:
+                raise SourceFetchError("target_signal_id 必须是正整数") from exc
+            raise SourceFetchError("有效期或生命周期映射值无效") from exc
         if not title or not content:
             raise SourceFetchError("字段映射后 title 或 content 为空")
         return RawSourceItem(
@@ -298,6 +346,15 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             content=content,
             url=urljoin(self.spec.request.url, raw_url) if raw_url else None,
             published_at=_parse_datetime(published),
+            valid_until=_parse_datetime(valid_until),
+            event_end_at=_parse_datetime(event_end_at),
+            validity_profile=parsed_profile,
+            validity_key=validity_key,
+            lifecycle_action=parsed_action,
+            target_signal_id=target_signal_id,
+            lifecycle_reason=_optional_text(
+                read(mapping.lifecycle_reason) if mapping.lifecycle_reason else None
+            ),
             extra={"raw": row},
         )
 
@@ -310,6 +367,13 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                     "content": item.content,
                     "url": item.url,
                     "published_at": item.published_at,
+                    "valid_until": item.valid_until,
+                    "event_end_at": item.event_end_at,
+                    "validity_profile": item.validity_profile,
+                    "validity_key": item.validity_key,
+                    "lifecycle_action": item.lifecycle_action,
+                    "target_signal_id": item.target_signal_id,
+                    "lifecycle_reason": item.lifecycle_reason,
                 }
             )
         except ValueError as exc:

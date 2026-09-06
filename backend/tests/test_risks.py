@@ -31,6 +31,7 @@ class StaticProvider:
         self.calls += 1
         return self.result or SignalAnalysisResult(
             event_type="weather",
+            event_subtype="weather_alert",
             suggested_severity="high",
             organizations=[{"name": "测试供应商有限公司", "aliases": []}],
             locations=[{"name": "上海市", "country_code": "CN", "city": "上海市"}],
@@ -189,6 +190,7 @@ def test_alias_match_persists_entity_and_structured_evidence(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="corporate",
+        event_subtype="corporate_distress",
         suggested_severity="high",
         organizations=[{"name": "D6 Precision", "aliases": []}],
         locations=[],
@@ -222,6 +224,7 @@ def test_postgis_distance_match_caps_weak_association_at_p2(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="weather",
+        event_subtype="weather_alert",
         suggested_severity="critical",
         organizations=[],
         locations=[
@@ -271,6 +274,7 @@ def test_district_location_match_rejects_same_city_other_district(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="weather",
+        event_subtype="weather_alert",
         suggested_severity="high",
         organizations=[],
         locations=[
@@ -317,6 +321,7 @@ def test_district_in_location_name_rejects_site_city_other_district(
     """事件未填 district 时，也不能因 city/region 字段错位跨区命中。"""
     result = SignalAnalysisResult(
         event_type="weather",
+        event_subtype="weather_alert",
         suggested_severity="high",
         organizations=[],
         locations=[
@@ -377,6 +382,7 @@ def test_district_spatial_match_rejects_same_district_in_wrong_city(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="weather",
+        event_subtype="weather_alert",
         suggested_severity="high",
         organizations=[],
         locations=[
@@ -418,6 +424,7 @@ def test_product_keyword_match_sets_product_relevance(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="logistics",
+        event_subtype="transport_disruption",
         suggested_severity="medium",
         organizations=[],
         locations=[],

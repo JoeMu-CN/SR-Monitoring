@@ -38,9 +38,9 @@ from app.scheduler.jobs import (
     create_monthly_research_batch_job,
     create_research_task_job,
     create_weekly_research_batch_job,
-    expire_job,
     recover_capacity_blocked_research_batches_job,
 )
+from app.scheduler.validity_job import risk_validity_job
 from app.signals.models import DataSource
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -184,7 +184,10 @@ def main() -> None:
         name="恢复容量阻塞研究批次",
     )
     scheduler.add_job(
-        expire_job, _trigger(SCHEDULER_EXPIRE_CRON), id="expire", name="提醒失效"
+        risk_validity_job,
+        _trigger(SCHEDULER_EXPIRE_CRON),
+        id="expire",
+        name="风险有效期物化",
     )
     _notification_settings = get_notification_settings()
     if _notification_settings.enabled:

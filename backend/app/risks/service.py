@@ -1,16 +1,11 @@
-"""风险管线服务（兼容层）。
+"""风险管线服务：AI 后分类门禁与规则引擎兼容入口。"""
 
-匹配、评分与提醒的核心逻辑已迁移至 app.risks.engine（模块化维度引擎）。
-本模块仅保留原公开接口的再导出，保证既有调用方（router、scheduler）与
-测试（test_scoring）兼容。
-
-process_analysis 转调引擎 process_event；scoring 形参为兼容保留、已不生效
-（评分参数由维度配置三层叠加决定：全局默认 + 维度增量 + DB 覆盖）。
-"""
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
+from app.ai.schemas import SignalAnalysisResult
 from app.risks.engine.engine import (
     _compute_expires_at,
     event_dedup_key,
@@ -21,11 +16,17 @@ from app.risks.engine.engine import (
 from app.risks.engine.matching import MATCH_ORDER, MatchCandidate
 from app.risks.schemas import RiskProcessResult
 from app.risks.scoring import ScoringSettings
+from app.risks.validity import (
+    InactiveRiskSignalError,
+    classify_pending_signal,
+    is_raw_signal_effective,
+)
 from app.signals.models import RawSignal
 
 __all__ = [
     "MATCH_ORDER",
     "MatchCandidate",
+    "InactiveRiskSignalError",
     "_compute_expires_at",
     "event_dedup_key",
     "expire_alerts",
@@ -40,9 +41,17 @@ def process_analysis(
     signal: RawSignal,
     analysis: AIAnalysisRecord,
     scoring: ScoringSettings | None = None,
+    *,
+    now_utc: datetime | None = None,
 ) -> RiskProcessResult:
-    """处理 AI 分析结果：归并事件、维度匹配、评分并生成提醒。
-
-    scoring 形参为兼容旧调用保留，已不再生效（评分由维度配置决定）。
-    """
-    return process_event(session, signal, analysis)
+    """同一事务完成 pending 分类，并仅让当前有效证据进入规则引擎。"""
+    del scoring
+    if analysis.status != "succeeded" or analysis.result is None:
+        raise ValueError("AI 分析尚未成功")
+    now = now_utc or datetime.now(UTC)
+    result = SignalAnalysisResult.model_validate(analysis.result)
+    classify_pending_signal(session, signal, analysis, result, now_utc=now)
+    if not is_raw_signal_effective(signal, now_utc=now):
+        session.commit()
+        raise InactiveRiskSignalError(signal.id, str(signal.validity_reason["code"]))
+    return process_event(session, signal, analysis, now_utc=now)

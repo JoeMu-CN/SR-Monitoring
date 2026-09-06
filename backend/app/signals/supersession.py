@@ -120,6 +120,7 @@ def _resolve_supersession(
         return
     if new_from > old_from:
         _mark_existing_superseded(existing, old_from, ingestion)
+        _refresh_existing_support(session, existing, ingestion.collected_at)
         return
     if new_from < old_from:
         # 乱序旧数据不反向替代：新信号留库但标为 superseded。
@@ -128,6 +129,7 @@ def _resolve_supersession(
     # 权威时间相同且指纹不同：按 SHA-256 fingerprint 字典序决定 winner。
     if new_fp < old_fp:
         _mark_existing_conflicted(existing, old_from, ingestion)
+        _refresh_existing_support(session, existing, ingestion.collected_at)
         return
     _mark_row_conflicted(row, new_from, ingestion, snapshot)
 
@@ -145,6 +147,14 @@ def _mark_existing_superseded(
             "superseding_fingerprint": ingestion.fingerprint,
         },
     }
+
+
+def _refresh_existing_support(
+    session: Session, existing: RawSignal, now_utc: datetime
+) -> None:
+    from app.risks.validity import refresh_signal_events
+
+    refresh_signal_events(session, existing, now_utc=now_utc)
 
 
 def _mark_row_superseded(

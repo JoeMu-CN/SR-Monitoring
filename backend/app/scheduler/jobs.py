@@ -51,7 +51,9 @@ from app.research.service import (
     create_task,
     reconcile_stale_tool_runs,
 )
+from app.risks.models import RiskEventSignal
 from app.risks.service import expire_alerts, process_analysis
+from app.risks.validity import expire_signal_if_due, is_raw_signal_effective
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
 from app.signals.relevance import (
@@ -223,8 +225,10 @@ def _format_tyc_content(result: dict[str, object]) -> str:
     return "；".join(parts)
 
 
-def _process_pending_signals(limit: int | None = None) -> int:
-    """对尚无成功 AI 解析的信号执行解析与全链路处理，返回处理条数。
+def _process_pending_signals(
+    limit: int | None = None, *, now_utc: datetime | None = None
+) -> int:
+    """领取尚未完成风险关联的有效信号，复用成功 AI 结果执行全链路。
 
     limit 为 None 时使用 SIGNAL_ANALYZE_BATCH 环境变量（默认 20）。
     调用 LLM 前先做确定性相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED），
@@ -235,25 +239,56 @@ def _process_pending_signals(limit: int | None = None) -> int:
         return 0
 
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
+    now = now_utc or datetime.now(UTC)
     processed = 0
     filtered = 0
     try:
         with SessionLocal() as session:
-            signal_ids = list(
+            candidates = list(
                 session.execute(
                     select(RawSignal.id, DataSource.code)
                     .join(DataSource, DataSource.id == RawSignal.source_id)
-                    .where(RawSignal.id.not_in(_succeeded_signal_ids(session)))
+                    .where(
+                        RawSignal.validity_state.in_(("pending_classification", "active")),
+                        RawSignal.id.not_in(_risk_processed_signal_ids()),
+                        RawSignal.id.not_in(_terminal_filtered_signal_ids()),
+                        RawSignal.validity_reason["code"].astext != "classification_failed",
+                    )
                     .where(DataSource.enabled.is_(True))
                     .order_by(RawSignal.collected_at)
-                    .limit(batch)
                 )
             )
+            signal_ids: list[tuple[int, str]] = []
+            validity_updated = False
+            for signal_id, source_code in candidates:
+                signal = session.get(RawSignal, signal_id)
+                if signal is None:
+                    continue
+                if signal.validity_state == "active" and not is_raw_signal_effective(
+                    signal, now_utc=now
+                ):
+                    expire_signal_if_due(signal, now_utc=now)
+                    validity_updated = True
+                    continue
+                signal_ids.append((signal_id, source_code))
+                if len(signal_ids) == batch:
+                    break
+            if validity_updated:
+                session.commit()
             for signal_id, source_code in signal_ids:
                 signal = session.get(RawSignal, signal_id)
                 if signal is None:
                     continue
-                if SIGNAL_RELEVANCE_FILTER_ENABLED:
+                analysis = session.scalar(
+                    select(AIAnalysisRecord)
+                    .where(
+                        AIAnalysisRecord.signal_id == signal.id,
+                        AIAnalysisRecord.status == "succeeded",
+                        AIAnalysisRecord.result.is_not(None),
+                    )
+                    .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
+                )
+                if analysis is None and SIGNAL_RELEVANCE_FILTER_ENABLED:
                     decision = assess_signal_relevance(
                         session, signal.title, signal.content
                     )
@@ -280,6 +315,8 @@ def _process_pending_signals(limit: int | None = None) -> int:
                 # （清单集合来自 signal-filter 配置，TTL 缓存热更新）
                 list_sources = load_filter_rules(session).list_sources
                 if (
+                    analysis is None
+                    and
                     source_code in list_sources
                     and not _matches_any_supplier(
                         session, f"{signal.title} {signal.content}"
@@ -305,8 +342,12 @@ def _process_pending_signals(limit: int | None = None) -> int:
                     continue
                 # 结构化宏观信号分级：commodity 涨跌幅低于阈值 → 免 LLM
                 rules = load_filter_rules(session)
-                grade_reason = grade_structured_signal(
-                    source_code, signal.title, signal.content, rules
+                grade_reason = (
+                    grade_structured_signal(
+                        source_code, signal.title, signal.content, rules
+                    )
+                    if analysis is None
+                    else None
                 )
                 if grade_reason is not None:
                     session.add(
@@ -328,11 +369,11 @@ def _process_pending_signals(limit: int | None = None) -> int:
                     filtered += 1
                     continue
                 try:
-                    analysis = asyncio.run(analyze_raw_signal(session, signal))
+                    if analysis is None:
+                        analysis = asyncio.run(analyze_raw_signal(session, signal))
                     if analysis.status != "succeeded" or analysis.result is None:
                         continue
-                    process_analysis(session, signal, analysis)
-                    session.commit()
+                    process_analysis(session, signal, analysis, now_utc=now)
                     processed += 1
                 except Exception as exc:
                     session.rollback()
@@ -344,11 +385,14 @@ def _process_pending_signals(limit: int | None = None) -> int:
         _pending_signal_processing_lock.release()
 
 
-def _succeeded_signal_ids(session: Session) -> Select[tuple[int]]:
-    from app.ai.models import AIAnalysisRecord
+def _risk_processed_signal_ids() -> Select[tuple[int]]:
+    return select(RiskEventSignal.signal_id)
 
+
+def _terminal_filtered_signal_ids() -> Select[tuple[int]]:
     return select(AIAnalysisRecord.signal_id).where(
-        AIAnalysisRecord.status == "succeeded"
+        AIAnalysisRecord.status == "succeeded",
+        AIAnalysisRecord.result.is_(None),
     )
 
 

@@ -75,6 +75,9 @@ def apply_lifecycle_action(
             "reason": ingestion.signal.lifecycle_reason,
         },
     }
+    from app.risks.validity import refresh_signal_events
+
+    refresh_signal_events(session, target, now_utc=ingestion.collected_at)
     session.add(
         DataSourceAuditLog(
             source_id=ingestion.source.id,

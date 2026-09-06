@@ -52,6 +52,7 @@ class AcceptanceProvider:
             raise ai_service.AIProviderError("模拟模型超时")  # type: ignore[attr-defined]
         return self.result or SignalAnalysisResult(
             event_type="weather",
+            event_subtype="weather_alert",
             suggested_severity="high",
             organizations=[{"name": "上海华辰精密制造有限公司", "aliases": []}],
             locations=[{"name": "上海市", "country_code": "CN", "city": "上海市"}],
@@ -226,6 +227,7 @@ def test_acceptance_3_legal_name_and_registry_no_match(
     provider = AcceptanceProvider(
         SignalAnalysisResult(
             event_type="corporate",
+            event_subtype="corporate_distress",
             suggested_severity="critical",
             organizations=[
                 {
@@ -264,6 +266,7 @@ def test_acceptance_4_country_only_signal_not_p1(
     provider = AcceptanceProvider(
         SignalAnalysisResult(
             event_type="geopolitical",
+            event_subtype="political_instability",
             suggested_severity="low",
             organizations=[],
             locations=[{"name": "中国", "country_code": "CN"}],

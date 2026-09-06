@@ -89,7 +89,15 @@ def db_session() -> Generator[Session]:
 
     # 测试不依赖 prod 种子：缺失时 seed 必要的 DataSource（事务回滚，prod 库不被污染）。
     # 当前仅 signals/import 端点需要 manual-json。生产已下线此信道，测试保留。
-    if not session.scalar(select(DataSource.id).where(DataSource.code == "manual-json")):
+    manual_source = session.scalar(
+        select(DataSource).where(DataSource.code == "manual-json")
+    )
+    test_validity_policy = {
+        "mode": "fixed_days",
+        "fixed_days": 3650,
+        "review_required": False,
+    }
+    if manual_source is None:
         now = datetime.now(UTC)
         session.add(
             DataSource(
@@ -104,11 +112,14 @@ def db_session() -> Generator[Session]:
                 auth_type="none",
                 login_config={},
                 adapter_config={},
+                validity_policy=test_validity_policy,
                 created_at=now,
                 updated_at=now,
             )
         )
-        session.flush()
+    else:
+        manual_source.validity_policy = test_validity_policy
+    session.flush()
 
     try:
         yield session

@@ -36,7 +36,7 @@ from app.risks.schemas import (
     RiskProcessResult,
     SourceHealthRead,
 )
-from app.risks.service import expire_alerts, process_analysis
+from app.risks.service import InactiveRiskSignalError, expire_alerts, process_analysis
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.suppliers.models import Supplier
 
@@ -136,7 +136,13 @@ async def process_signal(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="AI 分析失败，未生成风险事件",
             ) from exc
-    return process_analysis(session, signal, analysis)
+    try:
+        return process_analysis(session, signal, analysis)
+    except InactiveRiskSignalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="风险信号当前无有效证据，未生成风险事件",
+        ) from exc
 
 
 @router.get("/risk-alerts", response_model=RiskAlertListResponse)

@@ -261,21 +261,23 @@ class TestApplyForcedRules:
 
 
 class TestComputeExpiresAt:
-    def test_with_event_end_at(self) -> None:
+    def test_uses_event_valid_until_instead_of_event_end_at(self) -> None:
         settings = ScoringSettings(alert_expiry_days=90)
+        valid_until = datetime(2026, 8, 15, tzinfo=UTC)
         event = RiskEvent(
             dedup_key="test",
             event_type="weather",
             severity="high",
             summary="测试",
             end_at=datetime(2026, 8, 12, tzinfo=UTC),
+            valid_until=valid_until,
             confidence=0.9,
             facts={},
         )
         expires = _compute_expires_at(event, settings)
-        assert expires == datetime(2026, 8, 12, tzinfo=UTC) + timedelta(days=90)
+        assert expires == valid_until
 
-    def test_without_event_end_at(self) -> None:
+    def test_without_validity_deadline_is_unbounded(self) -> None:
         settings = ScoringSettings(alert_expiry_days=30)
         event = RiskEvent(
             dedup_key="test",
@@ -286,10 +288,8 @@ class TestComputeExpiresAt:
             confidence=0.9,
             facts={},
         )
-        before = datetime.now(UTC)
         expires = _compute_expires_at(event, settings)
-        after = datetime.now(UTC)
-        assert before + timedelta(days=30) <= expires <= after + timedelta(days=30)
+        assert expires is None
 
 
 # ── 集成测试：完整处理流程中的评分和失效 ─────────────────────
@@ -307,6 +307,7 @@ class StaticProvider:
         self.calls += 1
         return self.result or SignalAnalysisResult(
             event_type="weather",
+            event_subtype="weather_alert",
             suggested_severity="high",
             organizations=[{"name": "测试供应商有限公司", "aliases": []}],
             locations=[{"name": "上海市", "country_code": "CN", "city": "上海市"}],
@@ -362,6 +363,19 @@ def _import_signals(client: TestClient) -> None:
     assert response.status_code == 200
 
 
+def _mark_supporting_signal_expired(db_session: Session, signal_id: int) -> None:
+    signal = db_session.get(RawSignal, signal_id)
+    assert signal is not None
+    signal.validity_state = "expired"
+    signal.valid_until = datetime.now(UTC) - timedelta(days=1)
+    signal.validity_reason = {
+        "code": "expired_by_test",
+        "anchor_source": "published_at",
+        "details": {},
+    }
+    db_session.flush()
+
+
 def test_scoring_uses_v1_rule_version(
     client: TestClient,
     db_session: Session,
@@ -411,6 +425,7 @@ def test_forced_rule_sanctions_compliance_entity_hit(
 ) -> None:
     result = SignalAnalysisResult(
         event_type="compliance",
+        event_subtype="sanctions",
         suggested_severity="medium",
         organizations=[{"name": "测试供应商有限公司", "aliases": []}],
         locations=[],
@@ -501,9 +516,7 @@ def test_expire_alerts_marks_expired(
     assert alert is not None
     assert alert.status == "current"
 
-    # 手动将 expires_at 设置为过去
-    alert.expires_at = datetime.now(UTC) - timedelta(days=1)
-    db_session.flush()
+    _mark_supporting_signal_expired(db_session, signal_id)
 
     expired_count = expire_alerts(db_session)
     db_session.flush()
@@ -534,9 +547,8 @@ def test_expire_endpoint(
     assert response.status_code == 200
     assert response.json()["expired_count"] == 0
 
-    # 手动设置过期后再调用
-    alert.expires_at = datetime.now(UTC) - timedelta(hours=1)
-    db_session.flush()
+    # 关联证据失效后再调用
+    _mark_supporting_signal_expired(db_session, signal_id)
     response = client.post("/api/v1/risk-alerts/expire")
     assert response.status_code == 200
     assert response.json()["expired_count"] == 1
@@ -563,8 +575,7 @@ def test_expired_alert_not_in_current_list(
     assert response.json()["total"] == 1
 
     # 过期后不可见
-    alert.expires_at = datetime.now(UTC) - timedelta(hours=1)
-    db_session.flush()
+    _mark_supporting_signal_expired(db_session, signal_id)
     client.post("/api/v1/risk-alerts/expire")
     response = client.get("/api/v1/risk-alerts")
     assert response.json()["total"] == 0
@@ -574,12 +585,12 @@ def test_expired_alert_not_in_current_list(
     assert response.json()["total"] == 1
 
 
-def test_reprocess_expired_alert_restores_current(
+def test_reprocess_expired_alert_without_effective_evidence_is_rejected(
     client: TestClient,
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """重新处理已失效的提醒时，恢复为 current 状态。"""
+    """无有效证据时，重新处理不得把已失效提醒恢复为 current。"""
     provider = StaticProvider()
     monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
     _create_supplier(client)
@@ -591,16 +602,14 @@ def test_reprocess_expired_alert_restores_current(
     alert = db_session.scalar(select(RiskAlert))
     assert alert is not None
 
-    # 手动使其过期
-    alert.expires_at = datetime.now(UTC) - timedelta(hours=1)
-    db_session.flush()
+    _mark_supporting_signal_expired(db_session, signal_id)
     expire_alerts(db_session)
     db_session.flush()
     db_session.refresh(alert)
     assert alert.status == "expired"
 
-    # 重新处理同一信号，恢复 current
-    client.post(f"/api/v1/signals/{signal_id}/process")
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 409
     db_session.refresh(alert)
-    assert alert.status == "current"
-    assert alert.expires_at > datetime.now(UTC)
+    assert alert.status == "expired"

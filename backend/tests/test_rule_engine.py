@@ -118,6 +118,7 @@ def _run(
 def _result(**overrides: object) -> SignalAnalysisResult:
     base: dict[str, object] = {
         "event_type": "compliance",
+        "event_subtype": "compliance_violation",
         "suggested_severity": "medium",
         "organizations": [],
         "locations": [],
@@ -164,6 +165,7 @@ def test_dimension_dispatch_geopolitical(
         monkeypatch,
         _result(
             event_type="geopolitical",
+            event_subtype="political_instability",
             locations=[{"name": "中国", "country_code": "CN"}],
         ),
         "ENG-DISPATCH-2",
@@ -186,6 +188,7 @@ def test_geopolitical_country_only_is_weak_not_p1(
         monkeypatch,
         _result(
             event_type="geopolitical",
+            event_subtype="political_instability",
             suggested_severity="low",
             locations=[{"name": "中国", "country_code": "CN"}],
         ),
@@ -273,7 +276,11 @@ def test_industry_column_matches_supplier_industry(
         client,
         db_session,
         monkeypatch,
-        _result(event_type="logistics", affected_industries=["稀土永磁材料"]),
+        _result(
+            event_type="logistics",
+            event_subtype="transport_disruption",
+            affected_industries=["稀土永磁材料"],
+        ),
         "ENG-IND-RAW",
     )
     assert len(alerts) == 1
@@ -329,6 +336,7 @@ def test_db_override_severity_score_takes_effect(
         monkeypatch,
         _result(
             event_type="weather",
+            event_subtype="weather_alert",
             suggested_severity="high",
             organizations=[{"name": "测试供应商有限公司", "aliases": []}],
             locations=[{"name": "上海市", "country_code": "CN", "city": "上海市"}],
@@ -414,6 +422,7 @@ def test_rule_change_preserves_previous_alert_revision(
     )
     result = _result(
         event_type="weather",
+        event_subtype="weather_alert",
         suggested_severity="high",
         organizations=[{"name": "版本供应商", "aliases": [], "registry_no": "REG-REV-1"}],
     )

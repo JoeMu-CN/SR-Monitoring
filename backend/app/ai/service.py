@@ -42,6 +42,22 @@ async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisR
             stored_record.finished_at = datetime.now(UTC)
             stored_record.duration_ms = round((perf_counter() - started) * 1000)
             stored_record.error = str(exc)[:2000]
+            stored_record.needs_review = True
+            stored_record.review_reason = "AI 分类最终失败，需人工复核"
+            stored_signal = session.get(RawSignal, signal.id)
+            if (
+                stored_signal is not None
+                and stored_signal.validity_state == "pending_classification"
+            ):
+                stored_signal.validity_reason = {
+                    "code": "classification_failed",
+                    "anchor_source": (
+                        "published_at"
+                        if stored_signal.published_at is not None
+                        else "collected_at"
+                    ),
+                    "details": {"analysis_id": stored_record.id},
+                }
             session.commit()
         raise
 

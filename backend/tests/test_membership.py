@@ -12,14 +12,14 @@
 
 from datetime import UTC, datetime
 
-from app.signals.membership import (
+from app.signals.membership_evaluator import evaluate_membership_completeness
+from app.signals.membership_types import (
     CredibilityBaseline,
     EvalDecision,
     QuarantineCandidate,
     SnapshotHash,
     SnapshotInput,
     SourceMemberState,
-    evaluate_membership_completeness,
     membership_keys_hash,
 )
 

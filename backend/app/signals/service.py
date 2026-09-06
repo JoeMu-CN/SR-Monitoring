@@ -20,7 +20,7 @@ from app.signals.ingestion import (
     merge_source_metadata,
     persist_signal_ingestions,
 )
-from app.signals.membership_store import apply_membership_snapshot
+from app.signals.membership_persistence import apply_membership_snapshot
 from app.signals.models import CollectionRun, DataSource
 from app.signals.sources import PullSourceAdapter, SourceFetchError
 

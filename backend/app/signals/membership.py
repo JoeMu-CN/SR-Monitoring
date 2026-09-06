@@ -143,7 +143,12 @@ def evaluate_membership_completeness(
     consecutive_successful_full: int = 0,
 ) -> EvalResult:
     """评估一次完整快照，决定是否需要撤销成员。"""
-    if not snapshot.snapshot_complete:
+    if not snapshot.snapshot_complete or not snapshot.authoritative_full_snapshot:
+        return _no_action()
+
+    # 空快照门禁：空响应/零条目绝不进入撤销或可提升隔离，也不得成为
+    # 可信/候选基线（updated_baseline 与 quarantine_candidate 均为 None）。
+    if not snapshot.keys or snapshot.count == 0:
         return _no_action()
 
     if last_credible_baseline is None:

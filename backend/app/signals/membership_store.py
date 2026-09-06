@@ -151,6 +151,7 @@ def _load_baseline(
             CollectionRun.snapshot_complete.is_(True),
             CollectionRun.snapshot_hash.is_not(None),
             CollectionRun.quarantine_round == 0,
+            CollectionRun.snapshot_quality != "empty",
         )
         .order_by(CollectionRun.finished_at.desc())
         .limit(1)
@@ -175,6 +176,7 @@ def _load_candidate(
         .where(
             CollectionRun.source_id == source_id,
             CollectionRun.quarantine_round > 0,
+            CollectionRun.snapshot_quality != "empty",
         )
         .order_by(CollectionRun.finished_at.desc())
         .limit(1)
@@ -277,7 +279,10 @@ def _update_run(
 ) -> None:
     run.snapshot_complete = snapshot_complete
     run.snapshot_hash = str(snapshot_hash)
-    run.snapshot_quality = "complete" if snapshot_complete else "partial"
+    if snapshot_count == 0:
+        run.snapshot_quality = "empty"
+    else:
+        run.snapshot_quality = "complete" if snapshot_complete else "partial"
     run.member_count = snapshot_count
     run.new_member_count = new_member_count
     run.revoked_member_count = revoked_count

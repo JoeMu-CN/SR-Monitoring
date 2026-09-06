@@ -292,6 +292,71 @@ class TestSafetyGates:
         result = _evaluate(snap, states, _baseline())
         assert len(result.members_to_revoke) == 0
 
+    def test_non_authoritative_second_missing_never_revokes(self) -> None:
+        """非权威快照即使 snapshot_complete=True 且成员已连续缺失两轮也不撤销。
+
+        危险路径：authoritative_full_snapshot=False 但 snapshot_complete=True，
+        成员 consecutive_missing=1（已缺失一轮），本次再缺失即达两轮。
+        """
+        states = {_k: _state(_k) for _k in _BASELINE_KEYS}
+        states["entity-J"] = _state(
+            "entity-J", consecutive_missing=1, last_seen_at=NOW_UTC
+        )
+        snap = SnapshotInput(
+            keys=frozenset(f"entity-{c}" for c in "ABCDEFGHI"),
+            count=90,
+            snapshot_complete=True,
+            authoritative_full_snapshot=False,
+        )
+        result = evaluate_membership_completeness(
+            snapshot=snap,
+            current_states=states,
+            last_credible_baseline=_baseline(),
+            now_utc=NOW_UTC,
+            consecutive_successful_full=3,
+        )
+        assert result.decision is EvalDecision.NO_ACTION
+        assert len(result.members_to_revoke) == 0
+        assert result.updated_baseline is None
+
+    def test_authoritative_empty_snapshot_never_quarantines(self) -> None:
+        """authoritative 空快照即使有可信基线也绝不进入可提升隔离、绝不撤销。
+
+        危险路径：keys 为空且 count==0 但 snapshot_complete=True，
+        当前实现会走大幅缩减隔离路径并在三轮后提升撤销全部成员。
+        """
+        states = {_k: _state(_k) for _k in _BASELINE_KEYS}
+        snap = SnapshotInput(
+            keys=frozenset(), count=0,
+            snapshot_complete=True, authoritative_full_snapshot=True,
+        )
+        result = evaluate_membership_completeness(
+            snapshot=snap,
+            current_states=states,
+            last_credible_baseline=_baseline(),
+            now_utc=NOW_UTC,
+            consecutive_successful_full=3,
+        )
+        assert result.decision is EvalDecision.NO_ACTION
+        assert len(result.members_to_revoke) == 0
+        assert result.quarantine_candidate is None
+        assert result.updated_baseline is None
+
+    def test_authoritative_empty_first_snapshot_never_becomes_baseline(self) -> None:
+        """首次快照即为空时不得成为可信基线。"""
+        snap = SnapshotInput(
+            keys=frozenset(), count=0,
+            snapshot_complete=True, authoritative_full_snapshot=True,
+        )
+        result = evaluate_membership_completeness(
+            snapshot=snap,
+            current_states={},
+            last_credible_baseline=None,
+            now_utc=NOW_UTC,
+        )
+        assert result.decision is EvalDecision.NO_ACTION
+        assert result.updated_baseline is None
+
     def test_no_previous_snapshot_no_revoke(self) -> None:
         snap = SnapshotInput(
             keys=frozenset(f"entity-{c}" for c in "ABCDEFGHI"),

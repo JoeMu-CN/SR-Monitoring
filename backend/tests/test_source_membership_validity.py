@@ -387,14 +387,17 @@ def test_snapshot_non_authoritative_never_revokes(db_session: Session) -> None:
     collect_source(db_session, source, _FakeFullSnapshotAdapter(members))
     partial = _FakePartialAdapter(members[:-1])
 
-    # When: 非权威适配器连续两次缺失。
+    # When: 非权威适配器连续三轮缺失。
     first = collect_source(db_session, source, partial)
     second = collect_source(db_session, source, partial)
+    third = collect_source(db_session, source, partial)
 
-    # Then: 不撤销，快照标记为不完整。
+    # Then: 三轮均不撤销，快照标记为不完整。
     assert first.snapshot_complete is False
     assert second.revoked_member_count == 0
     assert second.snapshot_complete is False
+    assert third.revoked_member_count == 0
+    assert third.snapshot_complete is False
 
 
 def test_snapshot_empty_never_revokes(db_session: Session) -> None:
@@ -403,12 +406,20 @@ def test_snapshot_empty_never_revokes(db_session: Session) -> None:
     members = [f"member-{i}" for i in range(10)]
     collect_source(db_session, source, _FakeFullSnapshotAdapter(members))
 
-    # When: 空快照。
-    run = collect_source(db_session, source, _FakeFullSnapshotAdapter([]))
+    # When: authoritative 空快照连续三轮。
+    first = collect_source(db_session, source, _FakeFullSnapshotAdapter([]))
+    second = collect_source(db_session, source, _FakeFullSnapshotAdapter([]))
+    third = collect_source(db_session, source, _FakeFullSnapshotAdapter([]))
 
-    # Then: 不撤销任何成员。
-    assert run.revoked_member_count == 0
-    assert run.member_count == 0
+    # Then: 三轮均不撤销、不进入可提升隔离，快照质量记为 empty。
+    assert first.revoked_member_count == 0
+    assert first.member_count == 0
+    assert first.snapshot_quality == "empty"
+    assert second.revoked_member_count == 0
+    assert second.quarantine_round == 0
+    assert third.revoked_member_count == 0
+    assert third.quarantine_round == 0
+    assert third.snapshot_quality == "empty"
 
 
 # ── 适配器契约 ───────────────────────────────────────────────────────

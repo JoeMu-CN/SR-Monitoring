@@ -217,6 +217,7 @@ class OfacSdnAdapter(PullSourceAdapter):
 
     source_code = "ofac-sdn"
     endpoint = "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
+    authoritative_full_snapshot = True
 
     def __init__(
         self,
@@ -511,6 +512,7 @@ class UflpaEntityAdapter(PullSourceAdapter):
 
     source_code = "uflpa-entity-list"
     endpoint = "https://www.dhs.gov/uflpa-entity-list"
+    authoritative_full_snapshot = True
 
     def __init__(
         self,
@@ -628,6 +630,7 @@ class BisEntityListAdapter(PullSourceAdapter):
     # /entity-list 307 重定向到 EAR 744 法规页（含 Entity List 表格），
     # 直接配置最终官方地址（受控链路将重定向视为错误，遵循 SSRF 防护设计）。
     endpoint = "https://www.bis.gov/regulations/ear/744"
+    authoritative_full_snapshot = True
 
     def __init__(
         self,

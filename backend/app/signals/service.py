@@ -20,6 +20,7 @@ from app.signals.ingestion import (
     merge_source_metadata,
     persist_signal_ingestions,
 )
+from app.signals.membership_store import apply_membership_snapshot
 from app.signals.models import CollectionRun, DataSource
 from app.signals.sources import PullSourceAdapter, SourceFetchError
 
@@ -82,6 +83,20 @@ async def collect_source_async(
         created = persist_signal_ingestions(session, ingestions)
         stored_run = session.get(CollectionRun, run.id)
         assert stored_run is not None
+        snapshot_keys = frozenset(
+            item.signal.external_id
+            for item in ingestions
+            if item.signal.external_id
+        )
+        apply_membership_snapshot(
+            session,
+            source,
+            adapter,
+            stored_run,
+            snapshot_keys,
+            len(snapshot_keys),
+            collected_at,
+        )
         stored_run.status = "succeeded"
         stored_run.finished_at = datetime.now(UTC)
         stored_run.fetched_count = len(ingestions)

@@ -160,6 +160,17 @@ class CollectionRun(Base):
             "status IN ('running', 'succeeded', 'failed')",
             name="ck_collection_runs_status",
         ),
+        CheckConstraint(
+            "snapshot_quality IN ('complete', 'partial', 'empty', 'failed')",
+            name="ck_collection_runs_snapshot_quality",
+        ),
+        CheckConstraint(
+            "member_count >= 0 AND new_member_count >= 0 AND revoked_member_count >= 0",
+            name="ck_collection_runs_member_counts",
+        ),
+        CheckConstraint(
+            "quarantine_round >= 0", name="ck_collection_runs_quarantine_round"
+        ),
         Index("ix_collection_runs_source_started", "source_id", "started_at"),
     )
 
@@ -176,8 +187,69 @@ class CollectionRun(Base):
     created_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     duplicate_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     error: Mapped[str | None] = mapped_column(Text)
+    # 完整快照成员状态机跟踪字段
+    snapshot_complete: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false")
+    )
+    snapshot_hash: Mapped[str | None] = mapped_column(Text)
+    snapshot_quality: Mapped[str] = mapped_column(
+        Text, server_default=text("'partial'")
+    )
+    member_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    new_member_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    revoked_member_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    quarantine_round: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    quarantine_baseline_hash: Mapped[str | None] = mapped_column(Text)
+    quarantine_missing_hash: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[dict[str, object] | None] = mapped_column(JSONB)
 
     source: Mapped[DataSource] = relationship(back_populates="runs")
+
+
+class SourceMemberState(Base):
+    """名单成员状态：以 source_id + member_key 唯一跟踪成员生命周期。"""
+
+    __tablename__ = "source_member_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id", "member_key", name="uq_source_member_states_source_key"
+        ),
+        CheckConstraint(
+            "status IN ('active', 'revoked')",
+            name="ck_source_member_states_status",
+        ),
+        CheckConstraint(
+            "consecutive_missing >= 0",
+            name="ck_source_member_states_consecutive_missing",
+        ),
+        CheckConstraint(
+            "quarantine_round >= 0", name="ck_source_member_states_quarantine_round"
+        ),
+        CheckConstraint(
+            "btrim(member_key) <> ''", name="ck_source_member_states_member_key"
+        ),
+        Index(
+            "ix_source_member_states_source_status", "source_id", "status"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey("data_sources.id", ondelete="CASCADE")
+    )
+    member_key: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'active'"))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consecutive_missing: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    baseline_snapshot_hash: Mapped[str] = mapped_column(Text)
+    quarantine_round: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class RawSignal(Base):

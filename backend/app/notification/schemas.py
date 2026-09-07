@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 VALID_CHANNELS = ("dingtalk", "feishu", "serverchan", "pushplus")
 VALID_LEVELS = ("P1", "P2", "P3", "P4")
+DeliveryStatus = Literal[
+    "success",
+    "failed",
+    "queued",
+    "merged",
+    "rate_limited",
+    "quiet_suppressed",
+    "expired_suppressed",
+]
+_delivery_status_adapter: TypeAdapter[DeliveryStatus] = TypeAdapter(DeliveryStatus)
+
+
+def parse_delivery_status(value: str) -> DeliveryStatus:
+    """将数据库投递状态解析为 API 响应允许的字面量。"""
+    return _delivery_status_adapter.validate_python(value)
 
 
 class SubscriptionUpsert(BaseModel):
@@ -50,7 +66,7 @@ class DeliveryRead(BaseModel):
     id: int
     alert_id: int | None = None
     channel: str
-    status: str
+    status: DeliveryStatus
     title: str | None = None
     pushed_level: str | None = None
     attempt: int

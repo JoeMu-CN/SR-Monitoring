@@ -95,7 +95,7 @@ def list_deliveries(
                 id=row.id,
                 alert_id=row.alert_id,
                 channel=row.channel,
-                status=row.status,
+                status=schemas.parse_delivery_status(row.status),
                 title=row.title,
                 pushed_level=row.pushed_level,
                 attempt=row.attempt,

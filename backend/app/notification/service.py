@@ -29,6 +29,7 @@ from app.notification.providers import (
     build_providers,
 )
 from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
+from app.risks.query_validity import current_alert_condition
 from app.suppliers.models import Supplier
 
 logger = logging.getLogger("notification")
@@ -155,6 +156,7 @@ def _hourly_sent_count(session: Session, channel: str, now: datetime) -> int:
 
 
 def _send_with_retry(
+    session: Session,
     provider: NotifyProvider,
     delivery: NotificationDelivery,
     title: str,
@@ -164,6 +166,19 @@ def _send_with_retry(
     now: datetime,
 ) -> str:
     """尝试发送一次并更新记录；返回 status（success / failed / queued）。"""
+    if delivery.alert_id is not None:
+        alert = session.scalar(
+            select(RiskAlert)
+            .where(
+                RiskAlert.id == delivery.alert_id,
+                current_alert_condition(now),
+            )
+            .with_for_update()
+        )
+        if alert is None:
+            delivery.status = "expired_suppressed"
+            delivery.error = "alert_no_longer_current_or_valid"
+            return "expired_suppressed"
     try:
         provider.send(title, content)
         delivery.status = "success"
@@ -203,6 +218,7 @@ def scan_and_notify(
         "failed": 0,
         "rate_limited": 0,
         "quiet_suppressed": 0,
+        "expired_suppressed": 0,
         "channels": 0,
     }
     provider_map = {
@@ -223,7 +239,7 @@ def scan_and_notify(
     candidates = list(
         session.scalars(
             select(RiskAlert).where(
-                RiskAlert.status == "current",
+                current_alert_condition(current),
                 RiskAlert.level.in_(push_levels),
             )
         )
@@ -353,12 +369,14 @@ def _dispatch_immediate(
         summary["rate_limited"] += 1
         return
     status = _send_with_retry(
-        provider, delivery, title, content, settings, now=now
+        session, provider, delivery, title, content, settings, now=now
     )
     if status == "success":
         summary["sent"] += 1
     elif status == "failed":
         summary["failed"] += 1
+    elif status == "expired_suppressed":
+        summary["expired_suppressed"] += 1
     else:
         summary["queued"] += 1
 
@@ -408,20 +426,42 @@ def _process_merge_queue(
                     d.status = "rate_limited"
                 summary["rate_limited"] += len(batch)
                 continue
-        payloads = [(d.title or "", d.content or "") for d in batch]
+        current_batch: list[NotificationDelivery] = []
+        for delivery in batch:
+            if delivery.alert_id is None:
+                continue
+            alert = session.scalar(
+                select(RiskAlert)
+                .where(
+                    RiskAlert.id == delivery.alert_id,
+                    current_alert_condition(now),
+                )
+                .with_for_update()
+            )
+            if alert is None:
+                delivery.status = "expired_suppressed"
+                delivery.error = "alert_no_longer_current_or_valid"
+                summary["expired_suppressed"] += 1
+                continue
+            current_batch.append(delivery)
+        if not current_batch:
+            continue
+        payloads = [(d.title or "", d.content or "") for d in current_batch]
         title, content = _render_digest(payloads)
-        first = batch[0]
+        first = current_batch[0]
         status = _send_with_retry(
-            provider, first, title, content, settings, now=now
+            session, provider, first, title, content, settings, now=now
         )
         if status == "success":
             first.alert_id = None  # 摘要是多条合并，不再指向单条 alert
-            for d in batch[1:]:
+            for d in current_batch[1:]:
                 d.status = "merged"
-            summary["merged"] += len(batch)
+            summary["merged"] += len(current_batch)
         elif status == "failed":
             first.status = "failed"
             summary["failed"] += 1
+        elif status == "expired_suppressed":
+            summary["expired_suppressed"] += 1
         else:
             first.status = "queued"
             summary["queued"] += 1

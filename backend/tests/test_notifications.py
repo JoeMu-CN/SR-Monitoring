@@ -25,8 +25,10 @@ from app.notification.providers import (
     _check_response,
     build_providers,
 )
+from app.notification.schemas import DeliveryRead
 from app.notification.service import scan_and_notify
 from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
+from app.risks.query_validity import current_alert_condition
 from app.suppliers.models import Supplier
 
 # 相对当前时间的扫描基准：投递记录 created_at 由数据库 server_default 生成，
@@ -197,6 +199,135 @@ def test_p2_merged_after_window(db_session: Session) -> None:
     statuses = sorted(r.status for r in records)
     assert statuses == ["merged", "success"]
     assert all(r.alert_id is None for r in records if r.status == "success")
+
+
+def test_merge_payload_excludes_alert_expired_before_provider_send(
+    db_session: Session,
+) -> None:
+    """Given 两条已入窗口的提醒，When 一条在发送前到期，Then 摘要只含有效提醒。"""
+    first_alert = make_alert(db_session, level="P2")
+    second_alert = make_alert(db_session, level="P2")
+    provider = FakeProvider()
+    settings = make_settings(merge_window_minutes=15)
+
+    scan_and_notify(db_session, settings, now=T0, providers=[provider])
+    first_alert.expiry_kind = "finite"
+    first_alert.expires_at = T0 + timedelta(minutes=1)
+    second_alert.expiry_kind = "finite"
+    second_alert.expires_at = T0 + timedelta(hours=1)
+    db_session.flush()
+    assert (
+        db_session.scalar(
+            select(RiskAlert.id).where(
+                RiskAlert.id == first_alert.id,
+                current_alert_condition(T0 + timedelta(minutes=16)),
+            )
+        )
+        is None
+    )
+
+    scan_and_notify(
+        db_session,
+        settings,
+        now=T0 + timedelta(minutes=16),
+        providers=[provider],
+    )
+
+    assert len(provider.calls) == 1
+    assert "共 1 条提醒" in provider.calls[0][0]
+    first_delivery = _delivery_for(db_session, first_alert.id)
+    assert first_delivery is not None
+    assert first_delivery.status == "expired_suppressed"
+    assert first_delivery.error == "alert_no_longer_current_or_valid"
+
+
+def test_all_expired_queued_alerts_are_suppressed_without_provider_retry(
+    db_session: Session,
+) -> None:
+    """Given 已入队提醒，When 发送前全部到期，Then 不调 Provider 且游标幂等推进。"""
+    first_alert = make_alert(db_session, level="P2")
+    second_alert = make_alert(db_session, level="P2")
+    provider = FakeProvider()
+    settings = make_settings(merge_window_minutes=15)
+
+    scan_and_notify(db_session, settings, now=T0, providers=[provider])
+    for alert in (first_alert, second_alert):
+        alert.expiry_kind = "finite"
+        alert.expires_at = T0 + timedelta(minutes=1)
+    db_session.flush()
+
+    later = T0 + timedelta(minutes=16)
+    scan_and_notify(db_session, settings, now=later, providers=[provider])
+    scan_and_notify(
+        db_session,
+        settings,
+        now=later + timedelta(minutes=16),
+        providers=[provider],
+    )
+
+    deliveries = list(
+        db_session.scalars(
+            select(NotificationDelivery)
+            .where(NotificationDelivery.alert_id.in_((first_alert.id, second_alert.id)))
+            .order_by(NotificationDelivery.id)
+        )
+    )
+    assert provider.calls == []
+    assert [delivery.status for delivery in deliveries] == [
+        "expired_suppressed",
+        "expired_suppressed",
+    ]
+    assert all(delivery.attempt == 0 for delivery in deliveries)
+
+
+def test_revoked_alert_is_suppressed_before_provider_send(db_session: Session) -> None:
+    """Given 已入队提醒，When 提醒被撤销，Then 发送前抑制并记录稳定原因。"""
+    alert = make_alert(db_session, level="P2")
+    provider = FakeProvider()
+    settings = make_settings(merge_window_minutes=15)
+
+    scan_and_notify(db_session, settings, now=T0, providers=[provider])
+    alert.status = "expired"
+    db_session.flush()
+
+    scan_and_notify(
+        db_session,
+        settings,
+        now=T0 + timedelta(minutes=16),
+        providers=[provider],
+    )
+
+    delivery = _delivery_for(db_session, alert.id)
+    assert provider.calls == []
+    assert delivery is not None
+    assert delivery.status == "expired_suppressed"
+    assert delivery.error == "alert_no_longer_current_or_valid"
+
+
+def test_expired_suppressed_delivery_status_is_accepted_by_orm_database_and_schema(
+    db_session: Session,
+) -> None:
+    """Given 过期抑制投递，When 通过 ORM、DB 与响应模型，Then 合法且可审计。"""
+    delivery = NotificationDelivery(
+        alert_id=None,
+        channel="dingtalk",
+        status="expired_suppressed",
+        title="已抑制",
+        content="已抑制",
+        error="alert_no_longer_current_or_valid",
+    )
+    db_session.add(delivery)
+    db_session.flush()
+
+    response = DeliveryRead(
+        id=delivery.id,
+        channel=delivery.channel,
+        status="expired_suppressed",
+        attempt=delivery.attempt,
+        error=delivery.error,
+    )
+
+    assert response.status == "expired_suppressed"
 
 
 def test_hourly_limit_defers_p1(db_session: Session) -> None:

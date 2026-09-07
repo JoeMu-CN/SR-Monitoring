@@ -6,6 +6,7 @@
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlalchemy import select
@@ -519,3 +520,85 @@ def test_sandbox_geopolitical_country_weak(
     assert payload["dimension"]["key"] == "geopolitical"
     assert payload["candidates"]
     assert all(c["level"] != "P1" for c in payload["candidates"])
+
+
+# ── 维度事件类型互斥校验 ───────────────────────────────────────────────
+
+
+def test_update_dimension_rejects_event_type_conflict_with_enabled_dimension(
+    client: TestClient, db_session: Session
+) -> None:
+    """geopolitical 声明 weather 与已启用 natural 冲突 → 422 且不落库。"""
+    response = client.put(
+        "/api/v1/rule-engine/dimensions/geopolitical",
+        json={"config": {"event_types": ["geopolitical", "weather"]}},
+        headers={"X-User-Role": "admin"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["conflicts"] == [
+        {"event_type": "weather", "dimension": "natural"}
+    ]
+    # 不落库：geopolitical 无 DB 覆盖行，natural 的覆盖行未被改动
+    rows = {
+        row.key: row
+        for row in db_session.scalars(select(RuleDimensionConfig))
+    }
+    assert "geopolitical" not in rows
+    assert "natural" not in rows
+
+
+def test_update_dimension_allows_event_type_owned_by_disabled_dimension(
+    client: TestClient, db_session: Session
+) -> None:
+    """weather 归属已停用 natural 时，geopolitical 可接管 → 200。"""
+    db_session.add(
+        RuleDimensionConfig(key="natural", label="自然环境", enabled=False)
+    )
+    db_session.flush()
+    response = client.put(
+        "/api/v1/rule-engine/dimensions/geopolitical",
+        json={"config": {"event_types": ["geopolitical", "weather"]}},
+        headers={"X-User-Role": "admin"},
+    )
+    assert response.status_code == 200
+    assert response.json()["event_types"] == ["geopolitical", "weather"]
+
+
+def test_update_dimension_allows_event_type_reorder(
+    client: TestClient, db_session: Session
+) -> None:
+    """仅调整顺序不产生冲突 → 200。"""
+    response = client.put(
+        "/api/v1/rule-engine/dimensions/natural",
+        json={"config": {"event_types": ["geological", "weather"]}},
+        headers={"X-User-Role": "admin"},
+    )
+    assert response.status_code == 200
+    assert response.json()["event_types"] == ["geological", "weather"]
+
+
+def test_resolve_dimension_warns_on_duplicate_declaration(
+    client: TestClient, db_session: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    """存量重复声明时 resolve_dimension 记录 warning 且仍取第一个。"""
+    from app.risks.engine.processing import resolve_dimension
+    from app.risks.engine.registry import load_dimensions
+
+    db_session.add(
+        RuleDimensionConfig(
+            key="geopolitical",
+            label="地缘政治与安全",
+            enabled=True,
+            config={"event_types": ["weather"]},
+        )
+    )
+    db_session.flush()
+    with caplog.at_level("WARNING", logger="app.risks.engine.processing"):
+        resolved = resolve_dimension(load_dimensions(db_session), "weather")
+    assert resolved is not None
+    assert resolved.key == "natural"  # 仍取第一个（natural 在默认顺序中居首）
+    assert any(
+        "weather" in record.message and "natural" in record.message
+        for record in caplog.records
+    )

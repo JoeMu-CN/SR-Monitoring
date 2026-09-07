@@ -1,5 +1,6 @@
 """风险事件归并、供应商匹配、评分与提醒处理。"""
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -47,6 +48,8 @@ from app.risks.validity import (
 from app.signals.models import DataSource, RawSignal
 from app.suppliers.models import Supplier
 
+logger = logging.getLogger(__name__)
+
 MatcherFn = Callable[
     [Session, SignalAnalysisResult, list[Supplier], dict[str, int], dict[int, MatchCandidate]],
     None,
@@ -82,14 +85,19 @@ def load_suppliers(session: Session) -> list[Supplier]:
 def resolve_dimension(
     dimensions: list[RuntimeDimension], event_type: str
 ) -> RuntimeDimension | None:
-    return next(
-        (
-            dimension
-            for dimension in dimensions
-            if dimension.enabled and dimension.handles(event_type)
-        ),
-        None,
-    )
+    matches = [
+        dimension
+        for dimension in dimensions
+        if dimension.enabled and dimension.handles(event_type)
+    ]
+    if len(matches) > 1:
+        logger.warning(
+            "事件类型 %s 被多个启用维度声明（%s），取第一个 %s",
+            event_type,
+            ", ".join(dimension.key for dimension in matches),
+            matches[0].key,
+        )
+    return matches[0] if matches else None
 
 
 def match_suppliers(

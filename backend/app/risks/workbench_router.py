@@ -346,6 +346,23 @@ def update_dimension(
     if base is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
 
+    if payload.config is not None and payload.config.event_types:
+        new_event_types = set(payload.config.event_types)
+        conflicts: list[dict[str, str]] = []
+        for other in dimensions:
+            if other.key == key or not other.enabled:
+                continue
+            for event_type in sorted(new_event_types & set(other.config.event_types)):
+                conflicts.append({"event_type": event_type, "dimension": other.key})
+        if conflicts:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "message": "事件类型已被其它启用维度占用",
+                    "conflicts": conflicts,
+                },
+            )
+
     row = session.scalar(
         select(RuleDimensionConfig).where(RuleDimensionConfig.key == key)
     )

@@ -27,6 +27,8 @@ backups/
 # 本地工作产物与归档（不进版本库，仅存在于本机）
 .omo/
 .workbuddy/
+.openchamber/
+backend/uv.lock
 backend/app/static/
 backend/_wip_backup_engine/
 backend/supplier_risk_monitoring.egg-info/

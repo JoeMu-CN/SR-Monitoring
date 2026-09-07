@@ -86,15 +86,15 @@ export function App() {
   const loadData = useCallback(async () => {
     setError(null);
     try {
-      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse, agentResponse] = await Promise.all([
-        api.alerts(), api.suppliers(), canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(), api.agentStatus(),
+      // 核心主数据聚合：这些才是页面主体依赖的真正数据，任一失败都属于数据加载失败，统一进入全局错误横幅。
+      const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse] = await Promise.all([
+        api.alerts(), api.suppliers(), canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns(), api.dimensions(), api.health(),
       ]);
       setRiskItems(alertsResponse.items.map(mapRiskAlert));
       setSuppliers(suppliersResponse.items.map(mapSupplierListItem));
       setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
       setDimensions(dimensionResponse.map(mapDimension));
       setHealth(healthResponse);
-      setAgentStatus(agentResponse);
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 401) {
         setAuth(null);
@@ -102,8 +102,19 @@ export function App() {
         return;
       }
       setError(caught instanceof Error ? caught.message : '页面数据加载失败');
+      return;
     } finally {
       setLoading(false);
+    }
+
+    // agentStatus 是独立、非核心的请求：/api/v1/agent/status 需要 risk_query_use 权限，
+    // viewer 等只读角色按后端设计会被 403 拒绝，属预期而非错误。此接口失败不得阻塞上方
+    // 主数据渲染，也不得触发全局「权限不足」横幅——显式复位为 null，由依赖方（风险查询助手等）
+    // 按 null 优雅降级或隐藏。核心主数据已失败时（catch 已 return）不再发起本请求。
+    try {
+      setAgentStatus(await api.agentStatus());
+    } catch {
+      setAgentStatus(null);
     }
   }, [canManageSources]);
 

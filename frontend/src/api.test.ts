@@ -303,4 +303,16 @@ describe('updateDimensionConfig 幂等性', () => {
     expect(up.associationScores.country).toBe(8);
     expect(up.associationScores.industry).toBe(12);
   });
+
+  it('任何输入组合下 patch 都不含 alert_expiry_days', () => {
+    const original = mapped(dimensionRead());
+    // 修改阈值与评分，模拟一次真实保存
+    const updated = mapped(dimensionRead());
+    updated.thresholds = {...updated.thresholds, p1: 90};
+    updated.severityScores = {...updated.severityScores, critical: 30};
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch).not.toHaveProperty('alert_expiry_days');
+    // 即使原值与更新值在 ttl 语义上不同（已无该字段），patch 也不含该键
+    expect(Object.keys(patch)).not.toContain('alert_expiry_days');
+  });
 });

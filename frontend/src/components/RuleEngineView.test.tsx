@@ -15,7 +15,6 @@ const dimension = (overrides: Partial<MonitoringDimension> = {}): MonitoringDime
   severityScores: {critical: 35, high: 28, medium: 20, low: 10},
   associationScores: {registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12},
   thresholds: {p1: 85, p2: 65, p3: 40},
-  ttlHours: 336,
   contentItems: ['地震', '台风'],
   dataSources: [
     {code: 'nmc-weather', name: '中央气象台', status: 'connected', linked: true, enabled: true, adapterStatus: 'builtin', lastCollectedAt: '2026-09-01T08:00:00Z', validSignalCount: 12},
@@ -33,7 +32,6 @@ const geopoliticalDimension = (): MonitoringDimension => ({
   severityScores: {critical: 35, high: 28, medium: 20, low: 10},
   associationScores: {registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12, country: 8, industry: 12},
   thresholds: {p1: 85, p2: 65, p3: 40},
-  ttlHours: 336,
   contentItems: ['制裁', '出口管制'],
   dataSources: [{code: 'ofac-sdn', name: 'OFAC SDN', status: 'connected', linked: true, enabled: true, adapterStatus: 'builtin', lastCollectedAt: '2026-09-01T08:00:00Z', validSignalCount: 5}],
 });
@@ -262,5 +260,45 @@ describe('规则引擎评分矩阵编辑', () => {
     fireEvent.click(screen.getByText('保存配置'));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/超出允许范围/);
+  });
+});
+
+describe('规则引擎事件有效期控件移除', () => {
+  it('TTL 输入框不存在', () => {
+    vi.spyOn(api, 'dimensionInputs').mockResolvedValue({
+      declared_total: 1, declared_linked: 1, declared_enabled: 1,
+      observed: [], has_input: true,
+    });
+    renderWithRouter(
+      <RuleEngineView
+        dimensions={[dimension()]}
+        onToggleDimension={vi.fn()}
+        onUpdateDimension={vi.fn()}
+        role="admin"
+      />,
+    );
+
+    expect(screen.queryByText('事件有效期 (TTL)')).not.toBeInTheDocument();
+    expect(screen.queryByText('小时')).not.toBeInTheDocument();
+  });
+
+  it('只读说明存在且链接指向 /sources', () => {
+    vi.spyOn(api, 'dimensionInputs').mockResolvedValue({
+      declared_total: 1, declared_linked: 1, declared_enabled: 1,
+      observed: [], has_input: true,
+    });
+    renderWithRouter(
+      <RuleEngineView
+        dimensions={[dimension()]}
+        onToggleDimension={vi.fn()}
+        onUpdateDimension={vi.fn()}
+        role="admin"
+      />,
+    );
+
+    expect(screen.getByText('提醒失效')).toBeInTheDocument();
+    expect(screen.getByText(/提醒失效由信号有效期策略决定/)).toBeInTheDocument();
+    const link = screen.getByRole('link', {name: '数据源'});
+    expect(link).toHaveAttribute('href', '/sources');
   });
 });

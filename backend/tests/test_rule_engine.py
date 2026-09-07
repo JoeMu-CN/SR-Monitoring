@@ -602,3 +602,40 @@ def test_resolve_dimension_warns_on_duplicate_declaration(
         "weather" in record.message and "natural" in record.message
         for record in caplog.records
     )
+
+
+def test_update_without_alert_expiry_days_preserves_existing_override(
+    client: TestClient, db_session: Session
+) -> None:
+    """前端不再发送 alert_expiry_days 时，存量覆盖行的该键不被清除。
+
+    对应任务 18：merged.update(payload.config.model_dump(exclude_none=True))
+    只更新 payload 中非 None 的键；不含 alert_expiry_days 的 PUT 不会覆盖
+    已存在的 alert_expiry_days=60。
+    """
+    db_session.add(
+        RuleDimensionConfig(
+            key="natural",
+            label="自然环境",
+            enabled=True,
+            config={"alert_expiry_days": 60},
+        )
+    )
+    db_session.flush()
+
+    # 一次不含 alert_expiry_days 的 PUT（只改阈值）
+    response = client.put(
+        "/api/v1/rule-engine/dimensions/natural",
+        json={"config": {"p1_min": 90}},
+        headers={"X-User-Role": "admin"},
+    )
+    assert response.status_code == 200
+    assert response.json()["scoring"]["alert_expiry_days"] == 60
+
+    # DB 覆盖行中该键仍为 60
+    row = db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == "natural")
+    )
+    assert row is not None
+    assert row.config is not None
+    assert row.config["alert_expiry_days"] == 60

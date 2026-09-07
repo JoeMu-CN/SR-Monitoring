@@ -951,7 +951,6 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
     severityScores: {...(dimension.scoring.severity_scores ?? {})},
     associationScores: {...(dimension.scoring.association_scores ?? {})},
     thresholds: {p1: Number(dimension.scoring.p1_min ?? 85), p2: Number(dimension.scoring.p2_min ?? 65), p3: Number(dimension.scoring.p3_min ?? 40)},
-    ttlHours: Number(dimension.scoring.alert_expiry_days ?? 14) * 24,
     contentItems: dimension.content_items,
     dataSources: dimension.data_sources.map((source) => ({
       code: source.code,
@@ -987,7 +986,6 @@ export function updateDimensionConfig(original: MonitoringDimension, updated: Mo
   if (updated.thresholds.p1 !== original.thresholds.p1) patch.p1_min = updated.thresholds.p1;
   if (updated.thresholds.p2 !== original.thresholds.p2) patch.p2_min = updated.thresholds.p2;
   if (updated.thresholds.p3 !== original.thresholds.p3) patch.p3_min = updated.thresholds.p3;
-  if (updated.ttlHours !== original.ttlHours) patch.alert_expiry_days = Math.max(1, Math.round(updated.ttlHours / 24));
 
   return patch;
 }

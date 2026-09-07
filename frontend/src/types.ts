@@ -137,7 +137,6 @@ export interface MonitoringDimension {
     p2: number; // >= 65
     p3: number; // >= 40
   };
-  ttlHours: number; // e.g. 72
   contentItems: string[];
   dataSources: Array<{
     code: string;

@@ -4,6 +4,7 @@ import {api, DimensionInputsRead, RuleEngineOptions, SandboxResult} from '../api
 import { MonitoringDimension } from '../types';
 import {SignalFilterSection} from './SignalFilterSection';
 import {RuleEngineDimensionSources} from './RuleEngineDimensionSources';
+import {routePaths} from '../routes';
 
 // 严重程度与关联类型的展示标签（与后端 Severity / MatchType 对齐）
 const SEVERITY_LABELS: Record<string, string> = {
@@ -57,7 +58,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [p1Threshold, setP1Threshold] = useState(selectedDim?.thresholds.p1 ?? 85);
   const [p2Threshold, setP2Threshold] = useState(selectedDim?.thresholds.p2 ?? 65);
   const [p3Threshold, setP3Threshold] = useState(selectedDim?.thresholds.p3 ?? 40);
-  const [ttlHours, setTtlHours] = useState(selectedDim?.ttlHours ?? 336);
   const [configError, setConfigError] = useState('');
 
   // 输入健康度（按选中维度懒加载；失败不阻塞规则配置区渲染）
@@ -113,7 +113,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       setP1Threshold(selectedDim.thresholds.p1);
       setP2Threshold(selectedDim.thresholds.p2);
       setP3Threshold(selectedDim.thresholds.p3);
-      setTtlHours(selectedDim.ttlHours);
       setConfigError('');
       if (selectedDim.source?.event_types[0]) setSandboxEventType(selectedDim.source.event_types[0]);
       setSandboxResult(null);
@@ -139,7 +138,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         p2: Number(p2Threshold),
         p3: Number(p3Threshold),
       },
-      ttlHours: Number(ttlHours),
     };
     try {
       await onUpdateDimension(updated);
@@ -470,20 +468,14 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </div>
             </div>
 
-            {/* Event TTL */}
+            {/* 提醒失效说明（由信号有效期策略决定，只读） */}
             <div className="space-y-1">
-              <label className="text-[13px] font-bold text-[#424751]">事件有效期 (TTL)</label>
-              <div className="flex items-center max-w-xs">
-                <input
-                  type="number"
-                  value={ttlHours}
-                  onChange={(e) => setTtlHours(Number(e.target.value))}
-                  className="bg-[#f7f9ff] border border-[#c2c6d2] rounded-l-lg p-2 font-mono font-bold text-[#101d28] w-24 text-center"
-                />
-                <span className="bg-[#dceaf9] border border-l-0 border-[#c2c6d2] rounded-r-lg px-3 py-2 text-[13px] font-medium text-[#004782]">
-                  小时
-                </span>
-              </div>
+              <label className="text-[13px] font-bold text-[#424751]">提醒失效</label>
+              <p className="text-[12px] text-slate-500 leading-relaxed">
+                提醒失效由信号有效期策略决定，不再在此单独配置。请在
+                <a href={routePaths.sources} className="text-[#004782] underline underline-offset-2 hover:text-[#2563EB]">数据源</a>
+                的有效期配置中管理。
+              </p>
             </div>
           </div>
 

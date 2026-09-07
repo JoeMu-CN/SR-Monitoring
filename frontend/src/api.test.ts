@@ -315,4 +315,31 @@ describe('updateDimensionConfig 幂等性', () => {
     // 即使原值与更新值在 ttl 语义上不同（已无该字段），patch 也不含该键
     expect(Object.keys(patch)).not.toContain('alert_expiry_days');
   });
+
+  it('未修改 match_columns/event_types 时 patch 不含这两个键', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch).not.toHaveProperty('match_columns');
+    expect(patch).not.toHaveProperty('event_types');
+  });
+
+  it('只改 match_columns 时 patch 含完整新数组且不含 event_types', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    updated.matchColumns = ['entity', 'location', 'product', 'country', 'industry'];
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch.match_columns).toEqual(['entity', 'location', 'product', 'country', 'industry']);
+    expect(patch).not.toHaveProperty('event_types');
+    expect(patch).not.toHaveProperty('severity_scores');
+  });
+
+  it('只改 event_types 时 patch 含完整新数组且不含 match_columns', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    updated.eventTypes = ['geopolitical', 'trade_policy'];
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch.event_types).toEqual(['geopolitical', 'trade_policy']);
+    expect(patch).not.toHaveProperty('match_columns');
+  });
 });

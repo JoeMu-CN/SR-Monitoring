@@ -1,9 +1,12 @@
 import React, {useEffect, useState} from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
-import {api, DimensionInputsRead, RuleEngineOptions, SandboxResult} from '../api';
+import {api, ApiError, DimensionInputsRead, RuleEngineOptions, SandboxResult} from '../api';
 import { MonitoringDimension } from '../types';
 import {SignalFilterSection} from './SignalFilterSection';
 import {RuleEngineDimensionSources} from './RuleEngineDimensionSources';
+import {RuleEngineMatchColumns} from './RuleEngineMatchColumns';
+import {RuleEngineEventTypes} from './RuleEngineEventTypes';
+import {RuleEngineForcedRules} from './RuleEngineForcedRules';
 import {routePaths} from '../routes';
 
 // 严重程度与关联类型的展示标签（与后端 Severity / MatchType 对齐）
@@ -35,6 +38,24 @@ const DEFAULT_ASSOCIATION_SCORES: Record<string, number> = {
 const SEVERITY_MAX = 35;
 const ASSOCIATION_MAX = 30;
 
+interface EventTypeConflict {
+  event_type: string;
+  dimension: string;
+}
+
+function isEventTypeConflict(detail: unknown): detail is {message: string; conflicts: EventTypeConflict[]} {
+  return (
+    typeof detail === 'object' &&
+    detail !== null &&
+    'conflicts' in detail &&
+    Array.isArray((detail as {conflicts: unknown}).conflicts)
+  );
+}
+
+function extractConflicts(detail: {conflicts: EventTypeConflict[]}): EventTypeConflict[] {
+  return detail.conflicts;
+}
+
 interface RuleEngineViewProps {
   dimensions: MonitoringDimension[];
   onToggleDimension: (id: string) => Promise<void>;
@@ -58,7 +79,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [p1Threshold, setP1Threshold] = useState(selectedDim?.thresholds.p1 ?? 85);
   const [p2Threshold, setP2Threshold] = useState(selectedDim?.thresholds.p2 ?? 65);
   const [p3Threshold, setP3Threshold] = useState(selectedDim?.thresholds.p3 ?? 40);
+  const [matchColumns, setMatchColumns] = useState<string[]>(selectedDim?.matchColumns ?? []);
+  const [eventTypes, setEventTypes] = useState<string[]>(selectedDim?.eventTypes ?? []);
   const [configError, setConfigError] = useState('');
+  const [configConflicts, setConfigConflicts] = useState<Array<{event_type: string; dimension: string}>>([]);
 
   // 输入健康度（按选中维度懒加载；失败不阻塞规则配置区渲染）
   const [inputs, setInputs] = useState<DimensionInputsRead | null>(null);
@@ -113,7 +137,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       setP1Threshold(selectedDim.thresholds.p1);
       setP2Threshold(selectedDim.thresholds.p2);
       setP3Threshold(selectedDim.thresholds.p3);
+      setMatchColumns([...selectedDim.matchColumns]);
+      setEventTypes([...selectedDim.eventTypes]);
       setConfigError('');
+      setConfigConflicts([]);
       if (selectedDim.source?.event_types[0]) setSandboxEventType(selectedDim.source.event_types[0]);
       setSandboxResult(null);
       setSandboxError('');
@@ -129,6 +156,11 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       setConfigError('分值超出允许范围：严重程度 0-35，关联类型 0-30');
       return;
     }
+    // 前端阻止提交：至少保留一柱
+    if (matchColumns.length === 0) {
+      setConfigError('至少保留一个匹配柱，不能全部取消');
+      return;
+    }
     const updated: MonitoringDimension = {
       ...selectedDim,
       severityScores: {...severityScores},
@@ -138,12 +170,21 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         p2: Number(p2Threshold),
         p3: Number(p3Threshold),
       },
+      matchColumns: [...matchColumns],
+      eventTypes: [...eventTypes],
     };
     try {
       await onUpdateDimension(updated);
+      setConfigConflicts([]);
       alert(`规则 [${selectedDim.name}] 配置已成功保存！`);
     } catch (caught) {
-      setConfigError(caught instanceof Error ? caught.message : '规则配置保存失败');
+      if (caught instanceof ApiError && isEventTypeConflict(caught.detail)) {
+        setConfigError(caught.detail.message);
+        setConfigConflicts(extractConflicts(caught.detail));
+      } else {
+        setConfigError(caught instanceof Error ? caught.message : '规则配置保存失败');
+        setConfigConflicts([]);
+      }
     }
   };
 
@@ -317,7 +358,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   onClick={() => {
                     setSeverityScores({...selectedDim.severityScores});
                     setAssociationScores({...selectedDim.associationScores});
+                    setMatchColumns([...selectedDim.matchColumns]);
+                    setEventTypes([...selectedDim.eventTypes]);
                     setConfigError('');
+                    setConfigConflicts([]);
                   }}
                   className="px-3 py-1.5 border border-[#c2c6d2] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50"
                 >
@@ -344,6 +388,25 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </section>
               <RuleEngineDimensionSources dimension={selectedDim} inputs={inputs} inputsError={inputsError} />
             </div>
+
+            {/* 匹配柱与事件类型配置 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <RuleEngineMatchColumns
+                options={sandboxOptions.match_columns}
+                value={matchColumns}
+                onChange={setMatchColumns}
+                disabled={role !== 'admin'}
+              />
+              <RuleEngineEventTypes
+                options={sandboxOptions.event_types}
+                value={eventTypes}
+                onChange={setEventTypes}
+                disabled={role !== 'admin'}
+              />
+            </div>
+
+            {/* 强制规则只读列表 */}
+            <RuleEngineForcedRules rules={selectedDim.forcedRules} />
 
             {/* 评分矩阵编辑表 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -418,7 +481,20 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </section>
             </div>
 
-            {configError && <div role="alert" className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{configError}</div>}
+            {configError && (
+              <div role="alert" className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 space-y-1">
+                <p>{configError}</p>
+                {configConflicts.length > 0 && (
+                  <ul className="list-disc pl-4 space-y-0.5">
+                    {configConflicts.map((conflict) => (
+                      <li key={`${conflict.event_type}-${conflict.dimension}`}>
+                        事件类型「{conflict.event_type}」已被维度「{conflict.dimension}」占用
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {/* Risk Level Trigger Thresholds */}
             <div className="space-y-2">

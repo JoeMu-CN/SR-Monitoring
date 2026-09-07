@@ -445,6 +445,16 @@ export interface DimensionInputsRead {
   has_input: boolean;
 }
 
+export interface ForcedRuleRead {
+  name: string;
+  description: string;
+  event_types: string[];
+  event_subtypes: string[];
+  match_types: string[];
+  forced_level: string;
+  reason: string;
+}
+
 export interface DimensionRead {
   key: string;
   label: string;
@@ -465,6 +475,7 @@ export interface DimensionRead {
     p2_min?: number;
     p3_min?: number;
     alert_expiry_days?: number;
+    forced_rules?: ForcedRuleRead[];
     [key: string]: unknown;
   };
 }
@@ -629,7 +640,11 @@ export interface PasswordResetPayload {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly detail?: unknown,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -686,7 +701,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {...options, headers, credentials: 'include'});
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as {detail?: unknown} | null;
-    throw new ApiError(response.status, formatDetail(payload?.detail, response.status));
+    throw new ApiError(response.status, formatDetail(payload?.detail, response.status), payload?.detail);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -951,6 +966,9 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
     severityScores: {...(dimension.scoring.severity_scores ?? {})},
     associationScores: {...(dimension.scoring.association_scores ?? {})},
     thresholds: {p1: Number(dimension.scoring.p1_min ?? 85), p2: Number(dimension.scoring.p2_min ?? 65), p3: Number(dimension.scoring.p3_min ?? 40)},
+    matchColumns: [...(dimension.match_columns ?? [])],
+    eventTypes: [...(dimension.event_types ?? [])],
+    forcedRules: [...(dimension.scoring.forced_rules ?? [])],
     contentItems: dimension.content_items,
     dataSources: dimension.data_sources.map((source) => ({
       code: source.code,
@@ -974,6 +992,10 @@ function diffScores(original: Record<string, number>, updated: Record<string, nu
   return diff;
 }
 
+function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
 export function updateDimensionConfig(original: MonitoringDimension, updated: MonitoringDimension): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
 
@@ -986,6 +1008,9 @@ export function updateDimensionConfig(original: MonitoringDimension, updated: Mo
   if (updated.thresholds.p1 !== original.thresholds.p1) patch.p1_min = updated.thresholds.p1;
   if (updated.thresholds.p2 !== original.thresholds.p2) patch.p2_min = updated.thresholds.p2;
   if (updated.thresholds.p3 !== original.thresholds.p3) patch.p3_min = updated.thresholds.p3;
+
+  if (!arraysEqual(updated.matchColumns, original.matchColumns)) patch.match_columns = [...updated.matchColumns];
+  if (!arraysEqual(updated.eventTypes, original.eventTypes)) patch.event_types = [...updated.eventTypes];
 
   return patch;
 }

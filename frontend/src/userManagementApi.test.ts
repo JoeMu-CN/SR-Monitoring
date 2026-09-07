@@ -41,7 +41,7 @@ describe('用户管理 API 请求契约', () => {
     vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-create'});
 
     await expect(api.auth.createUser({username: 'dup_user', password: 'P@ssw0rd!'}))
-      .rejects.toThrow(new ApiError(409, '用户名已存在'));
+      .rejects.toThrow(new ApiError(409, '用户名已存在', '用户名已存在'));
     vi.unstubAllGlobals();
   });
 
@@ -90,7 +90,7 @@ describe('用户管理 API 请求契约', () => {
     vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-reset'});
 
     await expect(api.auth.resetPassword(1, {new_password: 'N3wP@ss!'}))
-      .rejects.toThrow(new ApiError(403, '请使用本人密码修改接口'));
+      .rejects.toThrow(new ApiError(403, '请使用本人密码修改接口', '请使用本人密码修改接口'));
     vi.unstubAllGlobals();
   });
 

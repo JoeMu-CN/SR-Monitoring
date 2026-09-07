@@ -137,6 +137,9 @@ export interface MonitoringDimension {
     p2: number; // >= 65
     p3: number; // >= 40
   };
+  matchColumns: string[]; // 启用的匹配柱（entity/location/product/country/industry）
+  eventTypes: string[]; // 接管的事件类型
+  forcedRules: import('./api').ForcedRuleRead[]; // 强制规则（只读展示）
   contentItems: string[];
   dataSources: Array<{
     code: string;

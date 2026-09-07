@@ -419,18 +419,38 @@ export interface RunAllSourcesResult {
   items: RunAllSourcesItem[];
 }
 
+export interface DimensionSourceRead {
+  code: string;
+  name: string;
+  declared_status: 'connected' | 'planned' | 'external_tool';
+  linked: boolean;
+  enabled: boolean | null;
+  adapter_status: string | null;
+  last_collected_at: string | null;
+  valid_signal_count: number | null;
+}
+
+export interface DimensionInputSourceRead {
+  code: string;
+  name: string;
+  signal_count: number;
+  latest_at: string | null;
+}
+
+export interface DimensionInputsRead {
+  declared_total: number;
+  declared_linked: number;
+  declared_enabled: number;
+  observed: DimensionInputSourceRead[];
+  has_input: boolean;
+}
+
 export interface DimensionRead {
   key: string;
   label: string;
   description: string;
   content_items: string[];
-  data_sources: Array<{
-    code: string;
-    name: string;
-    status: 'connected' | 'planned' | 'external_tool';
-    validity_mode?: string | null;
-    validity_policy_version?: string | null;
-  }>;
+  data_sources: DimensionSourceRead[];
   event_types: string[];
   match_columns: string[];
   enabled: boolean;
@@ -727,6 +747,7 @@ export const api = {
   publishSource: (id: number) => request<DataSourceRead>(`/api/v1/sources/${id}/publish`, {method: 'POST'}),
   collectionRuns: () => request<{items: CollectionRunRead[]; total: number}>('/api/v1/collection-runs?limit=100'),
   dimensions: () => request<DimensionRead[]>('/api/v1/rule-engine/dimensions'),
+  dimensionInputs: (key: string, days = 30) => request<DimensionInputsRead>(`/api/v1/rule-engine/dimensions/${key}/inputs?days=${days}`),
   ruleEngineOptions: () => request<RuleEngineOptions>('/api/v1/rule-engine/match-columns'),
   testRuleEngine: (payload: SandboxRequest) => request<SandboxResult>('/api/v1/rule-engine/test', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
@@ -935,9 +956,12 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
     dataSources: dimension.data_sources.map((source) => ({
       code: source.code,
       name: source.name,
-      status: source.status,
-      validityMode: typeof source.validity_mode === 'string' ? source.validity_mode : null,
-      validityPolicyVersion: typeof source.validity_policy_version === 'string' ? source.validity_policy_version : null,
+      status: source.declared_status,
+      linked: source.linked,
+      enabled: source.enabled,
+      adapterStatus: source.adapter_status,
+      lastCollectedAt: source.last_collected_at,
+      validSignalCount: source.valid_signal_count,
     })),
     source: dimension,
   };

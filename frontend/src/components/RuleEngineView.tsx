@@ -1,8 +1,9 @@
 import React, {useEffect, useState} from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
-import {api, RuleEngineOptions, SandboxResult, VALIDITY_MODE_LABELS} from '../api';
+import {api, DimensionInputsRead, RuleEngineOptions, SandboxResult} from '../api';
 import { MonitoringDimension } from '../types';
 import {SignalFilterSection} from './SignalFilterSection';
+import {RuleEngineDimensionSources} from './RuleEngineDimensionSources';
 
 // 严重程度与关联类型的展示标签（与后端 Severity / MatchType 对齐）
 const SEVERITY_LABELS: Record<string, string> = {
@@ -58,6 +59,24 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [p3Threshold, setP3Threshold] = useState(selectedDim?.thresholds.p3 ?? 40);
   const [ttlHours, setTtlHours] = useState(selectedDim?.ttlHours ?? 336);
   const [configError, setConfigError] = useState('');
+
+  // 输入健康度（按选中维度懒加载；失败不阻塞规则配置区渲染）
+  const [inputs, setInputs] = useState<DimensionInputsRead | null>(null);
+  const [inputsError, setInputsError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setInputs(null);
+    setInputsError('');
+    if (selectedDim) {
+      api.dimensionInputs(selectedDim.id)
+        .then((data) => { if (!cancelled) setInputs(data); })
+        .catch((error: unknown) => {
+          if (!cancelled) setInputsError(error instanceof Error ? error.message : '输入健康度加载失败');
+        });
+    }
+    return () => { cancelled = true; };
+  }, [activeDimId, selectedDim]);
 
   // Sandbox testing state
   const reduceMotion = useReducedMotion();
@@ -216,6 +235,19 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       <div className="text-[11px] text-slate-500 mt-0.5 truncate">
                         {dim.contentItems.slice(0, 3).join(' · ') || '待配置监控内容'}
                       </div>
+                      {isSelected && (
+                        <div className="text-[11px] mt-0.5">
+                          {inputsError ? (
+                            <span className="text-red-700 dark:text-red-300">输入健康度加载失败</span>
+                          ) : inputs === null ? (
+                            <span className="text-slate-400 dark:text-slate-500">输入健康度加载中…</span>
+                          ) : inputs.has_input ? (
+                            <span className="text-slate-600 dark:text-slate-300">近 30 天 {inputs.observed.length} 个信源有输入</span>
+                          ) : (
+                            <span className="text-slate-500 dark:text-slate-400">当前无输入</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -312,30 +344,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   ))}
                 </div>
               </section>
-              <section className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3">
-                <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">引用数据源</h3>
-                <div className="space-y-1.5">
-                  {selectedDim.dataSources.map((source) => (
-                    <div key={source.code} className="flex items-center justify-between gap-2 text-[11px]">
-                      <span className="text-slate-700 dark:text-slate-300">{source.name}</span>
-                      <span className="flex items-center gap-1.5">
-                        {source.validityMode && (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-slate-600 dark:bg-slate-800 dark:text-slate-300" title="有效期模式">
-                            {VALIDITY_MODE_LABELS[source.validityMode as keyof typeof VALIDITY_MODE_LABELS] ?? source.validityMode}
-                            {source.validityPolicyVersion ? ` · 策略版本 ${source.validityPolicyVersion}` : ''}
-                          </span>
-                        )}
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
-                          source.status === 'connected' ? 'bg-emerald-100 text-emerald-700' :
-                          source.status === 'external_tool' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-[#424751]'
-                        }`}>
-                          {source.status === 'connected' ? '已接入' : source.status === 'external_tool' ? '外部核查工具' : '规划中'}
-                        </span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </section>
+              <RuleEngineDimensionSources dimension={selectedDim} inputs={inputs} inputsError={inputsError} />
             </div>
 
             {/* 评分矩阵编辑表 */}

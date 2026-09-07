@@ -143,8 +143,11 @@ export interface MonitoringDimension {
     code: string;
     name: string;
     status: 'connected' | 'planned' | 'external_tool';
-    validityMode?: string | null; // 引用信源的有效期模式（后端提供时展示）
-    validityPolicyVersion?: string | null; // 引用信源的策略版本
+    linked: boolean;
+    enabled: boolean | null;
+    adapterStatus: string | null;
+    lastCollectedAt: string | null;
+    validSignalCount: number | null;
   }>;
   source?: import('./api').DimensionRead;
 }

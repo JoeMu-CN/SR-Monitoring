@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from app.signals.schemas import ValidityReasonRead
+
 
 class RiskProcessResult(BaseModel):
     signal_id: int
@@ -32,6 +34,13 @@ class RiskAlertRead(BaseModel):
     source_title: str
     source_url: str | None
     published_at: datetime | None
+    expires_at: datetime | None
+    expiry_kind: str
+    validity_state: str
+    valid_until: datetime | None
+    review_due_at: datetime | None
+    validity_policy_version: str | None
+    validity_reason: ValidityReasonRead
     updated_at: datetime
 
 
@@ -89,6 +98,11 @@ class EventDetailRead(BaseModel):
     end_at: datetime | None
     confidence: float
     created_at: datetime
+    validity_state: str
+    valid_until: datetime | None
+    review_due_at: datetime | None
+    validity_policy_version: str | None
+    validity_reason: ValidityReasonRead
     signals: list[EventSignalEvidence]
     entities: list[dict[str, object]]
     locations: list[dict[str, object]]

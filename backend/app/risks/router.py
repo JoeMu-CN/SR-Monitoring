@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,6 +25,7 @@ from app.risks.models import (
     RiskEventSignal,
     SupplierEventMatch,
 )
+from app.risks.query_validity import current_alert_condition
 from app.risks.schemas import (
     DashboardSummary,
     EventDetailRead,
@@ -38,6 +39,7 @@ from app.risks.schemas import (
 )
 from app.risks.service import InactiveRiskSignalError, expire_alerts, process_analysis
 from app.signals.models import CollectionRun, DataSource, RawSignal
+from app.signals.schemas import ValidityReasonRead
 from app.suppliers.models import Supplier
 
 router = APIRouter(prefix="/api/v1", tags=["风险提醒"])
@@ -99,6 +101,13 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
                 source_title=source_title,
                 source_url=source_url,
                 published_at=published_at,
+                expires_at=alert.expires_at,
+                expiry_kind=alert.expiry_kind,
+                validity_state=event.validity_state,
+                valid_until=event.valid_until,
+                review_due_at=event.review_due_at,
+                validity_policy_version=event.validity_policy_version,
+                validity_reason=ValidityReasonRead.model_validate(event.validity_reason),
                 updated_at=alert.updated_at,
             )
         )
@@ -154,7 +163,12 @@ def list_risk_alerts(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> RiskAlertListResponse:
-    filters = [RiskAlert.status == alert_status]
+    now_utc = datetime.now(UTC)
+    filters = [
+        current_alert_condition(now_utc)
+        if alert_status == "current"
+        else RiskAlert.status == "expired"
+    ]
     if level:
         filters.append(RiskAlert.level == level)
     total = session.scalar(select(func.count()).select_from(RiskAlert).where(*filters)) or 0
@@ -246,6 +260,11 @@ def get_event_detail(
         end_at=event.end_at,
         confidence=event.confidence,
         created_at=event.created_at,
+        validity_state=event.validity_state,
+        valid_until=event.valid_until,
+        review_due_at=event.review_due_at,
+        validity_policy_version=event.validity_policy_version,
+        validity_reason=ValidityReasonRead.model_validate(event.validity_reason),
         signals=[
             EventSignalEvidence(
                 signal_id=signal.id,
@@ -266,14 +285,15 @@ def dashboard_summary(
     session: SessionDependency, _user: RiskView
 ) -> DashboardSummary:
     """风险总览：P1-P4 数量、今日新增、类型分布、最近提醒、数据源状态。"""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
-    now = datetime.now(UTC)
-    today_start = now - timedelta(days=1)
+    now_utc = datetime.now(UTC)
+    today_start = now_utc - timedelta(days=1)
+    current_condition = current_alert_condition(now_utc)
 
     level_rows = session.execute(
         select(RiskAlert.level, func.count())
-        .where(RiskAlert.status == "current")
+        .where(current_condition)
         .group_by(RiskAlert.level)
     ).all()
     level_map = {level: count for level, count in level_rows}
@@ -287,7 +307,7 @@ def dashboard_summary(
         session.scalar(
             select(func.count())
             .select_from(RiskAlert)
-            .where(RiskAlert.status == "current", RiskAlert.created_at >= today_start)
+            .where(current_condition, RiskAlert.created_at >= today_start)
         )
         or 0
     )
@@ -296,7 +316,7 @@ def dashboard_summary(
         select(RiskEvent.event_type, func.count())
         .join(SupplierEventMatch, SupplierEventMatch.event_id == RiskEvent.id)
         .join(RiskAlert, RiskAlert.match_id == SupplierEventMatch.id)
-        .where(RiskAlert.status == "current")
+        .where(current_condition)
         .group_by(RiskEvent.event_type)
         .order_by(func.count().desc())
     ).all()
@@ -310,7 +330,7 @@ def dashboard_summary(
         .join(SupplierEventMatch, RiskAlert.match_id == SupplierEventMatch.id)
         .join(RiskEvent, SupplierEventMatch.event_id == RiskEvent.id)
         .join(Supplier, SupplierEventMatch.supplier_id == Supplier.id)
-        .where(RiskAlert.status == "current")
+        .where(current_condition)
         .order_by(RiskAlert.updated_at.desc(), RiskAlert.id.desc())
         .limit(10)
     ).all()
@@ -370,6 +390,6 @@ def trigger_expire_alerts(
     _user: AnalysisRun,
     _csrf: CsrfGuard,
 ) -> dict[str, int]:
-    expired_count = expire_alerts(session)
+    expired_count = expire_alerts(session, now_utc=datetime.now(UTC))
     session.commit()
     return {"expired_count": expired_count}

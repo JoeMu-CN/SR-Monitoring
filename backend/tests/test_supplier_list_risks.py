@@ -17,6 +17,7 @@ class AlertSpec:
     score: int
     status: str = "current"
     expires_at: datetime | None = None
+    expiry_kind: str = "legacy"
 
 
 def add_supplier(db_session: Session, code: str, *, enabled: bool = True) -> Supplier:
@@ -64,6 +65,7 @@ def add_alert(db_session: Session, supplier: Supplier, spec: AlertSpec) -> None:
             score_detail={},
             status=spec.status,
             expires_at=spec.expires_at,
+            expiry_kind=spec.expiry_kind,
         )
     )
 
@@ -80,10 +82,26 @@ def test_supplier_list_returns_strongest_effective_alert_consistently(
         "RISK-P4": ("P4", 40),
     }
     suppliers = {code: add_supplier(db_session, code) for code in expected}
-    add_alert(db_session, suppliers["RISK-P1"], AlertSpec("P2", 100, expires_at=future))
-    add_alert(db_session, suppliers["RISK-P1"], AlertSpec("P1", 1, expires_at=future))
-    add_alert(db_session, suppliers["RISK-P2"], AlertSpec("P2", 20, expires_at=future))
-    add_alert(db_session, suppliers["RISK-P2"], AlertSpec("P2", 80, expires_at=future))
+    add_alert(
+        db_session,
+        suppliers["RISK-P1"],
+        AlertSpec("P2", 100, expires_at=future, expiry_kind="finite"),
+    )
+    add_alert(
+        db_session,
+        suppliers["RISK-P1"],
+        AlertSpec("P1", 1, expires_at=future, expiry_kind="finite"),
+    )
+    add_alert(
+        db_session,
+        suppliers["RISK-P2"],
+        AlertSpec("P2", 20, expires_at=future, expiry_kind="finite"),
+    )
+    add_alert(
+        db_session,
+        suppliers["RISK-P2"],
+        AlertSpec("P2", 80, expires_at=future, expiry_kind="finite"),
+    )
     add_alert(db_session, suppliers["RISK-P3"], AlertSpec("P3", 30))
     add_alert(db_session, suppliers["RISK-P4"], AlertSpec("P4", 40))
     db_session.commit()
@@ -112,7 +130,11 @@ def test_supplier_list_excludes_expired_and_past_due_current_alerts(
     past_due = add_supplier(db_session, "PAST-DUE")
     no_alert = add_supplier(db_session, "NO-ALERT")
     add_alert(db_session, expired_status, AlertSpec("P1", 99, status="expired"))
-    add_alert(db_session, past_due, AlertSpec("P1", 98, expires_at=past))
+    add_alert(
+        db_session,
+        past_due,
+        AlertSpec("P1", 98, expires_at=past, expiry_kind="finite"),
+    )
     db_session.commit()
 
     # When

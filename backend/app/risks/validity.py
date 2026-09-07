@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
+from app.risks.query_validity import current_alert_condition, valid_signal_condition
 from app.risks.scoring import ScoringSettings
 from app.risks.signal_validity import (
     InactiveRiskSignalError,
@@ -26,6 +27,8 @@ __all__ = [
     "is_raw_signal_effective",
     "mark_classification_failed",
     "signal_validity_window",
+    "current_alert_condition",
+    "valid_signal_condition",
 ]
 
 

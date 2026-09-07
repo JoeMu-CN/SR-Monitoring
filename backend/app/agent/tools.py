@@ -4,6 +4,7 @@
 写操作（加入监控、启停供应商等）必须由用户在前端确认后走既有 API。
 """
 
+from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy import select
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.agent.budget import get_tyc_usage, record_tyc_usage
 from app.agent.tyc_gateway import TycGateway, build_tyc_gateway
 from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
+from app.risks.query_validity import current_alert_condition
 from app.suppliers.models import Supplier, SupplierProduct, SupplierSite
 
 MAX_ALERT_RESULTS = 50
@@ -89,10 +91,14 @@ class QueryCurrentAlertsTool:
         },
     }
 
+    def __init__(self, *, now_utc: datetime | None = None) -> None:
+        self.now_utc = now_utc
+
     async def execute(
         self, arguments: dict[str, object], session: Session
     ) -> dict[str, object]:
-        filters = [RiskAlert.status == "current"]
+        now_utc = self.now_utc or datetime.now(UTC)
+        filters = [current_alert_condition(now_utc)]
         if level := str(arguments.get("level") or "").strip():
             filters.append(RiskAlert.level == level)
         supplier_name = str(arguments.get("supplier_name") or "").strip()
@@ -137,6 +143,13 @@ class QueryCurrentAlertsTool:
                     "event_summary": event.summary,
                     "match_reasons": match.reasons,
                     "match_evidence": match.evidence,
+                    "expires_at": alert.expires_at,
+                    "expiry_kind": alert.expiry_kind,
+                    "validity_state": event.validity_state,
+                    "valid_until": event.valid_until,
+                    "review_due_at": event.review_due_at,
+                    "validity_policy_version": event.validity_policy_version,
+                    "validity_reason": event.validity_reason,
                     "updated_at": alert.updated_at.isoformat(),
                 }
                 for alert, match, event, supplier in rows
@@ -284,11 +297,11 @@ def _products(session: Session, supplier_id: int) -> list[SupplierProduct]:
     )
 
 
-def build_tools() -> list[Tool]:
+def build_tools(*, now_utc: datetime | None = None) -> list[Tool]:
     """风险查询 Agent 的永久只读工具白名单。"""
     return [
         QuerySuppliersTool(),
-        QueryCurrentAlertsTool(),
+        QueryCurrentAlertsTool(now_utc=now_utc),
         VerifyCompanyTool(),
         GetBudgetTool(),
     ]

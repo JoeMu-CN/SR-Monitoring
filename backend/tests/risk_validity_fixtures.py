@@ -1,7 +1,7 @@
 """任务 8 风险有效期数据库测试夹具。"""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -61,7 +61,11 @@ def linked_risk(
                 spec.profile if spec.state != "pending_classification" else None
             ),
             validity_state=spec.state,
-            valid_from=now_utc,
+            valid_from=(
+                min(now_utc, spec.valid_until - timedelta(microseconds=1))
+                if spec.valid_until is not None
+                else now_utc
+            ),
             valid_until=spec.valid_until,
             review_due_at=spec.review_due_at,
             validity_mode=(

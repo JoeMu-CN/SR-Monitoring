@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import case, func, or_, select, true
 from sqlalchemy.orm import Session, selectinload
@@ -6,6 +7,7 @@ from sqlalchemy.orm.interfaces import ORMOption
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.risks.models import RiskAlert, SupplierEventMatch
+from app.risks.query_validity import current_alert_condition
 from app.suppliers.models import Supplier, SupplierAlias, SupplierProduct
 from app.suppliers.schemas import (
     SupplierListItem,
@@ -39,7 +41,9 @@ def find_supplier(session: Session, supplier_id: int) -> Supplier | None:
     )
 
 
-def list_suppliers(session: Session, query: SupplierListQuery) -> SupplierListResponse:
+def list_suppliers(
+    session: Session, query: SupplierListQuery, *, now_utc: datetime
+) -> SupplierListResponse:
     level_strength = case(
         (RiskAlert.level == "P1", 1),
         (RiskAlert.level == "P2", 2),
@@ -60,10 +64,7 @@ def list_suppliers(session: Session, query: SupplierListQuery) -> SupplierListRe
             .label("risk_rank"),
         )
         .join(RiskAlert, RiskAlert.match_id == SupplierEventMatch.id)
-        .where(
-            RiskAlert.status == "current",
-            or_(RiskAlert.expires_at.is_(None), RiskAlert.expires_at > func.now()),
-        )
+        .where(current_alert_condition(now_utc))
         .subquery()
     )
     strongest_alert = (

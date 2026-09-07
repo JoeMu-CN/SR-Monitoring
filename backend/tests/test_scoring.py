@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+from risk_validity_fixtures import SignalSpec, linked_risk
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -21,7 +22,10 @@ from app.risks.scoring import (
     load_scoring_settings,
 )
 from app.risks.service import _compute_expires_at, expire_alerts
+from app.risks.validity import refresh_event_support
 from app.signals.models import RawSignal
+
+NOW_UTC = datetime(2026, 9, 6, 12, tzinfo=UTC)
 
 # ── 可配置评分单元测试 ──────────────────────────────────────────
 
@@ -613,3 +617,201 @@ def test_reprocess_expired_alert_without_effective_evidence_is_rejected(
     assert response.status_code == 409
     db_session.refresh(alert)
     assert alert.status == "expired"
+
+
+# ── 任务 8：事件/提醒到期物化的读路径与有效期边界 ────────────────
+
+
+def _api_datetime(value: str | None) -> datetime | None:
+    """把 pydantic v2 的 UTC 'Z' 序列化归一为可比较的 datetime。"""
+    if value is None:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def test_validity_fields_materialized_on_first_processing_and_exposed_by_read_apis(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """事件首次创建即同事务物化有效期列；读接口原样暴露只读字段。"""
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    _create_supplier(client)
+    _import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+    assert response.status_code == 200
+
+    event = db_session.scalar(select(RiskEvent))
+    assert event is not None
+    # 首次处理在同一事务物化，而不是等后续 refresh job 才补列。
+    assert event.validity_state == "active"
+    assert event.valid_until is not None
+    assert event.validity_policy_version is not None
+    assert set(event.validity_reason) == {"code", "anchor_source", "details"}
+    assert "content" not in str(event.validity_reason)
+
+    alert = db_session.scalar(select(RiskAlert))
+    assert alert is not None
+    assert alert.expires_at == event.valid_until
+    assert alert.expiry_kind == "finite"
+
+    listed = client.get("/api/v1/risk-alerts").json()["items"][0]
+    assert _api_datetime(listed["expires_at"]) == alert.expires_at
+    assert listed["expiry_kind"] == "finite"
+    assert listed["validity_state"] == "active"
+    assert _api_datetime(listed["valid_until"]) == event.valid_until
+    assert _api_datetime(listed["review_due_at"]) == event.review_due_at
+    assert listed["validity_policy_version"] == event.validity_policy_version
+    assert listed["validity_reason"] == event.validity_reason
+
+    detail = client.get(f"/api/v1/events/{event.id}").json()
+    assert detail["validity_state"] == "active"
+    assert _api_datetime(detail["valid_until"]) == event.valid_until
+    assert _api_datetime(detail["review_due_at"]) == event.review_due_at
+    assert detail["validity_policy_version"] == event.validity_policy_version
+    assert detail["validity_reason"] == event.validity_reason
+    assert set(detail["validity_reason"]) == {"code", "anchor_source", "details"}
+
+
+def test_expiry_boundary_equal_now_expires_finite_alert(db_session: Session) -> None:
+    """expires_at == now_utc 即失效（<= 边界），> now_utc 保持 current。"""
+    due = linked_risk(
+        db_session,
+        (SignalSpec("boundary-equal", valid_until=NOW_UTC),),
+        now_utc=NOW_UTC,
+    )
+    future = linked_risk(
+        db_session,
+        (SignalSpec("boundary-future", valid_until=NOW_UTC + timedelta(days=1)),),
+        now_utc=NOW_UTC,
+    )
+
+    expired_count = expire_alerts(db_session, now_utc=NOW_UTC)
+
+    assert expired_count == 1
+    assert due.event.validity_state == "expired"
+    assert due.alert.status == "expired"
+    assert future.event.validity_state == "active"
+    assert future.alert.status == "current"
+    assert future.alert.expires_at == NOW_UTC + timedelta(days=1)
+    assert future.alert.expiry_kind == "finite"
+
+
+def test_event_validity_unbounded_with_infinite_evidence_falls_back_on_revoke(
+    db_session: Session,
+) -> None:
+    """任一无限证据使事件截止为 NULL；逐条撤销后回落到剩余最晚截止。"""
+    day_3 = NOW_UTC + timedelta(days=3)
+    day_7 = NOW_UTC + timedelta(days=7)
+    risk = linked_risk(
+        db_session,
+        (
+            SignalSpec("validity-three-days", valid_until=day_3),
+            SignalSpec("validity-seven-days", valid_until=day_7),
+            SignalSpec("validity-infinite", mode="until_revoked"),
+        ),
+        now_utc=NOW_UTC,
+    )
+
+    # until_revoked 证据 valid_until/review_due_at 均为 NULL → 事件/提醒 unbounded。
+    assert expire_alerts(db_session, now_utc=NOW_UTC) == 0
+    assert risk.event.valid_until is None
+    assert risk.event.review_due_at is None
+    assert risk.alert.expires_at is None
+    assert risk.alert.expiry_kind == "unbounded"
+
+    # 撤销无限证据 → 回落到第 7 天。
+    risk.signals[2].validity_state = "revoked"
+    expire_alerts(db_session, now_utc=NOW_UTC)
+    assert risk.event.valid_until == day_7
+    assert risk.alert.expires_at == day_7
+    assert risk.alert.expiry_kind == "finite"
+
+    # 再撤销较长证据 → 回落到第 3 天。
+    risk.signals[1].validity_state = "revoked"
+    expire_alerts(db_session, now_utc=NOW_UTC)
+    assert risk.event.valid_until == day_3
+    assert risk.alert.expires_at == day_3
+    assert risk.event.validity_state == "active"
+
+
+def test_review_due_confirm_extends_deadline_and_revoke_terminates_alert(
+    db_session: Session,
+) -> None:
+    """法规 confirm 延长复核日，revoke 立即终止；提醒在同一协调调用内跟随。"""
+    day_3 = NOW_UTC + timedelta(days=3)
+    day_7 = NOW_UTC + timedelta(days=7)
+    risk = linked_risk(
+        db_session,
+        (SignalSpec("validity-review", review_due_at=day_3, mode="until_revoked"),),
+        now_utc=NOW_UTC,
+    )
+    # until_revoked 仅带复核日 → 事件/提醒截止即复核日（finite）。
+    assert expire_alerts(db_session, now_utc=NOW_UTC) == 0
+    assert risk.event.valid_until == day_3
+    assert risk.alert.expires_at == day_3
+    assert risk.alert.expiry_kind == "finite"
+    assert risk.alert.status == "current"
+
+    # confirm 把复核日延长到 day_7 → 事件与提醒在同一次协调调用内投影到 day_7。
+    risk.signals[0].review_due_at = day_7
+    assert expire_alerts(db_session, now_utc=NOW_UTC) == 0
+    assert risk.event.review_due_at == day_7
+    assert risk.event.valid_until == day_7
+    assert risk.alert.expires_at == day_7
+    assert risk.alert.expiry_kind == "finite"
+    assert risk.alert.status == "current"
+
+    # revoke 后无剩余有效证据 → 同一 expire_alerts 调用内事件与提醒 expired。
+    risk.signals[0].validity_state = "revoked"
+    assert expire_alerts(db_session, now_utc=NOW_UTC) == 1
+    assert risk.event.validity_state == "expired"
+    assert risk.alert.status == "expired"
+
+
+def test_validity_non_effective_evidence_never_keeps_current_alert(
+    db_session: Session,
+) -> None:
+    """只有 pending/过期/复核到期证据时，不产生 current 提醒且不再恢复。"""
+    specs = (
+        SignalSpec("validity-pending", state="pending_classification"),
+        SignalSpec("validity-due", review_due_at=NOW_UTC, mode="until_revoked"),
+        SignalSpec("validity-expired", state="expired", valid_until=NOW_UTC),
+    )
+    for spec in specs:
+        risk = linked_risk(db_session, (spec,), now_utc=NOW_UTC)
+        assert expire_alerts(db_session, now_utc=NOW_UTC) == 1
+        assert risk.event.validity_state == "expired"
+        assert risk.alert.status == "expired"
+        # 更晚时钟再次协调不会复活提醒，也不会滚动截止。
+        assert expire_alerts(db_session, now_utc=NOW_UTC + timedelta(days=1)) == 0
+        assert risk.alert.status == "expired"
+
+
+def test_validity_materialized_deadline_does_not_drift_across_calls(
+    db_session: Session,
+) -> None:
+    """end_at 在过去或为 None 且被重复处理时，截止时间不随调用时刻漂移。"""
+    day_3 = NOW_UTC + timedelta(days=3)
+    risk = linked_risk(
+        db_session,
+        (SignalSpec("validity-no-end", valid_until=day_3),),
+        now_utc=NOW_UTC,
+    )
+    risk.event.end_at = NOW_UTC - timedelta(days=1)
+    db_session.flush()
+
+    first = refresh_event_support(db_session, risk.event, now_utc=NOW_UTC)
+    assert first.expires_at == day_3
+
+    risk.event.end_at = None
+    db_session.flush()
+    later = refresh_event_support(
+        db_session, risk.event, now_utc=NOW_UTC + timedelta(days=2)
+    )
+    assert later.expires_at == day_3
+    assert risk.event.valid_until == day_3

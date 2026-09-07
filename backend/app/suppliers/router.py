@@ -202,6 +202,7 @@ def list_suppliers(
             limit=limit,
             offset=offset,
         ),
+        now_utc=datetime.now(UTC),
     )
 
 

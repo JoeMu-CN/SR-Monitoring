@@ -234,6 +234,10 @@ def test_manual_import_validity_when_weather_is_old_keeps_expired_history(
     db_session: Session,
 ) -> None:
     # Given
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "manual-json"))
+    assert source is not None
+    source.validity_policy = None
+    db_session.flush()
     payload = json.dumps(
         {
             "version": "1.0",

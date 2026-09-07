@@ -1,6 +1,7 @@
 """两类 Agent 的独立会话编排。"""
 
 import re
+from datetime import UTC, datetime
 from typing import cast
 
 from sqlalchemy import select
@@ -51,7 +52,7 @@ async def chat(
         owner_user_id=owner_user_id,
         llm=llm,
         agent_kind=RISK_QUERY,
-        tools=build_tools(),
+        tools=build_tools(now_utc=datetime.now(UTC)),
         system_prompt=AGENT_SYSTEM_PROMPT,
     )
 

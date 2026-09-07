@@ -309,6 +309,7 @@ def test_concurrent_same_dedup_keeps_both_links_without_duplicate_alert(
         ]
         analyses = [_analysis(setup, signal) for signal in signals]
         ids = [(signal.id, analysis.id) for signal, analysis in zip(signals, analyses, strict=True)]
+        source_id = source.id
         setup.commit()
 
     barrier = Barrier(2)
@@ -336,18 +337,53 @@ def test_concurrent_same_dedup_keeps_both_links_without_duplicate_alert(
         with ThreadPoolExecutor(max_workers=2) as executor:
             list(executor.map(run, ids))
         with SessionLocal() as verify:
-            assert verify.scalar(select(func.count()).select_from(RiskEvent)) == 1
-            assert verify.scalar(select(func.count()).select_from(RiskEventSignal)) == 2
-            assert verify.scalar(select(func.count()).select_from(RiskAlert)) == 1
+            test_event_ids = (
+                select(RiskEventSignal.event_id)
+                .join(RawSignal, RiskEventSignal.signal_id == RawSignal.id)
+                .where(RawSignal.source_id == source_id)
+            )
+            assert (
+                verify.scalar(
+                    select(func.count()).select_from(RiskEvent).where(RiskEvent.id.in_(test_event_ids))
+                )
+                == 1
+            )
+            assert (
+                verify.scalar(
+                    select(func.count())
+                    .select_from(RiskEventSignal)
+                    .where(RiskEventSignal.event_id.in_(test_event_ids))
+                )
+                == 2
+            )
+            assert (
+                verify.scalar(
+                    select(func.count())
+                    .select_from(RiskAlert)
+                    .join(SupplierEventMatch, RiskAlert.match_id == SupplierEventMatch.id)
+                    .where(SupplierEventMatch.event_id.in_(test_event_ids))
+                )
+                == 1
+            )
     finally:
         monkeypatch.setattr(Session, "scalar", original_scalar)
         with SessionLocal() as cleanup:
-            cleanup.execute(delete(RiskAlert))
-            cleanup.execute(delete(SupplierEventMatch))
-            cleanup.execute(delete(RiskEventSignal))
-            cleanup.execute(delete(RiskEvent))
-            cleanup.execute(delete(AIAnalysisRecord))
-            cleanup.execute(delete(RawSignal))
+            test_signal_ids = select(RawSignal.id).where(RawSignal.source_id == source_id)
+            test_event_ids = select(RiskEventSignal.event_id).where(
+                RiskEventSignal.signal_id.in_(test_signal_ids)
+            )
+            test_match_ids = select(SupplierEventMatch.id).where(
+                SupplierEventMatch.event_id.in_(test_event_ids)
+            )
+            cleanup.execute(delete(RiskAlert).where(RiskAlert.match_id.in_(test_match_ids)))
+            cleanup.execute(
+                delete(SupplierEventMatch).where(SupplierEventMatch.id.in_(test_match_ids))
+            )
+            cleanup.execute(delete(RiskEvent).where(RiskEvent.id.in_(test_event_ids)))
+            cleanup.execute(
+                delete(AIAnalysisRecord).where(AIAnalysisRecord.signal_id.in_(test_signal_ids))
+            )
+            cleanup.execute(delete(RawSignal).where(RawSignal.id.in_(test_signal_ids)))
             cleanup.execute(delete(Supplier).where(Supplier.supplier_code == "VALIDITY-CONCURRENT"))
             cleanup.execute(delete(DataSource).where(DataSource.code == code))
             cleanup.commit()

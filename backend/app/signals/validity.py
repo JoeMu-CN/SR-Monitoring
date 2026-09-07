@@ -504,11 +504,27 @@ def is_signal_effective(value: ValidityWindow | PolicyDecision, *, now_utc: date
     match value:
         case PolicyDecision():
             return False
-        case ValidityWindow(state=state, valid_until=valid_until, review_due_at=review_due_at):
-            return (
-                state is ValidityState.ACTIVE
-                and (valid_until is None or valid_until > now)
-                and (review_due_at is None or review_due_at > now)
+        case ValidityWindow(
+            mode=mode,
+            state=state,
+            valid_until=valid_until,
+            review_due_at=review_due_at,
+        ):
+            if state is not ValidityState.ACTIVE:
+                return False
+            match mode:
+                case (
+                    ValidityMode.FIXED_DAYS
+                    | ValidityMode.UNTIL_SUPERSEDED
+                    | ValidityMode.EVENT_END_PLUS_GRACE
+                ):
+                    deadline_is_current = valid_until is not None and valid_until > now
+                case ValidityMode.UNTIL_REVOKED | ValidityMode.INDEFINITE:
+                    deadline_is_current = valid_until is None or valid_until > now
+                case unreachable:
+                    assert_never(unreachable)
+            return deadline_is_current and (
+                review_due_at is None or review_due_at > now
             )
         case unreachable:
             assert_never(unreachable)

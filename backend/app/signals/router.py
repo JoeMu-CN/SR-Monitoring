@@ -1,11 +1,11 @@
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -23,6 +23,7 @@ from app.auth.security import (
     verify_csrf,
 )
 from app.database import get_session
+from app.risks.query_validity import valid_signal_condition as _valid_signal_condition
 from app.signals.adapter import (
     MAX_FILE_BYTES,
     ManualJsonAdapter,
@@ -192,7 +193,12 @@ def _source_validity_policy_version(source: DataSource) -> str | None:
     return stored.version or stored.fingerprint()
 
 
-def _serialize_source(source: DataSource, session: Session | None = None) -> DataSourceRead:
+def _serialize_source(
+    source: DataSource,
+    session: Session | None = None,
+    *,
+    now_utc: datetime,
+) -> DataSourceRead:
     payload = DataSourceRead.model_validate(source)
     policy_version = _source_validity_policy_version(source)
     if payload.validity_policy is not None:
@@ -214,13 +220,12 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
     )
     access = session.get(SourceHostAccess, endpoint_host) if session and endpoint_host else None
     if access:
-        now = datetime.now(UTC)
         access_status = "ready"
-        if access.cooldown_until and access.cooldown_until > now:
+        if access.cooldown_until and access.cooldown_until > now_utc:
             access_status = "cooldown"
-        elif access.lease_until and access.lease_until > now:
+        elif access.lease_until and access.lease_until > now_utc:
             access_status = "busy"
-        elif access.next_request_at and access.next_request_at > now:
+        elif access.next_request_at and access.next_request_at > now_utc:
             access_status = "throttled"
         payload = payload.model_copy(
             update={
@@ -256,16 +261,12 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
                 RawSignal.source_id == source.id
             )
         ) or 0
-        # 有效信号数：按信源级有效期过滤（NULL=永久有效，等于总数）。
-        valid_signals = total_signals
-        valid_condition = _valid_signal_condition(source)
-        if valid_condition is not None:
-            valid_signals = session.scalar(
-                select(func.count()).select_from(RawSignal).where(
-                    RawSignal.source_id == source.id,
-                    valid_condition,
-                )
-            ) or 0
+        valid_signals = session.scalar(
+            select(func.count()).select_from(RawSignal).where(
+                RawSignal.source_id == source.id,
+                _valid_signal_condition(source, now_utc=now_utc),
+            )
+        ) or 0
         payload = payload.model_copy(
             update={
                 "total_signal_count": int(total_signals),
@@ -275,23 +276,15 @@ def _serialize_source(source: DataSource, session: Session | None = None) -> Dat
     return payload
 
 
-def _valid_signal_condition(source: DataSource) -> ColumnElement[bool] | None:
-    if source.signal_validity_days is None:
-        return None
-    cutoff = datetime.now(UTC) - timedelta(days=source.signal_validity_days)
-    return or_(
-        RawSignal.published_at >= cutoff,
-        and_(
-            RawSignal.published_at.is_(None),
-            RawSignal.collected_at >= cutoff,
-        ),
-    )
-
-
 def _serialize_source_summary(
-    source: DataSource, session: Session | None = None
+    source: DataSource,
+    session: Session | None = None,
+    *,
+    now_utc: datetime,
 ) -> DataSourceSummaryRead:
-    return DataSourceSummaryRead.model_validate(_serialize_source(source, session))
+    return DataSourceSummaryRead.model_validate(
+        _serialize_source(source, session, now_utc=now_utc)
+    )
 
 
 def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
@@ -388,8 +381,9 @@ def fail_run(session: Session, run_id: int, message: str) -> None:
 def list_sources(
     session: SessionDependency, _user: SourceStatusView
 ) -> list[DataSourceSummaryRead]:
+    now_utc = datetime.now(UTC)
     return [
-        _serialize_source_summary(source, session)
+        _serialize_source_summary(source, session, now_utc=now_utc)
         for source in session.scalars(select(DataSource).order_by(DataSource.id))
     ]
 
@@ -398,8 +392,9 @@ def list_sources(
 def list_sources_admin(
     session: SessionDependency, _user: SourceManage
 ) -> list[DataSourceRead]:
+    now_utc = datetime.now(UTC)
     return [
-        _serialize_source(source, session)
+        _serialize_source(source, session, now_utc=now_utc)
         for source in session.scalars(select(DataSource).order_by(DataSource.id))
     ]
 
@@ -412,6 +407,7 @@ def list_source_signals(
     scope: Annotated[Literal["valid", "all"], Query()] = "valid",
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> SourceSignalListResponse:
+    now_utc = datetime.now(UTC)
     source = session.get(DataSource, source_id)
     if source is None:
         raise HTTPException(
@@ -421,9 +417,7 @@ def list_source_signals(
 
     filters: list[ColumnElement[bool]] = [RawSignal.source_id == source.id]
     if scope == "valid":
-        valid_condition = _valid_signal_condition(source)
-        if valid_condition is not None:
-            filters.append(valid_condition)
+        filters.append(_valid_signal_condition(source, now_utc=now_utc))
 
     total = session.scalar(
         select(func.count()).select_from(RawSignal).where(*filters)
@@ -535,7 +529,7 @@ def create_source(
     )
     session.commit()
     session.refresh(source)
-    return _serialize_source(source, session)
+    return _serialize_source(source, session, now_utc=datetime.now(UTC))
 
 
 @router.put("/sources/{source_id}", response_model=DataSourceRead)
@@ -546,6 +540,7 @@ def update_source(
     user: SourceManage,
     _csrf: CsrfGuard,
 ) -> DataSourceRead:
+    now_utc = datetime.now(UTC)
     source = session.get(DataSource, source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
@@ -615,11 +610,11 @@ def update_source(
         changes["validity_policy_version"] = policy_version
         changes["applies_to"] = "new_signals_only"
     if not changes:
-        return _serialize_source(source, session)
+        return _serialize_source(source, session, now_utc=now_utc)
     _audit(session, source_id=source.id, action="updated", actor=user, changes=changes)
     session.commit()
     session.refresh(source)
-    return _serialize_source(source, session)
+    return _serialize_source(source, session, now_utc=now_utc)
 
 
 @router.post("/sources/preview", response_model=AdapterPreviewResponse)
@@ -696,7 +691,7 @@ async def publish_source_adapter(
     )
     session.commit()
     session.refresh(source)
-    return _serialize_source(source, session)
+    return _serialize_source(source, session, now_utc=datetime.now(UTC))
 
 
 @router.delete("/sources/{source_id}", response_model=dict[str, object])

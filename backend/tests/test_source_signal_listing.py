@@ -47,6 +47,12 @@ def _signal(
         collected_at=collected_at,
         fingerprint=f"fingerprint-{source.code}-{index}",
         raw_data={"secret": index},
+        validity_state="legacy",
+        validity_reason={
+            "code": "legacy_unmigrated",
+            "anchor_source": "legacy",
+            "details": {},
+        },
     )
     session.add(signal)
     session.flush()

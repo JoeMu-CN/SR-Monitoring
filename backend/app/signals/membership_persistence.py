@@ -71,6 +71,7 @@ def apply_membership_snapshot(
     if result.decision in (EvalDecision.REVOKE, EvalDecision.QUARANTINE_PROMOTED):
         revoked = revoke_member_signals(
             session, source.id, result.members_to_revoke, result.revoke_reason or {},
+            now_utc=now_utc,
         )
 
     _upsert_states(

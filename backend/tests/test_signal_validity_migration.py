@@ -1,4 +1,3 @@
-# noqa: SIZE_OK — 真实 PostgreSQL 往返迁移测试需内含隔离库生命周期和完整历史夹具。
 import os
 import subprocess
 import sys

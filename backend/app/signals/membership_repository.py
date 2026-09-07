@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ from app.signals.validity import ValidityMode, ValidityState
 
 def revoke_member_signals(
     session: Session, source_id: int, member_keys: frozenset[str],
-    reason: dict[str, object],
+    reason: dict[str, object], *, now_utc: datetime,
 ) -> int:
     """批量撤销指定成员关联的 active until_revoked 信号。"""
     targets = list(
@@ -45,10 +45,9 @@ def revoke_member_signals(
     )
     if not targets:
         return 0
-    now = datetime.now(UTC)
     for target in targets:
         target.validity_state = ValidityState.REVOKED
-        target.valid_until = now
+        target.valid_until = now_utc
         target.lifecycle_action = "revoke"
         target.validity_reason = reason
     session.add(

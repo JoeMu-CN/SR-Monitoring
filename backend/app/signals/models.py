@@ -1,4 +1,3 @@
-# noqa: SIZE_OK — 本模块是信号域 SQLAlchemy 表声明，约束必须与字段同处作为纯模式定义。
 from datetime import datetime
 from typing import Final
 

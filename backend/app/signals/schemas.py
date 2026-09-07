@@ -1,4 +1,3 @@
-# noqa: SIZE_OK — 本模块集中声明信号域 API 数据结构，保持既有公开导入路径兼容。
 from datetime import datetime
 from typing import Annotated, Literal, Self
 

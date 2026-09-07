@@ -1,13 +1,11 @@
 """任务 6：完整快照成员状态机测试（迁移 + 服务集成 + 适配器契约）。"""
 
-# noqa: SIZE_OK — 真实 PostgreSQL 往返迁移测试需内含隔离库生命周期和完整历史夹具。
-
 import os
 import subprocess
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,6 +19,7 @@ from sqlalchemy.orm import Session
 from test_stack_guard import require_test_database_url
 
 from app.config import DATABASE_URL
+from app.signals import service as signal_service
 from app.signals.models import DataSource, RawSignal, SourceMemberState
 from app.signals.schemas import ManualSignalInput
 from app.signals.service import collect_source
@@ -33,6 +32,7 @@ from app.signals.sources import (
 )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+FROZEN_REVOKED_AT = datetime(2031, 2, 3, 4, 5, 6, tzinfo=UTC)
 
 
 # ── 迁移测试（隔离数据库往返） ───────────────────────────────────────
@@ -283,15 +283,24 @@ def _get_membership_source(session: Session) -> DataSource:
 
 
 def test_snapshot_revokes_member_after_two_consecutive_misses(
-    db_session: Session,
+    db_session: Session, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given: 全量基线 {member-0..member-9}。
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            del cls
+            assert tz is UTC
+            return FROZEN_REVOKED_AT
+
+    monkeypatch.setattr(signal_service, "datetime", FrozenDateTime)
     source = _get_membership_source(db_session)
     members = [f"member-{i}" for i in range(10)]
     first = collect_source(db_session, source, _FakeFullSnapshotAdapter(members))
     assert first.created_count == 10
     assert first.snapshot_complete is True
     assert first.member_count == 10
+    assert first.finished_at == FROZEN_REVOKED_AT
 
     # When: 连续两次缺失 member-9。
     second = collect_source(
@@ -312,6 +321,7 @@ def test_snapshot_revokes_member_after_two_consecutive_misses(
     )
     assert revoked is not None
     assert revoked.validity_state == "revoked"
+    assert revoked.valid_until == FROZEN_REVOKED_AT
     assert revoked.validity_reason["code"] == "two_consecutive_misses"
     state = db_session.scalar(
         select(SourceMemberState).where(

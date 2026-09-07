@@ -5,6 +5,8 @@
 业务规则的维护全部通过这些接口落到 DB 配置。
 """
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,12 +26,15 @@ from app.risks.engine.config import ALL_COLUMNS
 from app.risks.engine.engine import evaluate_event
 from app.risks.engine.registry import RuntimeDimension, load_dimensions
 from app.risks.models import RiskAlert, RuleDimensionConfig
+from app.risks.query_validity import valid_signal_condition
 from app.risks.workbench_schemas import (
     DimensionRead,
+    DimensionSourceRead,
     DimensionToggle,
     DimensionUpdate,
     SandboxRequest,
 )
+from app.signals.models import CollectionRun, DataSource, RawSignal
 
 router = APIRouter(prefix="/api/v1/rule-engine", tags=["规则引擎工作台"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -107,18 +112,106 @@ def _active_alert_counts(session: Session) -> dict[str, int]:
     return {str(dim): int(count) for dim, count in rows if dim is not None}
 
 
+@dataclass(frozen=True)
+class _SourceRealState:
+    """data_sources 表实时状态；linked=false 时全部实时字段为 None。"""
+
+    linked: bool
+    enabled: bool | None
+    adapter_status: str | None
+    last_collected_at: datetime | None
+    valid_signal_count: int | None
+
+
+def _source_status_map(
+    session: Session, codes: set[str]
+) -> dict[str, _SourceRealState]:
+    """按 code 批量查询 DataSource 构建实时状态映射。
+
+    查询次数只取决于信源总数（固定常数），不随维度数增长：
+    1 次查 DataSource 行、1 次按 source_id 分组取最近采集时间、
+    按 signal_validity_days 分组各 1 次统计有效信号数（判活谓词复用
+    query_validity.valid_signal_condition，与任务 9 统一口径）。
+    """
+    if not codes:
+        return {}
+    now_utc = datetime.now(UTC)
+    sources = {
+        s.code: s
+        for s in session.scalars(select(DataSource).where(DataSource.code.in_(codes)))
+    }
+    if not sources:
+        return {code: _SourceRealState(False, None, None, None, None) for code in codes}
+
+    source_ids = {s.id for s in sources.values()}
+
+    last_collected: dict[int, datetime] = {}
+    rows = session.execute(
+        select(CollectionRun.source_id, func.max(CollectionRun.finished_at))
+        .where(CollectionRun.source_id.in_(source_ids))
+        .group_by(CollectionRun.source_id)
+    ).all()
+    for source_id, finished_at in rows:
+        if finished_at is not None:
+            last_collected[int(source_id)] = finished_at
+
+    # 同 signal_validity_days 的信源判活条件一致，按组各一次查询
+    groups: dict[int | None, list[DataSource]] = {}
+    for src in sources.values():
+        groups.setdefault(src.signal_validity_days, []).append(src)
+    valid_counts: dict[int, int] = {}
+    for group in groups.values():
+        representative = group[0]
+        condition = valid_signal_condition(representative, now_utc=now_utc)
+        count_rows = session.execute(
+            select(RawSignal.source_id, func.count())
+            .where(RawSignal.source_id.in_([s.id for s in group]), condition)
+            .group_by(RawSignal.source_id)
+        ).all()
+        for source_id, count in count_rows:
+            valid_counts[int(source_id)] = int(count)
+
+    result: dict[str, _SourceRealState] = {}
+    for code in codes:
+        matched = sources.get(code)
+        if matched is None:
+            result[code] = _SourceRealState(False, None, None, None, None)
+        else:
+            result[code] = _SourceRealState(
+                linked=True,
+                enabled=matched.enabled,
+                adapter_status=matched.adapter_status,
+                last_collected_at=last_collected.get(matched.id),
+                valid_signal_count=valid_counts.get(matched.id, 0),
+            )
+    return result
+
+
 def _to_read(
-    dim: RuntimeDimension, override_keys: set[str], counts: dict[str, int]
+    dim: RuntimeDimension,
+    override_keys: set[str],
+    counts: dict[str, int],
+    source_map: dict[str, _SourceRealState],
 ) -> DimensionRead:
+    data_sources = [
+        DimensionSourceRead(
+            code=source.code,
+            name=source.name,
+            declared_status=source.status,
+            linked=source_map[source.code].linked,
+            enabled=source_map[source.code].enabled,
+            adapter_status=source_map[source.code].adapter_status,
+            last_collected_at=source_map[source.code].last_collected_at,
+            valid_signal_count=source_map[source.code].valid_signal_count,
+        )
+        for source in dim.config.data_sources
+    ]
     return DimensionRead(
         key=dim.key,
         label=dim.config.label,
         description=dim.config.description,
         content_items=list(dim.config.content_items),
-        data_sources=[
-            {"code": source.code, "name": source.name, "status": source.status}
-            for source in dim.config.data_sources
-        ],
+        data_sources=data_sources,
         event_types=list(dim.config.event_types),
         match_columns=list(dim.config.match_columns),
         enabled=dim.enabled,
@@ -130,30 +223,32 @@ def _to_read(
 
 def _load_state(
     session: Session,
-) -> tuple[list[RuntimeDimension], set[str], dict[str, int]]:
+) -> tuple[list[RuntimeDimension], set[str], dict[str, int], dict[str, _SourceRealState]]:
     dimensions = load_dimensions(session)
     override_keys = set(session.scalars(select(RuleDimensionConfig.key)))
     counts = _active_alert_counts(session)
-    return dimensions, override_keys, counts
+    source_codes = {s.code for d in dimensions for s in d.config.data_sources}
+    source_map = _source_status_map(session, source_codes)
+    return dimensions, override_keys, counts, source_map
 
 
 @router.get("/dimensions", response_model=list[DimensionRead])
 def list_dimensions(
     session: SessionDependency, _user: RuleSummaryView
 ) -> list[DimensionRead]:
-    dimensions, override_keys, counts = _load_state(session)
-    return [_to_read(dim, override_keys, counts) for dim in dimensions]
+    dimensions, override_keys, counts, source_map = _load_state(session)
+    return [_to_read(dim, override_keys, counts, source_map) for dim in dimensions]
 
 
 @router.get("/dimensions/{key}", response_model=DimensionRead)
 def get_dimension(
     key: str, session: SessionDependency, _user: RuleSummaryView
 ) -> DimensionRead:
-    dimensions, override_keys, counts = _load_state(session)
+    dimensions, override_keys, counts, source_map = _load_state(session)
     dim = next((d for d in dimensions if d.key == key), None)
     if dim is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
-    return _to_read(dim, override_keys, counts)
+    return _to_read(dim, override_keys, counts, source_map)
 
 
 @router.put("/dimensions/{key}", response_model=DimensionRead)
@@ -164,7 +259,7 @@ def update_dimension(
     _user: RuleManage,
     _csrf: CsrfGuard,
 ) -> DimensionRead:
-    dimensions, _, _ = _load_state(session)
+    dimensions, _, _, _ = _load_state(session)
     base = next((d for d in dimensions if d.key == key), None)
     if base is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
@@ -196,9 +291,9 @@ def update_dimension(
     session.commit()
     session.expire_all()
 
-    dimensions, override_keys, counts = _load_state(session)
+    dimensions, override_keys, counts, source_map = _load_state(session)
     dim = next(d for d in dimensions if d.key == key)
-    return _to_read(dim, override_keys, counts)
+    return _to_read(dim, override_keys, counts, source_map)
 
 
 @router.post("/dimensions/{key}/toggle", response_model=DimensionRead)

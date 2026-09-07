@@ -1,5 +1,6 @@
 """可视化规则工作台的请求/响应模型。"""
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -67,6 +68,25 @@ class DimensionConfigPatch(BaseModel):
         return value
 
 
+class DimensionSourceRead(BaseModel):
+    """维度引用信源的声明意图 + 实时真实状态（data_sources 表 join）。
+
+    declared_status 沿用 DimensionDataSource.status 取值
+    （connected / planned / external_tool），语义为"覆盖意图"；
+    linked 与 enabled/adapter_status/last_collected_at/valid_signal_count
+    来自 data_sources 表的实时状态，未命中的 code 全部为 None 且 linked=false。
+    """
+
+    code: str
+    name: str
+    declared_status: str
+    linked: bool
+    enabled: bool | None
+    adapter_status: str | None
+    last_collected_at: datetime | None
+    valid_signal_count: int | None
+
+
 class DimensionRead(BaseModel):
     """单个监控维度的运行时状态（默认配置 + DB 覆盖合并后）。"""
 
@@ -74,7 +94,7 @@ class DimensionRead(BaseModel):
     label: str
     description: str
     content_items: list[str]
-    data_sources: list[dict[str, str]]
+    data_sources: list[DimensionSourceRead]
     event_types: list[str]
     match_columns: list[str]
     enabled: bool

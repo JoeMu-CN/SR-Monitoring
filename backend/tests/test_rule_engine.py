@@ -476,17 +476,19 @@ def test_dimension_api_exposes_content_and_source_status(client: TestClient) -> 
     assert response.status_code == 200
     dimensions = {item["key"]: item for item in response.json()}
     assert "天气与气象预警" in dimensions["natural"]["content_items"]
-    assert {
-        "code": "nmc-weather",
-        "name": "中央气象台",
-        "status": "connected",
-    } in dimensions["natural"]["data_sources"]
-    assert {
-        "code": "tianyancha",
-        "name": "天眼查",
-        "status": "external_tool",
-    } in dimensions["corporate"]["data_sources"]
-    assert all(source["status"] == "planned" for source in dimensions["policy"]["data_sources"])
+    nmc = next(
+        s for s in dimensions["natural"]["data_sources"] if s["code"] == "nmc-weather"
+    )
+    assert nmc["name"] == "中央气象台"
+    assert nmc["declared_status"] == "connected"
+    tyc = next(
+        s for s in dimensions["corporate"]["data_sources"] if s["code"] == "tianyancha"
+    )
+    assert tyc["declared_status"] == "external_tool"
+    assert all(
+        s["declared_status"] == "planned"
+        for s in dimensions["policy"]["data_sources"]
+    )
 
 
 def test_dimension_metadata_survives_database_override(

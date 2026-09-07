@@ -924,13 +924,11 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
 }
 
 export function mapDimension(dimension: DimensionRead): MonitoringDimension {
-  const severityMax = Math.max(0, ...Object.values(dimension.scoring.severity_scores ?? {}));
-  const associationMax = Math.max(0, ...Object.values(dimension.scoring.association_scores ?? {}));
   return {
     id: dimension.key, name: dimension.label, icon: dimensionIcons[dimension.key] ?? 'shield', enabled: dimension.enabled,
     ruleId: String(dimension.scoring.rule_version ?? dimension.key),
-    severityWeight: Math.round((severityMax / 35) * 100) / 100,
-    relevanceWeight: Math.round((associationMax / 30) * 100) / 100,
+    severityScores: {...(dimension.scoring.severity_scores ?? {})},
+    associationScores: {...(dimension.scoring.association_scores ?? {})},
     thresholds: {p1: Number(dimension.scoring.p1_min ?? 85), p2: Number(dimension.scoring.p2_min ?? 65), p3: Number(dimension.scoring.p3_min ?? 40)},
     ttlHours: Number(dimension.scoring.alert_expiry_days ?? 14) * 24,
     contentItems: dimension.content_items,
@@ -945,18 +943,27 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
   };
 }
 
+function diffScores(original: Record<string, number>, updated: Record<string, number>): Record<string, number> {
+  const diff: Record<string, number> = {};
+  for (const key of Object.keys(updated)) {
+    if (updated[key] !== original[key]) diff[key] = updated[key];
+  }
+  return diff;
+}
+
 export function updateDimensionConfig(original: MonitoringDimension, updated: MonitoringDimension): Record<string, unknown> {
-  const source = original.source;
-  if (!source) return {};
-  const scale = (values: Record<string, number> | undefined, ratio: number, maximum: number) => Object.fromEntries(
-    Object.entries(values ?? {}).map(([key, value]) => [key, Math.max(0, Math.min(maximum, Math.round(value * ratio)))]),
-  );
-  const severityRatio = original.severityWeight > 0 ? updated.severityWeight / original.severityWeight : 1;
-  const relevanceRatio = original.relevanceWeight > 0 ? updated.relevanceWeight / original.relevanceWeight : 1;
-  return {
-    severity_scores: scale(source.scoring.severity_scores, severityRatio, 35),
-    association_scores: scale(source.scoring.association_scores, relevanceRatio, 30),
-    p1_min: updated.thresholds.p1, p2_min: updated.thresholds.p2, p3_min: updated.thresholds.p3,
-    alert_expiry_days: Math.max(1, Math.round(updated.ttlHours / 24)),
-  };
+  const patch: Record<string, unknown> = {};
+
+  const severityDiff = diffScores(original.severityScores, updated.severityScores);
+  if (Object.keys(severityDiff).length > 0) patch.severity_scores = severityDiff;
+
+  const associationDiff = diffScores(original.associationScores, updated.associationScores);
+  if (Object.keys(associationDiff).length > 0) patch.association_scores = associationDiff;
+
+  if (updated.thresholds.p1 !== original.thresholds.p1) patch.p1_min = updated.thresholds.p1;
+  if (updated.thresholds.p2 !== original.thresholds.p2) patch.p2_min = updated.thresholds.p2;
+  if (updated.thresholds.p3 !== original.thresholds.p3) patch.p3_min = updated.thresholds.p3;
+  if (updated.ttlHours !== original.ttlHours) patch.alert_expiry_days = Math.max(1, Math.round(updated.ttlHours / 24));
+
+  return patch;
 }

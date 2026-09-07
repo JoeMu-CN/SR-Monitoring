@@ -2,14 +2,18 @@ import {describe, expect, it, vi} from 'vitest';
 import {
   api,
   mapDataSource,
+  mapDimension,
   mapRiskAlert,
   mapSupplier,
   mapSupplierListItem,
+  updateDimensionConfig,
   type DataSourceRead,
+  type DimensionRead,
   type RiskAlertRead,
   type SupplierListItem,
   type SupplierRead,
 } from './api';
+import type {MonitoringDimension} from './types';
 
 describe('API 数据映射', () => {
   it('将风险提醒映射为 Google UI 风险卡片', () => {
@@ -229,5 +233,74 @@ describe('研究 API 请求契约', () => {
     expect(deleteOptions.body).toBeUndefined();
     expect(new Headers(deleteOptions.headers).get('X-CSRF-Token')).toBe('csrf-research');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('updateDimensionConfig 幂等性', () => {
+  const dimensionRead = (overrides: Partial<DimensionRead['scoring']> = {}): DimensionRead => ({
+    key: 'geopolitical',
+    label: '地缘政治与安全',
+    description: '',
+    content_items: ['制裁'],
+    data_sources: [],
+    event_types: ['geopolitical'],
+    match_columns: ['entity', 'country', 'industry'],
+    enabled: true,
+    has_override: false,
+    active_alerts: 0,
+    scoring: {
+      rule_version: 'risk-score-v1',
+      severity_scores: {critical: 35, high: 28, medium: 20, low: 10},
+      association_scores: {registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12, country: 8, industry: 12},
+      p1_min: 85,
+      p2_min: 65,
+      p3_min: 40,
+      alert_expiry_days: 90,
+      ...overrides,
+    },
+  });
+
+  const mapped = (read: DimensionRead): MonitoringDimension => mapDimension(read);
+
+  it('未修改任何字段时 patch 不包含 severity_scores/association_scores', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch).not.toHaveProperty('severity_scores');
+    expect(patch).not.toHaveProperty('association_scores');
+  });
+
+  it('含 country/industry 的地缘维度未修改时 patch 不包含评分矩阵', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch).not.toHaveProperty('severity_scores');
+    expect(patch).not.toHaveProperty('association_scores');
+  });
+
+  it('只改 critical 时 patch 仅含该键', () => {
+    const original = mapped(dimensionRead());
+    const updated = mapped(dimensionRead());
+    updated.severityScores = {...updated.severityScores, critical: 30};
+    const patch = updateDimensionConfig(original, updated);
+    expect(patch.severity_scores).toEqual({critical: 30});
+    expect(patch).not.toHaveProperty('association_scores');
+  });
+
+  it('1.0 → 0.5 → 1.0 的往返不再丢失原值', () => {
+    const original = mapped(dimensionRead());
+    // 用户把 critical 从 35 下调到 17
+    const down = mapped(dimensionRead());
+    down.severityScores = {...down.severityScores, critical: 17};
+    const downPatch = updateDimensionConfig(original, down);
+    expect(downPatch.severity_scores).toEqual({critical: 17});
+
+    // 再上调回 35（等于原值），patch 应为空，且 country/industry 未被连带缩放
+    const up = mapped(dimensionRead());
+    up.severityScores = {...up.severityScores, critical: 35};
+    const upPatch = updateDimensionConfig(original, up);
+    expect(upPatch.severity_scores).toBeUndefined();
+    expect(up.associationScores.country).toBe(8);
+    expect(up.associationScores.industry).toBe(12);
   });
 });

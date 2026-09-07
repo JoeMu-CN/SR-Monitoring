@@ -1,8 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React, {useEffect, useState} from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
 import {api, RuleEngineOptions, SandboxResult, VALIDITY_MODE_LABELS} from '../api';
 import { MonitoringDimension } from '../types';
 import {SignalFilterSection} from './SignalFilterSection';
+
+// 严重程度与关联类型的展示标签（与后端 Severity / MatchType 对齐）
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: '严重',
+  high: '高',
+  medium: '中',
+  low: '低',
+};
+
+const ASSOCIATION_LABELS: Record<string, string> = {
+  registry_no: '注册号',
+  legal_name: '法人全称',
+  alias: '别名',
+  site_distance: '地点距离',
+  site_text: '地点文本',
+  product: '产品',
+  country: '国家',
+  industry: '行业',
+};
+
+// 后端 ScoringSettings 默认分值（severity 0-35，association 0-30）
+const DEFAULT_SEVERITY_SCORES: Record<string, number> = {critical: 35, high: 28, medium: 20, low: 10};
+const DEFAULT_ASSOCIATION_SCORES: Record<string, number> = {
+  registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12,
+  country: 8, industry: 12,
+};
+
+const SEVERITY_MAX = 35;
+const ASSOCIATION_MAX = 30;
 
 interface RuleEngineViewProps {
   dimensions: MonitoringDimension[];
@@ -22,12 +51,13 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const selectedDim = dimensions.find((d) => d.id === activeDimId) || dimensions[0];
 
   // Editable configuration state
-  const [severityWeight, setSeverityWeight] = useState(selectedDim?.severityWeight ?? 0.5);
-  const [relevanceWeight, setRelevanceWeight] = useState(selectedDim?.relevanceWeight ?? 0.5);
+  const [severityScores, setSeverityScores] = useState<Record<string, number>>(selectedDim?.severityScores ?? {});
+  const [associationScores, setAssociationScores] = useState<Record<string, number>>(selectedDim?.associationScores ?? {});
   const [p1Threshold, setP1Threshold] = useState(selectedDim?.thresholds.p1 ?? 85);
   const [p2Threshold, setP2Threshold] = useState(selectedDim?.thresholds.p2 ?? 65);
   const [p3Threshold, setP3Threshold] = useState(selectedDim?.thresholds.p3 ?? 40);
   const [ttlHours, setTtlHours] = useState(selectedDim?.ttlHours ?? 336);
+  const [configError, setConfigError] = useState('');
 
   // Sandbox testing state
   const reduceMotion = useReducedMotion();
@@ -59,12 +89,13 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   // Update editor values when active dimension changes
   React.useEffect(() => {
     if (selectedDim) {
-      setSeverityWeight(selectedDim.severityWeight);
-      setRelevanceWeight(selectedDim.relevanceWeight);
+      setSeverityScores({...selectedDim.severityScores});
+      setAssociationScores({...selectedDim.associationScores});
       setP1Threshold(selectedDim.thresholds.p1);
       setP2Threshold(selectedDim.thresholds.p2);
       setP3Threshold(selectedDim.thresholds.p3);
       setTtlHours(selectedDim.ttlHours);
+      setConfigError('');
       if (selectedDim.source?.event_types[0]) setSandboxEventType(selectedDim.source.event_types[0]);
       setSandboxResult(null);
       setSandboxError('');
@@ -73,10 +104,17 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
   const handleSaveConfig = async () => {
     if (!selectedDim) return;
+    // 前端阻止超范围提交：严重程度 0-35，关联类型 0-30
+    const severityOutOfRange = Object.entries(severityScores).some(([key, value]) => value < 0 || value > SEVERITY_MAX);
+    const associationOutOfRange = Object.entries(associationScores).some(([key, value]) => value < 0 || value > ASSOCIATION_MAX);
+    if (severityOutOfRange || associationOutOfRange) {
+      setConfigError('分值超出允许范围：严重程度 0-35，关联类型 0-30');
+      return;
+    }
     const updated: MonitoringDimension = {
       ...selectedDim,
-      severityWeight,
-      relevanceWeight,
+      severityScores: {...severityScores},
+      associationScores: {...associationScores},
       thresholds: {
         p1: Number(p1Threshold),
         p2: Number(p2Threshold),
@@ -84,8 +122,12 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
       },
       ttlHours: Number(ttlHours),
     };
-    await onUpdateDimension(updated);
-    alert(`规则 [${selectedDim.name}] 配置已成功保存！`);
+    try {
+      await onUpdateDimension(updated);
+      alert(`规则 [${selectedDim.name}] 配置已成功保存！`);
+    } catch (caught) {
+      setConfigError(caught instanceof Error ? caught.message : '规则配置保存失败');
+    }
   };
 
   const splitValues = (value: string) => value.split(/[，,、]/).map((item) => item.trim()).filter(Boolean);
@@ -243,8 +285,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    setSeverityWeight(selectedDim.severityWeight);
-                    setRelevanceWeight(selectedDim.relevanceWeight);
+                    setSeverityScores({...selectedDim.severityScores});
+                    setAssociationScores({...selectedDim.associationScores});
+                    setConfigError('');
                   }}
                   className="px-3 py-1.5 border border-[#c2c6d2] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50"
                 >
@@ -295,40 +338,80 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               </section>
             </div>
 
-            {/* Sliders */}
+            {/* 评分矩阵编辑表 */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
+              <section className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="font-bold text-[#424751]">严重性权重 (SEVERITY)</span>
-                  <span className="font-mono font-bold text-[#004782]">{severityWeight}</span>
+                  <span className="font-bold text-[#424751]">严重程度分值 (0-{SEVERITY_MAX})</span>
                 </div>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1.0"
-                  step="0.05"
-                  value={severityWeight}
-                  onChange={(e) => setSeverityWeight(parseFloat(e.target.value))}
-                  className="w-full accent-[#004782] cursor-pointer"
-                />
-              </div>
+                <div className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-left text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                        <th className="px-3 py-2 font-bold">严重程度</th>
+                        <th className="px-3 py-2 font-bold text-right">当前值</th>
+                        <th className="px-3 py-2 font-bold text-right">默认值</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(severityScores).map((key) => (
+                        <tr key={key} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
+                          <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{SEVERITY_LABELS[key] ?? key}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              max={SEVERITY_MAX}
+                              value={severityScores[key]}
+                              onChange={(e) => setSeverityScores((current) => ({...current, [key]: Number(e.target.value)}))}
+                              className="w-20 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-700 rounded px-2 py-0.5 text-right font-mono font-bold text-[#101d28] dark:text-white"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-500">{DEFAULT_SEVERITY_SCORES[key] ?? severityScores[key]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
 
-              <div className="space-y-2">
+              <section className="space-y-2">
                 <div className="flex justify-between text-[13px]">
-                  <span className="font-bold text-[#424751]">业务关联度 (RELEVANCE)</span>
-                  <span className="font-mono font-bold text-[#004782]">{relevanceWeight}</span>
+                  <span className="font-bold text-[#424751]">关联类型分值 (0-{ASSOCIATION_MAX})</span>
                 </div>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1.0"
-                  step="0.05"
-                  value={relevanceWeight}
-                  onChange={(e) => setRelevanceWeight(parseFloat(e.target.value))}
-                  className="w-full accent-[#004782] cursor-pointer"
-                />
-              </div>
+                <div className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-left text-[11px] text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                        <th className="px-3 py-2 font-bold">关联类型</th>
+                        <th className="px-3 py-2 font-bold text-right">当前值</th>
+                        <th className="px-3 py-2 font-bold text-right">默认值</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(associationScores).map((key) => (
+                        <tr key={key} className="border-b border-slate-100 dark:border-slate-800 last:border-0">
+                          <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{ASSOCIATION_LABELS[key] ?? key}</td>
+                          <td className="px-3 py-2 text-right">
+                            <input
+                              type="number"
+                              min="0"
+                              max={ASSOCIATION_MAX}
+                              value={associationScores[key]}
+                              onChange={(e) => setAssociationScores((current) => ({...current, [key]: Number(e.target.value)}))}
+                              className="w-20 bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-700 rounded px-2 py-0.5 text-right font-mono font-bold text-[#101d28] dark:text-white"
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-slate-500">{DEFAULT_ASSOCIATION_SCORES[key] ?? associationScores[key]}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
             </div>
+
+            {configError && <div role="alert" className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{configError}</div>}
 
             {/* Risk Level Trigger Thresholds */}
             <div className="space-y-2">

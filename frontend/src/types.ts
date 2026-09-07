@@ -130,8 +130,8 @@ export interface MonitoringDimension {
   icon: string;
   enabled: boolean;
   ruleId: string;
-  severityWeight: number; // 0 - 1
-  relevanceWeight: number; // 0 - 1
+  severityScores: Record<string, number>; // 严重程度分值，0-35
+  associationScores: Record<string, number>; // 关联类型分值，0-30
   thresholds: {
     p1: number; // >= 85
     p2: number; // >= 65

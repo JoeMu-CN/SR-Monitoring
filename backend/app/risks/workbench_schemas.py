@@ -87,6 +87,29 @@ class DimensionSourceRead(BaseModel):
     valid_signal_count: int | None
 
 
+class DimensionInputSourceRead(BaseModel):
+    """observed 中单个信源的输入健康度聚合。"""
+
+    code: str
+    name: str
+    signal_count: int
+    latest_at: datetime | None
+
+
+class DimensionInputsRead(BaseModel):
+    """维度输入健康度反查结果。
+
+    declared_* 来自维度声明信源与 data_sources 表的实时 join；
+    observed 来自该维度实际接管的提醒所依赖的原始信号按 source_id 聚合。
+    """
+
+    declared_total: int
+    declared_linked: int
+    declared_enabled: int
+    observed: list[DimensionInputSourceRead]
+    has_input: bool
+
+
 class DimensionRead(BaseModel):
     """单个监控维度的运行时状态（默认配置 + DB 覆盖合并后）。"""
 

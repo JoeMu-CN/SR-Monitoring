@@ -6,11 +6,11 @@
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.ai.schemas import SignalAnalysisResult
@@ -25,9 +25,20 @@ from app.database import get_session
 from app.risks.engine.config import ALL_COLUMNS
 from app.risks.engine.engine import evaluate_event
 from app.risks.engine.registry import RuntimeDimension, load_dimensions
-from app.risks.models import RiskAlert, RuleDimensionConfig
-from app.risks.query_validity import valid_signal_condition
+from app.risks.models import (
+    RiskAlert,
+    RiskEvent,
+    RiskEventSignal,
+    RuleDimensionConfig,
+    SupplierEventMatch,
+)
+from app.risks.query_validity import (
+    current_alert_condition,
+    valid_signal_condition,
+)
 from app.risks.workbench_schemas import (
+    DimensionInputSourceRead,
+    DimensionInputsRead,
     DimensionRead,
     DimensionSourceRead,
     DimensionToggle,
@@ -249,6 +260,77 @@ def get_dimension(
     if dim is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
     return _to_read(dim, override_keys, counts, source_map)
+
+
+@router.get("/dimensions/{key}/inputs", response_model=DimensionInputsRead)
+def get_dimension_inputs(
+    key: str,
+    session: SessionDependency,
+    _user: RuleSummaryView,
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> DimensionInputsRead:
+    """维度输入健康度反查。
+
+    declared_* 复用任务 13 的 _source_status_map join 结果；
+    observed 从该维度实际接管的 current 提醒反查其依赖的原始信号，
+    按 source_id 聚合（alert → SupplierEventMatch → RiskEvent →
+    RiskEventSignal → RawSignal → DataSource）。未声明但实际有产出的
+    信源如实返回、不隐藏。
+    """
+    dimensions, _, _, _ = _load_state(session)
+    dim = next((d for d in dimensions if d.key == key), None)
+    if dim is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
+
+    declared_codes = {s.code for s in dim.config.data_sources}
+    source_map = _source_status_map(session, declared_codes)
+    declared_total = len(declared_codes)
+    declared_linked = sum(1 for s in source_map.values() if s.linked)
+    declared_enabled = sum(
+        1 for s in source_map.values() if s.linked and s.enabled
+    )
+
+    now_utc = datetime.now(UTC)
+    cutoff = now_utc - timedelta(days=days)
+    alert_condition = and_(
+        current_alert_condition(now_utc),
+        RiskAlert.score_detail["dimension"].astext == key,
+        RiskAlert.updated_at >= cutoff,
+    )
+    rows = session.execute(
+        select(
+            DataSource.code,
+            DataSource.name,
+            func.count(RawSignal.id),
+            func.max(func.coalesce(RawSignal.published_at, RawSignal.collected_at)),
+        )
+        .select_from(RiskAlert)
+        .join(SupplierEventMatch, SupplierEventMatch.id == RiskAlert.match_id)
+        .join(RiskEvent, RiskEvent.id == SupplierEventMatch.event_id)
+        .join(RiskEventSignal, RiskEventSignal.event_id == RiskEvent.id)
+        .join(RawSignal, RawSignal.id == RiskEventSignal.signal_id)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(alert_condition)
+        .group_by(DataSource.code, DataSource.name)
+    ).all()
+
+    observed = [
+        DimensionInputSourceRead(
+            code=code,
+            name=name,
+            signal_count=int(count),
+            latest_at=latest_at,
+        )
+        for code, name, count, latest_at in rows
+    ]
+    has_input = declared_enabled > 0 and bool(observed)
+    return DimensionInputsRead(
+        declared_total=declared_total,
+        declared_linked=declared_linked,
+        declared_enabled=declared_enabled,
+        observed=observed,
+        has_input=has_input,
+    )
 
 
 @router.put("/dimensions/{key}", response_model=DimensionRead)

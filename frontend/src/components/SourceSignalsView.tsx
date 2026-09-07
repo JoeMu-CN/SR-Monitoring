@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ChevronDown, ChevronUp, ExternalLink} from 'lucide-react';
 import {Link, useParams, useSearchParams} from 'react-router-dom';
-import {api, ApiError, type SourceSignalListResponse} from '../api';
+import {api, ApiError, VALIDITY_MODE_LABELS, VALIDITY_STATE_LABELS, type SourceSignalListResponse} from '../api';
 import {routePaths, type SourceSignalScope} from '../routes';
 
 const PAGE_SIZE = 20;
@@ -127,7 +127,9 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
         <div>
           <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">{data.source.name} · 已采集记录</h1>
           <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-            编码 <span className="font-mono font-bold">{data.source.code}</span> · {data.source.signal_validity_days === null ? '记录永久有效' : `记录有效期 ${data.source.signal_validity_days} 天`}
+            编码 <span className="font-mono font-bold">{data.source.code}</span> · {data.source.validity_policy
+              ? `${VALIDITY_MODE_LABELS[data.source.validity_policy.mode] ?? data.source.validity_policy.mode}${data.source.validity_policy.fixed_days != null ? ` ${data.source.validity_policy.fixed_days} 天` : ''}`
+              : (data.source.signal_validity_days === null ? '记录永久有效' : `记录有效期 ${data.source.signal_validity_days} 天`)}
           </p>
         </div>
       </header>
@@ -165,7 +167,12 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
               return (
                 <article key={signal.id} role="listitem" className="space-y-3 p-4 sm:p-5">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <h2 className="min-w-0 text-sm font-bold leading-relaxed text-slate-900 dark:text-white">{signal.title}</h2>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <h2 className="min-w-0 text-sm font-bold leading-relaxed text-slate-900 dark:text-white">{signal.title}</h2>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${signal.validity_state === 'active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : signal.validity_state === 'expired' ? 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300' : signal.validity_state === 'revoked' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : signal.validity_state === 'superseded' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : signal.validity_state === 'conflicted' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : signal.validity_state === 'legacy' ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                        {VALIDITY_STATE_LABELS[signal.validity_state] ?? signal.validity_state}
+                      </span>
+                    </div>
                     {sourceUrl && (
                       <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 shrink-0 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300">
                         查看原文<ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
@@ -176,6 +183,10 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
                     <div><dt className="font-bold">发布时间</dt><dd>{formatDateTime(signal.published_at)}</dd></div>
                     <div><dt className="font-bold">采集时间</dt><dd>{formatDateTime(signal.collected_at)}</dd></div>
                     <div className="min-w-0"><dt className="font-bold">外部编号</dt><dd className="break-all font-mono">{signal.external_id ?? '未提供'}</dd></div>
+                    <div><dt className="font-bold">有效期截止</dt><dd>{formatDateTime(signal.valid_until)}</dd></div>
+                    <div><dt className="font-bold">复核时间</dt><dd>{formatDateTime(signal.review_due_at)}</dd></div>
+                    <div className="min-w-0"><dt className="font-bold">策略版本</dt><dd className="break-all font-mono">{signal.validity_policy_version ?? '未生成'}</dd></div>
+                    <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd className="break-words">{signal.validity_reason.code}{signal.validity_reason.anchor_source !== 'legacy' ? `（锚定 ${signal.validity_reason.anchor_source}）` : ''}</dd></div>
                   </dl>
                   <p className="max-w-[75ch] whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300">{content}</p>
                   {signal.content.length > 240 && (

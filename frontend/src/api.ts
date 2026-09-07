@@ -1,5 +1,51 @@
 import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} from './types';
 
+/* ── 有效期策略类型（任务 8-10 后端已实现，任务 11 前端对齐） ───────── */
+
+export type ValidityMode = 'fixed_days' | 'until_superseded' | 'until_revoked' | 'event_end_plus_grace' | 'indefinite';
+
+export type ValidityState = 'pending_classification' | 'active' | 'expired' | 'superseded' | 'revoked' | 'conflicted' | 'legacy';
+
+export type LifecycleAction = 'assert' | 'confirm' | 'revoke' | 'supersede';
+
+export type ValidityProfile = string;
+
+export interface SourceValidityPolicy {
+  readonly profile?: ValidityProfile | null;
+  readonly mode: ValidityMode;
+  readonly fixed_days?: number | null;
+  readonly grace_days?: number | null;
+  readonly critical_grace_days?: number | null;
+  readonly review_days?: number | null;
+  readonly review_required?: boolean;
+}
+
+export type ValidityAnchorSource = 'published_at' | 'collected_at' | 'official_valid_until' | 'event_end' | 'legacy';
+
+export interface ValidityReasonRead {
+  readonly code: string;
+  readonly anchor_source: ValidityAnchorSource;
+  readonly details: Record<string, unknown>;
+}
+
+export const VALIDITY_MODE_LABELS: Record<ValidityMode, string> = {
+  fixed_days: '固定天数',
+  until_superseded: '替代时失效',
+  until_revoked: '撤销时失效',
+  event_end_plus_grace: '事件结束+宽限',
+  indefinite: '长期有效',
+};
+
+export const VALIDITY_STATE_LABELS: Record<ValidityState, string> = {
+  pending_classification: '待分类',
+  active: '有效',
+  expired: '已过期',
+  superseded: '已替代',
+  revoked: '已撤销',
+  conflicted: '冲突',
+  legacy: '旧版兼容',
+};
+
 export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
 export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type ResearchTaskEventStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'info';
@@ -133,6 +179,13 @@ export interface RiskAlertRead {
   source_url: string | null;
   published_at: string | null;
   updated_at: string;
+  expires_at: string | null;
+  expiry_kind: string;
+  validity_state: ValidityState;
+  valid_until: string | null;
+  review_due_at: string | null;
+  validity_policy_version: string | null;
+  validity_reason: ValidityReasonRead;
 }
 
 export interface EventSignalEvidence {
@@ -174,6 +227,11 @@ export interface EventDetailRead {
   readonly signals: readonly EventSignalEvidence[];
   readonly entities: readonly EventEntityEvidence[];
   readonly locations: readonly EventLocationEvidence[];
+  readonly validity_state: ValidityState;
+  readonly valid_until: string | null;
+  readonly review_due_at: string | null;
+  readonly validity_policy_version: string | null;
+  readonly validity_reason: ValidityReasonRead;
 }
 
 interface RiskAlertListResponse { items: RiskAlertRead[]; total: number }
@@ -255,6 +313,9 @@ export interface DataSourceRead {
   total_signal_count?: number;
   valid_signal_count?: number;
   signal_validity_days?: number | null;
+  validity_policy?: SourceValidityPolicy | null;
+  validity_policy_version?: string | null;
+  applies_to?: 'new_signals_only';
 }
 
 export interface SourceSignalRead {
@@ -265,6 +326,16 @@ export interface SourceSignalRead {
   readonly url: string | null;
   readonly published_at: string | null;
   readonly collected_at: string;
+  readonly validity_profile: ValidityProfile | null;
+  readonly validity_state: ValidityState;
+  readonly valid_from: string | null;
+  readonly valid_until: string | null;
+  readonly review_due_at: string | null;
+  readonly validity_mode: ValidityMode | null;
+  readonly validity_key: string | null;
+  readonly lifecycle_action: LifecycleAction;
+  readonly validity_policy_version: string | null;
+  readonly validity_reason: ValidityReasonRead;
 }
 
 export interface SourceSignalListResponse {
@@ -273,6 +344,7 @@ export interface SourceSignalListResponse {
     readonly code: string;
     readonly name: string;
     readonly signal_validity_days: number | null;
+    readonly validity_policy: SourceValidityPolicy | null;
   };
   readonly items: readonly SourceSignalRead[];
   readonly total: number;
@@ -305,6 +377,7 @@ export interface DataSourceWritePayload {
   adapter_config?: Record<string, unknown> | null;
   enabled: boolean;
   signal_validity_days?: number | null;
+  validity_policy?: SourceValidityPolicy | null;
 }
 
 export interface AdapterPreviewResponse {
@@ -355,6 +428,8 @@ export interface DimensionRead {
     code: string;
     name: string;
     status: 'connected' | 'planned' | 'external_tool';
+    validity_mode?: string | null;
+    validity_policy_version?: string | null;
   }>;
   event_types: string[];
   match_columns: string[];
@@ -751,6 +826,11 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     source: alert.source_title || '来源未披露',
     tags: [eventLabels[alert.event_type] ?? alert.event_type, ...alert.match_reasons.slice(0, 2)],
     status: alert.status === 'current' ? 'valid' : 'invalid', overallScore: alert.score,
+    validityState: alert.validity_state,
+    validUntil: alert.valid_until,
+    reviewDueAt: alert.review_due_at,
+    validityReason: alert.validity_reason,
+    validityPolicyVersion: alert.validity_policy_version,
     eventCategory: alert.event_subtype ?? alert.event_type, impactScope: evidenceText(alert.match_evidence),
     evidenceChain: {
       sourceName: alert.source_title || '来源未披露', sourceType: '风险信号', eventSummary: alert.event_summary,
@@ -826,6 +906,9 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
     totalSignalCount: source.total_signal_count ?? 0,
     validSignalCount: source.valid_signal_count ?? source.total_signal_count ?? 0,
     signalValidityDays: source.signal_validity_days ?? null,
+    validityMode: source.validity_policy?.mode ?? null,
+    validityPolicy: source.validity_policy ?? null,
+    validityPolicyVersion: source.validity_policy_version ?? null,
     code: source.code, credibility: source.credibility, schedule: source.schedule,
     endpointUrl: source.endpoint_url ?? null, authType: source.auth_type ?? 'none',
     loginConfig: source.login_config ?? {}, credentialRef: source.credential_ref ?? null,
@@ -851,7 +934,13 @@ export function mapDimension(dimension: DimensionRead): MonitoringDimension {
     thresholds: {p1: Number(dimension.scoring.p1_min ?? 85), p2: Number(dimension.scoring.p2_min ?? 65), p3: Number(dimension.scoring.p3_min ?? 40)},
     ttlHours: Number(dimension.scoring.alert_expiry_days ?? 14) * 24,
     contentItems: dimension.content_items,
-    dataSources: dimension.data_sources,
+    dataSources: dimension.data_sources.map((source) => ({
+      code: source.code,
+      name: source.name,
+      status: source.status,
+      validityMode: typeof source.validity_mode === 'string' ? source.validity_mode : null,
+      validityPolicyVersion: typeof source.validity_policy_version === 'string' ? source.validity_policy_version : null,
+    })),
     source: dimension,
   };
 }

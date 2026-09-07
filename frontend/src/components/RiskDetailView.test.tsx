@@ -39,6 +39,13 @@ const alert = (id: number, status: RiskAlertRead['status'] = 'current'): RiskAle
   source_url: `https://example.test/source-${id}`,
   published_at: '2026-08-30T08:00:00Z',
   updated_at: '2026-08-31T08:00:00Z',
+  expires_at: null,
+  expiry_kind: 'none',
+  validity_state: 'active',
+  valid_until: null,
+  review_due_at: null,
+  validity_policy_version: 'v1',
+  validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
 });
 
 const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetailRead => ({
@@ -55,6 +62,11 @@ const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetai
   signals: [{signal_id: id, title: `原始信号 ${id}`, content: '信号原文内容', url: 'https://example.test/signal', published_at: '2026-08-30T08:00:00Z'}],
   entities: [{name: '关联主体', normalized_name: '关联主体有限公司', registry_no: '91310000'}],
   locations: [{name: '上海生产地点', country_code: 'CN', region: '上海', city: '上海', district: '浦东', latitude: 31.2, longitude: 121.5, radius_km: 10}],
+  validity_state: 'active',
+  valid_until: null,
+  review_due_at: null,
+  validity_policy_version: 'v1',
+  validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
   ...overrides,
 });
 

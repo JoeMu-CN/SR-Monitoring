@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
-import {api, RuleEngineOptions, SandboxResult} from '../api';
+import {api, RuleEngineOptions, SandboxResult, VALIDITY_MODE_LABELS} from '../api';
 import { MonitoringDimension } from '../types';
 import {SignalFilterSection} from './SignalFilterSection';
 
@@ -275,11 +275,19 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   {selectedDim.dataSources.map((source) => (
                     <div key={source.code} className="flex items-center justify-between gap-2 text-[11px]">
                       <span className="text-slate-700 dark:text-slate-300">{source.name}</span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
-                        source.status === 'connected' ? 'bg-emerald-100 text-emerald-700' :
-                        source.status === 'external_tool' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-[#424751]'
-                      }`}>
-                        {source.status === 'connected' ? '已接入' : source.status === 'external_tool' ? '外部核查工具' : '规划中'}
+                      <span className="flex items-center gap-1.5">
+                        {source.validityMode && (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-slate-600 dark:bg-slate-800 dark:text-slate-300" title="有效期模式">
+                            {VALIDITY_MODE_LABELS[source.validityMode as keyof typeof VALIDITY_MODE_LABELS] ?? source.validityMode}
+                            {source.validityPolicyVersion ? ` · 策略版本 ${source.validityPolicyVersion}` : ''}
+                          </span>
+                        )}
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
+                          source.status === 'connected' ? 'bg-emerald-100 text-emerald-700' :
+                          source.status === 'external_tool' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-[#424751]'
+                        }`}>
+                          {source.status === 'connected' ? '已接入' : source.status === 'external_tool' ? '外部核查工具' : '规划中'}
+                        </span>
                       </span>
                     </div>
                   ))}

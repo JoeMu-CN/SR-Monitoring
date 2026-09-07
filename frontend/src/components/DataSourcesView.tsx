@@ -2,7 +2,7 @@ import React, {useState} from 'react';
 import {motion} from 'motion/react';
 import {AlertTriangle, X} from 'lucide-react';
 import {Link} from 'react-router-dom';
-import {api, type DataSourceWritePayload} from '../api';
+import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
 import type {DataSource} from '../types';
 
@@ -58,6 +58,18 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [editingKeyHint, setEditingKeyHint] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [previewText, setPreviewText] = useState('');
+  // 有效期策略编辑状态（独立于 form，避免与 signal_validity_days 冲突）
+  const [validityMode, setValidityMode] = useState<ValidityMode>('fixed_days');
+  const [validityFixedDays, setValidityFixedDays] = useState<number | null>(null);
+  const [validityGraceDays, setValidityGraceDays] = useState<number | null>(null);
+  const [validityCriticalGraceDays, setValidityCriticalGraceDays] = useState<number | null>(null);
+  const [validityReviewDays, setValidityReviewDays] = useState<number | null>(null);
+  const [validityReviewRequired, setValidityReviewRequired] = useState(true);
+  const [validityError, setValidityError] = useState<string | null>(null);
+  // 客户端校验用 UI 状态（不进入策略 payload，后端策略 schema 不接受这些字段）
+  const [validityKeyInput, setValidityKeyInput] = useState('');
+  const [autoRevokeOnMissingSnapshot, setAutoRevokeOnMissingSnapshot] = useState(false);
+  const [authoritativeFullSnapshot, setAuthoritativeFullSnapshot] = useState(false);
 
   const update = (key: keyof DataSourceWritePayload, value: unknown) => {
     setForm((current) => ({...current, [key]: value}));
@@ -81,6 +93,18 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       description: source.description, adapter_config: source.adapterConfig,
       enabled: source.enabled, signal_validity_days: source.signalValidityDays,
     });
+    // 有效期策略：优先取结构化策略，否则回退到旧 signal_validity_days 映射为 fixed_days
+    const policy = source.validityPolicy;
+    setValidityMode(policy?.mode ?? 'fixed_days');
+    setValidityFixedDays(policy?.fixed_days ?? source.signalValidityDays ?? null);
+    setValidityGraceDays(policy?.grace_days ?? null);
+    setValidityCriticalGraceDays(policy?.critical_grace_days ?? null);
+    setValidityReviewDays(policy?.review_days ?? null);
+    setValidityReviewRequired(policy?.review_required ?? true);
+    // 冲突旧字段：signal_validity_days 与策略不一致时阻止保存，避免后端 422
+    const legacyConflict = source.signalValidityDays != null && policy !== null
+      && (policy.mode !== 'fixed_days' || policy.fixed_days !== source.signalValidityDays);
+    setValidityError(legacyConflict ? 'signal_validity_days 与 validity_policy 配置冲突，请先修正有效期策略' : null);
     setAdapterText(Object.keys(source.adapterConfig).length
       ? JSON.stringify(source.adapterConfig, null, 2) : '');
     setPreviewText('');
@@ -121,17 +145,67 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     }
   };
 
+  const buildValidityPolicy = (): SourceValidityPolicy | null => {
+    const policy: SourceValidityPolicy = {mode: validityMode};
+    switch (validityMode) {
+      case 'fixed_days':
+        if (validityFixedDays === null) return null; // 留空=永久有效
+        return {...policy, fixed_days: validityFixedDays, ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}), review_required: validityReviewRequired};
+      case 'event_end_plus_grace':
+        return {
+          ...policy,
+          ...(validityGraceDays !== null ? {grace_days: validityGraceDays} : {}),
+          ...(validityCriticalGraceDays !== null ? {critical_grace_days: validityCriticalGraceDays} : {}),
+          ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}),
+          review_required: validityReviewRequired,
+        };
+      case 'until_superseded':
+      case 'until_revoked':
+      case 'indefinite':
+        return {...policy, ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}), review_required: validityReviewRequired};
+    }
+  };
+
+  const validateValidity = (): string | null => {
+    if (validityMode === 'fixed_days' && validityFixedDays !== null && (validityFixedDays < 1 || validityFixedDays > 3650)) {
+      return '固定天数必须在 1 到 3650 之间';
+    }
+    if (validityMode === 'event_end_plus_grace') {
+      if (validityGraceDays !== null && (validityGraceDays < 1 || validityGraceDays > 3650)) return '宽限天数必须在 1 到 3650 之间';
+      if (validityCriticalGraceDays !== null && (validityCriticalGraceDays < 1 || validityCriticalGraceDays > 3650)) return '关键宽限天数必须在 1 到 3650 之间';
+    }
+    if (validityMode === 'until_superseded' && !validityKeyInput.trim()) {
+      return '替代策略必须提供替代判定键（validity_key）';
+    }
+    if (validityMode === 'until_revoked' && autoRevokeOnMissingSnapshot && !authoritativeFullSnapshot) {
+      return '声明按完整快照缺失自动撤销时，必须同时声明权威完整快照（authoritative_full_snapshot）';
+    }
+    if (validityReviewDays !== null && (validityReviewDays < 1 || validityReviewDays > 3650)) return '复核天数必须在 1 到 3650 之间';
+    return null;
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
+    setValidityError(null);
+    const validityCheck = validateValidity();
+    if (validityCheck) {
+      setValidityError(validityCheck);
+      return;
+    }
     try {
       const isExternalTool = form.source_type === 'external_tool';
       const adapterConfig = isExternalTool ? null : parseAdapter();
+      const validityPolicy = buildValidityPolicy();
+      // 旧 signal_validity_days 与 validity_policy 必须一致：fixed_days 模式同步天数，其余模式置空
+      const signalValidityDays = validityMode === 'fixed_days' ? validityFixedDays : null;
       const payload = {
         ...form,
         schedule: isExternalTool ? null : form.schedule,
         adapter_config: adapterConfig,
         api_key: apiKeyInput.trim() || undefined,
+        signal_validity_days: signalValidityDays,
+        validity_policy: validityPolicy,
       };
       if (editingId) {
         const {code: _code, adapter_config: _adapterConfig, api_key: _apiKey, ...rest} = payload;
@@ -221,7 +295,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         </div>
       </div>
 
-      {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
+      {error && <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
       {!warningDismissed && delayedSources.length > 0 && (
         <motion.div
@@ -390,9 +464,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         （累计 {source.totalSignalCount.toLocaleString()}）
                       </Link>
                     )}
-                    {source.signalValidityDays != null && (
-                      <span className="ml-1 text-[10px] font-normal text-slate-400" title="信息记录有效期">
-                        有效期 {source.signalValidityDays} 天
+                    {source.validityPolicy && (
+                      <span className="ml-1 text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
+                        {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
+                        {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
                       </span>
                     )}
                   </div>
@@ -463,10 +538,69 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}
                 <input disabled={isExternalForm} value={isExternalForm ? '按需调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
               </label>
-              <label className="text-xs font-bold" title="信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录、风险提醒按该时长失效">
-                信息记录有效期（天）
-                <input type="number" min="1" max="3650" placeholder="留空=永久有效" value={form.signal_validity_days ?? ''} onChange={(event) => update('signal_validity_days', event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+              <label className="text-xs font-bold sm:col-span-2" title="选择信号有效期策略模式；不同模式启用不同配置字段">
+                有效期策略
+                <select
+                  value={validityMode}
+                  onChange={(event) => {
+                    setValidityMode(event.target.value as ValidityMode);
+                    setValidityError(null);
+                  }}
+                  className="mt-1 w-full border rounded-lg p-2"
+                >
+                  {(Object.keys(VALIDITY_MODE_LABELS) as ValidityMode[]).map((mode) => (
+                    <option key={mode} value={mode}>{VALIDITY_MODE_LABELS[mode]}</option>
+                  ))}
+                </select>
               </label>
+              {validityMode === 'fixed_days' && (
+                <label className="text-xs font-bold" title="信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录">
+                  固定天数（天）
+                  <input type="number" min="1" max="3650" placeholder="留空=永久有效" value={validityFixedDays ?? ''} onChange={(event) => setValidityFixedDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                </label>
+              )}
+              {validityMode === 'event_end_plus_grace' && (
+                <>
+                  <label className="text-xs font-bold" title="事件结束后额外宽限的天数">
+                    宽限天数（天）
+                    <input type="number" min="1" max="3650" placeholder="留空=不设宽限" value={validityGraceDays ?? ''} onChange={(event) => setValidityGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  </label>
+                  <label className="text-xs font-bold" title="关键事件（如制裁、出口管制）的额外宽限天数">
+                    关键宽限天数（天）
+                    <input type="number" min="1" max="3650" placeholder="留空=不设关键宽限" value={validityCriticalGraceDays ?? ''} onChange={(event) => setValidityCriticalGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  </label>
+                </>
+              )}
+              {validityMode === 'until_superseded' && (
+                <label className="text-xs font-bold sm:col-span-2" title="替代判定依赖信号携带的 validity_key；未提供 key 时替代策略无法生效">
+                  替代判定键（validity_key）
+                  <input value={validityKeyInput} onChange={(event) => setValidityKeyInput(event.target.value)} placeholder="例如实体编号、公告编号" className="mt-1 w-full border rounded-lg p-2 font-mono" />
+                  <span className="mt-1 block text-[11px] font-normal text-slate-500">该信源信号必须携带此键，替代策略才能判定后续信号是否取代当前信号。</span>
+                </label>
+              )}
+              {validityMode === 'until_revoked' && (
+                <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2">
+                  <input type="checkbox" checked={autoRevokeOnMissingSnapshot} onChange={(event) => setAutoRevokeOnMissingSnapshot(event.target.checked)} />
+                  按完整快照缺失自动撤销（名单类信源）
+                </label>
+              )}
+              {validityMode === 'until_revoked' && autoRevokeOnMissingSnapshot && (
+                <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2" title="自动撤销依赖信源声明为权威完整快照；未声明时后端不会执行自动撤销">
+                  <input type="checkbox" checked={authoritativeFullSnapshot} onChange={(event) => setAuthoritativeFullSnapshot(event.target.checked)} />
+                  声明权威完整快照（authoritative_full_snapshot）
+                </label>
+              )}
+              <label className="text-xs font-bold" title="复核提醒天数；到期后提醒进入复核窗口">
+                复核天数（天）
+                <input type="number" min="1" max="3650" placeholder="留空=不设复核" value={validityReviewDays ?? ''} onChange={(event) => setValidityReviewDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+              </label>
+              <label className="text-xs font-bold flex items-center gap-2">
+                <input type="checkbox" checked={validityReviewRequired} onChange={(event) => setValidityReviewRequired(event.target.checked)} />
+                需要复核
+              </label>
+              {validityError && (
+                <p role="alert" className="sm:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{validityError}</p>
+              )}
               <label className="text-xs font-bold">认证方式
                 <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">
                   <option value="none">无需认证</option>

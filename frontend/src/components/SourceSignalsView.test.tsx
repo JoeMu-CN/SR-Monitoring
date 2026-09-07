@@ -6,7 +6,7 @@ import {api, ApiError, type SourceSignalListResponse} from '../api';
 import {SourceSignalsView} from './SourceSignalsView';
 
 const emptyResponse: SourceSignalListResponse = {
-  source: {id: 17, code: 'OFFICIAL-17', name: '官方风险源', signal_validity_days: 30},
+  source: {id: 17, code: 'OFFICIAL-17', name: '官方风险源', signal_validity_days: 30, validity_policy: {mode: 'fixed_days', fixed_days: 30}},
   items: [],
   total: 0,
   offset: 0,
@@ -23,6 +23,16 @@ const populatedResponse: SourceSignalListResponse = {
     url: 'https://official.example/events/91',
     published_at: '2026-08-31T08:00:00Z',
     collected_at: '2026-09-01T08:00:00Z',
+    validity_profile: 'transport_disruption',
+    validity_state: 'active',
+    valid_from: '2026-08-31T08:00:00Z',
+    valid_until: '2026-09-30T08:00:00Z',
+    review_due_at: null,
+    validity_mode: 'fixed_days',
+    validity_key: null,
+    lifecycle_action: 'assert',
+    validity_policy_version: 'v1',
+    validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
   }],
   total: 25,
   offset: 20,

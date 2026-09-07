@@ -16,6 +16,13 @@ export interface RiskItem {
   source?: string; // e.g. "Reuters", "Gov API", "Bloomberg"
   tags?: string[];
   status: 'valid' | 'invalid';
+
+  // 有效期派生状态（来自提醒/事件/信号的有效期字段）
+  validityState?: string; // active|expired|revoked|superseded|conflicted|legacy
+  validUntil?: string | null; // 截止时间
+  reviewDueAt?: string | null; // 复核时间
+  validityReason?: {code: string; anchor_source: string; details: Record<string, unknown>};
+  validityPolicyVersion?: string | null; // 策略版本指纹
   
   // Detailed information
   overallScore?: number; // e.g. 85 or 92
@@ -112,6 +119,9 @@ export interface DataSource {
   totalSignalCount: number; // 累计信号数（历史存量）
   validSignalCount: number; // 有效期内信号数
   signalValidityDays: number | null; // 信源级信号有效期（天），null=永久
+  validityMode: string | null; // 有效期模式：fixed_days|until_superseded|until_revoked|event_end_plus_grace|indefinite|null
+  validityPolicy: import('./api').SourceValidityPolicy | null; // 完整有效期策略对象
+  validityPolicyVersion: string | null; // 服务端生成的策略版本指纹
 }
 
 export interface MonitoringDimension {
@@ -133,6 +143,8 @@ export interface MonitoringDimension {
     code: string;
     name: string;
     status: 'connected' | 'planned' | 'external_tool';
+    validityMode?: string | null; // 引用信源的有效期模式（后端提供时展示）
+    validityPolicyVersion?: string | null; // 引用信源的策略版本
   }>;
   source?: import('./api').DimensionRead;
 }

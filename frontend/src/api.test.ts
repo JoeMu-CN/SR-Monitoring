@@ -35,6 +35,13 @@ describe('API 数据映射', () => {
       source_url: null,
       published_at: '2026-08-08T01:00:00Z',
       updated_at: '2026-08-08T02:00:00Z',
+      expires_at: null,
+      expiry_kind: 'none',
+      validity_state: 'active',
+      valid_until: null,
+      review_due_at: null,
+      validity_policy_version: 'v1',
+      validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
     };
 
     const result = mapRiskAlert(alert);

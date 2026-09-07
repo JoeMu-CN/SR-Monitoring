@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {ArrowLeft, Download, MessageCircleQuestion, RefreshCw, ShieldAlert} from 'lucide-react';
-import {ApiError, api, mapRiskAlert, type EventDetailRead, type RiskAlertRead} from '../api';
+import {ApiError, api, VALIDITY_STATE_LABELS, mapRiskAlert, type EventDetailRead, type RiskAlertRead} from '../api';
 import type {RiskItem} from '../types';
 import {RiskDetailEvidenceSections} from './RiskDetailEvidenceSections';
 
@@ -21,6 +21,10 @@ const levelName: Record<RiskAlertRead['level'], string> = {
 };
 
 const errorMessage = (caught: unknown, fallback: string): string => caught instanceof Error ? caught.message : fallback;
+
+const formatDateTime = (value: string | null) => (
+  value ? new Date(value).toLocaleString('zh-CN', {hour12: false}) : '未提供'
+);
 
 const DetailState = ({title, detail, action}: {readonly title: string; readonly detail: string; readonly action?: React.ReactNode}) => (
   <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-start justify-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60" role="status">
@@ -121,6 +125,9 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-md px-2.5 py-0.5 text-[12px] font-bold text-white ${levelClassName[alert.level]}`}>{alert.level} {levelName[alert.level]}</span>
             <span className="rounded-full border border-[#185fa5]/30 bg-[#185fa5]/5 px-2 py-0.5 text-[11px] font-semibold text-[#004782] dark:border-blue-400/30 dark:bg-blue-400/10 dark:text-blue-300">{alert.status === 'current' ? '当前有效' : '已失效'}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${alert.validity_state === 'active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : alert.validity_state === 'expired' ? 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300' : alert.validity_state === 'revoked' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : alert.validity_state === 'superseded' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : alert.validity_state === 'conflicted' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : alert.validity_state === 'legacy' ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+              {VALIDITY_STATE_LABELS[alert.validity_state] ?? alert.validity_state}
+            </span>
           </div>
           <h1 className="mt-3 text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">{alert.supplier_name}</h1>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600 dark:text-slate-300">{alert.event_summary}</p>
@@ -143,6 +150,16 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
             <p className="font-mono text-2xl font-black text-slate-900 dark:text-white">{alert.score}<span className="ml-1 text-sm text-slate-400">/ 100</span></p>
           </div>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80" aria-label="有效期信息">
+        <h2 className="text-sm font-black text-slate-900 dark:text-white">有效期信息</h2>
+        <dl className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3 dark:text-slate-400">
+          <div><dt className="font-bold">有效期截止</dt><dd>{formatDateTime(alert.valid_until)}</dd></div>
+          <div><dt className="font-bold">复核时间</dt><dd>{formatDateTime(alert.review_due_at)}</dd></div>
+          <div className="min-w-0"><dt className="font-bold">策略版本</dt><dd className="break-all font-mono">{alert.validity_policy_version ?? '未生成'}</dd></div>
+          <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd className="break-words">{alert.validity_reason.code}{alert.validity_reason.anchor_source !== 'legacy' ? `（锚定 ${alert.validity_reason.anchor_source}）` : ''}</dd></div>
+        </dl>
       </section>
 
       {eventLoading && <DetailState title="正在加载事件证据" detail="提醒详情已加载，正在取得事件、信号、主体与地点证据。" />}

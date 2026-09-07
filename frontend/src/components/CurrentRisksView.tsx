@@ -1,6 +1,7 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
+import {VALIDITY_STATE_LABELS} from '../api';
 import type {RiskItem} from '../types';
 
 interface CurrentRisksViewProps {
@@ -154,6 +155,7 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <RiskBadge level={item.level} name={item.levelName} />
+                      <ValidityBadge state={item.validityState} />
                       <span className="truncate text-[15px] font-bold text-slate-900 group-hover:text-[#185fa5] dark:text-white">{item.companyName}</span>
                     </div>
                     {item.location && (
@@ -176,6 +178,14 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
                   </div>
                   <span className="flex items-center gap-1 font-bold text-[#185fa5]">查看详情<ChevronRight className="h-3.5 w-3.5" /></span>
                 </div>
+                {(item.validUntil || item.reviewDueAt || item.validityReason || item.validityPolicyVersion) && (
+                  <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800">
+                    {item.validUntil && <div><dt className="inline font-bold">截止</dt> <dd className="inline font-mono">{formatDateTime(item.validUntil)}</dd></div>}
+                    {item.reviewDueAt && <div><dt className="inline font-bold">复核</dt> <dd className="inline font-mono">{formatDateTime(item.reviewDueAt)}</dd></div>}
+                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline font-mono">{item.validityReason.code}</dd></div>}
+                    {item.validityPolicyVersion && <div><dt className="inline font-bold">策略版本</dt> <dd className="inline font-mono">{item.validityPolicyVersion}</dd></div>}
+                  </dl>
+                )}
               </motion.button>
             ))}
           </div>
@@ -207,3 +217,26 @@ const SourceBadge = ({name}: {name: string}) => (
     {name}
   </span>
 );
+
+const formatDateTime = (value: string) => (
+  new Date(value).toLocaleString('zh-CN', {hour12: false})
+);
+
+const VALIDITY_BADGE_CLASS: Record<string, string> = {
+  active: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+  expired: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+  revoked: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+  superseded: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+  conflicted: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  legacy: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+};
+
+const ValidityBadge = ({state}: {state: string | undefined}) => {
+  if (!state) return null;
+  const label = VALIDITY_STATE_LABELS[state as keyof typeof VALIDITY_STATE_LABELS] ?? state;
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${VALIDITY_BADGE_CLASS[state] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+      {label}
+    </span>
+  );
+};

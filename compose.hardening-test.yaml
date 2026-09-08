@@ -1,0 +1,76 @@
+services:
+  postgres-test:
+    labels:
+      supplier-risk-hardening.owner: "${HARDENING_RUN_ID:?HARDENING_RUN_ID is required}"
+
+  app-test:
+    image: "${HARDENING_TEST_IMAGE:?HARDENING_TEST_IMAGE is required}"
+    labels:
+      supplier-risk-hardening.owner: "${HARDENING_RUN_ID:?HARDENING_RUN_ID is required}"
+    environment:
+      DATABASE_URL: postgresql+psycopg://supplier_risk_test:test_only_password@postgres-test:5432/supplier_risk_test
+      APP_ENV: test
+      AI_PROVIDER: fake
+      AI_BASE_URL: ""
+      AI_MODEL: ""
+      AI_API_KEY: ""
+      SEARCH_PROVIDER: none
+      SEARCH_API_KEY: ""
+      SEARCH_BASE_URL: ""
+      TYC_API_KEY: ""
+      RESEARCH_WORKER_ENABLED: "false"
+      RESEARCH_WORKER_MODE: local_lifecycle_test
+      RESEARCH_DAILY_TOPIC: ""
+      RESEARCH_WEEKLY_TOPIC: ""
+      RESEARCH_MONTHLY_ENABLED: "false"
+      RESEARCH_MONTHLY_TOPIC: ""
+      RESEARCH_CRAWL4AI_ENABLED: "false"
+      RESEARCH_CRAWL4AI_API_TOKEN: ""
+      MONITOR_CRAWL4AI_ENABLED: "false"
+      MONITOR_CRAWL4AI_API_TOKEN: ""
+      NOTIFY_DINGTALK_ENABLED: "false"
+      NOTIFY_DINGTALK_WEBHOOK_URL: ""
+      NOTIFY_DINGTALK_SECRET: ""
+      NOTIFY_FEISHU_ENABLED: "false"
+      NOTIFY_FEISHU_WEBHOOK_URL: ""
+      NOTIFY_FEISHU_SECRET: ""
+      NOTIFY_SERVERCHAN_ENABLED: "false"
+      NOTIFY_SERVERCHAN_SEND_KEY: ""
+      NOTIFY_PUSHPLUS_ENABLED: "false"
+      NOTIFY_PUSHPLUS_TOKEN: ""
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && python tests/seed_e2e.py && uvicorn app.main:app --host 0.0.0.0 --port 8080
+
+  test-runner:
+    image: "${HARDENING_TEST_IMAGE:?HARDENING_TEST_IMAGE is required}"
+    labels:
+      supplier-risk-hardening.owner: "${HARDENING_RUN_ID:?HARDENING_RUN_ID is required}"
+    environment:
+      DATABASE_URL: postgresql+psycopg://supplier_risk_test:test_only_password@postgres-test:5432/supplier_risk_test
+      APP_ENV: test
+      AI_PROVIDER: fake
+      AI_BASE_URL: ""
+      AI_MODEL: ""
+      AI_API_KEY: ""
+      SEARCH_PROVIDER: none
+      SEARCH_API_KEY: ""
+      SEARCH_BASE_URL: ""
+      TYC_API_KEY: ""
+      RESEARCH_WORKER_ENABLED: "false"
+      RESEARCH_CRAWL4AI_ENABLED: "false"
+      MONITOR_CRAWL4AI_ENABLED: "false"
+      NOTIFY_DINGTALK_ENABLED: "false"
+      NOTIFY_FEISHU_ENABLED: "false"
+      NOTIFY_SERVERCHAN_ENABLED: "false"
+      NOTIFY_PUSHPLUS_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: "${HARDENING_EVIDENCE_DIR:?HARDENING_EVIDENCE_DIR is required}"
+        target: /test-evidence
+
+networks:
+  default:
+    labels:
+      supplier-risk-hardening.owner: "${HARDENING_RUN_ID:?HARDENING_RUN_ID is required}"

@@ -52,6 +52,7 @@ vi.mock('./api', async (importOriginal) => {
       createSupplier: vi.fn(),
       toggleSupplier: vi.fn(),
       deleteSupplier: vi.fn(),
+      supplierDeletionImpact: vi.fn(),
     },
   };
 });
@@ -320,6 +321,15 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.agentStatus).mockImplementation(overrides.agentStatus ?? (async () => agentStatusOk));
   vi.mocked(api.dimensionInputs).mockResolvedValue(inputsOk);
   vi.mocked(api.ruleEngineOptions).mockResolvedValue(optionsOk);
+  vi.mocked(api.supplierDeletionImpact).mockResolvedValue({
+    can_delete: true,
+    match_count: 0,
+    alert_count: 0,
+    sites_count: 1,
+    products_count: 1,
+    aliases_count: 1,
+    blocked_reason: null,
+  });
 };
 
 const renderApp = (path: string) => render(
@@ -572,5 +582,55 @@ describe('App 供应商编辑：地点字段无损', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(screen.getByText('编辑供应商 · SUP-0002')).toBeInTheDocument();
     expect(screen.getByDisplayValue('乙测试精密有限公司')).toBeInTheDocument();
+  });
+});
+
+describe('App 供应商编辑：删除影响展示', () => {
+  const blockedImpact = {
+    can_delete: false,
+    match_count: 3,
+    alert_count: 2,
+    sites_count: 2,
+    products_count: 1,
+    aliases_count: 1,
+    blocked_reason: 'supplier_has_risk_history',
+  };
+
+  it('管理员打开编辑时拉取删除影响并在弹窗内渲染阻止提示', async () => {
+    adminSetup();
+    vi.mocked(api.getSupplier).mockResolvedValue(editDetailA);
+    vi.mocked(api.supplierDeletionImpact).mockResolvedValue(blockedImpact);
+    const user = userEvent.setup();
+    renderApp('/suppliers');
+    await screen.findByText('供应商管理');
+    await user.click(await screen.findByRole('button', {name: '编辑供应商：示例精密电子有限公司'}, {timeout: 5000}));
+    await screen.findByText('编辑供应商 · SUP-0001');
+
+    expect(api.supplierDeletionImpact).toHaveBeenCalledTimes(1);
+    const alertBox = await screen.findByRole('alert', {}, {timeout: 5000});
+    expect(alertBox).toHaveTextContent('风险关联 3 条');
+    expect(alertBox).toHaveTextContent('暂停监控可保留全部历史');
+  });
+
+  it('删除影响请求失败时弹窗仍可编辑并显示错误，不触发全局横幅', async () => {
+    adminSetup();
+    vi.mocked(api.getSupplier).mockResolvedValue(editDetailA);
+    vi.mocked(api.supplierDeletionImpact).mockRejectedValue(new ApiError(403, '权限不足'));
+    const user = userEvent.setup();
+    renderApp('/suppliers');
+    await screen.findByText('供应商管理');
+    await user.click(await screen.findByRole('button', {name: '编辑供应商：示例精密电子有限公司'}, {timeout: 5000}));
+    await screen.findByText('编辑供应商 · SUP-0001');
+
+    const alertBox = await screen.findByRole('alert', {}, {timeout: 5000});
+    expect(alertBox).toHaveTextContent('权限不足');
+    expect(alertBox).toHaveTextContent('服务端仍会执行安全检查');
+    // 编辑功能不受影响：法人名称可修改
+    const legalInput = await screen.findByDisplayValue('示例精密电子有限公司', {}, {timeout: 5000});
+    await user.clear(legalInput);
+    await user.type(legalInput, '仍可编辑有限公司');
+    expect(screen.getByDisplayValue('仍可编辑有限公司')).toBeInTheDocument();
+    // 无全局错误横幅（横幅内含「重新加载」按钮；此处不应出现）
+    expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import type {SupplierDeletionImpactRead} from '../api';
 import {Supplier} from '../types';
 
 interface SupplierModalProps {
@@ -15,6 +16,10 @@ interface SupplierModalProps {
   extraSiteCount?: number;
   /** 编辑时首条产品以外的产品数量（只读，不修改） */
   extraProductCount?: number;
+  /** 服务端删除影响统计（编辑态加载；仅展示，服务端删除时仍会重新检查） */
+  deletionImpact?: SupplierDeletionImpactRead | null;
+  /** 删除影响加载失败信息（如 viewer 无权限） */
+  deletionImpactError?: string | null;
 }
 
 export const NewSupplierModal: React.FC<SupplierModalProps> = ({
@@ -27,6 +32,8 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
   updatedAt,
   extraSiteCount = 0,
   extraProductCount = 0,
+  deletionImpact = null,
+  deletionImpactError = null,
 }) => {
   const [legalName, setLegalName] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
@@ -144,10 +151,15 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
   const hintText = isEdit
     ? '保存后将立即生效。监控启停仍由「启停监控」按钮统一控制，删除供应商会同时清理其事件匹配记录。'
     : '保存后该供应商将开启监控；风险信号由当前已配置的数据源及其采集计划提供。';
+  const showImpactSection = isEdit && (deletionImpactError !== null || deletionImpact !== null);
+  const impactBlocked = deletionImpact !== null && !deletionImpact.can_delete;
+  const childCountText = deletionImpact
+    ? `地点 ${deletionImpact.sites_count} 条 · 产品 ${deletionImpact.products_count} 条 · 别名 ${deletionImpact.aliases_count} 条`
+    : '';
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-      <div className="w-full max-w-3xl space-y-5 overflow-hidden rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl space-y-5 overflow-y-auto rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex justify-between items-center pb-3 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2 font-bold text-[18px] text-[#101d28] dark:text-white">
             <span className="material-symbols-outlined text-[#004782] text-[22px]">factory</span>
@@ -322,6 +334,29 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
             </div>
           )}
 
+          {showImpactSection && deletionImpactError !== null && (
+            <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
+              <p>{deletionImpactError}</p>
+              <p className="mt-1 text-red-600">无法预览删除影响时，服务端仍会执行安全检查。</p>
+            </div>
+          )}
+          {showImpactSection && deletionImpactError === null && deletionImpact && (
+            impactBlocked ? (
+              <div role="alert" className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
+                <p className="font-bold">
+                  该供应商存在风险关联 {deletionImpact.match_count} 条、提醒 {deletionImpact.alert_count} 条，删除将被服务端阻止（{deletionImpact.blocked_reason}）。
+                </p>
+                <p className="mt-1">{childCountText}</p>
+                <p className="mt-1">暂停监控可保留全部历史。</p>
+              </div>
+            ) : (
+              <div role="status" className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-[#004782]">
+                <p>该供应商暂无风险关联，可安全删除。</p>
+                <p className="mt-1">{childCountText}</p>
+              </div>
+            )
+          )}
+
           {submitError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">{submitError}</div>
           )}
@@ -335,7 +370,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   disabled={isSaving || isDeleting}
                   className="px-3 py-2 text-[12px] font-bold text-[#ba1a1a] hover:bg-red-50 disabled:opacity-50 rounded-lg flex items-center gap-1.5"
                 >
-                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  <span aria-hidden="true" className="material-symbols-outlined text-[16px]">delete</span>
                   <span>{isDeleting ? '正在删除…' : '删除供应商'}</span>
                 </button>
               )}

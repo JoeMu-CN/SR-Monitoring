@@ -653,6 +653,12 @@ export class ApiError extends Error {
 
 function formatDetail(raw: unknown, status: number): string {
   if (typeof raw === 'string') return raw;
+  if (
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+    && 'message' in raw && typeof raw.message === 'string'
+  ) {
+    return raw.message;
+  }
   if (Array.isArray(raw)) {
     const msgs = raw
       .map((item) => {
@@ -696,6 +702,16 @@ export type SupplierUpdatePayload = Omit<SupplierCreatePayload, 'supplier_code' 
   sites: Array<{id?: number; site_name: string; country_code: string; region: string | null; city: string | null; district: string | null; address: string; latitude: number | null; longitude: number | null}>;
   products: Array<{id?: number; name: string; keywords: string[]}>;
 };
+
+export interface SupplierDeletionImpactRead {
+  can_delete: boolean;
+  match_count: number;
+  alert_count: number;
+  sites_count: number;
+  products_count: number;
+  aliases_count: number;
+  blocked_reason: string | null;
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
@@ -816,6 +832,7 @@ export const api = {
     method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
   }),
   getSupplier: (id: number, signal?: AbortSignal) => request<SupplierRead>(`/api/v1/suppliers/${id}`, signal ? {signal} : {}),
+  supplierDeletionImpact: (id: number) => request<SupplierDeletionImpactRead>(`/api/v1/suppliers/${id}/deletion-impact`),
   updateSupplier: (id: number, payload: SupplierUpdatePayload) => request<SupplierRead>(`/api/v1/suppliers/${id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),

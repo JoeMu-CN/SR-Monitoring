@@ -170,6 +170,16 @@ class EnabledUpdate(BaseModel):
     enabled: bool
 
 
+class DeletionImpact(BaseModel):
+    can_delete: bool
+    match_count: int
+    alert_count: int
+    sites_count: int
+    products_count: int
+    aliases_count: int
+    blocked_reason: str | None
+
+
 class AliasRead(AliasInput):
     model_config = ConfigDict(from_attributes=True)
 

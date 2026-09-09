@@ -15,8 +15,10 @@ from app.auth.security import (
     PERM_SUPPLIER_VIEW,
     require_permission,
     verify_csrf,
+    write_audit,
 )
 from app.database import get_session
+from app.suppliers.deletion import build_deletion_impact, delete_supplier_guarded
 from app.suppliers.editing import (
     apply_supplier_update,
     assert_version_matches,
@@ -37,6 +39,7 @@ from app.suppliers.queries import (
 from app.suppliers.queries import list_suppliers as query_suppliers
 from app.suppliers.schemas import (
     COUNTRY_CODE_PATTERN,
+    DeletionImpact,
     EnabledUpdate,
     ImportSummary,
     SupplierCreate,
@@ -239,6 +242,15 @@ def get_supplier(
     return get_supplier_or_404(session, supplier_id)
 
 
+@router.get("/{supplier_id}/deletion-impact", response_model=DeletionImpact)
+def get_supplier_deletion_impact(
+    supplier_id: int, session: SessionDependency, _user: SupplierManage
+) -> DeletionImpact:
+    """删除影响统计：全部 match 计入历史（不只 current），alert_count 含全部状态。"""
+    supplier = get_supplier_or_404(session, supplier_id)
+    return build_deletion_impact(session, supplier)
+
+
 @router.put("/{supplier_id}", response_model=SupplierRead)
 def update_supplier(
     supplier_id: int,
@@ -259,12 +271,22 @@ def update_supplier_enabled(
     supplier_id: int,
     payload: EnabledUpdate,
     session: SessionDependency,
-    _user: SupplierManage,
+    user: SupplierManage,
     _csrf: CsrfGuard,
 ) -> Supplier:
     supplier = get_supplier_or_404(session, supplier_id)
     supplier.enabled = payload.enabled
     supplier.updated_at = datetime.now(UTC)
+    write_audit(
+        session,
+        action="supplier_resumed" if payload.enabled else "supplier_paused",
+        actor_user_id=user.id,
+        resource_type="supplier",
+        resource_id=str(supplier_id),
+        success=True,
+        detail=f"enabled={str(payload.enabled).lower()}",
+    )
+    # 审计与启停同事务提交：commit 失败两者一起回滚，不伪装成功。
     commit_or_conflict(session)
     return get_supplier_or_404(session, supplier.id)
 
@@ -273,10 +295,8 @@ def update_supplier_enabled(
 def delete_supplier(
     supplier_id: int,
     session: SessionDependency,
-    _user: SupplierManage,
+    user: SupplierManage,
     _csrf: CsrfGuard,
 ) -> None:
-    """硬删除供应商。已建立的 supplier_event_matches / 子表通过 ondelete CASCADE 一并清理。"""
-    supplier = get_supplier_or_404(session, supplier_id)
-    session.delete(supplier)
-    session.commit()
+    """受保护删除：父行 FOR UPDATE + 全部 match 复查；拒绝/成功均写审计。"""
+    delete_supplier_guarded(session, supplier_id, actor_user_id=user.id)

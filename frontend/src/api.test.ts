@@ -345,3 +345,32 @@ describe('updateDimensionConfig 幂等性', () => {
     expect(patch).not.toHaveProperty('match_columns');
   });
 });
+
+describe('供应商删除影响 API 请求契约', () => {
+  it('deletion-impact 只读请求不携带写头并返回结构化影响', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        can_delete: false,
+        match_count: 3,
+        alert_count: 2,
+        sites_count: 1,
+        products_count: 1,
+        aliases_count: 1,
+        blocked_reason: 'supplier_has_risk_history',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const impact = await api.supplierDeletionImpact(9);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/suppliers/9/deletion-impact',
+      expect.objectContaining({credentials: 'include'}),
+    );
+    expect(impact.can_delete).toBe(false);
+    expect(impact.blocked_reason).toBe('supplier_has_risk_history');
+    vi.unstubAllGlobals();
+  });
+});

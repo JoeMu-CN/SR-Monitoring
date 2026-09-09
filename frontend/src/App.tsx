@@ -13,6 +13,7 @@ import {
   type AuthMeResponse,
   type AuthUser,
   type AgentStatusRead,
+  type SupplierDeletionImpactRead,
   type SupplierRead,
   type SystemHealth,
 } from './api';
@@ -61,6 +62,8 @@ export function App() {
   const [isSupplierImportModalOpen, setIsSupplierImportModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [editingDetail, setEditingDetail] = useState<SupplierRead | null>(null);
+  const [deletionImpact, setDeletionImpact] = useState<SupplierDeletionImpactRead | null>(null);
+  const [deletionImpactError, setDeletionImpactError] = useState<string | null>(null);
   const editSupplierAbortRef = useRef<AbortController | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const permissions = auth?.permissions ?? [];
@@ -229,6 +232,8 @@ export function App() {
     editSupplierAbortRef.current?.abort();
     const controller = new AbortController();
     editSupplierAbortRef.current = controller;
+    setDeletionImpact(null);
+    setDeletionImpactError(null);
     try {
       const detail = await api.getSupplier(Number(supplier.id), controller.signal);
       // 仅当未被取消时才更新状态
@@ -241,6 +246,15 @@ export function App() {
       if (caught instanceof DOMException && caught.name === 'AbortError') return;
       if (controller.signal.aborted) return;
       setError(caught instanceof Error ? caught.message : '获取供应商详情失败');
+      return;
+    }
+    // 删除影响仅编辑态且有权管理时拉取；失败不阻塞编辑，弹窗内提示服务端仍会检查。
+    if (canManageSuppliers && !controller.signal.aborted) {
+      try {
+        setDeletionImpact(await api.supplierDeletionImpact(Number(supplier.id)));
+      } catch (caught) {
+        setDeletionImpactError(caught instanceof Error ? caught.message : '删除影响获取失败');
+      }
     }
   };
 
@@ -310,6 +324,8 @@ export function App() {
     setIsNewSupplierModalOpen(false);
     setEditingSupplier(null);
     setEditingDetail(null);
+    setDeletionImpact(null);
+    setDeletionImpactError(null);
   };
 
   const handleToggleDimension = async (dimensionId: string) => {
@@ -426,6 +442,8 @@ export function App() {
         updatedAt={editingDetail?.updated_at}
         extraSiteCount={editingDetail ? Math.max(0, editingDetail.sites.length - 1) : 0}
         extraProductCount={editingDetail ? Math.max(0, editingDetail.products.length - 1) : 0}
+        deletionImpact={deletionImpact}
+        deletionImpactError={deletionImpactError}
       />
       <SupplierImportModal
         isOpen={isSupplierImportModalOpen}

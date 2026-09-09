@@ -1,5 +1,6 @@
 import re
 import unicodedata
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Self
 
@@ -38,6 +39,7 @@ def clean_optional_text(value: object) -> str | None:
 
 
 class AliasInput(BaseModel):
+    id: int | None = None
     alias: NonEmptyText
     language: str | None = None
 
@@ -48,6 +50,7 @@ class AliasInput(BaseModel):
 
 
 class SiteInput(BaseModel):
+    id: int | None = None
     site_name: NonEmptyText
     country_code: str
     region: str | None = None
@@ -78,6 +81,7 @@ class SiteInput(BaseModel):
 
 
 class ProductInput(BaseModel):
+    id: int | None = None
     name: NonEmptyText
     keywords: list[str] = Field(default_factory=list)
 
@@ -159,7 +163,7 @@ class SupplierCreate(SupplierBase):
 
 
 class SupplierUpdate(SupplierBase):
-    pass
+    expected_updated_at: datetime | None = None
 
 
 class EnabledUpdate(BaseModel):
@@ -196,6 +200,7 @@ class SupplierRead(BaseModel):
     industry: str | None
     raw_materials: list[str]
     enabled: bool
+    updated_at: datetime
     aliases: list[AliasRead]
     sites: list[SiteRead]
     products: list[ProductRead]

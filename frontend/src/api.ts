@@ -246,6 +246,7 @@ export interface SupplierRead {
   industry: string | null;
   raw_materials: string[];
   enabled: boolean;
+  updated_at: string;
   aliases: Array<{id: number; alias: string; language: string | null}>;
   sites: Array<{
     id: number;
@@ -689,7 +690,12 @@ export interface SupplierCreatePayload {
   products: Array<{name: string; keywords: string[]}>;
 }
 
-export type SupplierUpdatePayload = Omit<SupplierCreatePayload, 'supplier_code'>;
+export type SupplierUpdatePayload = Omit<SupplierCreatePayload, 'supplier_code' | 'aliases' | 'sites' | 'products'> & {
+  expected_updated_at?: string;
+  aliases: Array<{id?: number; alias: string; language: string | null}>;
+  sites: Array<{id?: number; site_name: string; country_code: string; region: string | null; city: string | null; district: string | null; address: string; latitude: number | null; longitude: number | null}>;
+  products: Array<{id?: number; name: string; keywords: string[]}>;
+};
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
@@ -809,6 +815,7 @@ export const api = {
   toggleSupplier: (id: number, enabled: boolean) => request<SupplierRead>(`/api/v1/suppliers/${id}/enabled`, {
     method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),
   }),
+  getSupplier: (id: number, signal?: AbortSignal) => request<SupplierRead>(`/api/v1/suppliers/${id}`, signal ? {signal} : {}),
   updateSupplier: (id: number, payload: SupplierUpdatePayload) => request<SupplierRead>(`/api/v1/suppliers/${id}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),
@@ -891,6 +898,11 @@ export function mapSupplier(supplier: SupplierRead, riskLevel?: RiskLevel, riskS
     registrationNo: supplier.registry_no ?? '未登记',
     registrationAddress: supplier.registration_address ?? '未登记',
     productionLocation: supplier.sites.map((item) => [item.city, item.district, item.site_name].filter(Boolean).join(' ')).join('、') || '未登记',
+    // 编辑表单需要首地点的真实字段值才能无损往返（保存时按表单值回传，未编辑即原值）
+    productionRegion: site?.region ?? undefined,
+    productionCity: site?.city ?? undefined,
+    productionDistrict: site?.district ?? undefined,
+    productionAddress: site?.address ?? undefined,
     countryRegion: supplier.country_code, tier: '重点供应商',
     category: supplier.industry ?? supplier.products[0]?.name ?? '未分类',
     suppliedProduct: supplier.products.map((item) => item.name).join('、') || '未登记',

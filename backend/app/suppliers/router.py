@@ -17,6 +17,11 @@ from app.auth.security import (
     verify_csrf,
 )
 from app.database import get_session
+from app.suppliers.editing import (
+    apply_supplier_update,
+    assert_version_matches,
+    lock_supplier_for_update,
+)
 from app.suppliers.importer import (
     MAX_FILE_BYTES,
     WorkbookValidationError,
@@ -72,30 +77,37 @@ def replace_supplier_details(
     supplier.raw_materials = list(payload.raw_materials)
     supplier.enabled = payload.enabled
     supplier.updated_at = datetime.now(UTC)
-    supplier.aliases = [
-        SupplierAlias(
-            alias=item.alias,
-            language=item.language,
-            normalized_alias=normalize_alias(item.alias),
+    supplier.aliases = []
+    for alias_item in payload.aliases:
+        alias = SupplierAlias(
+            alias=alias_item.alias,
+            language=alias_item.language,
+            normalized_alias=normalize_alias(alias_item.alias),
         )
-        for item in payload.aliases
-    ]
-    supplier.sites = [
-        SupplierSite(
-            site_name=item.site_name,
-            country_code=item.country_code,
-            region=item.region,
-            city=item.city,
-            district=item.district,
-            address=item.address,
-            latitude=item.latitude,
-            longitude=item.longitude,
+        if alias_item.id is not None:
+            alias.id = alias_item.id
+        supplier.aliases.append(alias)
+    supplier.sites = []
+    for site_item in payload.sites:
+        site = SupplierSite(
+            site_name=site_item.site_name,
+            country_code=site_item.country_code,
+            region=site_item.region,
+            city=site_item.city,
+            district=site_item.district,
+            address=site_item.address,
+            latitude=site_item.latitude,
+            longitude=site_item.longitude,
         )
-        for item in payload.sites
-    ]
-    supplier.products = [
-        SupplierProduct(name=item.name, keywords=item.keywords) for item in payload.products
-    ]
+        if site_item.id is not None:
+            site.id = site_item.id
+        supplier.sites.append(site)
+    supplier.products = []
+    for product_item in payload.products:
+        product = SupplierProduct(name=product_item.name, keywords=product_item.keywords)
+        if product_item.id is not None:
+            product.id = product_item.id
+        supplier.products.append(product)
 
 
 def commit_or_conflict(session: Session) -> None:
@@ -235,8 +247,9 @@ def update_supplier(
     _user: SupplierManage,
     _csrf: CsrfGuard,
 ) -> Supplier:
-    supplier = get_supplier_or_404(session, supplier_id)
-    replace_supplier_details(session, supplier, payload)
+    supplier = lock_supplier_for_update(session, supplier_id)
+    assert_version_matches(supplier, payload.expected_updated_at)
+    apply_supplier_update(supplier, payload)
     commit_or_conflict(session)
     return get_supplier_or_404(session, supplier.id)
 

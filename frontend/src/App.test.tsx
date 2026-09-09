@@ -1,5 +1,6 @@
 import React from 'react';
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import {api, ApiError} from './api';
@@ -13,6 +14,7 @@ import type {
   RuleEngineOptions,
   RiskAlertRead,
   SupplierListItem,
+  SupplierRead,
   SystemHealth,
 } from './api';
 import {App} from './App';
@@ -36,6 +38,7 @@ vi.mock('./api', async (importOriginal) => {
       },
       alerts: vi.fn(),
       suppliers: vi.fn(),
+      supplierPage: vi.fn(),
       sources: vi.fn(),
       sourcesAdmin: vi.fn(),
       collectionRuns: vi.fn(),
@@ -44,6 +47,11 @@ vi.mock('./api', async (importOriginal) => {
       agentStatus: vi.fn(),
       dimensionInputs: vi.fn(),
       ruleEngineOptions: vi.fn(),
+      getSupplier: vi.fn(),
+      updateSupplier: vi.fn(),
+      createSupplier: vi.fn(),
+      toggleSupplier: vi.fn(),
+      deleteSupplier: vi.fn(),
     },
   };
 });
@@ -124,6 +132,7 @@ const supplierBackend: SupplierListItem = {
   industry: '电子元件制造',
   raw_materials: ['硅片'],
   enabled: true,
+  updated_at: '2026-09-01T00:00:00Z',
   aliases: [{id: 1, alias: '示例电子', language: 'zh'}],
   sites: [{
     id: 1,
@@ -139,6 +148,66 @@ const supplierBackend: SupplierListItem = {
   products: [{id: 1, name: '微电子元件', keywords: []}],
   current_risk_level: 'P1',
   current_risk_score: 86,
+};
+
+// —— 编辑弹窗行为测试夹具 ——
+// 详情中首条地点国家(DE)与供应商国家(CN)不同，用于锁定「不把供应商国家当生产地点国家」。
+const editDetailA: SupplierRead = {
+  id: 1,
+  supplier_code: 'SUP-0001',
+  legal_name: '示例精密电子有限公司',
+  country_code: 'CN',
+  registry_no: '91330100MA1234567X',
+  registration_address: '浙江省杭州市滨江区江陵路100号',
+  industry: '电子元件制造',
+  raw_materials: ['硅片'],
+  enabled: true,
+  updated_at: '2026-09-01T10:00:00Z',
+  aliases: [{id: 10, alias: '示例电子', language: 'zh'}],
+  sites: [{
+    id: 20,
+    site_name: '杭州工厂',
+    country_code: 'DE',
+    region: '巴伐利亚州',
+    city: '慕尼黑',
+    district: null,
+    address: '慕尼黑工业区1号',
+    latitude: 48.1,
+    longitude: 11.5,
+  }],
+  products: [{id: 30, name: '功率器件', keywords: ['MOSFET', 'IGBT']}],
+};
+
+// 「他人修改后」的最新详情：updated_at 令牌与法人名称、地点城市均不同，可观察重载同步。
+const editDetailAFresh: SupplierRead = {
+  ...editDetailA,
+  legal_name: '服务器最新名称有限公司',
+  updated_at: '2026-09-02T00:00:00Z',
+  sites: [{...editDetailA.sites[0], city: '苏州市'}],
+};
+
+const editDetailB: SupplierRead = {
+  ...editDetailA,
+  id: 2,
+  supplier_code: 'SUP-0002',
+  legal_name: '乙测试精密有限公司',
+  registry_no: '91330100MA7654321X',
+  updated_at: '2026-09-01T11:00:00Z',
+  aliases: [{id: 12, alias: '乙测试', language: 'zh'}],
+  sites: [{...editDetailA.sites[0], id: 21, site_name: '苏州工厂', country_code: 'CN', region: '江苏省', city: '苏州市', district: '工业园区', address: '金鸡湖大道2号'}],
+  products: [{id: 31, name: '连接器', keywords: []}],
+};
+
+const supplierListItemB: SupplierListItem = {
+  ...supplierBackend,
+  id: 2,
+  supplier_code: 'SUP-0002',
+  legal_name: '乙测试精密有限公司',
+  aliases: [{id: 12, alias: '乙测试', language: 'zh'}],
+  sites: [{...supplierBackend.sites[0], id: 21, site_name: '苏州工厂', city: '苏州市'}],
+  products: [{...supplierBackend.products[0], id: 31, name: '连接器'}],
+  current_risk_level: null,
+  current_risk_score: null,
 };
 
 const sourceBackend: DataSourceRead = {
@@ -242,6 +311,7 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.auth.logout).mockResolvedValue({detail: 'ok'});
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
   vi.mocked(api.suppliers).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
+  vi.mocked(api.supplierPage).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
   vi.mocked(api.sources).mockResolvedValue([sourceBackend]);
   vi.mocked(api.sourcesAdmin).mockResolvedValue([sourceBackend]);
   vi.mocked(api.collectionRuns).mockResolvedValue(noCollectionRuns);
@@ -260,7 +330,9 @@ const renderApp = (path: string) => render(
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  // reset 而非 clear：mockResolvedValueOnce 等一次性实现若跨测试残留，
+  // 会把上一个用例的队列错配到下一个用例（表现为偶发超时/错值）。
+  vi.resetAllMocks();
 });
 
 // jsdom 未实现 Element#scrollIntoView；风险查询助手挂载时会调用它，统一垫上 no-op。
@@ -273,9 +345,11 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     defaultMocks({agentStatus: async () => { throw denied403; }});
     renderApp('/rules');
 
-    // 维度主数据加载成功：六个维度名称逐一出现
+    // 等待 route-content 出现：loading=false + auth 就绪后 AppRoutes 才挂载
+    const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
+    // 维度主数据加载成功：六个维度名称均已渲染
     for (const label of DIMENSION_LABELS) {
-      expect((await screen.findAllByText(label)).length).toBeGreaterThan(0);
+      expect(within(routeContent).getAllByText(label).length).toBeGreaterThan(0);
     }
     // viewer 写控件禁用
     expect(screen.getByRole('button', {name: '保存配置'})).toBeDisabled();
@@ -339,5 +413,164 @@ describe('App 中依赖 agentStatus 的视图', () => {
     expect(screen.getByRole('textbox')).toBeInTheDocument();
     // 无全局横幅（agentStatus 500 不触发全局 error）
     expect(screen.queryByText('Agent 状态服务不可用')).not.toBeInTheDocument();
+  });
+});
+
+// ---- 供应商编辑弹窗：409 并发冲突语义与地点字段无损（任务2 语义缺口回归）----
+
+const adminSetup = () => {
+  defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+  vi.mocked(api.supplierPage).mockResolvedValue({items: [supplierBackend, supplierListItemB], total: 2, limit: 20, offset: 0});
+};
+
+const openEditModal = async (label: string, code: string) => {
+  const user = userEvent.setup();
+  renderApp('/suppliers');
+  // 先等供应商页挂载完成，再找行内编辑按钮（jsdom 负载下默认 1s 可能不够）
+  await screen.findByText('供应商管理');
+  await user.click(await screen.findByRole('button', {name: `编辑供应商：${label}`}, {timeout: 5000}));
+  await screen.findByText(`编辑供应商 · ${code}`);
+  return user;
+};
+
+describe('App 供应商编辑：409 冲突后不得自动替换并发令牌', () => {
+  it('409 后不自动调用 getSupplier 刷新令牌，再次保存仍携带同一旧 expected_updated_at', async () => {
+    adminSetup();
+    vi.mocked(api.getSupplier)
+      .mockResolvedValueOnce(editDetailA)
+      .mockResolvedValueOnce(editDetailAFresh);
+    vi.mocked(api.updateSupplier).mockRejectedValue(new ApiError(409, '供应商已被其他人修改，请刷新后重试'));
+    const user = await openEditModal('示例精密电子有限公司', 'SUP-0001');
+
+    // 用户修改法人名称
+    const legalInput = await screen.findByDisplayValue('示例精密电子有限公司', {}, {timeout: 5000});
+    await user.clear(legalInput);
+    await user.type(legalInput, '用户改名有限公司');
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await screen.findByText(/已被其他用户修改/);
+    // 用户输入保留
+    expect(await screen.findByDisplayValue('用户改名有限公司', {}, {timeout: 5000})).toBeInTheDocument();
+    // 关键：409 后不得自动重拉详情刷新 expected_updated_at（getSupplier 仅在打开编辑时调用一次）
+    expect(api.getSupplier).toHaveBeenCalledTimes(1);
+
+    // 再次保存：payload 仍基于旧详情构造，携带同一旧令牌（直接重试会被再次 409，而非静默覆盖）
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    expect(api.updateSupplier).toHaveBeenCalledTimes(2);
+    const [, payload1] = vi.mocked(api.updateSupplier).mock.calls[0];
+    const [, payload2] = vi.mocked(api.updateSupplier).mock.calls[1];
+    expect(payload1.expected_updated_at).toBe('2026-09-01T10:00:00Z');
+    expect(payload2.expected_updated_at).toBe('2026-09-01T10:00:00Z');
+  });
+
+  it('409 提示要求关闭后重新打开；明确重载时表单与完整详情同步为最新数据', async () => {
+    adminSetup();
+    vi.mocked(api.getSupplier)
+      .mockResolvedValueOnce(editDetailA)
+      .mockResolvedValueOnce(editDetailAFresh);
+    vi.mocked(api.updateSupplier).mockRejectedValueOnce(new ApiError(409, '供应商已被其他人修改，请刷新后重试'))
+      .mockResolvedValue(editDetailAFresh);
+    const user = await openEditModal('示例精密电子有限公司', 'SUP-0001');
+
+    // 先修改法人名称，再触发 409
+    const legalInput = await screen.findByDisplayValue('示例精密电子有限公司', {}, {timeout: 5000});
+    await user.clear(legalInput);
+    await user.type(legalInput, '用户改名有限公司');
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    // 冲突提示要求明确重载（关闭后重新打开），而非声称已自动重载
+    expect(await screen.findByText(/已被其他用户修改/)).toBeInTheDocument();
+    expect(screen.getByText(/请关闭后重新打开/)).toBeInTheDocument();
+    // 用户输入保留
+    expect(await screen.findByDisplayValue('用户改名有限公司', {}, {timeout: 5000})).toBeInTheDocument();
+
+    // 明确重载：关闭弹窗后重新打开同一供应商
+    await user.click(screen.getByRole('button', {name: '取消'}));
+    await user.click(await screen.findByRole('button', {name: '编辑供应商：示例精密电子有限公司'}, {timeout: 5000}));
+    await screen.findByText('编辑供应商 · SUP-0001');
+    expect(api.getSupplier).toHaveBeenCalledTimes(2);
+
+    // 表单与完整详情同步：法人名称与地点字段均为服务器最新值
+    expect(screen.getByDisplayValue('服务器最新名称有限公司')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('苏州市')).toBeInTheDocument();
+
+    // 完整详情同步：不再修改直接保存 → 携带重载后的新令牌
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await waitFor(() => expect(vi.mocked(api.updateSupplier)).toHaveBeenCalledTimes(2));
+    const [, reloadedPayload] = vi.mocked(api.updateSupplier).mock.calls[1];
+    expect(reloadedPayload.expected_updated_at).toBe('2026-09-02T00:00:00Z');
+  });
+});
+
+describe('App 供应商编辑：地点字段无损', () => {
+  it('编辑保存不把供应商国家写入生产地点国家，未编辑地点字段原值保留', async () => {
+    adminSetup();
+    vi.mocked(api.getSupplier).mockResolvedValue(editDetailA);
+    vi.mocked(api.updateSupplier).mockResolvedValue(editDetailAFresh);
+    const user = await openEditModal('示例精密电子有限公司', 'SUP-0001');
+
+    // 仅修改法人名称，不触碰任何地点字段
+    const legalInput = await screen.findByDisplayValue('示例精密电子有限公司', {}, {timeout: 5000});
+    await user.clear(legalInput);
+    await user.type(legalInput, '仅改名称有限公司');
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+
+    const [savedId, payload] = vi.mocked(api.updateSupplier).mock.calls[0];
+    expect(savedId).toBe(1);
+    // 供应商国家随表单更新，但不得下写到生产地点
+    expect(payload.country_code).toBe('CN');
+    expect(payload.sites[0].country_code).toBe('DE');
+    // 未编辑的地点字段按详情原值回传，不被表单空值清空或拼接近似值污染
+    expect(payload.sites[0].site_name).toBe('杭州工厂');
+    expect(payload.sites[0].region).toBe('巴伐利亚州');
+    expect(payload.sites[0].city).toBe('慕尼黑');
+    expect(payload.sites[0].district).toBeNull();
+    expect(payload.sites[0].address).toBe('慕尼黑工业区1号');
+    expect(payload.sites[0].latitude).toBe(48.1);
+    expect(payload.sites[0].longitude).toBe(11.5);
+    // 首产品名变更保留关键词
+    expect(payload.products[0].name).toBe('功率器件');
+    expect(payload.products[0].keywords).toEqual(['MOSFET', 'IGBT']);
+  });
+
+  it('无地点无产品供应商仅改名称时保持空集合', async () => {
+    adminSetup();
+    const emptyDetail: SupplierRead = {...editDetailA, sites: [], products: []};
+    vi.mocked(api.getSupplier).mockResolvedValue(emptyDetail);
+    vi.mocked(api.updateSupplier).mockResolvedValue(emptyDetail);
+    const user = await openEditModal('示例精密电子有限公司', 'SUP-0001');
+
+    const legalInput = await screen.findByDisplayValue('示例精密电子有限公司', {}, {timeout: 5000});
+    await user.clear(legalInput);
+    await user.type(legalInput, '仅改名称有限公司');
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+
+    const [, payload] = vi.mocked(api.updateSupplier).mock.calls[0];
+    expect(payload.sites).toEqual([]);
+    expect(payload.products).toEqual([]);
+  });
+
+  it('快速连续编辑两个供应商时，先发出的旧详情响应不会覆盖新选择', async () => {
+    adminSetup();
+    let resolveA!: (detail: SupplierRead) => void;
+    vi.mocked(api.getSupplier).mockImplementation((id: number) => {
+      if (id === 1) {
+        return new Promise<SupplierRead>((resolve) => { resolveA = resolve; });
+      }
+      return Promise.resolve(editDetailB);
+    });
+    const user = userEvent.setup();
+    renderApp('/suppliers');
+    await screen.findByText('供应商管理');
+
+    // 先点供应商 A（详情请求挂起），再点供应商 B
+    await user.click(await screen.findByRole('button', {name: '编辑供应商：示例精密电子有限公司'}, {timeout: 5000}));
+    await user.click(await screen.findByRole('button', {name: '编辑供应商：乙测试精密有限公司'}, {timeout: 5000}));
+    await screen.findByText('编辑供应商 · SUP-0002');
+    expect(screen.getByDisplayValue('乙测试精密有限公司')).toBeInTheDocument();
+
+    // A 的旧详情此时才返回：不得覆盖当前选择的 B
+    resolveA(editDetailA);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByText('编辑供应商 · SUP-0002')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('乙测试精密有限公司')).toBeInTheDocument();
   });
 });

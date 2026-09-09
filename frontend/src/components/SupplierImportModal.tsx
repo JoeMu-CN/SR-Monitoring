@@ -164,7 +164,8 @@ export const SupplierImportModal = ({isOpen, onClose, onImported, onRequestError
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#eef6ff] text-[#007aff] dark:bg-blue-950"><FileSpreadsheet aria-hidden="true" className="h-5 w-5" /></span>
             <div className="min-w-0">
               <h2 ref={titleRef} tabIndex={-1} id="supplier-import-title" className="text-lg font-bold text-[#101d28] outline-none dark:text-white">Excel 导入供应商</h2>
-              <p className="mt-1 text-sm text-[#424751] dark:text-slate-400">使用标准三工作表模板，<span className="inline-block whitespace-nowrap">校验通过后</span>统一新增或更新。</p>
+              <p className="mt-1 text-sm text-[#424751] dark:text-slate-400">使用标准三工作表模板，<span className="inline-block whitespace-nowrap">校验通过后</span>按供应商编码全量替换其别名、地点和产品。</p>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">注意：同编码供应商的现有地点和产品将被模板数据完整替换，未在模板中的记录会删除。</p>
             </div>
           </div>
           <button type="button" aria-label="关闭导入弹窗" onClick={onClose} disabled={uploading} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:hover:bg-slate-800"><X aria-hidden="true" className="h-5 w-5" /></button>

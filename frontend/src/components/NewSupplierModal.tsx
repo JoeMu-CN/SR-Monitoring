@@ -9,6 +9,12 @@ interface SupplierModalProps {
   onSave: (supplier: Supplier) => Promise<void>;
   // 仅 edit 模式需要：调起后端 DELETE，成功后 App 会关闭 modal
   onDelete?: (supplierId: string) => Promise<void>;
+  /** 编辑时从 GET /suppliers/{id} 获取的 updated_at 并发令牌 */
+  updatedAt?: string;
+  /** 编辑时首条地点以外的地点数量（只读，不修改） */
+  extraSiteCount?: number;
+  /** 编辑时首条产品以外的产品数量（只读，不修改） */
+  extraProductCount?: number;
 }
 
 export const NewSupplierModal: React.FC<SupplierModalProps> = ({
@@ -18,6 +24,9 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
   initialSupplier,
   onSave,
   onDelete,
+  updatedAt,
+  extraSiteCount = 0,
+  extraProductCount = 0,
 }) => {
   const [legalName, setLegalName] = useState('');
   const [supplierCode, setSupplierCode] = useState('');
@@ -71,8 +80,12 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supplierCode.trim() || !legalName.trim() || !suppliedProduct.trim()) {
-      setSubmitError('请填写供应商编码、法人主体及供应产品。');
+    if (!supplierCode.trim() || !legalName.trim()) {
+      setSubmitError('请填写供应商编码及法人主体。');
+      return;
+    }
+    if (!isEdit && !suppliedProduct.trim()) {
+      setSubmitError('新增供应商时请填写供应产品。');
       return;
     }
     if (!/^[A-Za-z]{2}$/.test(countryCode.trim())) {
@@ -270,7 +283,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
               </label>
               <input
                 type="text"
-                required
+                required={!isEdit}
                 placeholder="例如: 功率半导体, 光学镜片"
                 value={suppliedProduct}
                 onChange={(e) => setSuppliedProduct(e.target.value)}
@@ -295,6 +308,19 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
             <span className="material-symbols-outlined text-[18px]">verified</span>
             <span>{hintText}</span>
           </div>
+
+          {isEdit && extraSiteCount > 0 && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">info</span>
+              <span>另有 {extraSiteCount} 条地点，保存不会覆盖。如需修改全部地点，请使用 Excel 导入。</span>
+            </div>
+          )}
+          {isEdit && extraProductCount > 0 && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2">
+              <span className="material-symbols-outlined text-[18px]">info</span>
+              <span>另有 {extraProductCount} 条产品，保存不会覆盖。如需修改全部产品，请使用 Excel 导入。</span>
+            </div>
+          )}
 
           {submitError && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">{submitError}</div>

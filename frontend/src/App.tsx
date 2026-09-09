@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {useLocation, useNavigate} from 'react-router-dom';
 import {
@@ -7,14 +7,17 @@ import {
   mapDataSource,
   mapDimension,
   mapRiskAlert,
+  mapSupplier,
   mapSupplierListItem,
   updateDimensionConfig,
   type AuthMeResponse,
   type AuthUser,
   type AgentStatusRead,
+  type SupplierRead,
   type SystemHealth,
 } from './api';
 import type {DataSource, MonitoringDimension, RiskItem, Supplier} from './types';
+import {buildEditPayload} from './supplierEdit';
 import {AppRoutes, type RouteViews} from './AppRoutes';
 import {RiskRouteView} from './RiskRouteView';
 import {ExportReportModal} from './components/ExportReportModal';
@@ -57,6 +60,8 @@ export function App() {
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [isSupplierImportModalOpen, setIsSupplierImportModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [editingDetail, setEditingDetail] = useState<SupplierRead | null>(null);
+  const editSupplierAbortRef = useRef<AbortController | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const permissions = auth?.permissions ?? [];
   const canManageSources = permissions.includes(routePermissions.sourceManage);
@@ -219,9 +224,24 @@ export function App() {
     }
   };
 
-  const handleEditSupplier = (supplier: Supplier) => {
-    setEditingSupplier(supplier);
-    setIsNewSupplierModalOpen(true);
+  const handleEditSupplier = async (supplier: Supplier) => {
+    // 取消前一次尚未完成的详情请求，防止竞态覆盖
+    editSupplierAbortRef.current?.abort();
+    const controller = new AbortController();
+    editSupplierAbortRef.current = controller;
+    try {
+      const detail = await api.getSupplier(Number(supplier.id), controller.signal);
+      // 仅当未被取消时才更新状态
+      if (!controller.signal.aborted) {
+        setEditingDetail(detail);
+        setEditingSupplier(mapSupplier(detail));
+        setIsNewSupplierModalOpen(true);
+      }
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === 'AbortError') return;
+      if (controller.signal.aborted) return;
+      setError(caught instanceof Error ? caught.message : '获取供应商详情失败');
+    }
   };
 
   const openNewSupplierModal = () => {
@@ -231,35 +251,39 @@ export function App() {
 
   // NewSupplierModal 在 create/edit 模式共用的 onSave：根据当前 modal 模式分发到 create / update。
   const handleSaveSupplier = async (supplier: Supplier) => {
-    if (editingSupplier) {
-      // edit 分支
+    if (editingSupplier && editingDetail) {
+      // edit 分支：基于完整详情深拷贝构造无损 payload，保留所有未编辑字段
       const countryCode = /^[A-Za-z]{2}$/.test(supplier.countryRegion ?? '')
         ? String(supplier.countryRegion).toUpperCase()
         : 'CN';
+      const payload = buildEditPayload(editingDetail, {
+        legal_name: supplier.legalName,
+        country_code: countryCode,
+        registry_no: supplier.registrationNo || null,
+        registration_address: supplier.registrationAddress?.trim() || null,
+        industry: supplier.category || null,
+        // 地点仅回传表单中实际可编辑的四个字段；site_name/国家/坐标不由供应商字段推断：
+        // 未编辑字段保留详情原值（不把供应商国家当生产地点国家，不静默清空坐标与地点名称）。
+        site_overrides: {
+          region: supplier.productionRegion?.trim() || null,
+          city: supplier.productionCity?.trim() || null,
+          district: supplier.productionDistrict?.trim() || null,
+          address: supplier.productionAddress?.trim() || undefined,
+        },
+        product_overrides: {
+          name: supplier.suppliedProduct,
+        },
+      });
       try {
-        await api.updateSupplier(Number(editingSupplier.id), {
-          legal_name: supplier.legalName,
-          country_code: countryCode,
-          registry_no: supplier.registrationNo || null,
-          registration_address: supplier.registrationAddress?.trim() || null,
-          industry: supplier.category || null,
-          raw_materials: [],
-          enabled: true,
-          aliases: [],
-          sites: supplier.productionLocation ? [{
-            site_name: supplier.productionLocation,
-            country_code: countryCode,
-            region: supplier.productionRegion?.trim() || null,
-            city: supplier.productionCity?.trim() || null,
-            district: supplier.productionDistrict?.trim() || null,
-            address: supplier.productionAddress?.trim() || supplier.productionLocation,
-            latitude: null,
-            longitude: null,
-          }] : [],
-          products: supplier.suppliedProduct ? [{name: supplier.suppliedProduct, keywords: []}] : [],
-        });
+        await api.updateSupplier(Number(editingDetail.id), payload);
         await refreshSuppliers();
       } catch (caught) {
+        // 409 并发冲突：保留用户输入，但不自动重拉详情刷新 expected_updated_at——
+        // 把新令牌配给基于旧详情构造的输入，会把过期内容静默覆盖到最新版本上。
+        // 明确重载路径：关闭弹窗后重新打开该供应商，重载时完整详情与表单一次性同步。
+        if (caught instanceof ApiError && caught.status === 409) {
+          throw new Error('供应商资料已被其他用户修改。为避免用过期内容覆盖新版本，未自动刷新并发令牌；请关闭后重新打开该供应商以载入最新数据（您的输入已保留）。');
+        }
         setError(caught instanceof Error ? caught.message : '供应商修改失败');
         throw caught;
       }
@@ -273,6 +297,7 @@ export function App() {
       await api.deleteSupplier(Number(supplierId));
       await refreshSuppliers();
       setEditingSupplier(null);
+      setEditingDetail(null);
       setIsNewSupplierModalOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '供应商删除失败');
@@ -281,8 +306,10 @@ export function App() {
   };
 
   const closeSupplierModal = () => {
+    editSupplierAbortRef.current?.abort();
     setIsNewSupplierModalOpen(false);
     setEditingSupplier(null);
+    setEditingDetail(null);
   };
 
   const handleToggleDimension = async (dimensionId: string) => {
@@ -395,7 +422,11 @@ export function App() {
       <ExportReportModal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} selectedRisk={reportRisk} riskItems={riskItems} />
       <NewSupplierModal isOpen={isNewSupplierModalOpen} onClose={closeSupplierModal}
         mode={editingSupplier ? 'edit' : 'create'} initialSupplier={editingSupplier ?? undefined}
-        onSave={handleSaveSupplier} onDelete={handleDeleteSupplier} />
+        onSave={handleSaveSupplier} onDelete={handleDeleteSupplier}
+        updatedAt={editingDetail?.updated_at}
+        extraSiteCount={editingDetail ? Math.max(0, editingDetail.sites.length - 1) : 0}
+        extraProductCount={editingDetail ? Math.max(0, editingDetail.products.length - 1) : 0}
+      />
       <SupplierImportModal
         isOpen={isSupplierImportModalOpen}
         onClose={() => setIsSupplierImportModalOpen(false)}

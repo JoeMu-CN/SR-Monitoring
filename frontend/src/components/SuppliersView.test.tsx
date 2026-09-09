@@ -15,6 +15,7 @@ const makeItem = (index: number, overrides: Partial<SupplierListItem> = {}): Sup
   industry: '精密件',
   raw_materials: [],
   enabled: true,
+  updated_at: '2026-09-01T00:00:00Z',
   aliases: [],
   sites: [],
   products: [{id: index, name: `产品 ${index}`, keywords: []}],

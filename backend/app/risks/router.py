@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
@@ -17,6 +17,7 @@ from app.auth.security import (
     verify_csrf,
 )
 from app.database import get_session
+from app.risks.dashboard import build_dashboard_aggregate
 from app.risks.models import (
     EventEntity,
     EventLocation,
@@ -30,8 +31,6 @@ from app.risks.schemas import (
     DashboardSummary,
     EventDetailRead,
     EventSignalEvidence,
-    EventTypeCount,
-    LevelCount,
     RiskAlertListResponse,
     RiskAlertRead,
     RiskProcessResult,
@@ -280,72 +279,15 @@ def get_event_detail(
     )
 
 
-@router.get("/dashboard/summary", response_model=DashboardSummary)
-def dashboard_summary(
-    session: SessionDependency, _user: RiskView
-) -> DashboardSummary:
-    """风险总览：P1-P4 数量、今日新增、类型分布、最近提醒、数据源状态。"""
-    from datetime import timedelta
-
-    now_utc = datetime.now(UTC)
-    today_start = now_utc - timedelta(days=1)
-    current_condition = current_alert_condition(now_utc)
-
-    level_rows = session.execute(
-        select(RiskAlert.level, func.count())
-        .where(current_condition)
-        .group_by(RiskAlert.level)
-    ).all()
-    level_map = {level: count for level, count in level_rows}
-    level_counts = [
-        LevelCount(level=level, count=level_map.get(level, 0))
-        for level in ("P1", "P2", "P3", "P4")
-    ]
-    total_current = sum(level_map.values())
-
-    today_new = (
-        session.scalar(
-            select(func.count())
-            .select_from(RiskAlert)
-            .where(current_condition, RiskAlert.created_at >= today_start)
-        )
-        or 0
-    )
-
-    type_rows = session.execute(
-        select(RiskEvent.event_type, func.count())
-        .join(SupplierEventMatch, SupplierEventMatch.event_id == RiskEvent.id)
-        .join(RiskAlert, RiskAlert.match_id == SupplierEventMatch.id)
-        .where(current_condition)
-        .group_by(RiskEvent.event_type)
-        .order_by(func.count().desc())
-    ).all()
-    type_distribution = [
-        EventTypeCount(event_type=event_type, count=count)
-        for event_type, count in type_rows
-    ]
-
-    recent_rows = session.execute(
-        select(RiskAlert, SupplierEventMatch, RiskEvent, Supplier)
-        .join(SupplierEventMatch, RiskAlert.match_id == SupplierEventMatch.id)
-        .join(RiskEvent, SupplierEventMatch.event_id == RiskEvent.id)
-        .join(Supplier, SupplierEventMatch.supplier_id == Supplier.id)
-        .where(current_condition)
-        .order_by(RiskAlert.updated_at.desc(), RiskAlert.id.desc())
-        .limit(10)
-    ).all()
-    recent_alerts = _build_alert_reads(session, recent_rows)
-
-    sources_list = list(
-        session.scalars(select(DataSource).order_by(DataSource.id))
-    )
+def _build_source_health(session: Session) -> list[SourceHealthRead]:
+    """来源采集新鲜度：每来源最近一次采集运行的完成时间与状态。"""
+    sources_list = list(session.scalars(select(DataSource).order_by(DataSource.id)))
     latest_run_ids = session.execute(
-        select(CollectionRun.source_id, func.max(CollectionRun.id))
-        .group_by(CollectionRun.source_id)
+        select(CollectionRun.source_id, func.max(CollectionRun.id)).group_by(
+            CollectionRun.source_id
+        )
     ).all()
-    latest_by_source = {
-        source_id: run_id for source_id, run_id in latest_run_ids
-    }
+    latest_by_source = {source_id: run_id for source_id, run_id in latest_run_ids}
     runs_by_id = {
         run.id: run
         for run in session.scalars(
@@ -354,7 +296,7 @@ def dashboard_summary(
             )
         )
     }
-    sources = [
+    return [
         SourceHealthRead(
             id=source.id,
             code=source.code,
@@ -374,14 +316,77 @@ def dashboard_summary(
         for source in sources_list
     ]
 
+
+def _build_dashboard_summary(session: Session, *, window_days: int) -> DashboardSummary:
+    """在单一只读快照事务内完整物化全部总览字段。
+
+    聚合、近期提醒与来源状态全部使用同一 Session；返回的 Pydantic 模型不含
+    任何 ORM 实例引用，调用方在快照事务关闭后可安全使用。
+    """
+    aggregate = build_dashboard_aggregate(session, days=window_days)
+    recent_alerts = _build_alert_reads(session, aggregate.recent_rows)
+    sources = _build_source_health(session)
     return DashboardSummary(
-        level_counts=level_counts,
-        total_current=total_current,
-        today_new=today_new,
-        type_distribution=type_distribution,
+        level_counts=aggregate.level_counts,
+        total_current=aggregate.total_current,
+        today_new=aggregate.today_new,
+        type_distribution=aggregate.type_distribution,
         recent_alerts=recent_alerts,
         sources=sources,
+        as_of=aggregate.as_of,
+        window_start=aggregate.window_start,
+        window_days=aggregate.window_days,
+        period_new_count=aggregate.period_new_count,
+        supplier_total=aggregate.supplier_total,
+        active_supplier_total=aggregate.active_supplier_total,
+        source_distribution=aggregate.source_distribution,
+        retention_window_days=aggregate.retention_window_days,
+        history_may_be_partial=aggregate.history_may_be_partial,
     )
+
+
+@router.get("/dashboard/summary", response_model=DashboardSummary)
+def dashboard_summary(
+    session: SessionDependency,
+    _user: RiskView,
+    window_days: Annotated[int, Query(alias="days")] = 30,
+) -> DashboardSummary:
+    """风险总览：当前分布与期间新增分离统计。
+
+    当前统计（P1-P4、今日新增、类型分布、来源分布、最近提醒）共享同一 as_of；
+    期间新增统计窗口内创建的全部提醒行（含已失效），不冒充唯一事件数。
+    """
+    if window_days not in (7, 30, 90):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="days must be 7, 30 or 90",
+        )
+
+    bind = session.get_bind()
+    if not isinstance(bind, Engine):
+        # 调用方（测试夹具或外层调用者）已把 Session 绑定到具体 Connection，
+        # 并在该连接上自行管理事务边界；直接在其中完成只读聚合，不另起连接。
+        return _build_dashboard_summary(session, window_days=window_days)
+
+    # 认证依赖已在其连接上 commit，之后再对同一 Session 调 connection(execution_options=...)
+    # 会被 SQLAlchemy 忽略（"Connection is already established for the given bind"），
+    # 隔离级别不会生效。改为从引擎另起一条独立连接，在首次查询前显式声明
+    # REPEATABLE READ + 只读事务，使聚合、近期提醒、来源状态同属一个数据库快照，
+    # 并发写入在快照建立后提交的行对本请求不可见。
+    read_conn = bind.connect().execution_options(
+        isolation_level="REPEATABLE READ",
+        postgresql_readonly=True,
+    )
+    try:
+        read_txn = read_conn.begin()
+        snapshot = Session(bind=read_conn, expire_on_commit=False)
+        try:
+            return _build_dashboard_summary(snapshot, window_days=window_days)
+        finally:
+            snapshot.close()
+            read_txn.rollback()
+    finally:
+        read_conn.close()
 
 
 @router.post("/risk-alerts/expire")

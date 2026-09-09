@@ -70,6 +70,18 @@ class SourceHealthRead(BaseModel):
     last_run_status: str | None
 
 
+class SourceDistributionItem(BaseModel):
+    """来源分布：同一提醒关联到某来源去重计数，多来源可重复归属。
+
+    各来源计数之和可大于当前提醒总数，不当互斥占比使用。
+    """
+
+    source_id: int
+    code: str
+    name: str
+    count: int
+
+
 class DashboardSummary(BaseModel):
     level_counts: list[LevelCount]
     total_current: int
@@ -77,6 +89,15 @@ class DashboardSummary(BaseModel):
     type_distribution: list[EventTypeCount]
     recent_alerts: list[RiskAlertRead]
     sources: list[SourceHealthRead]
+    as_of: datetime
+    window_start: datetime
+    window_days: int
+    period_new_count: int
+    supplier_total: int
+    active_supplier_total: int
+    source_distribution: list[SourceDistributionItem]
+    retention_window_days: int
+    history_may_be_partial: bool
 
 
 class EventSignalEvidence(BaseModel):

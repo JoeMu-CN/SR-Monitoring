@@ -8,6 +8,7 @@ import type {
   AgentStatusRead,
   AuthUser,
   CollectionRunRead,
+  DashboardSummary,
   DataSourceRead,
   DimensionRead,
   DimensionInputsRead,
@@ -37,6 +38,7 @@ vi.mock('./api', async (importOriginal) => {
         resetPassword: vi.fn(),
       },
       alerts: vi.fn(),
+      dashboardSummary: vi.fn(),
       suppliers: vi.fn(),
       supplierPage: vi.fn(),
       sources: vi.fn(),
@@ -121,6 +123,30 @@ const alertBackend: RiskAlertRead = {
   review_due_at: null,
   validity_policy_version: 'rule-v1',
   validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
+};
+
+// 总览汇总夹具：故意让 total_current(1) 远小于 alerts 列表口径也能验证"统计来自 summary"。
+const dashboardSummaryOk: DashboardSummary = {
+  level_counts: [
+    {level: 'P1', count: 1},
+    {level: 'P2', count: 0},
+    {level: 'P3', count: 0},
+    {level: 'P4', count: 0},
+  ],
+  total_current: 1,
+  today_new: 0,
+  type_distribution: [{event_type: 'compliance', count: 1}],
+  recent_alerts: [alertBackend],
+  sources: [{id: 1, code: 'ofac-sdn', name: 'OFAC SDN', enabled: true, last_run_at: null, last_run_status: null}],
+  as_of: '2026-09-09T00:00:00Z',
+  window_start: '2026-08-10T00:00:00Z',
+  window_days: 30,
+  period_new_count: 1,
+  supplier_total: 1,
+  active_supplier_total: 1,
+  source_distribution: [{source_id: 1, code: 'ofac-sdn', name: 'OFAC SDN', count: 1}],
+  retention_window_days: 90,
+  history_may_be_partial: false,
 };
 
 const supplierBackend: SupplierListItem = {
@@ -311,6 +337,7 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.auth.login).mockResolvedValue(user);
   vi.mocked(api.auth.logout).mockResolvedValue({detail: 'ok'});
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
+  vi.mocked(api.dashboardSummary).mockResolvedValue(dashboardSummaryOk);
   vi.mocked(api.suppliers).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
   vi.mocked(api.supplierPage).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
   vi.mocked(api.sources).mockResolvedValue([sourceBackend]);
@@ -367,14 +394,14 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     expect(screen.queryByText('权限不足')).not.toBeInTheDocument();
   });
 
-  it('agentStatus 返回 403 时风险提醒与供应商主数据仍正常渲染（/overview）', async () => {
+  it('agentStatus 返回 403 时总览汇总仍正常渲染（/overview）', async () => {
     defaultMocks({agentStatus: async () => { throw denied403; }});
     renderApp('/overview');
 
     expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
-    // 风险提醒（来自 alerts 主数据）正常渲染
+    // 最近风险提醒（来自 dashboardSummary.recent_alerts）正常渲染
     expect((await screen.findAllByText('示例精密电子有限公司')).length).toBeGreaterThan(0);
-    // 供应商（来自 suppliers 主数据）计数正常渲染：总监控企业 1 家、当前风险提醒 1 条
+    // 总览统计（来自 dashboardSummary）正常渲染：总监控企业 1 家、当前风险提醒 1 条
     const supplierStat = screen.getByText((_content, element) => (
       element?.tagName === 'SPAN' && element.textContent === '总监控企业：1 家'
     ));
@@ -632,5 +659,36 @@ describe('App 供应商编辑：删除影响展示', () => {
     expect(screen.getByDisplayValue('仍可编辑有限公司')).toBeInTheDocument();
     // 无全局错误横幅（横幅内含「重新加载」按钮；此处不应出现）
     expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();
+  });
+});
+
+describe('App /overview 与 loadData 解耦', () => {
+  it('loadData 的 Promise.all 仍 pending 时 /overview 已挂载并显示自管汇总，不被全局 loading 遮挡', async () => {
+    defaultMocks();
+    // suppliers 属于 loadData 的 Promise.all —— 令其永不 resolve，模拟核心数据仍在加载
+    vi.mocked(api.suppliers).mockImplementation(() => new Promise<never>(() => {}));
+    renderApp('/overview');
+
+    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
+    expect(screen.queryByText('正在加载供应链风险数据…')).not.toBeInTheDocument();
+  });
+
+  it('来源配置接口失败但 summary 成功时 /overview 仍显示总览数据', async () => {
+    defaultMocks();
+    vi.mocked(api.sources).mockRejectedValue(new ApiError(503, '数据源服务不可用'));
+    vi.mocked(api.sourcesAdmin).mockRejectedValue(new ApiError(503, '数据源服务不可用'));
+    renderApp('/overview');
+
+    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
+  });
+
+  it('summary 返回 401 时经 App 统一处理清理会话并退回登录页', async () => {
+    defaultMocks();
+    vi.mocked(api.dashboardSummary).mockRejectedValue(new ApiError(401, '登录已失效'));
+    renderApp('/overview');
+
+    expect(await screen.findByText('登录已失效，请重新登录')).toBeInTheDocument();
   });
 });

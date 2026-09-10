@@ -236,6 +236,64 @@ export interface EventDetailRead {
 
 interface RiskAlertListResponse { items: RiskAlertRead[]; total: number }
 
+/* ── 总览汇总契约（任务 4 后端 GET /dashboard/summary?days=7|30|90） ───────── */
+
+export type DashboardWindowDays = 7 | 30 | 90;
+
+export interface DashboardLevelCount {
+  readonly level: RiskLevel;
+  readonly count: number;
+}
+
+export interface DashboardEventTypeCount {
+  readonly event_type: string;
+  readonly count: number;
+}
+
+/** 来源采集新鲜度：每来源最近一次采集运行的完成时间与状态。 */
+export interface DashboardSourceHealth {
+  readonly id: number;
+  readonly code: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly last_run_at: string | null;
+  readonly last_run_status: string | null;
+}
+
+/** 来源分布：同一提醒关联到某来源去重计数，多来源可重复归属；各来源之和可大于当前提醒总数，非互斥占比。 */
+export interface DashboardSourceDistributionItem {
+  readonly source_id: number;
+  readonly code: string;
+  readonly name: string;
+  readonly count: number;
+}
+
+export interface DashboardSummary {
+  /** 当前有效快照下的 P1–P4 计数，恒含四档、顺序固定，不随 days 变化。 */
+  readonly level_counts: readonly DashboardLevelCount[];
+  /** 当前有效提醒总数（同一只读快照），不随 days 变化。 */
+  readonly total_current: number;
+  /** 过去 24 小时内创建且当前仍有效的提醒数（兼容字段，非自然日）。 */
+  readonly today_new: number;
+  readonly type_distribution: readonly DashboardEventTypeCount[];
+  /** 最近提醒：updated_at DESC, id DESC，最多 10 条。 */
+  readonly recent_alerts: readonly RiskAlertRead[];
+  readonly sources: readonly DashboardSourceHealth[];
+  /** 数据截至时间（聚合快照点，UTC ISO）。 */
+  readonly as_of: string;
+  readonly window_start: string;
+  /** 服务端回显的窗口天数（7|30|90）。 */
+  readonly window_days: number;
+  /** 窗口 [window_start, as_of) 内创建的全部提醒行，含已失效。 */
+  readonly period_new_count: number;
+  readonly supplier_total: number;
+  readonly active_supplier_total: number;
+  readonly source_distribution: readonly DashboardSourceDistributionItem[];
+  readonly retention_window_days: number;
+  /** days 超出已配置提醒保留期时为 true：更早的期间新增可能已被清理，历史不完整。 */
+  readonly history_may_be_partial: boolean;
+}
+
 export interface SupplierRead {
   id: number;
   supplier_code: string;
@@ -749,6 +807,7 @@ export const api = {
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
+  dashboardSummary: (days: DashboardWindowDays) => request<DashboardSummary>(`/api/v1/dashboard/summary?days=${days}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   supplierPage: (query: string, status: SupplierStatusFilter, offset: number) => {

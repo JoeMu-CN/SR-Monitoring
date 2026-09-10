@@ -71,6 +71,9 @@ export function App() {
   const canManageSuppliers = permissions.includes(routePermissions.supplierManage);
   const canManageRules = permissions.includes(routePermissions.ruleManage);
   const canUseRiskAssistant = permissions.includes(routePermissions.riskQueryUse);
+  // /overview 自管 dashboardSummary 请求，独立于 loadData 的 Promise.all 与全局 loading/splash：
+  // 其他核心资源仍 pending 或失败时，总览页也要能挂载并显示自己的汇总。
+  const onOverviewRoute = location.pathname === routePaths.overview;
 
   useEffect(() => {
     const savedTheme = localStorage.getItem('sr-theme') ?? 'light';
@@ -127,6 +130,10 @@ export function App() {
   }, [canManageSources]);
 
   useEffect(() => { if (auth) void loadData(); }, [auth, loadData]);
+
+  // 一旦停留在 /overview（不受全局 loading/splash 遮挡），开屏动画视为已完成，
+  // 避免核心数据加载结束后切到其他路由再补放一次开屏。
+  useEffect(() => { if (onOverviewRoute) setSplashFinished(true); }, [onOverviewRoute]);
 
   const handleLogin = async (username: string, password: string) => {
     setAuthError(null);
@@ -372,7 +379,7 @@ export function App() {
   }, []);
   const riskRouteView = <RiskRouteView riskItems={riskItems} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
   const routeViews: RouteViews = {
-    overview: <OverviewView riskItems={riskItems} suppliers={suppliers} onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} />,
+    overview: <OverviewView onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} onRequestError={handleDetailRequestError} />,
     risks: riskRouteView,
     riskDetail: riskRouteView,
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
@@ -411,7 +418,7 @@ export function App() {
               <button className="font-bold hover:underline" onClick={() => void loadData()}>重新加载</button>
             </div>
           )}
-          {loading ? (
+          {loading && !onOverviewRoute ? (
             <div className="min-h-[50vh] flex items-center justify-center text-[#424751]">
               <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
               正在加载供应链风险数据…
@@ -453,7 +460,7 @@ export function App() {
       />
       <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} />
       <AnimatePresence>
-        {(!splashFinished || loading) && <SystemSplashScreen onComplete={completeSplash} />}
+        {(!splashFinished || loading) && !onOverviewRoute && <SystemSplashScreen onComplete={completeSplash} />}
       </AnimatePresence>
     </div>
   );

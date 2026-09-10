@@ -10,7 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import RetentionSettings
-from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
+from app.risks.models import (
+    RiskAlert,
+    RiskEvent,
+    RiskEventSignal,
+    SupplierEventMatch,
+)
 from app.scheduler.retention import cleanup_retention
 from app.signals.declarative import AdapterSpec, DeclarativeSourceAdapter
 from app.signals.models import CollectionRun, DataSource, RawSignal
@@ -711,6 +716,107 @@ def test_cleanup_keeps_recent_data(db_session: Session) -> None:
     assert (
         db_session.scalar(
             select(func.count()).select_from(RawSignal).where(RawSignal.id == signal.id)
+        )
+        == 1
+    )
+
+
+def test_cleanup_keeps_old_signal_supporting_current_unbounded_alert(
+    db_session: Session,
+) -> None:
+    """任务6补充回归：旧信号仍被现行无限提醒引用时，闭包整体保留。
+
+    不依赖新 now_utc 签名，仅用真实时钟与超期旧数据刻画闭包保护；
+    当前实现会误删该信号，失败即缺陷证据。
+    """
+    source = _get_nmc_source(db_session)
+    supplier = Supplier(
+        supplier_code="SUP-RET-KEEP",
+        legal_name="保留测试供应商",
+        country_code="CN",
+        registry_no="91310000RETKEEP01",
+    )
+    db_session.add(supplier)
+    db_session.flush()
+    signal = RawSignal(
+        source_id=source.id,
+        title="被引用旧信号",
+        content="仍支撑现行无限提醒",
+        fingerprint="kept-old-signal-fp",
+        raw_data={},
+    )
+    db_session.add(signal)
+    db_session.flush()
+    old = datetime.now(UTC) - timedelta(days=100)
+    db_session.execute(
+        RawSignal.__table__.update()
+        .where(RawSignal.id == signal.id)
+        .values(collected_at=old)
+    )
+    event = RiskEvent(
+        dedup_key="retention-keep-event",
+        event_type="compliance",
+        severity="high",
+        summary="现行事件",
+        start_at=old,
+        end_at=old,
+        confidence=0.9,
+        facts={},
+    )
+    db_session.add(event)
+    db_session.flush()
+    db_session.add(RiskEventSignal(event_id=event.id, signal_id=signal.id))
+    match = SupplierEventMatch(
+        supplier_id=supplier.id,
+        event_id=event.id,
+        match_type="registry_no",
+        score=90,
+        reasons=["测试"],
+        evidence=[],
+    )
+    db_session.add(match)
+    db_session.flush()
+    alert = RiskAlert(
+        match_id=match.id,
+        level="P1",
+        score=90,
+        score_detail={},
+        status="current",
+        expires_at=None,
+        expiry_kind="unbounded",
+    )
+    db_session.add(alert)
+    db_session.commit()
+
+    result = cleanup_retention(
+        db_session,
+        RetentionSettings(signal_days=90, event_days=90, run_days=30),
+    )
+
+    assert result.deleted_signals == 0
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(RawSignal).where(RawSignal.id == signal.id)
+        )
+        == 1
+    )
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(RiskAlert).where(RiskAlert.id == alert.id)
+        )
+        == 1
+    )
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(SupplierEventMatch)
+            .where(SupplierEventMatch.id == match.id)
+        )
+        == 1
+    )
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(RiskEvent).where(RiskEvent.id == event.id)
         )
         == 1
     )

@@ -19,10 +19,14 @@ $baseUrl = "http://127.0.0.1:18080"
 $expectedDatabaseUrl = "postgresql+psycopg://supplier_risk_test:test_only_password@postgres-test:5432/supplier_risk_test"
 $runId = "{0}-{1}" -f ([DateTimeOffset]::UtcNow.ToString("yyyyMMddTHHmmssfffZ")), [Guid]::NewGuid().ToString("N").Substring(0, 8)
 $imageReference = "supplierriskmonitoring-hardening-test:$runId"
-$evidenceRoot = Join-Path $repoRoot ".omo/evidence/task-1-current-version-hardening"
+$evidenceRoot = Join-Path $repoRoot ".omo/evidence/task-10-current-version-hardening"
 $evidenceDirectory = Join-Path $evidenceRoot $runId
 $summaryPath = Join-Path $evidenceDirectory "summary.json"
 $buildLogPath = Join-Path $evidenceDirectory "build.txt"
+$hardeningSeedScript = "tests/seed_hardening_e2e.py"
+$hardeningBackendTest = "tests/test_hardening_integration.py"
+$hardeningE2eSpec = "tests/e2e/current-version-hardening.spec.ts"
+$legacySeedNotRunReason = "legacy-baseline-implicit-seed-e2e-only"
 $compose = @(
     "compose", "--project-name", $projectName,
     "--file", $composeBaseFile,
@@ -180,6 +184,28 @@ function Invoke-LoggedNative {
     }
 }
 
+function Invoke-HardeningSeed {
+    <#
+        任务10：在隔离栈启动后通过 test-runner 显式叠加 seed_hardening_e2e.py。
+        app-test 的容器命令只隐式执行既有 seed_e2e.py；本期新 seed 必须在这里
+        额外执行一次，任何非零退出都会原样记录并让调用方立即终止本阶段。
+    #>
+    param([Parameter(Mandatory)][string]$Phase)
+
+    $seedStarted = [DateTimeOffset]::UtcNow
+    $seedLogPath = Join-Path $evidenceDirectory ("hardening-seed-{0}.txt" -f $Phase)
+    & docker @compose --profile tools run --rm test-runner python $hardeningSeedScript *> $seedLogPath
+    $seedExitCode = $LASTEXITCODE
+    return [ordered]@{
+        script = $hardeningSeedScript
+        status = if ($seedExitCode -eq 0) { "passed" } else { "failed" }
+        started_at_utc = $seedStarted.ToString("o")
+        finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+        exit_code = $seedExitCode
+        log = $seedLogPath
+    }
+}
+
 function Read-JUnitCounts {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -199,7 +225,7 @@ function Read-JUnitCounts {
         tests = $cases.Count
         failures = $failures.Count
         skipped = $skipped.Count
-        passed = ($cases.Count -gt 0) -and ($failures.Count -eq 0)
+        passed = ($cases.Count -gt 0) -and ($failures.Count -eq 0) -and ($skipped.Count -eq 0)
     }
 }
 
@@ -226,15 +252,140 @@ function Stop-OwnedStack {
     }
 }
 
+function New-SeedNotRunRecord {
+    <#
+        legacy 基线库的 seed 占位记录：app-test 容器命令已隐式执行 seed_e2e.py，
+        该库明确不叠加 hardening seed，避免污染 legacy 测试断言。
+    #>
+    return [ordered]@{
+        status = "not-run"
+        reason = $legacySeedNotRunReason
+    }
+}
+
+function New-NotRunStage {
+    <#
+        fail-fast 语义：首个失败 stage 之后的 stage 一律记录为 not-run，并写明原因。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Reason,
+        [string]$Kind,
+        [string]$Spec,
+        [bool]$WithHardeningSeed
+    )
+
+    $record = [ordered]@{
+        status = "not-run"
+        reason = $Reason
+    }
+    if ($Kind) { $record.kind = $Kind }
+    if ($Spec) { $record.spec = $Spec }
+    $record.database = "supplier_risk_test"
+    $record.hardening_seed = $WithHardeningSeed
+    $record.seed = New-SeedNotRunRecord
+    return $record
+}
+
+function Get-StageAggregate {
+    <#
+        任务10父级聚合：仅汇总已运行且有可解析报告的 stage 计数；not-run stage 不伪造数值。
+        父 phase 通过要求至少一个已运行 stage、无失败 stage，且测试数大于 0。
+    #>
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Stages)
+
+    $tests = 0
+    $failures = 0
+    $skipped = 0
+    $runCount = 0
+    $runFailed = 0
+    foreach ($key in @($Stages.Keys)) {
+        $stage = $Stages[$key]
+        if ($null -eq $stage) { continue }
+        $status = [string]$stage["status"]
+        if ($status -eq "passed" -or $status -eq "failed") {
+            $runCount++
+            if ($status -eq "failed") { $runFailed++ }
+        }
+        if ($stage.Contains("tests") -and $null -ne $stage["tests"]) { $tests += [int]$stage["tests"] }
+        if ($stage.Contains("failures") -and $null -ne $stage["failures"]) { $failures += [int]$stage["failures"] }
+        if ($stage.Contains("skipped") -and $null -ne $stage["skipped"]) { $skipped += [int]$stage["skipped"] }
+    }
+    return [ordered]@{
+        passed = (($runCount -gt 0) -and ($runFailed -eq 0) -and ($tests -gt 0))
+        run_count = $runCount
+        run_failed = $runFailed
+        tests = $tests
+        failures = $failures
+        skipped = $skipped
+    }
+}
+
+function Get-E2eSpecPaths {
+    <#
+        任务10：E2E spec 稳定字典序发现（Ordinal），可选按白名单定向过滤后仍保持字典序。
+    #>
+    param([AllowEmptyCollection()][string[]]$Selected)
+
+    $e2eDirectory = Join-Path $frontendRoot "tests/e2e"
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($item in @(Get-ChildItem -LiteralPath $e2eDirectory -Filter "*.spec.ts" -File)) {
+        $names.Add($item.Name)
+    }
+    $names.Sort([System.StringComparer]::Ordinal)
+    $all = @($names | ForEach-Object { "tests/e2e/$_" })
+    if ($Selected.Count -eq 0) {
+        return $all
+    }
+    return @($all | Where-Object { $Selected -contains $_ })
+}
+
 if ($DatabaseUrl -cne $expectedDatabaseUrl) {
     Stop-WithValidationError "拒绝运行：DATABASE_URL 必须精确指向隔离 supplier_risk_test。"
 }
+$testsSpecified = -not [string]::IsNullOrWhiteSpace($Tests)
 $selectedTests = @(Resolve-AllowedTests -SelectedSuite $Suite -RequestedTests $Tests)
 foreach ($requiredPath in @($frontendRoot, $composeBaseFile, $composeOverrideFile, $dockerfile)) {
     if (-not (Test-Path -LiteralPath $requiredPath)) {
         Stop-WithValidationError "缺少验收入口所需路径：$requiredPath"
     }
 }
+
+# 任务10拓扑分流：backend 按测试类别拆分为 legacy 基线库与 hardening 库两个阶段。
+# - legacy：全量 tests 显式排除 test_hardening_integration.py；定向时按类别只跑被选中的 legacy 文件。
+# - hardening：仅运行 tests/test_hardening_integration.py；未被定向选中时记录 not-run。
+$legacyBackendArgs = @()
+$hardeningBackendArgs = @()
+if ($Suite -in @("backend", "all")) {
+    if ((-not $testsSpecified) -or ($selectedTests -contains "tests")) {
+        $legacyBackendArgs = @("tests", "--ignore=tests/test_hardening_integration.py")
+        $hardeningBackendArgs = @($hardeningBackendTest)
+    }
+    else {
+        foreach ($path in $selectedTests) {
+            if ($path -eq $hardeningBackendTest) {
+                $hardeningBackendArgs += $path
+            }
+            else {
+                $legacyBackendArgs += $path
+            }
+        }
+    }
+}
+
+# 任务10拓扑分流：E2E spec 稳定字典序发现；legacy spec 各自独立基线库，
+# current-version-hardening.spec.ts 独立 hardening 库。
+$allE2eSpecs = @()
+$selectedE2eSpecs = @()
+if ($Suite -in @("e2e", "all")) {
+    $allE2eSpecs = @(Get-E2eSpecPaths -Selected @())
+    if ((-not $testsSpecified) -or ($selectedTests -contains "tests/e2e")) {
+        $selectedE2eSpecs = $allE2eSpecs
+    }
+    else {
+        $selectedE2eSpecs = @(Get-E2eSpecPaths -Selected $selectedTests)
+    }
+}
+
 Test-PortAvailable
 Assert-NoProjectResources
 
@@ -257,8 +408,22 @@ $exitCode = 1
 $resourceCreationAttempted = $false
 $imageBuilt = $false
 $imageIdentityVerified = $false
+$notInSuiteReason = "not-in-selected-suite"
+
+function New-PhaseSkeleton {
+    param([object]$Reason)
+
+    return [ordered]@{
+        status = "not-run"
+        reason = $Reason
+        started_at_utc = $null
+        finished_at_utc = $null
+        stages = [ordered]@{}
+    }
+}
+
 $summary = [ordered]@{
-    schema = "supplier-risk-monitoring/current-version-hardening-run/v1"
+    schema = "supplier-risk-monitoring/current-version-hardening-run/v2"
     status = "failed"
     suite = $Suite
     requested_tests = $selectedTests
@@ -269,10 +434,41 @@ $summary = [ordered]@{
     base_url = $baseUrl
     source_sha256 = $sourceFingerprint
     image = [ordered]@{reference = $imageReference; id = $null; source_label = $null}
-    phases = [ordered]@{}
+    phases = [ordered]@{
+        backend = (New-PhaseSkeleton -Reason $(if ($Suite -in @("backend", "all")) { $null } else { $notInSuiteReason }))
+        frontend = (New-PhaseSkeleton -Reason $(if ($Suite -eq "all") { $null } else { $notInSuiteReason }))
+        e2e = (New-PhaseSkeleton -Reason $(if ($Suite -in @("e2e", "all")) { $null } else { $notInSuiteReason }))
+    }
     cleanup = [ordered]@{attempted = $false; passed = $false; image_removed = $false}
     evidence_directory = $evidenceDirectory
     error = $null
+}
+
+if ($Suite -in @("backend", "all")) {
+    $summary.phases.backend.stages.legacy = [ordered]@{
+        status = "not-run"; reason = "excluded-by-requested-tests"; kind = "legacy"
+        database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $false
+        seed = (New-SeedNotRunRecord)
+    }
+    $summary.phases.backend.stages.hardening = [ordered]@{
+        status = "not-run"; reason = "excluded-by-requested-tests"; kind = "hardening"
+        database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $true
+        seed = (New-SeedNotRunRecord)
+    }
+}
+foreach ($spec in $allE2eSpecs) {
+    $stem = [System.IO.Path]::GetFileName($spec).Replace(".spec.ts", "")
+    $isHardeningSpec = ($spec -eq $hardeningE2eSpec)
+    $isSelected = ($selectedE2eSpecs -contains $spec)
+    $summary.phases.e2e.stages[$stem] = [ordered]@{
+        status = "not-run"
+        reason = $(if ($isSelected) { $null } else { "excluded-by-requested-tests" })
+        kind = if ($isHardeningSpec) { "hardening" } else { "legacy" }
+        spec = $spec
+        database = "supplier_risk_test"
+        hardening_seed = $isHardeningSpec
+        seed = (New-SeedNotRunRecord)
+    }
 }
 
 try {
@@ -301,54 +497,195 @@ try {
 
     if ($Suite -in @("backend", "all")) {
         $backendStarted = [DateTimeOffset]::UtcNow
-        $resourceCreationAttempted = $true
-        Invoke-LoggedNative -Name "后端隔离栈启动（迁移 + seed）" -LogPath (Join-Path $evidenceDirectory "backend-compose-up.txt") -Command {
-            & docker @compose up --detach --wait app-test
-        }
-        $backendTests = @(if ($Suite -eq "all") { "tests" } else { $selectedTests })
-        $junitPath = Join-Path $evidenceDirectory "junit.xml"
-        & docker @compose --profile tools run --rm test-runner pytest @backendTests --junitxml=/test-evidence/junit.xml *> (Join-Path $evidenceDirectory "backend-tests.txt")
-        $pytestExitCode = $LASTEXITCODE
-        $backendCounts = $null
-        $junitDiagnostic = "ok"
-        $junitError = $null
-        if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
+        $summary.phases.backend.started_at_utc = $backendStarted.ToString("o")
+        $backendFailure = $null
+        $backendFailureExit = $null
+
+        # ---------- legacy 基线库：仅有 app-test 隐式 seed_e2e，全量排除 hardening 集成 ----------
+        if ($legacyBackendArgs.Count -gt 0) {
+            $stageStarted = [DateTimeOffset]::UtcNow
+            $resourceCreationAttempted = $true
+            $stageFailed = $false
+            $stageError = $null
+            $stageExitCode = $null
+            $stageCounts = $null
+            $junitDiagnostic = "ok"
+            $junitError = $null
+            $legacyJunitPath = Join-Path $evidenceDirectory "junit-backend-legacy.xml"
             try {
-                $backendCounts = Read-JUnitCounts -Path $junitPath
+                Invoke-LoggedNative -Name "legacy 基线库栈启动（迁移 + seed_e2e）" -LogPath (Join-Path $evidenceDirectory "backend-legacy-compose-up.txt") -Command {
+                    & docker @compose up --detach --wait app-test
+                }
+                # legacy 基线库只包含 seed_e2e 数据；不叠加 hardening seed，保证既有断言不被污染。
+                & docker @compose --profile tools run --rm test-runner pytest @legacyBackendArgs --junitxml=/test-evidence/junit-backend-legacy.xml *> (Join-Path $evidenceDirectory "backend-legacy-tests.txt")
+                $stageExitCode = $LASTEXITCODE
             }
             catch {
-                $junitDiagnostic = "unparsable"
-                $junitError = $_.Exception.Message
+                $stageFailed = $true
+                $stageError = $_.Exception.Message
+                $stageExitCode = if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { 1 }
+            }
+            finally {
+                Stop-OwnedStack
+                $resourceCreationAttempted = $false
+            }
+            if (-not $stageFailed) {
+                if (Test-Path -LiteralPath $legacyJunitPath -PathType Leaf) {
+                    try {
+                        $stageCounts = Read-JUnitCounts -Path $legacyJunitPath
+                    }
+                    catch {
+                        $junitDiagnostic = "unparsable"
+                        $junitError = $_.Exception.Message
+                    }
+                }
+                else {
+                    $junitDiagnostic = "missing"
+                    $junitError = "legacy pytest 未生成 JUnit 报告：$legacyJunitPath"
+                }
+                $stageFailed = -not (
+                    ($stageExitCode -eq 0) -and
+                    ($null -ne $stageCounts) -and
+                    $stageCounts.passed
+                )
+                if ($stageFailed) {
+                    $stageError = "legacy 基线库阶段失败：pytest exit=$stageExitCode；junit=$junitDiagnostic。"
+                }
+            }
+            $summary.phases.backend.stages.legacy = [ordered]@{
+                status = if ($stageFailed) { "failed" } else { "passed" }
+                kind = "legacy"
+                database = "supplier_risk_test"
+                selected_tests = @($legacyBackendArgs | Where-Object { -not $_.StartsWith("--") })
+                hardening_seed = $false
+                seed = (New-SeedNotRunRecord)
+                started_at_utc = $stageStarted.ToString("o")
+                finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+                exit_code = $stageExitCode
+                tests = if ($null -ne $stageCounts) { $stageCounts.tests } else { $null }
+                failures = if ($null -ne $stageCounts) { $stageCounts.failures } else { $null }
+                skipped = if ($null -ne $stageCounts) { $stageCounts.skipped } else { $null }
+                junit = $legacyJunitPath
+                junit_available = ($null -ne $stageCounts)
+                junit_diagnostic = $junitDiagnostic
+                junit_error = $junitError
+                error = $stageError
+            }
+            if ($stageFailed) {
+                $backendFailure = $stageError
+                $backendFailureExit = if ($stageExitCode -ne 0) { $stageExitCode } else { 1 }
+            }
+        }
+
+        # ---------- hardening 库：另一个新库，恰好一次 hardening seed，仅跑集成测试 ----------
+        if ($null -ne $backendFailure) {
+            $summary.phases.backend.stages.hardening = [ordered]@{
+                status = "not-run"; reason = "preceding-stage-failed"; kind = "hardening"
+                database = "supplier_risk_test"; selected_tests = @($hardeningBackendArgs); hardening_seed = $true
+                seed = (New-SeedNotRunRecord)
+            }
+        }
+        elseif ($hardeningBackendArgs.Count -gt 0) {
+            $stageStarted = [DateTimeOffset]::UtcNow
+            $resourceCreationAttempted = $true
+            $stageFailed = $false
+            $stageError = $null
+            $stageExitCode = $null
+            $stageCounts = $null
+            $junitDiagnostic = "ok"
+            $junitError = $null
+            $seedRecord = $null
+            $hardeningJunitPath = Join-Path $evidenceDirectory "junit-backend-hardening.xml"
+            try {
+                Invoke-LoggedNative -Name "hardening 库栈启动（迁移 + seed_e2e）" -LogPath (Join-Path $evidenceDirectory "backend-hardening-compose-up.txt") -Command {
+                    & docker @compose up --detach --wait app-test
+                }
+                # 与 legacy 基线库物理隔离：独立 fresh 栈即独立新库，先叠加 hardening seed。
+                $seedRecord = Invoke-HardeningSeed -Phase "backend-hardening"
+                if ($seedRecord.status -ne "passed") {
+                    $stageFailed = $true
+                    $stageExitCode = if ($seedRecord.exit_code -ne 0) { $seedRecord.exit_code } else { 1 }
+                    $stageError = "hardening 阶段 seed 失败：python $hardeningSeedScript exit=$($seedRecord.exit_code)；详见 $($seedRecord.log)。"
+                }
+                else {
+                    & docker @compose --profile tools run --rm test-runner pytest @hardeningBackendArgs --junitxml=/test-evidence/junit-backend-hardening.xml *> (Join-Path $evidenceDirectory "backend-hardening-tests.txt")
+                    $stageExitCode = $LASTEXITCODE
+                }
+            }
+            catch {
+                $stageFailed = $true
+                $stageError = $_.Exception.Message
+                $stageExitCode = if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { 1 }
+            }
+            finally {
+                Stop-OwnedStack
+                $resourceCreationAttempted = $false
+            }
+            if (-not $stageFailed) {
+                if (Test-Path -LiteralPath $hardeningJunitPath -PathType Leaf) {
+                    try {
+                        $stageCounts = Read-JUnitCounts -Path $hardeningJunitPath
+                    }
+                    catch {
+                        $junitDiagnostic = "unparsable"
+                        $junitError = $_.Exception.Message
+                    }
+                }
+                else {
+                    $junitDiagnostic = "missing"
+                    $junitError = "hardening pytest 未生成 JUnit 报告：$hardeningJunitPath"
+                }
+                $stageFailed = -not (
+                    ($stageExitCode -eq 0) -and
+                    ($null -ne $stageCounts) -and
+                    $stageCounts.passed
+                )
+                if ($stageFailed) {
+                    $stageError = "hardening 阶段失败：pytest exit=$stageExitCode；junit=$junitDiagnostic。"
+                }
+            }
+            $summary.phases.backend.stages.hardening = [ordered]@{
+                status = if ($stageFailed) { "failed" } else { "passed" }
+                kind = "hardening"
+                database = "supplier_risk_test"
+                selected_tests = @($hardeningBackendArgs)
+                hardening_seed = $true
+                seed = $seedRecord
+                started_at_utc = $stageStarted.ToString("o")
+                finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+                exit_code = $stageExitCode
+                tests = if ($null -ne $stageCounts) { $stageCounts.tests } else { $null }
+                failures = if ($null -ne $stageCounts) { $stageCounts.failures } else { $null }
+                skipped = if ($null -ne $stageCounts) { $stageCounts.skipped } else { $null }
+                junit = $hardeningJunitPath
+                junit_available = ($null -ne $stageCounts)
+                junit_diagnostic = $junitDiagnostic
+                junit_error = $junitError
+                error = $stageError
+            }
+            if ($stageFailed) {
+                $backendFailure = $stageError
+                $backendFailureExit = if ($stageExitCode -ne 0) { $stageExitCode } else { 1 }
             }
         }
         else {
-            $junitDiagnostic = "missing"
-            $junitError = "测试命令未生成 JUnit 报告：$junitPath"
+            $summary.phases.backend.stages.hardening = [ordered]@{
+                status = "not-run"; reason = "excluded-by-requested-tests"; kind = "hardening"
+                database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $true
+                seed = (New-SeedNotRunRecord)
+            }
         }
-        $backendFailed = -not (
-            ($pytestExitCode -eq 0) -and
-            ($null -ne $backendCounts) -and
-            $backendCounts.passed
-        )
-        $summary.phases.backend = [ordered]@{
-            status = if ($backendFailed) { "failed" } else { "passed" }
-            started_at_utc = $backendStarted.ToString("o")
-            finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
-            exit_code = $pytestExitCode
-            tests = if ($null -ne $backendCounts) { $backendCounts.tests } else { $null }
-            failures = if ($null -ne $backendCounts) { $backendCounts.failures } else { $null }
-            skipped = if ($null -ne $backendCounts) { $backendCounts.skipped } else { $null }
-            junit = $junitPath
-            junit_available = ($null -ne $backendCounts)
-            junit_diagnostic = $junitDiagnostic
-            junit_error = $junitError
+
+        $backendAggregate = Get-StageAggregate -Stages $summary.phases.backend.stages
+        $summary.phases.backend.tests = $backendAggregate.tests
+        $summary.phases.backend.failures = $backendAggregate.failures
+        $summary.phases.backend.skipped = $backendAggregate.skipped
+        $summary.phases.backend.status = if ($backendAggregate.passed) { "passed" } else { "failed" }
+        $summary.phases.backend.finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+        if ($null -ne $backendFailure) {
+            $exitCode = if ($null -ne $backendFailureExit) { $backendFailureExit } else { 1 }
+            throw $backendFailure
         }
-        if ($backendFailed) {
-            $exitCode = if ($pytestExitCode -ne 0) { $pytestExitCode } else { 1 }
-            throw "后端阶段失败：pytest exit=$pytestExitCode；junit=$junitDiagnostic。"
-        }
-        Stop-OwnedStack
-        $resourceCreationAttempted = $false
     }
 
     if ($Suite -eq "all") {
@@ -413,8 +750,10 @@ try {
         $frontendFailed = $frontendFailed -or ($null -ne $typecheckExit -and $typecheckExit -ne 0) -or ($null -ne $buildExit -and $buildExit -ne 0)
         $summary.phases.frontend = [ordered]@{
             status = if ($frontendFailed) { "failed" } else { "passed" }
+            reason = $null
             started_at_utc = $frontendStarted.ToString("o")
             finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+            stages = [ordered]@{}
             exit_code = if ($null -ne $typecheckExit -and $typecheckExit -ne 0) { $typecheckExit } elseif ($null -ne $buildExit -and $buildExit -ne 0) { $buildExit } else { $frontendExitCode }
             tests = if ($null -ne $frontendCounts) { $frontendCounts.tests } else { $null }
             failures = if ($null -ne $frontendCounts) { $frontendCounts.failures } else { $null }
@@ -435,87 +774,192 @@ try {
     if ($Suite -in @("e2e", "all")) {
         Test-PortAvailable
         Assert-NoProjectResources
-        $e2eStarted = [DateTimeOffset]::UtcNow
-        $resourceCreationAttempted = $true
-        Invoke-LoggedNative -Name "E2E 全新隔离栈启动与 seed" -LogPath (Join-Path $evidenceDirectory "e2e-compose-up.txt") -Command {
-            & docker @compose up --detach --wait app-test
-        }
-        $health = Invoke-RestMethod -Uri "$baseUrl/api/v1/system/health"
-        if ($health.status -ne "ok" -or $health.database -ne "ok") {
-            throw "E2E 隔离栈健康检查未返回数据库可用。"
-        }
-
         $playwrightExecutable = Join-Path $frontendRoot "node_modules/.bin/playwright.cmd"
         if (-not (Test-Path -LiteralPath $playwrightExecutable -PathType Leaf)) {
             throw "Playwright 工具不可用：$playwrightExecutable"
         }
-        $playwrightJson = Join-Path $evidenceDirectory "playwright.json"
-        $playwrightError = Join-Path $evidenceDirectory "playwright-error.txt"
-        $e2eTests = @(if ($Suite -eq "all") { "tests/e2e" } else { $selectedTests })
-        $env:PLAYWRIGHT_BASE_URL = $baseUrl
-        $playwrightExitCode = $null
-        Push-Location $frontendRoot
-        try {
-            & $playwrightExecutable test @e2eTests --workers=1 --reporter=json > $playwrightJson 2> $playwrightError
-            $playwrightExitCode = $LASTEXITCODE
-        }
-        finally {
-            Pop-Location
-        }
-        $playwrightReport = $null
-        $reportDiagnostic = "ok"
-        $reportError = $null
-        if (Test-Path -LiteralPath $playwrightJson -PathType Leaf) {
+        $e2eStarted = [DateTimeOffset]::UtcNow
+        $summary.phases.e2e.started_at_utc = $e2eStarted.ToString("o")
+        $e2eFailure = $null
+        $e2eFailureExit = $null
+        $e2eStop = $false
+
+        foreach ($spec in $selectedE2eSpecs) {
+            $stem = [System.IO.Path]::GetFileName($spec).Replace(".spec.ts", "")
+            if ($e2eStop) {
+                $summary.phases.e2e.stages[$stem] = New-NotRunStage -Reason "preceding-e2e-stage-failed" `
+                    -Kind $(if ($spec -eq $hardeningE2eSpec) { "hardening" } else { "legacy" }) `
+                    -Spec $spec -WithHardeningSeed ($spec -eq $hardeningE2eSpec)
+                continue
+            }
+
+            $isHardeningSpec = ($spec -eq $hardeningE2eSpec)
+            $stageStarted = [DateTimeOffset]::UtcNow
+            $resourceCreationAttempted = $true
+            $stageFailed = $false
+            $stageError = $null
+            $stageExitCode = $null
+            $seedRecord = $null
+            $playwrightExitCode = $null
+            $playwrightReport = $null
+            $statsValid = $false
+            $playwrightCount = $null
+            $reportDiagnostic = "ok"
+            $reportError = $null
+            $playwrightJson = Join-Path $evidenceDirectory ("playwright-{0}.json" -f $stem)
+            $playwrightError = Join-Path $evidenceDirectory ("playwright-{0}-error.txt" -f $stem)
+            $playwrightAttempted = $false
             try {
-                $playwrightReport = Get-Content -Raw -LiteralPath $playwrightJson | ConvertFrom-Json
+                Invoke-LoggedNative -Name ("E2E 全新隔离栈启动（{0}）" -f $spec) -LogPath (Join-Path $evidenceDirectory ("e2e-{0}-compose-up.txt" -f $stem)) -Command {
+                    & docker @compose up --detach --wait app-test
+                }
+                $health = Invoke-RestMethod -Uri "$baseUrl/api/v1/system/health"
+                if ($health.status -ne "ok" -or $health.database -ne "ok") {
+                    throw "E2E 隔离栈健康检查未返回数据库可用。"
+                }
+                if ($isHardeningSpec) {
+                    # 仅 hardening spec 的独立新库叠加恰好一次 hardening seed；legacy spec 保持纯基线。
+                    $seedRecord = Invoke-HardeningSeed -Phase "e2e-$stem"
+                    if ($seedRecord.status -ne "passed") {
+                        $stageFailed = $true
+                        $stageExitCode = if ($seedRecord.exit_code -ne 0) { $seedRecord.exit_code } else { 1 }
+                        $stageError = "E2E 阶段 seed 失败：python $hardeningSeedScript exit=$($seedRecord.exit_code)；详见 $($seedRecord.log)。"
+                    }
+                }
+                if (-not $stageFailed) {
+                    # 每个 spec 独立重建：清理上一 spec 的 trace/截图，避免产物串库。
+                    $playwrightArtifactsSource = Join-Path $frontendRoot "test-results"
+                    if (Test-Path -LiteralPath $playwrightArtifactsSource) {
+                        Remove-Item -LiteralPath $playwrightArtifactsSource -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                    $playwrightAttempted = $true
+                    $env:PLAYWRIGHT_BASE_URL = $baseUrl
+                    Push-Location $frontendRoot
+                    try {
+                        & $playwrightExecutable test $spec --workers=1 --reporter=json > $playwrightJson 2> $playwrightError
+                        $playwrightExitCode = $LASTEXITCODE
+                        $stageExitCode = $playwrightExitCode
+                    }
+                    finally {
+                        Pop-Location
+                    }
+                }
             }
             catch {
-                $reportDiagnostic = "unparsable"
-                $reportError = $_.Exception.Message
+                $stageFailed = $true
+                $stageError = $_.Exception.Message
+                if ($null -eq $stageExitCode) { $stageExitCode = 1 }
+            }
+            finally {
+                # 无论 Playwright 成败都保留本轮 trace/截图等真实产物到任务10证据目录。
+                if ($playwrightAttempted) {
+                    $playwrightArtifactsTarget = Join-Path $evidenceDirectory ("playwright-artifacts-{0}" -f $stem)
+                    $playwrightArtifactsSource = Join-Path $frontendRoot "test-results"
+                    if (Test-Path -LiteralPath $playwrightArtifactsSource) {
+                        Copy-Item -LiteralPath $playwrightArtifactsSource -Destination $playwrightArtifactsTarget -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                Stop-OwnedStack
+                $resourceCreationAttempted = $false
+            }
+
+            if ($playwrightAttempted -and -not ($stageFailed -and $null -eq $playwrightExitCode)) {
+                if (Test-Path -LiteralPath $playwrightJson -PathType Leaf) {
+                    try {
+                        $playwrightReport = Get-Content -Raw -LiteralPath $playwrightJson | ConvertFrom-Json
+                    }
+                    catch {
+                        $reportDiagnostic = "unparsable"
+                        $reportError = $_.Exception.Message
+                    }
+                }
+                else {
+                    $reportDiagnostic = "missing"
+                    $reportError = "Playwright 未生成机器可读报告：$playwrightJson"
+                }
+                $statsNames = @("expected", "unexpected", "flaky", "skipped")
+                $statsValues = @{}
+                $statsValid = $false
+                $statsProp = if ($null -ne $playwrightReport) { $playwrightReport.psobject.Properties['stats'] } else { $null }
+                if ($null -ne $playwrightReport -and $null -ne $statsProp) {
+                    $statsValid = $true
+                    foreach ($statsName in $statsNames) {
+                        $fieldProperty = $statsProp.Value.psobject.Properties[$statsName]
+                        if ($null -eq $fieldProperty -or $null -eq $fieldProperty.Value) {
+                            $statsValid = $false
+                            break
+                        }
+                        $parsedValue = 0
+                        if (-not [int]::TryParse([string]$fieldProperty.Value, [ref]$parsedValue) -or $parsedValue -lt 0) {
+                            $statsValid = $false
+                            break
+                        }
+                        $statsValues[$statsName] = $parsedValue
+                    }
+                }
+                if ($null -ne $playwrightReport -and -not $statsValid) {
+                    $reportDiagnostic = "invalid"
+                    $reportError = "Playwright 报告 stats 字段缺失或非非负整数：$playwrightJson"
+                }
+                $playwrightCount = if ($statsValid) {
+                    [int]$statsValues["expected"] + [int]$statsValues["unexpected"] + [int]$statsValues["flaky"] + [int]$statsValues["skipped"]
+                }
+                else {
+                    $null
+                }
+                $stageFailed = -not (
+                    ($playwrightExitCode -eq 0) -and
+                    $statsValid -and
+                    ($statsValues["expected"] -gt 0) -and
+                    ($statsValues["unexpected"] -eq 0) -and
+                    ($statsValues["flaky"] -eq 0) -and
+                    ($statsValues["skipped"] -eq 0)
+                )
+                if ($stageFailed) {
+                    $stageError = "E2E 阶段失败：playwright exit=$playwrightExitCode；report=$reportDiagnostic。"
+                    $stageExitCode = if ($null -ne $playwrightExitCode -and $playwrightExitCode -ne 0) { $playwrightExitCode } else { 1 }
+                }
+            }
+
+            $summary.phases.e2e.stages[$stem] = [ordered]@{
+                status = if ($stageFailed) { "failed" } else { "passed" }
+                reason = $null
+                kind = if ($isHardeningSpec) { "hardening" } else { "legacy" }
+                spec = $spec
+                database = "supplier_risk_test"
+                hardening_seed = $isHardeningSpec
+                seed = if ($null -ne $seedRecord) { $seedRecord } else { New-SeedNotRunRecord }
+                started_at_utc = $stageStarted.ToString("o")
+                finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+                exit_code = $stageExitCode
+                tests = $playwrightCount
+                failures = if ($statsValid) { [int]$statsValues["unexpected"] } else { $null }
+                skipped = if ($statsValid) { [int]$statsValues["skipped"] } else { $null }
+                report = $playwrightJson
+                report_available = ($null -ne $playwrightReport)
+                report_diagnostic = $reportDiagnostic
+                report_error = $reportError
+                database_recreated_and_seeded = $true
+                error = $stageError
+            }
+            if ($stageFailed) {
+                # fail-fast：首个失败 spec 后不再为后续 spec 启动新栈，其余记录 not-run。
+                $e2eStop = $true
+                $e2eFailure = $stageError
+                $e2eFailureExit = if ($null -ne $stageExitCode) { $stageExitCode } else { 1 }
             }
         }
-        else {
-            $reportDiagnostic = "missing"
-            $reportError = "Playwright 未生成机器可读报告：$playwrightJson"
+
+        $e2eAggregate = Get-StageAggregate -Stages $summary.phases.e2e.stages
+        $summary.phases.e2e.tests = $e2eAggregate.tests
+        $summary.phases.e2e.failures = $e2eAggregate.failures
+        $summary.phases.e2e.skipped = $e2eAggregate.skipped
+        $summary.phases.e2e.status = if ($e2eAggregate.passed) { "passed" } else { "failed" }
+        $summary.phases.e2e.finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+        if ($null -ne $e2eFailure) {
+            $exitCode = if ($null -ne $e2eFailureExit) { $e2eFailureExit } else { 1 }
+            throw $e2eFailure
         }
-        $statsProp = if ($null -ne $playwrightReport) { $playwrightReport.psobject.Properties['stats'] } else { $null }
-        $statsValid = ($null -ne $statsProp)
-        if ($null -ne $playwrightReport -and -not $statsValid) {
-            $reportDiagnostic = "invalid"
-            $reportError = "Playwright 报告可解析但缺少 stats 字段：$playwrightJson"
-        }
-        $playwrightCount = if ($statsValid) {
-            [int]$playwrightReport.stats.expected + [int]$playwrightReport.stats.unexpected + [int]$playwrightReport.stats.flaky + [int]$playwrightReport.stats.skipped
-        }
-        else {
-            $null
-        }
-        $e2eFailed = -not (
-            ($playwrightExitCode -eq 0) -and
-            $statsValid -and
-            ([int]$playwrightReport.stats.unexpected -eq 0) -and
-            ($playwrightCount -gt 0)
-        )
-        $summary.phases.e2e = [ordered]@{
-            status = if ($e2eFailed) { "failed" } else { "passed" }
-            started_at_utc = $e2eStarted.ToString("o")
-            finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
-            exit_code = if ($null -ne $playwrightExitCode) { $playwrightExitCode } else { $null }
-            tests = $playwrightCount
-            failures = if ($statsValid) { [int]$playwrightReport.stats.unexpected } else { $null }
-            skipped = if ($statsValid) { [int]$playwrightReport.stats.skipped } else { $null }
-            report = $playwrightJson
-            report_available = ($null -ne $playwrightReport)
-            report_diagnostic = $reportDiagnostic
-            report_error = $reportError
-            database_recreated_and_seeded = $true
-        }
-        if ($e2eFailed) {
-            $exitCode = if ($null -ne $playwrightExitCode -and $playwrightExitCode -ne 0) { $playwrightExitCode } else { 1 }
-            throw "E2E 阶段失败：playwright exit=$playwrightExitCode；report=$reportDiagnostic。"
-        }
-        Stop-OwnedStack
-        $resourceCreationAttempted = $false
     }
 
     $exitCode = 0
@@ -526,6 +970,12 @@ catch {
     }
     $summary.error = $_.Exception.Message
     [Console]::Error.WriteLine($_.Exception.Message)
+    foreach ($phaseName in @("backend", "frontend", "e2e")) {
+        $phaseRecord = $summary.phases[$phaseName]
+        if ($phaseRecord.status -eq "not-run" -and $null -eq $phaseRecord.reason) {
+            $phaseRecord.reason = "preceding-phase-failed"
+        }
+    }
 }
 finally {
     if ($resourceCreationAttempted) {
@@ -544,7 +994,7 @@ finally {
         $summary.cleanup.passed = $true
     }
 
-    if ($imageBuilt -and $imageIdentityVerified) {
+    if ($imageBuilt) {
         & docker image rm $imageReference *>> (Join-Path $evidenceDirectory "cleanup.txt")
         if ($LASTEXITCODE -eq 0) {
             $summary.cleanup.image_removed = $true

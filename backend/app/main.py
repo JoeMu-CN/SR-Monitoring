@@ -16,6 +16,7 @@ from app.notification.router import router as notification_router
 from app.research.router import router as research_router
 from app.risks.router import router as risks_router
 from app.risks.workbench_router import router as workbench_router
+from app.scheduler.health_router import router as monitoring_health_router
 from app.signals.router import router as signals_router
 from app.suppliers.router import router as suppliers_router
 
@@ -35,6 +36,7 @@ app.include_router(workbench_router)
 if RESEARCH_TRACK_ENABLED:
     app.include_router(research_router)
 app.include_router(notification_router)
+app.include_router(monitoring_health_router)
 app.include_router(auth_router)
 
 

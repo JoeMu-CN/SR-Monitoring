@@ -5,12 +5,13 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.agent import models as agent_models  # noqa: F401
 from app.ai import models as ai_models  # noqa: F401
+from app.auth import models as auth_models  # noqa: F401
 from app.config import DATABASE_URL
 from app.database import Base
+from app.research import models as research_models  # noqa: F401
+from app.scheduler import runtime_models as scheduler_runtime_models  # noqa: F401
 from app.signals import models as signal_models  # noqa: F401
 from app.suppliers import models as supplier_models  # noqa: F401
-from app.auth import models as auth_models  # noqa: F401
-from app.research import models as research_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", DATABASE_URL)

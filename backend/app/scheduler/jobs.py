@@ -18,8 +18,9 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.ai.models import AIAnalysisRecord
 from app.ai.service import analyze_raw_signal
@@ -54,6 +55,7 @@ from app.research.service import (
 from app.risks.models import RiskEventSignal
 from app.risks.service import expire_alerts, process_analysis
 from app.risks.validity import expire_signal_if_due, is_raw_signal_effective
+from app.scheduler import runtime
 from app.scheduler.retention import cleanup_retention
 from app.signals.models import DataSource, RawSignal
 from app.signals.relevance import (
@@ -105,13 +107,21 @@ def _collect_enabled_sources(
             except Exception as exc:  # 非拉取式（manual-json）或未实现
                 logger.info("跳过数据源 %s（非拉取式）: %s", source.code, exc)
                 continue
+            # 任务开始写观测（独立短事务；写失败不影响采集业务）。
+            runtime.record_job_started(runtime.source_collection_job_key(source.id))
             try:
                 run = collect_source(session, source, pull_adapter)
             except CollectionFailed as exc:
                 logger.error("数据源 %s 采集失败: %s", source.code, exc)
                 summary[source.code] = -1
+                runtime.record_source_collection(source.id, succeeded=False)
                 continue
+            except Exception:
+                # 采集链意外异常：先写 failed 观测再原样抛出，不把中断伪装成成功。
+                runtime.record_source_collection(source.id, succeeded=False)
+                raise
             summary[source.code] = run.created_count
+            runtime.record_source_collection(source.id, succeeded=True)
             logger.info(
                 "数据源 %s 采集完成: fetched=%d created=%d dup=%d",
                 source.code,
@@ -238,25 +248,18 @@ def _process_pending_signals(
         logger.info("已有待处理信号批次运行，跳过本次重复处理")
         return 0
 
+    # 任务开始写观测（独立短事务；lock 未获得时保持零观测）。失败不影响业务。
+    runtime.record_job_started(runtime.PENDING_SIGNALS_JOB_KEY)
+
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
     now = now_utc or datetime.now(UTC)
     processed = 0
     filtered = 0
+    failed = 0
     try:
         with SessionLocal() as session:
             candidates = list(
-                session.execute(
-                    select(RawSignal.id, DataSource.code)
-                    .join(DataSource, DataSource.id == RawSignal.source_id)
-                    .where(
-                        RawSignal.validity_state.in_(("pending_classification", "active")),
-                        RawSignal.id.not_in(_risk_processed_signal_ids()),
-                        RawSignal.id.not_in(_terminal_filtered_signal_ids()),
-                        RawSignal.validity_reason["code"].astext != "classification_failed",
-                    )
-                    .where(DataSource.enabled.is_(True))
-                    .order_by(RawSignal.collected_at)
-                )
+                session.execute(pending_signal_candidate_select(now_utc=now))
             )
             signal_ids: list[tuple[int, str]] = []
             validity_updated = False
@@ -377,9 +380,28 @@ def _process_pending_signals(
                     processed += 1
                 except Exception as exc:
                     session.rollback()
+                    failed += 1
                     logger.error("信号 %s 处理失败: %s", signal_id, exc)
         if filtered:
             logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
+    except Exception:
+        # 业务事务因基础设施异常失败：得出失败结论后，用独立短事务写观测再抛出。
+        runtime.record_job_result(
+            runtime.PENDING_SIGNALS_JOB_KEY,
+            succeeded=False,
+            failed=1,
+            error_code="pending_processing_failed",
+        )
+        raise
+    else:
+        # 业务结论成功后，用独立短事务写本轮 processed/filtered/failed。
+        runtime.record_job_result(
+            runtime.PENDING_SIGNALS_JOB_KEY,
+            succeeded=True,
+            processed=processed,
+            filtered=filtered,
+            failed=failed,
+        )
         return processed
     finally:
         _pending_signal_processing_lock.release()
@@ -393,6 +415,53 @@ def _terminal_filtered_signal_ids() -> Select[tuple[int]]:
     return select(AIAnalysisRecord.signal_id).where(
         AIAnalysisRecord.status == "succeeded",
         AIAnalysisRecord.result.is_(None),
+    )
+
+
+def pending_signal_candidate_filters(
+    *, now_utc: datetime | None = None
+) -> list[ColumnElement[bool]]:
+    """当前分析队列候选信号的共享谓词（业务处理链与只读健康聚合复用同一份）。
+
+    要求已 join ``DataSource``。排除：已生成风险关联的、落入 terminal filtered
+    分析记录的、分类失败(classification_failed)的、停用信源下的、以及有效期已过的
+    active 信号。绝不复制会与业务漂移的第二份谓词。
+    """
+    now = now_utc or datetime.now(UTC)
+    return [
+        RawSignal.validity_state.in_(("pending_classification", "active")),
+        RawSignal.id.not_in(_risk_processed_signal_ids()),
+        RawSignal.id.not_in(_terminal_filtered_signal_ids()),
+        RawSignal.validity_reason["code"].astext != "classification_failed",
+        DataSource.enabled.is_(True),
+        or_(
+            RawSignal.validity_state == "pending_classification",
+            RawSignal.valid_until.is_(None),
+            RawSignal.valid_until > now,
+        ),
+    ]
+
+
+def pending_signal_candidate_select(
+    *, now_utc: datetime | None = None
+) -> Select[tuple[int, str]]:
+    """候选信号 ``(id, source_code)``，按采集时间升序；不施加任何 batch limit。"""
+    return (
+        select(RawSignal.id, DataSource.code)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(*pending_signal_candidate_filters(now_utc=now_utc))
+        .order_by(RawSignal.collected_at)
+    )
+
+
+def pending_signal_candidate_id_select(
+    *, now_utc: datetime | None = None
+) -> Select[tuple[int]]:
+    """候选信号 id 集合（健康聚合计数用）；同样不施加 batch limit。"""
+    return (
+        select(RawSignal.id.label("signal_id"))
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(*pending_signal_candidate_filters(now_utc=now_utc))
     )
 
 
@@ -815,18 +884,3 @@ def cleanup_job() -> None:
         except Exception as exc:
             session.rollback()
             logger.exception("保留清理任务异常: %s", exc)
-
-
-def _cron_to_apscheduler(expr: str) -> dict[str, str]:
-    """将 '分 时 日 月 周' 5 段 cron 拆成 APScheduler 参数。"""
-    parts = expr.split()
-    if len(parts) != 5:
-        raise ValueError(f"非法 cron 表达式: {expr}")
-    minute, hour, day, month, day_of_week = parts
-    return {
-        "minute": minute,
-        "hour": hour,
-        "day": day,
-        "month": month,
-        "day_of_week": day_of_week,
-    }

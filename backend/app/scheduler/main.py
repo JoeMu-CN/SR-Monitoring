@@ -29,8 +29,8 @@ from app.config import (
 from app.database import SessionLocal
 from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
+from app.scheduler.health_rules import cron_to_apscheduler
 from app.scheduler.jobs import (
-    _cron_to_apscheduler,
     cleanup_job,
     collect_job,
     collect_source_job,
@@ -39,6 +39,10 @@ from app.scheduler.jobs import (
     create_research_task_job,
     create_weekly_research_batch_job,
     recover_capacity_blocked_research_batches_job,
+)
+from app.scheduler.runtime import (
+    HEARTBEAT_INTERVAL_SECONDS,
+    record_heartbeat,
 )
 from app.scheduler.validity_job import risk_validity_job
 from app.signals.models import DataSource
@@ -52,7 +56,7 @@ logger = logging.getLogger("scheduler.main")
 
 
 def _trigger(expr: str) -> CronTrigger:
-    return CronTrigger(**_cron_to_apscheduler(expr), timezone="Asia/Shanghai")
+    return CronTrigger(**cron_to_apscheduler(expr), timezone="Asia/Shanghai")
 
 
 def _register_source_jobs(scheduler: BlockingScheduler) -> None:
@@ -157,6 +161,14 @@ def main() -> None:
         _trigger("0 6 * * *"),
         id="tyc-suppliers-daily",
         name="天眼查供应商批量核查",
+    )
+    record_heartbeat()
+    scheduler.add_job(
+        record_heartbeat,
+        "interval",
+        seconds=HEARTBEAT_INTERVAL_SECONDS,
+        id="runtime-heartbeat",
+        name="持久化调度器心跳",
     )
     _register_source_jobs(scheduler)
     _register_weekly_research_job(scheduler)

@@ -38,6 +38,7 @@ from app.risks.models import (
     RuleDimensionConfig,
     SupplierEventMatch,
 )
+from app.scheduler.runtime_models import SchedulerRuntimeState
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.suppliers.importer import (
     SHEET_PRODUCTS,
@@ -54,6 +55,15 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         require_test_database_url(str(engine.url))
     except UnsafeTestDatabaseError as error:
         raise pytest.UsageError(str(error)) from None
+
+
+@pytest.fixture(autouse=True)
+def _reset_scheduler_runtime_state() -> Generator[None]:
+    """观测表由 Scheduler 用独立短事务写入，测试间必须在事务外提交式清空，
+    否则未提交的 db_session 事务删除已提交行会与观测写入的 upsert 相互死锁。"""
+    with engine.begin() as connection:
+        connection.execute(delete(SchedulerRuntimeState))
+    yield
 
 
 @pytest.fixture

@@ -44,6 +44,12 @@ D8 前端页面、D9 真实数据源与独立调度器，以及 D10 验收收口
 - `POST /api/v1/sources/{id}/run` 手动触发拉取式数据源采集。
 - 独立 Scheduler 进程（APScheduler）：定时采集、AI 解析、事件归并、评分、提醒失效和数据保留清理。
 - 数据保留清理：原始信号/AI 分析 90 天、事件与提醒失效后 90 天、采集运行 30 天（均可配置）。
+- 供应商资料无损编辑：编辑读取完整详情并提交 `expected_updated_at` 版本令牌，未编辑的地点/产品/别名/关键词不丢失，版本冲突返回 409 `supplier_changed`。
+- 供应商删除保护：`GET /api/v1/suppliers/{id}/deletion-impact` 展示影响；存在任何保留的风险关联时删除被原子拒绝并写审计，日常退出使用暂停。
+- 总览服务端全量汇总：`GET /api/v1/dashboard/summary?days=7|30|90`，当前统计与期间新增（含已失效）口径分离，不依赖分页。
+- 监控健康聚合：`GET /api/v1/system/monitoring-health` 报告 Scheduler 心跳与每来源新鲜度/积压；`/api/v1/system/health` 保持数据库存活语义。
+- 通知可靠性：扫描结果显式提交、按 alert×channel 去重、摘要保留全部成员关联、详情链接指向 `/risks/{id}`；外部渠道重复窗口已如实披露。
+- 数据保留清理保护有效及保留期内提醒所引用的完整证据闭包，共享 match/event 不被级联误删。
 
 ## 本地启动
 
@@ -166,6 +172,8 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 
 正式切换前必须完成数据库备份、恢复演练和 HTTPS 登录冒烟；回滚时切回上一镜像并保留已完成的数据库迁移记录，不对正式库执行破坏性回退。
 
+当前版本的回滚兼容 smoke 为 blocked（没有可用的上一已验证候选镜像），发布候选就绪仍为 false、生产发布授权仍为 pending；在补齐可回滚证据前不得宣称可回滚。当前状态与证据见 [docs/current-version-release-readiness.md](docs/current-version-release-readiness.md)。
+
 D10 的逐项证据和未通过项见 [D10验收记录.md](D10验收记录.md)。
 
 ## Scheduler 定时任务
@@ -238,6 +246,12 @@ Scheduler 是独立容器，与 Web 服务共用同一镜像，启动时自动�
     npm test
     npm run lint
     npm run typecheck
+
+当前版本的隔离候选全量门禁（专用 Compose 项目、临时镜像、独立测试库、浏览器回归并自动清理，不会触碰业务库）：
+
+    pwsh -File scripts/test-current-version-hardening.ps1 -Suite all
+
+该命令的本轮结果、各能力证据与回滚状态见 [docs/current-version-release-readiness.md](docs/current-version-release-readiness.md)。
 
 ## 当前限制
 

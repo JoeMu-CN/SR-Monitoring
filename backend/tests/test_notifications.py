@@ -75,12 +75,18 @@ def make_settings(**overrides: object) -> NotificationSettings:
 _id_counter = 0
 
 
-def make_alert(db: Session, *, level: str = "P1") -> RiskAlert:
+def make_alert(
+    db: Session,
+    *,
+    level: str = "P1",
+    legal_name: str = "测试供应商有限公司",
+    alert_id: int | None = None,
+) -> RiskAlert:
     global _id_counter
     _id_counter += 1
     supplier = Supplier(
         supplier_code=f"SUP-TEST-{_id_counter:06d}",
-        legal_name="测试供应商有限公司",
+        legal_name=legal_name,
         country_code="CN",
         enabled=True,
     )
@@ -113,6 +119,8 @@ def make_alert(db: Session, *, level: str = "P1") -> RiskAlert:
         score_detail={"rule_version": "v1"},
         status="current",
     )
+    if alert_id is not None:
+        alert.id = alert_id  # Identity BY DEFAULT：显式主键用于大/小 id 场景
     db.add(alert)
     db.flush()
     return alert
@@ -194,11 +202,13 @@ def test_p2_merged_after_window(db_session: Session) -> None:
             select(NotificationDelivery).order_by(NotificationDelivery.id)
         )
     )
-    # 合并后：首条升级为摘要（alert_id 置空），其余标记 merged
+    # 合并后：首条 success、其余 merged；成员保留 alert 归属并统一投递状态
     assert len(records) == 2
     statuses = sorted(r.status for r in records)
     assert statuses == ["merged", "success"]
-    assert all(r.alert_id is None for r in records if r.status == "success")
+    assert all(r.alert_id is not None for r in records)
+    assert len({r.delivered_at for r in records}) == 1
+    assert all(r.delivered_at is not None for r in records)
 
 
 def test_merge_payload_excludes_alert_expired_before_provider_send(
@@ -216,22 +226,26 @@ def test_merge_payload_excludes_alert_expired_before_provider_send(
     second_alert.expiry_kind = "finite"
     second_alert.expires_at = T0 + timedelta(hours=1)
     db_session.flush()
+    queued_created = list(
+        db_session.scalars(
+            select(NotificationDelivery.created_at).where(
+                NotificationDelivery.alert_id.in_((first_alert.id, second_alert.id))
+            )
+        )
+    )
+    # 窗口基准取数据库实际 created_at，避免导入与执行间隔导致的差值抖动
+    digest_now = max(queued_created) + timedelta(minutes=16)
     assert (
         db_session.scalar(
             select(RiskAlert.id).where(
                 RiskAlert.id == first_alert.id,
-                current_alert_condition(T0 + timedelta(minutes=16)),
+                current_alert_condition(digest_now),
             )
         )
         is None
     )
 
-    scan_and_notify(
-        db_session,
-        settings,
-        now=T0 + timedelta(minutes=16),
-        providers=[provider],
-    )
+    scan_and_notify(db_session, settings, now=digest_now, providers=[provider])
 
     assert len(provider.calls) == 1
     assert "共 1 条提醒" in provider.calls[0][0]
@@ -289,13 +303,15 @@ def test_revoked_alert_is_suppressed_before_provider_send(db_session: Session) -
     scan_and_notify(db_session, settings, now=T0, providers=[provider])
     alert.status = "expired"
     db_session.flush()
-
-    scan_and_notify(
-        db_session,
-        settings,
-        now=T0 + timedelta(minutes=16),
-        providers=[provider],
+    queued_created = db_session.scalar(
+        select(NotificationDelivery.created_at).where(
+            NotificationDelivery.alert_id == alert.id
+        )
     )
+    assert queued_created is not None
+    digest_now = queued_created + timedelta(minutes=16)
+
+    scan_and_notify(db_session, settings, now=digest_now, providers=[provider])
 
     delivery = _delivery_for(db_session, alert.id)
     assert provider.calls == []

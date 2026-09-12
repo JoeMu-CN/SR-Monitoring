@@ -1,158 +1,115 @@
-"""通知扫描编排：游标扫描 → 订阅过滤 → 防骚扰（合并/限频/免打扰）→ 发送。
+"""通知扫描编排：逐 (alert_id, channel) 去重扫描 → 防骚扰（合并/限频/免打扰）→ 发送。
 
-设计（见《风险预警手机推送接入方案.md》第 6 章）：
-- 零侵入：独立 notify_job 只读 risk_alerts，不改风险引擎。
-- 新增推送：alert.id > 游标（投递记录中最大 alert_id）。
-- 升级重推：同一 match 的 current alert 等级提高时重新推送。
-- P1 即时单条；P2 入队等待合并窗口（15 分钟）后发合并摘要。
-- 单渠道单小时限频（默认 20 条），超限转合并队列。
-- 免打扰时段抑制 P2（P1 不受影响）。
-- 发送失败按窗口退避重试，最终失败落 failed 记录（不静默丢失）。
+- 去重无全局游标；success/merged 同级不重发、升级可重发；failed 终态；
+  quiet/rate/expired 抑制在条件解除后复查再投递。
+- 摘要成功首条 success、其余 merged，成员保留 alert_id 并统一投递状态；
+  失败全批一致 attempt 与线性退避，不改写 created_at。
+- 创建早于回填窗口（queries.BACKFILL_GRACE_MINUTES）且无投递记录的候选只计
+  backfill_pending（不补发）；alert_id IS NULL 只计 legacy_unlinked。
+- notify_job 成功显式 commit、异常显式 rollback：发送后提交失败存在
+  at-least-once 重复窗口，下一成功轮收敛，不宣称 exactly-once。
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import NotificationSettings, get_notification_settings
 from app.database import SessionLocal
-from app.notification.models import NotificationDelivery, NotificationSubscription
+from app.notification import delivery_queries as queries
+from app.notification.models import NotificationDelivery
 from app.notification.providers import (
     NotificationError,
     NotifyProvider,
     build_providers,
 )
-from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
+from app.notification.rendering import (
+    DigestMember,
+    alert_context,
+    render_alert_payload,
+    render_digest,
+)
+from app.risks.models import RiskAlert
 from app.risks.query_validity import current_alert_condition
-from app.suppliers.models import Supplier
 
 logger = logging.getLogger("notification")
-
-LEVEL_ORDER = {"P1": 0, "P2": 1, "P3": 2, "P4": 3}
-# 合并队列兜底：超过该时长强制发送（即使限频），防止无限积压
-QUEUED_FORCE_SEND_MINUTES = 120
-
-SendFn = Callable[[str, str], None]
 
 _notify_lock = threading.Lock()
 
 
-# ---------------------------------------------------------------------------
-# 消息渲染
-# ---------------------------------------------------------------------------
-def _render_alert_payload(
-    alert: RiskAlert,
-    supplier_name: str,
-    event_type: str,
-    summary: str,
-    reasons: list[str],
-    frontend_url: str,
-) -> tuple[str, str]:
-    """渲染单条提醒标题与正文（敏感信息不出现）。"""
-    title = f"【风险预警 {alert.level}】供应商「{supplier_name}」"
-    lines = [
-        f"维度：{event_type}",
-        f"事件：{(summary or '')[:80]}",
-    ]
-    if reasons:
-        lines.append(f"匹配：{'; '.join(str(r) for r in reasons[:2])}")
-    if frontend_url:
-        lines.append(f"平台：{frontend_url.rstrip('/')}/#/risk-alerts/{alert.id}")
-    return title, "\n".join(lines)
-
-
-def _render_digest(payloads: list[tuple[str, str]]) -> tuple[str, str]:
-    """把多条单条负载合并为一条摘要。"""
-    title = f"【风险预警汇总】共 {len(payloads)} 条提醒"
-    lines: list[str] = []
-    for idx, (_title, _content) in enumerate(payloads[:10], start=1):
-        first_line = (_content.splitlines()[0] if _content else "")
-        lines.append(f"{idx}. {first_line}")
-    if len(payloads) > 10:
-        lines.append(f"…另有 {len(payloads) - 10} 条，请登录平台查看")
-    return title, "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
-# 订阅与免打扰
-# ---------------------------------------------------------------------------
-def _global_subscription(
-    session: Session, settings: NotificationSettings
-) -> NotificationSubscription:
-    row = session.scalar(
-        select(NotificationSubscription).where(
-            NotificationSubscription.channel == "global"
-        )
+def scan_and_notify(
+    session: Session,
+    settings: NotificationSettings,
+    *,
+    now: datetime | None = None,
+    providers: list[NotifyProvider] | None = None,
+) -> dict[str, int]:
+    """执行一轮推送扫描，返回汇总统计（可注入 now/providers 便于测试）。"""
+    current = now or datetime.now(UTC)
+    summary: dict[str, int] = dict.fromkeys(
+        (
+            "new_alerts",
+            "upgraded",
+            "recovered",
+            "sent",
+            "merged",
+            "queued",
+            "failed",
+            "rate_limited",
+            "quiet_suppressed",
+            "expired_suppressed",
+            "backfill_pending",
+            "legacy_unlinked",
+            "channels",
+        ),
+        0,
     )
-    if row is None:
-        row = NotificationSubscription(
-            channel="global",
-            receiver="全局配置",
-            push_levels=list(settings.push_levels),
-            enabled=True,
-        )
-        session.add(row)
-        session.flush()
-    return row
+    summary["legacy_unlinked"] = queries.count_legacy_unlinked(session)
+    provider_map = {
+        provider.name: provider for provider in (providers or build_providers(settings))
+    }
+    channels = queries.active_channels(session, set(provider_map))
+    summary["channels"] = len(channels)
+    if not channels:
+        return summary
 
+    global_row = queries.global_subscription(session, settings)
+    push_levels = set(global_row.push_levels or list(settings.push_levels))
+    quiet = global_row.quiet_hours
+    criteria = (current_alert_condition(current), RiskAlert.level.in_(push_levels))
+    candidates = list(
+        session.scalars(select(RiskAlert).where(*criteria).order_by(RiskAlert.id))
+    )
 
-def _active_channels(
-    session: Session, settings: NotificationSettings
-) -> list[str]:
-    """返回当前应推送的渠道名（.env 启用 且 订阅记录启用）。
-
-    订阅表无任何渠道记录时按 .env 启用的渠道推送（默认行为）。
-    """
-    providers = {provider.name: provider for provider in build_providers(settings)}
-    rows = list(
-        session.scalars(
-            select(NotificationSubscription).where(
-                NotificationSubscription.channel != "global"
+    for alert in candidates:
+        for channel in channels:
+            existing = queries.get_delivery(session, alert.id, channel)
+            if existing is None:
+                if queries.is_backfill(alert, current):
+                    summary["backfill_pending"] += 1
+                    continue
+                summary["new_alerts"] += 1
+            else:
+                action = queries.plan_redelivery(existing, alert.level)
+                if action is None:
+                    continue
+                summary[action] += 1
+            _enqueue_or_send(
+                session, settings, provider_map[channel], alert, quiet, current,
+                summary, delivery=existing,
             )
-        )
+
+    session.flush()
+    _process_merge_queue(
+        session, settings, provider_map, channels, quiet, current, summary
     )
-    if not rows:
-        return sorted(providers)
-    enabled = {row.channel for row in rows if row.enabled}
-    return sorted(name for name in providers if name in enabled)
-
-
-def _in_quiet_hours(now: datetime, quiet_hours: dict[str, object] | None) -> bool:
-    if not quiet_hours:
-        return False
-    try:
-        start = str(quiet_hours.get("start", ""))
-        end = str(quiet_hours.get("end", ""))
-        if not start or not end or start == end:
-            return False
-        current = now.time().strftime("%H:%M")
-        if start < end:
-            return start <= current < end
-        return current >= start or current < end  # 跨天时段（如 22:00–08:00）
-    except (TypeError, ValueError):
-        return False
-
-
-# ---------------------------------------------------------------------------
-# 发送辅助
-# ---------------------------------------------------------------------------
-def _hourly_sent_count(session: Session, channel: str, now: datetime) -> int:
-    return int(
-        session.scalar(
-            select(func.count(NotificationDelivery.id)).where(
-                NotificationDelivery.channel == channel,
-                NotificationDelivery.status == "success",
-                NotificationDelivery.delivered_at >= now - timedelta(hours=1),
-            )
-        )
-        or 0
-    )
+    session.flush()
+    return summary
 
 
 def _send_with_retry(
@@ -165,16 +122,9 @@ def _send_with_retry(
     *,
     now: datetime,
 ) -> str:
-    """尝试发送一次并更新记录；返回 status（success / failed / queued）。"""
+    """发送一次并更新记录；返回 summary 键（sent/failed/queued/expired_suppressed）。"""
     if delivery.alert_id is not None:
-        alert = session.scalar(
-            select(RiskAlert)
-            .where(
-                RiskAlert.id == delivery.alert_id,
-                current_alert_condition(now),
-            )
-            .with_for_update()
-        )
+        alert = queries.get_current_alert(session, delivery.alert_id, now)
         if alert is None:
             delivery.status = "expired_suppressed"
             delivery.error = "alert_no_longer_current_or_valid"
@@ -186,104 +136,17 @@ def _send_with_retry(
         delivery.error = None
         delivery.title = title
         delivery.content = content[:2000]
-        return "success"
+        return "sent"
     except NotificationError as exc:
         delivery.attempt += 1
         delivery.error = str(exc)[:500]
         if delivery.attempt >= settings.retry_attempts:
             delivery.status = "failed"
             return "failed"
-        delivery.created_at = now  # 重新进入合并窗口计时，避免每轮重试风暴
+        # 退避锚点：显式写本轮失败时刻（服务端 onupdate 同 Session 内不可回读）
+        delivery.updated_at = now
+        delivery.status = "queued"  # 重新进入合并队列；退避见 queries.merge_due
         return "queued"
-
-
-# ---------------------------------------------------------------------------
-# 主扫描
-# ---------------------------------------------------------------------------
-def scan_and_notify(
-    session: Session,
-    settings: NotificationSettings,
-    *,
-    now: datetime | None = None,
-    providers: list[NotifyProvider] | None = None,
-) -> dict[str, int]:
-    """执行一轮推送扫描，返回汇总统计（可注入 now/providers 便于测试）。"""
-    current = now or datetime.now(UTC)
-    summary = {
-        "new_alerts": 0,
-        "upgraded": 0,
-        "sent": 0,
-        "merged": 0,
-        "queued": 0,
-        "failed": 0,
-        "rate_limited": 0,
-        "quiet_suppressed": 0,
-        "expired_suppressed": 0,
-        "channels": 0,
-    }
-    provider_map = {
-        provider.name: provider for provider in (providers or build_providers(settings))
-    }
-    channels = [
-        name for name in _active_channels(session, settings) if name in provider_map
-    ]
-    summary["channels"] = len(channels)
-    if not channels:
-        return summary
-
-    global_row = _global_subscription(session, settings)
-    push_levels = set(global_row.push_levels or list(settings.push_levels))
-    quiet = global_row.quiet_hours
-
-    cursor = session.scalar(select(func.max(NotificationDelivery.alert_id)))
-    candidates = list(
-        session.scalars(
-            select(RiskAlert).where(
-                current_alert_condition(current),
-                RiskAlert.level.in_(push_levels),
-            )
-        )
-    )
-
-    for alert in candidates:
-        is_new = cursor is None or alert.id > cursor
-        for channel in channels:
-            existing = session.scalar(
-                select(NotificationDelivery).where(
-                    NotificationDelivery.alert_id == alert.id,
-                    NotificationDelivery.channel == channel,
-                )
-            )
-            if existing is not None:
-                pushed = existing.pushed_level
-                if (
-                    existing.status != "success"
-                    or pushed is None
-                    or LEVEL_ORDER.get(alert.level, 99) >= LEVEL_ORDER.get(pushed, 99)
-                ):
-                    continue
-                summary["upgraded"] += 1
-            elif not is_new:
-                continue
-            else:
-                summary["new_alerts"] += 1
-            _enqueue_or_send(
-                session,
-                settings,
-                provider_map[channel],
-                alert,
-                quiet,
-                current,
-                summary,
-                delivery=existing,
-            )
-
-    session.flush()
-    _process_merge_queue(
-        session, settings, provider_map, channels, quiet, current, summary
-    )
-    session.flush()
-    return summary
 
 
 def _enqueue_or_send(
@@ -297,23 +160,9 @@ def _enqueue_or_send(
     *,
     delivery: NotificationDelivery | None,
 ) -> None:
-    """对单个 alert×渠道：P1 即时发送；P2 入合并队列（免打扰/限频抑制）。"""
-    supplier_name = "未知供应商"
-    event_type = ""
-    event_summary = ""
-    reasons: list[str] = []
-    match = session.get(SupplierEventMatch, alert.match_id)
-    if match is not None:
-        supplier = session.get(Supplier, match.supplier_id)
-        if supplier is not None:
-            supplier_name = supplier.legal_name
-        reasons = list(match.reasons or [])
-        event = session.get(RiskEvent, match.event_id)
-        if event is not None:
-            event_type = event.event_type
-            event_summary = event.summary
-
-    title, content = _render_alert_payload(
+    """对单个 alert×渠道渲染并投递：P1 即时发送；P2 入合并队列（免打扰/限频抑制）。"""
+    supplier_name, event_type, event_summary, reasons = alert_context(session, alert)
+    title, content = render_alert_payload(
         alert,
         supplier_name,
         event_type,
@@ -338,47 +187,16 @@ def _enqueue_or_send(
         delivery.title = title
         delivery.content = content[:2000]
 
-    # 免打扰：仅抑制 P2（P1 始终可达）
-    if alert.level == "P2" and _in_quiet_hours(now, quiet):
-        delivery.status = "quiet_suppressed"
-        summary["quiet_suppressed"] += 1
-        return
-
-    if alert.level == "P1":
-        _dispatch_immediate(
-            session, settings, provider, delivery, title, content, now, summary
+    # 免打扰/限频判定：immediate 之外的取值同时是 summary 键
+    action = queries.classify_dispatch(session, provider, alert, quiet, now, settings)
+    if action == "immediate":
+        action = _send_with_retry(
+            session, provider, delivery, title, content, settings, now=now
         )
     else:
-        delivery.status = "queued"
-        summary["queued"] += 1
-
-
-def _dispatch_immediate(
-    session: Session,
-    settings: NotificationSettings,
-    provider: NotifyProvider,
-    delivery: NotificationDelivery,
-    title: str,
-    content: str,
-    now: datetime,
-    summary: dict[str, int],
-) -> None:
-    """P1 即时发送；超限时转入合并队列（转合并摘要）。"""
-    if _hourly_sent_count(session, provider.name, now) >= settings.hourly_limit:
-        delivery.status = "queued"
-        summary["rate_limited"] += 1
-        return
-    status = _send_with_retry(
-        session, provider, delivery, title, content, settings, now=now
-    )
-    if status == "success":
-        summary["sent"] += 1
-    elif status == "failed":
-        summary["failed"] += 1
-    elif status == "expired_suppressed":
-        summary["expired_suppressed"] += 1
-    else:
-        summary["queued"] += 1
+        # 限频 P1 转合并队列（行回 queued 等待摘要）；quiet_suppressed 留痕
+        delivery.status = "queued" if action == "rate_limited" else action
+    summary[action] += 1
 
 
 def _process_merge_queue(
@@ -400,78 +218,39 @@ def _process_merge_queue(
     )
     for channel in channels:
         provider = provider_map[channel]
-        batch = [
-            d
-            for d in queued
-            if d.channel == channel
-            and now - d.created_at >= timedelta(minutes=settings.merge_window_minutes)
-        ]
+        batch = queries.prepare_merge_batch(
+            session, queued, channel, settings, quiet, now, summary
+        )
         if not batch:
             continue
-        # 全部为 P2 且处于免打扰时段 → 抑制留痕
-        if _in_quiet_hours(now, quiet) and all(
-            (d.pushed_level or "P2") == "P2" for d in batch
-        ):
-            for d in batch:
-                d.status = "quiet_suppressed"
-            summary["quiet_suppressed"] += len(batch)
-            continue
-        # 限频：兜底时长内超限则抑制；有兜底到期则强制发送（防积压）
-        if _hourly_sent_count(session, channel, now) >= settings.hourly_limit:
-            if all(
-                now - d.created_at < timedelta(minutes=QUEUED_FORCE_SEND_MINUTES)
-                for d in batch
-            ):
-                for d in batch:
-                    d.status = "rate_limited"
-                summary["rate_limited"] += len(batch)
-                continue
         current_batch: list[NotificationDelivery] = []
+        members: list[DigestMember] = []
         for delivery in batch:
             if delivery.alert_id is None:
                 continue
-            alert = session.scalar(
-                select(RiskAlert)
-                .where(
-                    RiskAlert.id == delivery.alert_id,
-                    current_alert_condition(now),
-                )
-                .with_for_update()
-            )
+            alert = queries.get_current_alert(session, delivery.alert_id, now)
             if alert is None:
                 delivery.status = "expired_suppressed"
                 delivery.error = "alert_no_longer_current_or_valid"
                 summary["expired_suppressed"] += 1
                 continue
             current_batch.append(delivery)
+            members.append(queries.digest_member(session, alert))
         if not current_batch:
             continue
-        payloads = [(d.title or "", d.content or "") for d in current_batch]
-        title, content = _render_digest(payloads)
-        first = current_batch[0]
-        status = _send_with_retry(
-            session, provider, first, title, content, settings, now=now
-        )
-        if status == "success":
-            first.alert_id = None  # 摘要是多条合并，不再指向单条 alert
-            for d in current_batch[1:]:
-                d.status = "merged"
-            summary["merged"] += len(current_batch)
-        elif status == "failed":
-            first.status = "failed"
-            summary["failed"] += 1
-        elif status == "expired_suppressed":
-            summary["expired_suppressed"] += 1
-        else:
-            first.status = "queued"
-            summary["queued"] += 1
+        title, content = render_digest(members, settings.frontend_url)
+        try:
+            provider.send(title, content)
+        except NotificationError as exc:
+            queries.mark_batch_failure(
+                current_batch, exc, settings.retry_attempts, now, summary
+            )
+            continue
+        queries.mark_batch_success(current_batch, title, content, now, summary)
 
 
-# ---------------------------------------------------------------------------
-# Scheduler 入口
-# ---------------------------------------------------------------------------
 def notify_job() -> None:
-    """Scheduler 独立 Job：轮询新增/升级提醒并推送。"""
+    """Scheduler 独立 Job：轮询新增/升级提醒并推送；成功提交、异常回滚。"""
     settings = get_notification_settings()
     if not settings.enabled:
         return
@@ -480,7 +259,12 @@ def notify_job() -> None:
         return
     try:
         with SessionLocal() as session:
-            summary = scan_and_notify(session, settings)
+            try:
+                summary = scan_and_notify(session, settings)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
         logger.info("通知扫描完成: %s", summary)
     except Exception:
         logger.exception("通知扫描异常")

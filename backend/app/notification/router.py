@@ -16,9 +16,9 @@ from app.auth.security import PERM_RULE_MANAGE, require_permission, verify_csrf
 from app.config import get_notification_settings
 from app.database import get_session
 from app.notification import schemas
+from app.notification.delivery_queries import global_subscription
 from app.notification.models import NotificationDelivery, NotificationSubscription
 from app.notification.providers import NotificationError, build_providers
-from app.notification.service import _global_subscription
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["通知管理"])
 
@@ -115,7 +115,7 @@ def list_subscriptions(
     _: NotifyAdmin,
 ) -> list[schemas.SubscriptionRead]:
     """查看当前订阅配置（全局级别/免打扰 + 各渠道启停）。"""
-    _global_subscription(session, get_notification_settings())
+    global_subscription(session, get_notification_settings())
     session.flush()
     rows = session.scalars(
         select(NotificationSubscription).order_by(
@@ -158,7 +158,7 @@ def update_global_subscription(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="免打扰时段需要 start 与 end（HH:MM）",
             )
-    row = _global_subscription(session, get_notification_settings())
+    row = global_subscription(session, get_notification_settings())
     row.push_levels = list(dict.fromkeys(payload.push_levels))
     row.quiet_hours = quiet
     session.commit()

@@ -1,0 +1,43 @@
+services:
+  postgres-test:
+    labels:
+      supplier-risk-hardening-recovery.owner: "${RECOVERY_RUN_ID:?RECOVERY_RUN_ID is required}"
+
+  test-runner:
+    image: "${RECOVERY_TEST_IMAGE:?RECOVERY_TEST_IMAGE is required}"
+    labels:
+      supplier-risk-hardening-recovery.owner: "${RECOVERY_RUN_ID:?RECOVERY_RUN_ID is required}"
+    environment:
+      DATABASE_URL: postgresql+psycopg://supplier_risk_test:test_only_password@postgres-test:5432/supplier_risk_test
+      APP_ENV: test
+      AI_PROVIDER: fake
+      AI_BASE_URL: ""
+      AI_MODEL: ""
+      AI_API_KEY: ""
+      SEARCH_PROVIDER: none
+      SEARCH_API_KEY: ""
+      SEARCH_BASE_URL: ""
+      TYC_API_KEY: ""
+      RESEARCH_WORKER_ENABLED: "false"
+      RESEARCH_WORKER_MODE: local_lifecycle_test
+      RESEARCH_DAILY_TOPIC: ""
+      RESEARCH_WEEKLY_TOPIC: ""
+      RESEARCH_MONTHLY_ENABLED: "false"
+      RESEARCH_MONTHLY_TOPIC: ""
+      RESEARCH_CRAWL4AI_ENABLED: "false"
+      RESEARCH_CRAWL4AI_API_KEY: ""
+      MONITOR_CRAWL4AI_ENABLED: "false"
+      MONITOR_CRAWL4AI_API_KEY: ""
+      NOTIFY_DINGTALK_ENABLED: "false"
+      NOTIFY_FEISHU_ENABLED: "false"
+      NOTIFY_SERVERCHAN_ENABLED: "false"
+      NOTIFY_PUSHPLUS_ENABLED: "false"
+    volumes:
+      - type: bind
+        source: "${RECOVERY_EVIDENCE_DIR:?RECOVERY_EVIDENCE_DIR is required}"
+        target: /test-evidence
+
+networks:
+  default:
+    labels:
+      supplier-risk-hardening-recovery.owner: "${RECOVERY_RUN_ID:?RECOVERY_RUN_ID is required}"

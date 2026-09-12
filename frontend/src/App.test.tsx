@@ -12,6 +12,7 @@ import type {
   DataSourceRead,
   DimensionRead,
   DimensionInputsRead,
+  MonitoringHealthRead,
   RuleEngineOptions,
   RiskAlertRead,
   SupplierListItem,
@@ -46,6 +47,7 @@ vi.mock('./api', async (importOriginal) => {
       collectionRuns: vi.fn(),
       dimensions: vi.fn(),
       health: vi.fn(),
+      monitoringHealth: vi.fn(),
       agentStatus: vi.fn(),
       dimensionInputs: vi.fn(),
       ruleEngineOptions: vi.fn(),
@@ -91,6 +93,37 @@ const ADMIN_PERMISSIONS = [
 const agentStatusOk: AgentStatusRead = {llm_configured: true, model: 'qwen-plus', tyc_enabled: false, max_steps: 5};
 
 const healthOk: SystemHealth = {status: 'ok', database: 'ok'};
+
+const monitoringHealthOk: MonitoringHealthRead = {
+  as_of: '2026-09-11T06:00:00Z',
+  overall: 'ok',
+  scheduler: {
+    status: 'ok',
+    last_heartbeat_at: '2026-09-11T05:59:30Z',
+    age_seconds: 30,
+    interval_seconds: 60,
+    stale_after_seconds: 180,
+  },
+  processing: {
+    total: 0,
+    classification_failed: 0,
+    backlog_over_1h: 0,
+    oldest_pending_age_seconds: null,
+    last_run: {status: 'succeeded', started_at: '2026-09-11T05:58:00Z', finished_at: '2026-09-11T05:58:20Z', processed: 5, filtered: 1, failed: 0},
+  },
+  sources: [
+    {
+      source_id: 1,
+      code: 'nmc-weather',
+      name: '中央气象台预警',
+      state: 'ok',
+      reason_code: 'success_observed',
+      last_success_at: '2026-09-11T05:30:00Z',
+      last_attempt_at: '2026-09-11T05:30:10Z',
+      next_expected_at: '2026-09-11T06:00:00Z',
+    },
+  ],
+};
 
 const denied403 = new ApiError(403, '权限不足');
 
@@ -345,6 +378,7 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.collectionRuns).mockResolvedValue(noCollectionRuns);
   vi.mocked(api.dimensions).mockResolvedValue(sixDimensions);
   vi.mocked(api.health).mockResolvedValue(healthOk);
+  vi.mocked(api.monitoringHealth).mockResolvedValue(monitoringHealthOk);
   vi.mocked(api.agentStatus).mockImplementation(overrides.agentStatus ?? (async () => agentStatusOk));
   vi.mocked(api.dimensionInputs).mockResolvedValue(inputsOk);
   vi.mocked(api.ruleEngineOptions).mockResolvedValue(optionsOk);
@@ -690,5 +724,86 @@ describe('App /overview 与 loadData 解耦', () => {
     renderApp('/overview');
 
     expect(await screen.findByText('登录已失效，请重新登录')).toBeInTheDocument();
+  });
+});
+
+describe('App 监控健康只读诊断', () => {
+  it('有权限时在 /overview 请求 monitoring-health 并渲染 ok 横幅', async () => {
+    defaultMocks();
+    renderApp('/overview');
+
+    const banner = await screen.findByTestId('monitoring-health-banner', {}, {timeout: 5000});
+    expect(api.monitoringHealth).toHaveBeenCalled();
+    expect(banner).toHaveAttribute('data-state', 'ok');
+  });
+
+  it('无 source_status_view 权限的账号不发起诊断请求也不渲染横幅', async () => {
+    defaultMocks({permissions: ['risk_view']});
+    renderApp('/overview');
+
+    await screen.findByText('全网供应链风险概览');
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
+  });
+
+  it('诊断 401 走统一会话失效并退回登录页', async () => {
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockRejectedValue(new ApiError(401, '登录已失效'));
+    renderApp('/overview');
+
+    expect(await screen.findByText('登录已失效，请重新登录')).toBeInTheDocument();
+  });
+
+  it('诊断 403 只隐藏诊断：无全局错误横幅、无 unknown 误报，主数据正常', async () => {
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockRejectedValue(new ApiError(403, '权限不足'));
+    renderApp('/overview');
+
+    await screen.findByText('全网供应链风险概览');
+    expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText('尚无法确认监控状态')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();
+  });
+
+  it('诊断 503 显示「尚无法确认监控状态」且不清空风险列表', async () => {
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockRejectedValue(new ApiError(503, '诊断服务不可用'));
+    renderApp('/overview');
+
+    const banner = await screen.findByTestId('monitoring-health-banner', {}, {timeout: 5000});
+    expect(banner).toHaveAttribute('data-state', 'unknown');
+    expect(banner.textContent).toContain('尚无法确认监控状态');
+    expect(banner.textContent).not.toContain('监控正常');
+    // 业务数据未被诊断失败清空
+    expect((await screen.findAllByText('示例精密电子有限公司')).length).toBeGreaterThan(0);
+  });
+
+  it('诊断降级时 /overview 显示「部分链路异常」，风险数据保持可见', async () => {
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockResolvedValue({...monitoringHealthOk, overall: 'degraded'});
+    renderApp('/overview');
+
+    const banner = await screen.findByTestId('monitoring-health-banner', {}, {timeout: 5000});
+    expect(banner).toHaveAttribute('data-state', 'degraded');
+    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
+    expect(screen.queryByTestId('overview-metric-total')).toHaveTextContent('1');
+  });
+
+  it('/sources 页同样接入诊断：来源新鲜度与健康横幅均按权限请求', async () => {
+    defaultMocks();
+    renderApp('/sources');
+
+    expect(await screen.findByText('中央气象台预警')).toBeInTheDocument();
+    expect(api.monitoringHealth).toHaveBeenCalled();
+    expect(screen.getByTestId('source-health-1').textContent).toContain('最近成功');
+  });
+
+  it('非展示路由（/rules）不发起诊断请求', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    renderApp('/rules');
+
+    const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
+    expect(within(routeContent).getAllByText('自然环境').length).toBeGreaterThan(0);
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
   });
 });

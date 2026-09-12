@@ -5,12 +5,16 @@ import {Link} from 'react-router-dom';
 import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
 import type {DataSource} from '../types';
+import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
+import {MonitoringSourceFreshness} from './MonitoringHealthBanner';
 
 interface DataSourcesViewProps {
   dataSources: DataSource[];
   role: 'viewer' | 'admin';
   onUpdateSource: (id: string, payload: Partial<DataSourceWritePayload>) => Promise<void>;
   onRefreshSources: () => Promise<void>;
+  // 任务8 只读诊断：每来源最后成功/下次预期/失败超期原因；403 或失败时为 hidden/unknown，不渲染。
+  monitoringHealth: MonitoringHealthSnapshot;
   // 草稿箱、新增数据源、立即全量同步已下线：平台不再开放人工接入新数据源，
   // 但保留"编辑现有数据源"（API Key / 调度周期 / 适配器等配置项）+ 启停 + 修改日志审计。
 }
@@ -38,7 +42,7 @@ const emptyForm: DataSourceWritePayload = {
 };
 
 export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
-  dataSources, role, onUpdateSource, onRefreshSources,
+  dataSources, role, onUpdateSource, onRefreshSources, monitoringHealth,
 }) => {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [warningDismissed, setWarningDismissed] = useState(false);
@@ -271,6 +275,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const isExternalForm = form.source_type === 'external_tool';
   const isTycForm = isExternalForm && form.code === 'tianyancha';
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
+  // 诊断就绪时按 source_id 建立新鲜度索引；hidden/unknown/loading 一律不渲染来源级健康。
+  const healthBySource = monitoringHealth.status === 'ready'
+    ? new Map(monitoringHealth.health.sources.map((item) => [item.source_id, item]))
+    : null;
 
   return (
     <div className="space-y-5 pb-20 lg:pb-8">
@@ -425,6 +433,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                         数据源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
                       </p>
+                      <MonitoringSourceFreshness health={healthBySource?.get(Number(source.id))} />
                     </div>
                   </div>
                   <div className="col-span-6 md:col-span-2 flex items-center gap-2">
@@ -465,7 +474,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       </Link>
                     )}
                     {source.validityPolicy && (
-                      <span className="ml-1 text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
+                      <span className="ml-1 whitespace-nowrap text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
                         {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
                         {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
                       </span>

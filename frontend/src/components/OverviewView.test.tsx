@@ -2,8 +2,9 @@ import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter, Route, Routes, useLocation, useNavigate} from 'react-router-dom';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {api, ApiError, type DashboardSummary, type RiskAlertRead} from '../api';
+import {api, ApiError, type DashboardSummary, type MonitoringHealthRead, type RiskAlertRead} from '../api';
 import type {RiskItem} from '../types';
+import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {OverviewView} from './OverviewView';
 
 // 仅把 dashboardSummary 网络方法替换为可控 mock，保留真实 mapRiskAlert / ApiError。
@@ -74,6 +75,28 @@ const baseSummary: DashboardSummary = {
 
 const makeSummary = (overrides: Partial<DashboardSummary> = {}): DashboardSummary => ({...baseSummary, ...overrides});
 
+const monitoringHealthOk: MonitoringHealthRead = {
+  as_of: '2026-09-11T06:00:00Z',
+  overall: 'ok',
+  scheduler: {
+    status: 'ok',
+    last_heartbeat_at: '2026-09-11T05:59:30Z',
+    age_seconds: 30,
+    interval_seconds: 60,
+    stale_after_seconds: 180,
+  },
+  processing: {
+    total: 0,
+    classification_failed: 0,
+    backlog_over_1h: 0,
+    oldest_pending_age_seconds: null,
+    last_run: {status: 'succeeded', started_at: '2026-09-11T05:58:00Z', finished_at: '2026-09-11T05:58:20Z', processed: 5, filtered: 1, failed: 0},
+  },
+  sources: [],
+};
+
+const readyHealth = (health: MonitoringHealthRead): MonitoringHealthSnapshot => ({status: 'ready', health});
+
 const Probe = () => {
   const location = useLocation();
   return <output data-testid="ov-search">{location.search}</output>;
@@ -90,6 +113,7 @@ interface RenderOptions {
   readonly onSelectRisk?: (item: RiskItem) => void;
   readonly onViewAllRisks?: () => void;
   readonly onRequestError?: (error: ApiError) => void;
+  readonly monitoringHealth?: MonitoringHealthSnapshot;
 }
 
 const renderOverview = (options: RenderOptions = {}) => {
@@ -103,7 +127,12 @@ const renderOverview = (options: RenderOptions = {}) => {
           path="/overview"
           element={(
             <>
-              <OverviewView onSelectRisk={onSelectRisk} onViewAllRisks={onViewAllRisks} onRequestError={onRequestError} />
+              <OverviewView
+                onSelectRisk={onSelectRisk}
+                onViewAllRisks={onViewAllRisks}
+                onRequestError={onRequestError}
+                monitoringHealth={options.monitoringHealth ?? readyHealth(monitoringHealthOk)}
+              />
               <Probe />
               <BackButton />
             </>
@@ -160,7 +189,8 @@ describe('OverviewView 服务端汇总统计', () => {
     vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({as_of: '2026-09-08T02:00:00Z'}));
     renderOverview();
 
-    expect(await screen.findByText(/数据截至/)).toBeInTheDocument();
+    // 页头与健康横幅都可携带「数据截至」，只需保证语义存在且不出现旧文案
+    expect((await screen.findAllByText(/数据截至/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/最后更新/)).not.toBeInTheDocument();
   });
 });
@@ -460,5 +490,65 @@ describe('OverviewView 导航回调', () => {
     const [item] = onSelectRisk.mock.calls[0] as [RiskItem];
     expect(item.id).toBe('501');
     expect(item.companyName).toBe('示例风险供应商');
+  });
+});
+
+describe('OverviewView 监控健康横幅', () => {
+  it('空风险且诊断 ok：显示「监控正常，截至…暂无当前风险」，空态不能被误读为监控成功', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({
+      total_current: 0,
+      level_counts: [
+        {level: 'P1', count: 0},
+        {level: 'P2', count: 0},
+        {level: 'P3', count: 0},
+        {level: 'P4', count: 0},
+      ],
+    }));
+    renderOverview();
+
+    await screen.findByText('当前无有效风险提醒');
+    const banner = screen.getByTestId('monitoring-health-banner');
+    expect(banner).toHaveAttribute('data-state', 'ok');
+    expect(banner.textContent).toMatch(/监控正常，截至.*暂无当前风险/);
+  });
+
+  it('空风险且诊断降级：显示降级文案而非「监控正常」', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({total_current: 0}));
+    renderOverview({monitoringHealth: readyHealth({...monitoringHealthOk, overall: 'degraded'})});
+
+    const banner = await screen.findByTestId('monitoring-health-banner');
+    expect(banner).toHaveAttribute('data-state', 'degraded');
+    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
+    expect(banner.textContent).not.toContain('监控正常，截至');
+  });
+
+  it('非空风险且诊断 inactive：仍展示横幅（含数据新鲜度），风险数据不被清空', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({total_current: 17}));
+    renderOverview({monitoringHealth: readyHealth({...monitoringHealthOk, overall: 'inactive'})});
+
+    const banner = await screen.findByTestId('monitoring-health-banner');
+    expect(banner).toHaveAttribute('data-state', 'inactive');
+    expect(banner.textContent).toContain('未开启自动监控');
+    expect(totalCurrentText(17)).toBeInTheDocument();
+  });
+
+  it('诊断 503（snapshot=unknown）：显示无法确认，业务统计保持可见', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({total_current: 17}));
+    renderOverview({monitoringHealth: {status: 'unknown'}});
+
+    const banner = await screen.findByTestId('monitoring-health-banner');
+    expect(banner).toHaveAttribute('data-state', 'unknown');
+    expect(banner.textContent).toContain('尚无法确认监控状态');
+    expect(banner.textContent).not.toContain('监控正常');
+    expect(totalCurrentText(17)).toBeInTheDocument();
+  });
+
+  it('无诊断权限（hidden）：不渲染横幅，页面其余内容不受影响', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({total_current: 17}));
+    renderOverview({monitoringHealth: {status: 'hidden'}});
+
+    await screen.findByText('全网供应链风险概览');
+    expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
+    expect(totalCurrentText(17)).toBeInTheDocument();
   });
 });

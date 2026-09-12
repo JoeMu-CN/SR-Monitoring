@@ -640,6 +640,55 @@ export interface AgentStatusRead {
 
 export interface SystemHealth { status: string; database: string }
 
+// —— 只读监控健康聚合（GET /api/v1/system/monitoring-health，沿用 source_status_view 权限）。
+// 契约与 backend/app/scheduler/health_schemas.py 一一对应：只含稳定枚举、计数与时间戳。
+export type MonitoringOverallStatus = 'ok' | 'degraded' | 'unknown' | 'inactive';
+export type MonitoringSourceState = 'ok' | 'failed' | 'overdue' | 'never_run' | 'disabled' | 'on_demand' | 'invalid_schedule';
+
+export interface MonitoringSchedulerHealth {
+  status: 'unknown' | 'ok' | 'stale';
+  last_heartbeat_at: string | null;
+  age_seconds: number | null;
+  interval_seconds: number;
+  stale_after_seconds: number;
+}
+
+export interface MonitoringProcessingRun {
+  status: 'idle' | 'running' | 'succeeded' | 'failed';
+  started_at: string | null;
+  finished_at: string | null;
+  processed: number;
+  filtered: number;
+  failed: number;
+}
+
+export interface MonitoringProcessingHealth {
+  total: number;
+  classification_failed: number;
+  backlog_over_1h: number;
+  oldest_pending_age_seconds: number | null;
+  last_run: MonitoringProcessingRun;
+}
+
+export interface MonitoringSourceHealth {
+  source_id: number;
+  code: string;
+  name: string;
+  state: MonitoringSourceState;
+  reason_code: string;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  next_expected_at: string | null;
+}
+
+export interface MonitoringHealthRead {
+  as_of: string;
+  overall: MonitoringOverallStatus;
+  scheduler: MonitoringSchedulerHealth;
+  processing: MonitoringProcessingHealth;
+  sources: MonitoringSourceHealth[];
+}
+
 export interface AIReviewSummary {
   needs_review: number;
   filtered: number;
@@ -856,6 +905,9 @@ export const api = {
     reset: () => request<void>('/api/v1/signals/filter-config', {method: 'DELETE'}),
   },
   health: () => request<SystemHealth>('/api/v1/system/health'),
+  monitoringHealth: (signal?: AbortSignal) => request<MonitoringHealthRead>(
+    '/api/v1/system/monitoring-health', signal ? {signal} : {},
+  ),
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
   aiReviewSummary: () => request<AIReviewSummary>('/api/v1/ai-review-summary'),
   aiReviewItems: () => request<AIReviewItem[]>('/api/v1/ai-review-items?limit=5'),

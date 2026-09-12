@@ -2,7 +2,10 @@ import json
 from datetime import UTC, datetime
 from typing import Final, TypedDict
 
-from e2e_source_signal_fixtures import add_source_signal_fixtures
+from e2e_source_signal_fixtures import (
+    LEGACY_VALIDITY_REASON_JSON,
+    add_source_signal_fixtures,
+)
 from sqlalchemy import select
 from test_stack_guard import require_test_database_url
 
@@ -18,12 +21,16 @@ from app.risks.models import (
     SupplierEventMatch,
 )
 from app.signals.models import DataSource, RawSignal
+from app.signals.validity import ValidityState
 from app.suppliers.models import Supplier, SupplierAlias, SupplierProduct, SupplierSite
 
 ADMIN_USERNAME: Final = "e2e-platform-admin"
 VIEWER_USERNAME: Final = "e2e-viewer"
 TEST_PASSWORD: Final = "E2E-Test-Only-2026!"
-FIXED_NOW: Final = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
+# 锚点必须相对当前 UTC 时间：legacy 信号由 query_validity 按真实 now 与
+# source.signal_validity_days 过滤，硬编码日期会随时间过期，导致“源信号有效
+# 记录”归零（E2E 时间炸弹）。取整点使夹具相对偏移下的 25/20/5 样本契约稳定。
+FIXED_NOW: Final = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
 
 
 class SeedReceipt(TypedDict):
@@ -142,6 +149,8 @@ def seed() -> SeedReceipt:
                     collected_at=FIXED_NOW,
                     fingerprint=f"e2e-fingerprint-{offset}",
                     raw_data={"fixture": True, "sequence": offset},
+                    validity_state=ValidityState.LEGACY,
+                    validity_reason=LEGACY_VALIDITY_REASON_JSON,
                 )
             )
             session.add(

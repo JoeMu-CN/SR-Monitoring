@@ -24,6 +24,7 @@ $evidenceDirectory = Join-Path $evidenceRoot $runId
 $summaryPath = Join-Path $evidenceDirectory "summary.json"
 $buildLogPath = Join-Path $evidenceDirectory "build.txt"
 $hardeningSeedScript = "tests/seed_hardening_e2e.py"
+$baselineBackendTest = "tests/test_e2e_seed.py"
 $hardeningBackendTest = "tests/test_hardening_integration.py"
 $hardeningE2eSpec = "tests/e2e/current-version-hardening.spec.ts"
 $legacySeedNotRunReason = "legacy-baseline-implicit-seed-e2e-only"
@@ -320,6 +321,125 @@ function Get-StageAggregate {
     }
 }
 
+function New-BackendNotRunStage {
+    <#
+        任务10：backend 未运行 stage 的统一记录。定向未选中记 excluded-by-requested-tests；
+        前序 stage 失败记 preceding-stage-failed，并保留被选中的路径以便追溯。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][string]$Reason,
+        [AllowEmptyCollection()][string[]]$SelectedTests,
+        [bool]$WithHardeningSeed
+    )
+
+    return [ordered]@{
+        status = "not-run"
+        reason = $Reason
+        kind = $Kind
+        database = "supplier_risk_test"
+        selected_tests = @($SelectedTests)
+        hardening_seed = $WithHardeningSeed
+        seed = New-SeedNotRunRecord
+    }
+}
+
+function Invoke-BackendFreshStage {
+    <#
+        任务10：backend 每个 stage 使用独立 fresh 栈（迁移 + 隐式 seed_e2e）。
+        baseline/legacy 绝不叠加 hardening seed；hardening 在其隔离新库恰好叠加一次。
+        任何非零退出（含 seed 失败）原样记录，由调用方按固定顺序 fail-fast。
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$SelectedTests,
+        [Parameter(Mandatory)][string]$JunitFileName,
+        [Parameter(Mandatory)][bool]$WithHardeningSeed,
+        [Parameter(Mandatory)][string]$SeedPhase
+    )
+
+    $stageStarted = [DateTimeOffset]::UtcNow
+    $script:resourceCreationAttempted = $true
+    $stageFailed = $false
+    $stageError = $null
+    $stageExitCode = $null
+    $stageCounts = $null
+    $junitDiagnostic = "ok"
+    $junitError = $null
+    $seedRecord = $null
+    $upLogName = "backend-$Kind-compose-up.txt"
+    $testsLogName = "backend-$Kind-tests.txt"
+    $junitPath = Join-Path $evidenceDirectory $JunitFileName
+    try {
+        Invoke-LoggedNative -Name "backend $Kind 全新隔离栈启动（迁移 + seed_e2e）" -LogPath (Join-Path $evidenceDirectory $upLogName) -Command {
+            & docker @compose up --detach --wait app-test
+        }
+        if ($WithHardeningSeed) {
+            $seedRecord = Invoke-HardeningSeed -Phase $SeedPhase
+            if ($seedRecord.status -ne "passed") {
+                $stageFailed = $true
+                $stageExitCode = if ($seedRecord.exit_code -ne 0) { $seedRecord.exit_code } else { 1 }
+                $stageError = "hardening 阶段 seed 失败：python $hardeningSeedScript exit=$($seedRecord.exit_code)；详见 $($seedRecord.log)。"
+            }
+        }
+        if (-not $stageFailed) {
+            & docker @compose --profile tools run --rm test-runner pytest @SelectedTests --junitxml=/test-evidence/$JunitFileName *> (Join-Path $evidenceDirectory $testsLogName)
+            $stageExitCode = $LASTEXITCODE
+        }
+    }
+    catch {
+        $stageFailed = $true
+        $stageError = $_.Exception.Message
+        $stageExitCode = if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { 1 }
+    }
+    finally {
+        Stop-OwnedStack
+        $script:resourceCreationAttempted = $false
+    }
+    if (-not $stageFailed) {
+        if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
+            try {
+                $stageCounts = Read-JUnitCounts -Path $junitPath
+            }
+            catch {
+                $junitDiagnostic = "unparsable"
+                $junitError = $_.Exception.Message
+            }
+        }
+        else {
+            $junitDiagnostic = "missing"
+            $junitError = "backend $Kind pytest 未生成 JUnit 报告：$junitPath"
+        }
+        $stageFailed = -not (
+            ($stageExitCode -eq 0) -and
+            ($null -ne $stageCounts) -and
+            $stageCounts.passed
+        )
+        if ($stageFailed) {
+            $stageError = "backend $Kind 阶段失败：pytest exit=$stageExitCode；junit=$junitDiagnostic。"
+        }
+    }
+    return [ordered]@{
+        status = if ($stageFailed) { "failed" } else { "passed" }
+        kind = $Kind
+        database = "supplier_risk_test"
+        selected_tests = @($SelectedTests | Where-Object { -not $_.StartsWith("--") })
+        hardening_seed = $WithHardeningSeed
+        seed = if ($null -ne $seedRecord) { $seedRecord } else { New-SeedNotRunRecord }
+        started_at_utc = $stageStarted.ToString("o")
+        finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+        exit_code = $stageExitCode
+        tests = if ($null -ne $stageCounts) { $stageCounts.tests } else { $null }
+        failures = if ($null -ne $stageCounts) { $stageCounts.failures } else { $null }
+        skipped = if ($null -ne $stageCounts) { $stageCounts.skipped } else { $null }
+        junit = $junitPath
+        junit_available = ($null -ne $stageCounts)
+        junit_diagnostic = $junitDiagnostic
+        junit_error = $junitError
+        error = $stageError
+    }
+}
+
 function Get-E2eSpecPaths {
     <#
         任务10：E2E spec 稳定字典序发现（Ordinal），可选按白名单定向过滤后仍保持字典序。
@@ -350,19 +470,25 @@ foreach ($requiredPath in @($frontendRoot, $composeBaseFile, $composeOverrideFil
     }
 }
 
-# 任务10拓扑分流：backend 按测试类别拆分为 legacy 基线库与 hardening 库两个阶段。
-# - legacy：全量 tests 显式排除 test_hardening_integration.py；定向时按类别只跑被选中的 legacy 文件。
-# - hardening：仅运行 tests/test_hardening_integration.py；未被定向选中时记录 not-run。
+# 任务10拓扑分流：backend 按测试类别拆分为三个独立 fresh 库阶段（固定顺序 baseline → legacy → hardening）。
+# - baseline-seed-contract：仅运行 tests/test_e2e_seed.py，保证 seed 确定性断言在未被其它测试污染的新库上执行。
+# - legacy：全量 tests 显式排除 baseline 与 hardening 测试；定向时按类别只跑被选中的 legacy 文件。
+# - hardening：仅运行 tests/test_hardening_integration.py 并在隔离新库恰好叠加一次 hardening seed。
+$baselineBackendArgs = @()
 $legacyBackendArgs = @()
 $hardeningBackendArgs = @()
 if ($Suite -in @("backend", "all")) {
     if ((-not $testsSpecified) -or ($selectedTests -contains "tests")) {
-        $legacyBackendArgs = @("tests", "--ignore=tests/test_hardening_integration.py")
+        $baselineBackendArgs = @($baselineBackendTest)
+        $legacyBackendArgs = @("tests", "--ignore=$baselineBackendTest", "--ignore=$hardeningBackendTest")
         $hardeningBackendArgs = @($hardeningBackendTest)
     }
     else {
         foreach ($path in $selectedTests) {
-            if ($path -eq $hardeningBackendTest) {
+            if ($path -eq $baselineBackendTest) {
+                $baselineBackendArgs += $path
+            }
+            elseif ($path -eq $hardeningBackendTest) {
                 $hardeningBackendArgs += $path
             }
             else {
@@ -445,6 +571,11 @@ $summary = [ordered]@{
 }
 
 if ($Suite -in @("backend", "all")) {
+    $summary.phases.backend.stages.baseline = [ordered]@{
+        status = "not-run"; reason = "excluded-by-requested-tests"; kind = "baseline"
+        database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $false
+        seed = (New-SeedNotRunRecord)
+    }
     $summary.phases.backend.stages.legacy = [ordered]@{
         status = "not-run"; reason = "excluded-by-requested-tests"; kind = "legacy"
         database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $false
@@ -500,180 +631,61 @@ try {
         $summary.phases.backend.started_at_utc = $backendStarted.ToString("o")
         $backendFailure = $null
         $backendFailureExit = $null
+        $backendStop = $false
 
-        # ---------- legacy 基线库：仅有 app-test 隐式 seed_e2e，全量排除 hardening 集成 ----------
-        if ($legacyBackendArgs.Count -gt 0) {
-            $stageStarted = [DateTimeOffset]::UtcNow
-            $resourceCreationAttempted = $true
-            $stageFailed = $false
-            $stageError = $null
-            $stageExitCode = $null
-            $stageCounts = $null
-            $junitDiagnostic = "ok"
-            $junitError = $null
-            $legacyJunitPath = Join-Path $evidenceDirectory "junit-backend-legacy.xml"
-            try {
-                Invoke-LoggedNative -Name "legacy 基线库栈启动（迁移 + seed_e2e）" -LogPath (Join-Path $evidenceDirectory "backend-legacy-compose-up.txt") -Command {
-                    & docker @compose up --detach --wait app-test
-                }
-                # legacy 基线库只包含 seed_e2e 数据；不叠加 hardening seed，保证既有断言不被污染。
-                & docker @compose --profile tools run --rm test-runner pytest @legacyBackendArgs --junitxml=/test-evidence/junit-backend-legacy.xml *> (Join-Path $evidenceDirectory "backend-legacy-tests.txt")
-                $stageExitCode = $LASTEXITCODE
-            }
-            catch {
-                $stageFailed = $true
-                $stageError = $_.Exception.Message
-                $stageExitCode = if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { 1 }
-            }
-            finally {
-                Stop-OwnedStack
-                $resourceCreationAttempted = $false
-            }
-            if (-not $stageFailed) {
-                if (Test-Path -LiteralPath $legacyJunitPath -PathType Leaf) {
-                    try {
-                        $stageCounts = Read-JUnitCounts -Path $legacyJunitPath
-                    }
-                    catch {
-                        $junitDiagnostic = "unparsable"
-                        $junitError = $_.Exception.Message
-                    }
-                }
-                else {
-                    $junitDiagnostic = "missing"
-                    $junitError = "legacy pytest 未生成 JUnit 报告：$legacyJunitPath"
-                }
-                $stageFailed = -not (
-                    ($stageExitCode -eq 0) -and
-                    ($null -ne $stageCounts) -and
-                    $stageCounts.passed
-                )
-                if ($stageFailed) {
-                    $stageError = "legacy 基线库阶段失败：pytest exit=$stageExitCode；junit=$junitDiagnostic。"
-                }
-            }
-            $summary.phases.backend.stages.legacy = [ordered]@{
-                status = if ($stageFailed) { "failed" } else { "passed" }
-                kind = "legacy"
-                database = "supplier_risk_test"
-                selected_tests = @($legacyBackendArgs | Where-Object { -not $_.StartsWith("--") })
-                hardening_seed = $false
-                seed = (New-SeedNotRunRecord)
-                started_at_utc = $stageStarted.ToString("o")
-                finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
-                exit_code = $stageExitCode
-                tests = if ($null -ne $stageCounts) { $stageCounts.tests } else { $null }
-                failures = if ($null -ne $stageCounts) { $stageCounts.failures } else { $null }
-                skipped = if ($null -ne $stageCounts) { $stageCounts.skipped } else { $null }
-                junit = $legacyJunitPath
-                junit_available = ($null -ne $stageCounts)
-                junit_diagnostic = $junitDiagnostic
-                junit_error = $junitError
-                error = $stageError
-            }
-            if ($stageFailed) {
-                $backendFailure = $stageError
-                $backendFailureExit = if ($stageExitCode -ne 0) { $stageExitCode } else { 1 }
+        # ---------- baseline-seed-contract：fresh 库仅跑 seed 契约测试，绝不叠加 hardening seed ----------
+        if ($baselineBackendArgs.Count -gt 0) {
+            $summary.phases.backend.stages.baseline = Invoke-BackendFreshStage `
+                -Kind "baseline" -SelectedTests $baselineBackendArgs `
+                -JunitFileName "junit-backend-baseline.xml" -WithHardeningSeed $false -SeedPhase "backend-baseline"
+            if ($summary.phases.backend.stages.baseline.status -eq "failed") {
+                $backendStop = $true
+                $backendFailure = $summary.phases.backend.stages.baseline.error
+                $baselineExit = $summary.phases.backend.stages.baseline.exit_code
+                $backendFailureExit = if ($null -ne $baselineExit -and $baselineExit -ne 0) { $baselineExit } else { 1 }
             }
         }
 
-        # ---------- hardening 库：另一个新库，恰好一次 hardening seed，仅跑集成测试 ----------
-        if ($null -ne $backendFailure) {
-            $summary.phases.backend.stages.hardening = [ordered]@{
-                status = "not-run"; reason = "preceding-stage-failed"; kind = "hardening"
-                database = "supplier_risk_test"; selected_tests = @($hardeningBackendArgs); hardening_seed = $true
-                seed = (New-SeedNotRunRecord)
-            }
+        # ---------- legacy 基线库：fresh 库全量排除 baseline/hardening，绝不叠加 hardening seed ----------
+        if ($backendStop) {
+            $summary.phases.backend.stages.legacy = New-BackendNotRunStage -Kind "legacy" `
+                -Reason "preceding-stage-failed" -SelectedTests $legacyBackendArgs -WithHardeningSeed $false
         }
-        elseif ($hardeningBackendArgs.Count -gt 0) {
-            $stageStarted = [DateTimeOffset]::UtcNow
-            $resourceCreationAttempted = $true
-            $stageFailed = $false
-            $stageError = $null
-            $stageExitCode = $null
-            $stageCounts = $null
-            $junitDiagnostic = "ok"
-            $junitError = $null
-            $seedRecord = $null
-            $hardeningJunitPath = Join-Path $evidenceDirectory "junit-backend-hardening.xml"
-            try {
-                Invoke-LoggedNative -Name "hardening 库栈启动（迁移 + seed_e2e）" -LogPath (Join-Path $evidenceDirectory "backend-hardening-compose-up.txt") -Command {
-                    & docker @compose up --detach --wait app-test
-                }
-                # 与 legacy 基线库物理隔离：独立 fresh 栈即独立新库，先叠加 hardening seed。
-                $seedRecord = Invoke-HardeningSeed -Phase "backend-hardening"
-                if ($seedRecord.status -ne "passed") {
-                    $stageFailed = $true
-                    $stageExitCode = if ($seedRecord.exit_code -ne 0) { $seedRecord.exit_code } else { 1 }
-                    $stageError = "hardening 阶段 seed 失败：python $hardeningSeedScript exit=$($seedRecord.exit_code)；详见 $($seedRecord.log)。"
-                }
-                else {
-                    & docker @compose --profile tools run --rm test-runner pytest @hardeningBackendArgs --junitxml=/test-evidence/junit-backend-hardening.xml *> (Join-Path $evidenceDirectory "backend-hardening-tests.txt")
-                    $stageExitCode = $LASTEXITCODE
-                }
-            }
-            catch {
-                $stageFailed = $true
-                $stageError = $_.Exception.Message
-                $stageExitCode = if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { 1 }
-            }
-            finally {
-                Stop-OwnedStack
-                $resourceCreationAttempted = $false
-            }
-            if (-not $stageFailed) {
-                if (Test-Path -LiteralPath $hardeningJunitPath -PathType Leaf) {
-                    try {
-                        $stageCounts = Read-JUnitCounts -Path $hardeningJunitPath
-                    }
-                    catch {
-                        $junitDiagnostic = "unparsable"
-                        $junitError = $_.Exception.Message
-                    }
-                }
-                else {
-                    $junitDiagnostic = "missing"
-                    $junitError = "hardening pytest 未生成 JUnit 报告：$hardeningJunitPath"
-                }
-                $stageFailed = -not (
-                    ($stageExitCode -eq 0) -and
-                    ($null -ne $stageCounts) -and
-                    $stageCounts.passed
-                )
-                if ($stageFailed) {
-                    $stageError = "hardening 阶段失败：pytest exit=$stageExitCode；junit=$junitDiagnostic。"
-                }
-            }
-            $summary.phases.backend.stages.hardening = [ordered]@{
-                status = if ($stageFailed) { "failed" } else { "passed" }
-                kind = "hardening"
-                database = "supplier_risk_test"
-                selected_tests = @($hardeningBackendArgs)
-                hardening_seed = $true
-                seed = $seedRecord
-                started_at_utc = $stageStarted.ToString("o")
-                finished_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
-                exit_code = $stageExitCode
-                tests = if ($null -ne $stageCounts) { $stageCounts.tests } else { $null }
-                failures = if ($null -ne $stageCounts) { $stageCounts.failures } else { $null }
-                skipped = if ($null -ne $stageCounts) { $stageCounts.skipped } else { $null }
-                junit = $hardeningJunitPath
-                junit_available = ($null -ne $stageCounts)
-                junit_diagnostic = $junitDiagnostic
-                junit_error = $junitError
-                error = $stageError
-            }
-            if ($stageFailed) {
-                $backendFailure = $stageError
-                $backendFailureExit = if ($stageExitCode -ne 0) { $stageExitCode } else { 1 }
+        elseif ($legacyBackendArgs.Count -gt 0) {
+            $summary.phases.backend.stages.legacy = Invoke-BackendFreshStage `
+                -Kind "legacy" -SelectedTests $legacyBackendArgs `
+                -JunitFileName "junit-backend-legacy.xml" -WithHardeningSeed $false -SeedPhase "backend-legacy"
+            if ($summary.phases.backend.stages.legacy.status -eq "failed") {
+                $backendStop = $true
+                $backendFailure = $summary.phases.backend.stages.legacy.error
+                $legacyExit = $summary.phases.backend.stages.legacy.exit_code
+                $backendFailureExit = if ($null -ne $legacyExit -and $legacyExit -ne 0) { $legacyExit } else { 1 }
             }
         }
         else {
-            $summary.phases.backend.stages.hardening = [ordered]@{
-                status = "not-run"; reason = "excluded-by-requested-tests"; kind = "hardening"
-                database = "supplier_risk_test"; selected_tests = @(); hardening_seed = $true
-                seed = (New-SeedNotRunRecord)
+            $summary.phases.backend.stages.legacy = New-BackendNotRunStage -Kind "legacy" `
+                -Reason "excluded-by-requested-tests" -SelectedTests @() -WithHardeningSeed $false
+        }
+
+        # ---------- hardening 库：另一个 fresh 库，恰好一次 hardening seed，仅跑集成测试 ----------
+        if ($backendStop) {
+            $summary.phases.backend.stages.hardening = New-BackendNotRunStage -Kind "hardening" `
+                -Reason "preceding-stage-failed" -SelectedTests $hardeningBackendArgs -WithHardeningSeed $true
+        }
+        elseif ($hardeningBackendArgs.Count -gt 0) {
+            $summary.phases.backend.stages.hardening = Invoke-BackendFreshStage `
+                -Kind "hardening" -SelectedTests $hardeningBackendArgs `
+                -JunitFileName "junit-backend-hardening.xml" -WithHardeningSeed $true -SeedPhase "backend-hardening"
+            if ($summary.phases.backend.stages.hardening.status -eq "failed") {
+                $backendStop = $true
+                $backendFailure = $summary.phases.backend.stages.hardening.error
+                $hardeningExit = $summary.phases.backend.stages.hardening.exit_code
+                $backendFailureExit = if ($null -ne $hardeningExit -and $hardeningExit -ne 0) { $hardeningExit } else { 1 }
             }
+        }
+        else {
+            $summary.phases.backend.stages.hardening = New-BackendNotRunStage -Kind "hardening" `
+                -Reason "excluded-by-requested-tests" -SelectedTests @() -WithHardeningSeed $true
         }
 
         $backendAggregate = Get-StageAggregate -Stages $summary.phases.backend.stages

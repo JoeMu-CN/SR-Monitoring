@@ -19,6 +19,7 @@ const apiResponse = (url: string) => {
   if (url.includes('/rule-engine/dimensions')) return [];
   if (url.includes('/system/health')) return {status: 'healthy'};
   if (url.includes('/agent/status')) return {enabled: false, configured: false};
+  if (url.includes('/dashboard/summary')) return {level_counts: [{level: 'P1', count: 0}, {level: 'P2', count: 0}, {level: 'P3', count: 0}, {level: 'P4', count: 0}], total_current: 0, today_new: 0, type_distribution: [], recent_alerts: [], sources: [], as_of: '2026-08-30T00:00:00Z', window_start: '2026-07-31T00:00:00Z', window_days: 30, period_new_count: 0, supplier_total: 0, active_supplier_total: 0, source_distribution: [], retention_window_days: 90, history_may_be_partial: false};
   return {detail: 'Unhandled deterministic API fixture'};
 };
 

@@ -64,6 +64,11 @@ $result = [ordered]@{
         hardening_evidence_task10 = "not-run"
         backend_stage_isolation = "not-run"
         backend_tests_routing = "not-run"
+        backend_baseline_stage = "not-run"
+        backend_baseline_only_routing = "not-run"
+        backend_mixed_routing = "not-run"
+        backend_baseline_fail_fast = "not-run"
+        backend_three_stage_aggregate = "not-run"
         e2e_per_spec_fresh_stack = "not-run"
         e2e_fail_fast_not_run = "not-run"
         parent_aggregate_backend = "not-run"
@@ -248,6 +253,15 @@ if ($args -contains "run") {
     $junitArg = @($args) | Where-Object { $_ -like '--junitxml=*' } | Select-Object -First 1
     if ($null -ne $junitArg) {
         $junitTarget = Join-Path $env:HARDENING_EVIDENCE_DIR ([System.IO.Path]::GetFileName($junitArg.Substring(11)))
+    }
+    # 三阶段拓扑：baseline 阶段放行（默认 2 用例通过），其余 stage 以带报告的失败结束，
+    # 用于校验父级三阶段聚合、legacy 失败后 hardening 记 preceding-stage-failed。
+    if (($mode -eq "baseline-pass-legacy-failure") -and -not (@($args) -contains "tests/test_e2e_seed.py")) {
+        $cases = '<testcase classname="contract" name="one"/><testcase classname="contract" name="two"/><testcase classname="contract" name="three"/><testcase classname="contract" name="four"/><testcase classname="contract" name="five"><error message="forced"/></testcase>'
+        $junit = "<?xml version=`"1.0`"?><testsuites tests=`"5`" failures=`"1`" errors=`"0`" skipped=`"0`"><testsuite name=`"contract`" tests=`"5`" failures=`"1`" errors=`"0`" skipped=`"0`">$cases</testsuite></testsuites>"
+        [System.IO.File]::WriteAllText($junitTarget, $junit, [System.Text.UTF8Encoding]::new($false))
+        $global:LASTEXITCODE = 3
+        return
     }
     switch ($mode) {
         "pytest-failure" {
@@ -660,36 +674,52 @@ exit 0
     $hardeningSpecIndex = [array]::IndexOf($expectedE2eSpecNames, "current-version-hardening.spec.ts")
     Assert-Contract ($hardeningSpecIndex -ge 0) "契约前置：未发现 current-version-hardening.spec.ts。"
 
-    # backend 全量：legacy 基线库（仅隐式 seed_e2e）+ hardening 库（恰好一次 hardening seed）。
+    # backend 全量：三阶段 fresh DB 拓扑 baseline（seed 契约）→ legacy（全量排除）→ hardening（seed 恰好一次）。
     Set-ContractMode -Mode "normal"
     $backendTopology = Invoke-Entry -Script $probeEntryScript -Arguments @("-Suite", "backend")
     Assert-Contract ($backendTopology.exit_code -eq 0) "新拓扑 backend 全量场景未成功。"
     $topologyCalls = @(Read-DockerCalls)
     $topologyIntervals = @(Split-StackIntervals -Calls $topologyCalls)
-    Assert-Contract ($topologyIntervals.Count -eq 2) "backend 全量应重建 2 个独立库栈（legacy/hardening），实际 $($topologyIntervals.Count)。"
-    Assert-Contract ($topologyIntervals[0].seed_count -eq 0) "legacy 基线库栈不得执行 hardening seed。"
-    Assert-Contract ($topologyIntervals[1].seed_count -eq 1) "hardening 库栈未恰好执行一次 hardening seed。"
+    Assert-Contract ($topologyIntervals.Count -eq 3) "backend 全量应重建 3 个独立库栈（baseline/legacy/hardening），实际 $($topologyIntervals.Count)。"
+    Assert-Contract ($topologyIntervals[0].seed_count -eq 0) "baseline 库栈不得执行 hardening seed。"
+    Assert-Contract ($topologyIntervals[1].seed_count -eq 0) "legacy 基线库栈不得执行 hardening seed。"
+    Assert-Contract ($topologyIntervals[2].seed_count -eq 1) "hardening 库栈未恰好执行一次 hardening seed。"
+    Assert-Contract ($topologyIntervals[0].down_index -lt $topologyIntervals[1].up_index) "backend 未按 baseline → legacy 固定顺序执行。"
+    Assert-Contract ($topologyIntervals[1].down_index -lt $topologyIntervals[2].up_index) "backend 未按 legacy → hardening 固定顺序执行。"
     $topologyPytestIndexes = @(
         for ($index = 0; $index -lt $topologyCalls.Count; $index++) {
             if (@($topologyCalls[$index].arguments) -contains "pytest") { $index }
         }
     )
-    Assert-Contract ($topologyPytestIndexes.Count -eq 2) "backend 全量应恰好两次 pytest，实际 $($topologyPytestIndexes.Count)。"
-    Assert-Contract ($topologyIntervals[0].up_index -lt $topologyPytestIndexes[0]) "legacy pytest 未在 legacy 库栈启动后执行。"
-    Assert-Contract ($topologyIntervals[1].up_index -lt $topologyPytestIndexes[1]) "hardening pytest 未在 hardening 库栈启动后执行。"
-    $topologyLegacyArgs = @($topologyCalls[$topologyPytestIndexes[0]].arguments)
+    Assert-Contract ($topologyPytestIndexes.Count -eq 3) "backend 全量应恰好三次 pytest，实际 $($topologyPytestIndexes.Count)。"
+    Assert-Contract ($topologyIntervals[0].up_index -lt $topologyPytestIndexes[0]) "baseline pytest 未在 baseline 库栈启动后执行。"
+    Assert-Contract ($topologyIntervals[1].up_index -lt $topologyPytestIndexes[1]) "legacy pytest 未在 legacy 库栈启动后执行。"
+    Assert-Contract ($topologyIntervals[2].up_index -lt $topologyPytestIndexes[2]) "hardening pytest 未在 hardening 库栈启动后执行。"
+    $topologyBaselineArgs = @($topologyCalls[$topologyPytestIndexes[0]].arguments)
+    $topologyBaselineSelected = @($topologyBaselineArgs | Where-Object { $_ -like 'tests/*' -and $_ -notlike '--*' })
+    Assert-Contract (
+        ($topologyBaselineSelected.Count -eq 1) -and ($topologyBaselineSelected[0] -eq "tests/test_e2e_seed.py")
+    ) "baseline 阶段未仅运行 tests/test_e2e_seed.py（实际：$($topologyBaselineSelected -join ',')）。"
+    Assert-Contract (-not ($topologyBaselineArgs -contains "tests")) "baseline 阶段不得运行 tests 目录全量。"
+    $topologyLegacyArgs = @($topologyCalls[$topologyPytestIndexes[1]].arguments)
+    Assert-Contract ($topologyLegacyArgs -contains "tests") "legacy 全量 pytest 未运行 tests 目录。"
+    Assert-Contract ($topologyLegacyArgs -contains "--ignore=tests/test_e2e_seed.py") "legacy 全量 pytest 未排除 test_e2e_seed.py。"
     Assert-Contract ($topologyLegacyArgs -contains "--ignore=tests/test_hardening_integration.py") "legacy 全量 pytest 未排除 test_hardening_integration.py。"
+    Assert-Contract (-not ($topologyLegacyArgs -contains "tests/test_e2e_seed.py")) "legacy 基线库直接运行了 baseline seed 契约测试。"
     Assert-Contract (-not ($topologyLegacyArgs -contains "tests/test_hardening_integration.py")) "legacy 基线库直接运行了 hardening 集成测试。"
-    $topologyHardeningArgs = @($topologyCalls[$topologyPytestIndexes[1]].arguments)
+    $topologyHardeningArgs = @($topologyCalls[$topologyPytestIndexes[2]].arguments)
     $topologyHardeningSelected = @($topologyHardeningArgs | Where-Object { $_ -like 'tests/*' -and $_ -notlike '--*' })
     Assert-Contract (
         ($topologyHardeningSelected.Count -eq 1) -and ($topologyHardeningSelected[0] -eq "tests/test_hardening_integration.py")
     ) "hardening 阶段未仅运行 tests/test_hardening_integration.py。"
     $topologySummary = ConvertFrom-OutputJson -Text $backendTopology.text
     Assert-Contract ($null -ne $topologySummary) "新拓扑 backend 场景未输出机器可读摘要。"
+    Assert-Contract ($topologySummary.phases.backend.stages.baseline.status -eq "passed") "backend 摘要未记录 baseline 阶段通过。"
+    Assert-Contract ($topologySummary.phases.backend.stages.baseline.kind -eq "baseline") "backend 摘要 baseline 阶段 kind 错误。"
     Assert-Contract ($topologySummary.phases.backend.stages.legacy.status -eq "passed") "backend 摘要未记录 legacy 基线库阶段通过。"
     Assert-Contract ($topologySummary.phases.backend.stages.hardening.status -eq "passed") "backend 摘要未记录 hardening 库阶段通过。"
     $result.checks.backend_stage_isolation = "passed"
+    $result.checks.backend_baseline_stage = "passed"
 
     $topologySeedIndexes = @(
         for ($index = 0; $index -lt $topologyCalls.Count; $index++) {
@@ -698,13 +728,30 @@ exit 0
         }
     )
     Assert-Contract ($topologySeedIndexes.Count -eq 1) "backend 全量未恰好显式执行一次 seed_hardening_e2e.py。"
-    Assert-Contract ($topologyIntervals[1].up_index -lt $topologySeedIndexes[0]) "hardening seed 未在其隔离库栈启动后执行。"
-    Assert-Contract ($topologySeedIndexes[0] -lt $topologyPytestIndexes[1]) "hardening seed 未在 hardening pytest 之前执行。"
+    Assert-Contract ($topologyIntervals[2].up_index -lt $topologySeedIndexes[0]) "hardening seed 未在其隔离库栈启动后执行。"
+    Assert-Contract ($topologySeedIndexes[0] -lt $topologyPytestIndexes[2]) "hardening seed 未在 hardening pytest 之前执行。"
     Assert-Contract ($topologySummary.phases.backend.stages.hardening.seed.status -eq "passed") "backend 摘要未记录 hardening seed 通过。"
     Assert-Contract ($topologySummary.phases.backend.stages.hardening.seed.exit_code -eq 0) "backend 摘要未记录 hardening seed 退出码。"
     $result.checks.hardening_seed_backend_phase = "passed"
 
-    # -Tests 定向按类别分流：legacy 路径只建基线库，hardening 路径只建 hardening 库。
+    # -Tests 定向按类别分流：baseline 只建 baseline 库，普通文件只建 legacy 库，hardening 只建 hardening 库。
+    Set-ContractMode -Mode "normal"
+    $routingBaselineOnly = Invoke-Entry -Script $probeEntryScript -Arguments @(
+        "-Suite", "backend", "-Tests", "tests/test_e2e_seed.py"
+    )
+    Assert-Contract ($routingBaselineOnly.exit_code -eq 0) "定向 baseline 测试场景未成功。"
+    $routingBaselineIntervals = @(Split-StackIntervals -Calls @(Read-DockerCalls))
+    Assert-Contract ($routingBaselineIntervals.Count -eq 1) "定向 baseline 测试应仅重建 1 个 baseline 库栈，实际 $($routingBaselineIntervals.Count)。"
+    Assert-Contract ($routingBaselineIntervals[0].seed_count -eq 0) "定向 baseline 栈不得执行 hardening seed。"
+    $routingBaselineSummary = ConvertFrom-OutputJson -Text $routingBaselineOnly.text
+    Assert-Contract ($null -ne $routingBaselineSummary) "定向 baseline 场景未输出摘要。"
+    Assert-Contract ($routingBaselineSummary.phases.backend.stages.baseline.status -eq "passed") "定向 baseline 摘要未记录 baseline 阶段通过。"
+    Assert-Contract ($routingBaselineSummary.phases.backend.stages.legacy.status -eq "not-run") "未选中的 legacy 阶段未记录 not-run。"
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingBaselineSummary.phases.backend.stages.legacy.reason)) "not-run 的 legacy 阶段缺少 reason。"
+    Assert-Contract ($routingBaselineSummary.phases.backend.stages.hardening.status -eq "not-run") "未选中的 hardening 阶段未记录 not-run。"
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingBaselineSummary.phases.backend.stages.hardening.reason)) "not-run 的 hardening 阶段缺少 reason。"
+    $result.checks.backend_baseline_only_routing = "passed"
+
     Set-ContractMode -Mode "normal"
     $routingLegacyOnly = Invoke-Entry -Script $probeEntryScript -Arguments @(
         "-Suite", "backend", "-Tests", "tests/test_health.py"
@@ -714,6 +761,8 @@ exit 0
     Assert-Contract ($routingLegacyIntervals.Count -eq 1) "定向 legacy 测试应仅重建 1 个基线库栈，实际 $($routingLegacyIntervals.Count)。"
     Assert-Contract ($routingLegacyIntervals[0].seed_count -eq 0) "定向 legacy 栈不得执行 hardening seed。"
     $routingLegacySummary = ConvertFrom-OutputJson -Text $routingLegacyOnly.text
+    Assert-Contract ($routingLegacySummary.phases.backend.stages.baseline.status -eq "not-run") "未选中的 baseline 阶段未记录 not-run。"
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingLegacySummary.phases.backend.stages.baseline.reason)) "not-run 的 baseline 阶段缺少 reason。"
     Assert-Contract ($routingLegacySummary.phases.backend.stages.legacy.status -eq "passed") "定向 legacy 摘要未记录 legacy 阶段通过。"
     Assert-Contract ($routingLegacySummary.phases.backend.stages.hardening.status -eq "not-run") "未选中的 hardening 阶段未记录 not-run。"
     Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingLegacySummary.phases.backend.stages.hardening.reason)) "not-run 的 hardening 阶段缺少 reason。"
@@ -727,10 +776,45 @@ exit 0
     Assert-Contract ($routingHardeningIntervals.Count -eq 1) "定向 hardening 测试应仅重建 1 个 hardening 库栈，实际 $($routingHardeningIntervals.Count)。"
     Assert-Contract ($routingHardeningIntervals[0].seed_count -eq 1) "定向 hardening 栈未恰好执行一次 hardening seed。"
     $routingHardeningSummary = ConvertFrom-OutputJson -Text $routingHardeningOnly.text
+    Assert-Contract ($routingHardeningSummary.phases.backend.stages.baseline.status -eq "not-run") "未选中的 baseline 阶段未记录 not-run。"
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingHardeningSummary.phases.backend.stages.baseline.reason)) "not-run 的 baseline 阶段缺少 reason。"
     Assert-Contract ($routingHardeningSummary.phases.backend.stages.legacy.status -eq "not-run") "未选中的 legacy 阶段未记录 not-run。"
     Assert-Contract (-not [string]::IsNullOrWhiteSpace([string]$routingHardeningSummary.phases.backend.stages.legacy.reason)) "not-run 的 legacy 阶段缺少 reason。"
     Assert-Contract ($routingHardeningSummary.phases.backend.stages.hardening.status -eq "passed") "定向 hardening 摘要未记录 hardening 阶段通过。"
     $result.checks.backend_tests_routing = "passed"
+
+    # 混合 -Tests：仅运行非空 stage，且严格保持 baseline → legacy → hardening 固定顺序。
+    Set-ContractMode -Mode "normal"
+    $routingMixed = Invoke-Entry -Script $probeEntryScript -Arguments @(
+        "-Suite", "backend", "-Tests", "tests/test_e2e_seed.py,tests/test_health.py,tests/test_hardening_integration.py"
+    )
+    Assert-Contract ($routingMixed.exit_code -eq 0) "混合定向测试场景未成功。"
+    $routingMixedCalls = @(Read-DockerCalls)
+    $routingMixedIntervals = @(Split-StackIntervals -Calls $routingMixedCalls)
+    Assert-Contract ($routingMixedIntervals.Count -eq 3) "混合定向应重建 3 个 stage 库栈，实际 $($routingMixedIntervals.Count)。"
+    Assert-Contract ($routingMixedIntervals[0].seed_count -eq 0) "混合定向 baseline 栈不得执行 hardening seed。"
+    Assert-Contract ($routingMixedIntervals[1].seed_count -eq 0) "混合定向 legacy 栈不得执行 hardening seed。"
+    Assert-Contract ($routingMixedIntervals[2].seed_count -eq 1) "混合定向 hardening 栈未恰好执行一次 hardening seed。"
+    Assert-Contract ($routingMixedIntervals[0].down_index -lt $routingMixedIntervals[1].up_index) "混合定向未按 baseline → legacy 顺序执行。"
+    Assert-Contract ($routingMixedIntervals[1].down_index -lt $routingMixedIntervals[2].up_index) "混合定向未按 legacy → hardening 顺序执行。"
+    $routingMixedPytestIndexes = @(
+        for ($index = 0; $index -lt $routingMixedCalls.Count; $index++) {
+            if (@($routingMixedCalls[$index].arguments) -contains "pytest") { $index }
+        }
+    )
+    Assert-Contract ($routingMixedPytestIndexes.Count -eq 3) "混合定向应恰好三次 pytest，实际 $($routingMixedPytestIndexes.Count)。"
+    $mixedBaselineSelected = @(@($routingMixedCalls[$routingMixedPytestIndexes[0]].arguments) | Where-Object { $_ -like 'tests/*' -and $_ -notlike '--*' })
+    Assert-Contract (($mixedBaselineSelected.Count -eq 1) -and ($mixedBaselineSelected[0] -eq "tests/test_e2e_seed.py")) "混合定向 baseline 阶段选取错误。"
+    $mixedLegacySelected = @(@($routingMixedCalls[$routingMixedPytestIndexes[1]].arguments) | Where-Object { $_ -like 'tests/*' -and $_ -notlike '--*' })
+    Assert-Contract (($mixedLegacySelected.Count -eq 1) -and ($mixedLegacySelected[0] -eq "tests/test_health.py")) "混合定向 legacy 阶段选取错误。"
+    $mixedHardeningSelected = @(@($routingMixedCalls[$routingMixedPytestIndexes[2]].arguments) | Where-Object { $_ -like 'tests/*' -and $_ -notlike '--*' })
+    Assert-Contract (($mixedHardeningSelected.Count -eq 1) -and ($mixedHardeningSelected[0] -eq "tests/test_hardening_integration.py")) "混合定向 hardening 阶段选取错误。"
+    $routingMixedSummary = ConvertFrom-OutputJson -Text $routingMixed.text
+    Assert-Contract ($null -ne $routingMixedSummary) "混合定向场景未输出摘要。"
+    Assert-Contract ($routingMixedSummary.phases.backend.stages.baseline.status -eq "passed") "混合定向 baseline 阶段未通过。"
+    Assert-Contract ($routingMixedSummary.phases.backend.stages.legacy.status -eq "passed") "混合定向 legacy 阶段未通过。"
+    Assert-Contract ($routingMixedSummary.phases.backend.stages.hardening.status -eq "passed") "混合定向 hardening 阶段未通过。"
+    $result.checks.backend_mixed_routing = "passed"
 
     # e2e 逐 spec：每个 spec 独立库栈，字典序运行；hardening spec 栈恰好一次 seed。
     Set-ContractMode -Mode "normal"
@@ -804,18 +888,19 @@ exit 0
     Assert-Contract ($failFastSummary.phases.e2e.status -eq "failed") "e2e 阶段失败未汇总为 failed。"
     $result.checks.e2e_fail_fast_not_run = "passed"
 
-    # backend：hardening seed 失败时 legacy 基线库结果保留，hardening pytest 不得执行。
+    # backend：hardening seed 失败时 baseline/legacy 结果保留，hardening pytest 不得执行。
     Set-ContractMode -Mode "seed-failure"
     $seedFailure = Invoke-Entry -Script $probeEntryScript -Arguments @("-Suite", "backend")
     Assert-Contract ($seedFailure.exit_code -eq 42) "seed 失败退出码 42 未被原样传播。"
     $seedFailureCalls = @(Read-DockerCalls)
     $seedFailureIntervals = @(Split-StackIntervals -Calls $seedFailureCalls)
-    Assert-Contract ($seedFailureIntervals.Count -eq 2) "seed 失败场景应已启动 legacy 与 hardening 两个库栈。"
-    Assert-Contract ($seedFailureIntervals[1].seed_count -eq 1) "hardening 库栈未执行 seed。"
+    Assert-Contract ($seedFailureIntervals.Count -eq 3) "seed 失败场景应已启动 baseline、legacy 与 hardening 三个库栈。"
+    Assert-Contract ($seedFailureIntervals[2].seed_count -eq 1) "hardening 库栈未执行 seed。"
     $seedFailurePytestCount = @($seedFailureCalls | Where-Object { @($_.arguments) -contains "pytest" }).Count
-    Assert-Contract ($seedFailurePytestCount -eq 1) "hardening seed 失败后不得再执行 hardening pytest（全量仅允许 legacy 一次），实际 $seedFailurePytestCount 次。"
+    Assert-Contract ($seedFailurePytestCount -eq 2) "hardening seed 失败后不得再执行 hardening pytest（全量仅允许 baseline、legacy 各一次），实际 $seedFailurePytestCount 次。"
     $seedFailureObj = ConvertFrom-OutputJson -Text $seedFailure.text
     Assert-Contract ($null -ne $seedFailureObj) "seed 失败场景未输出机器可读摘要。"
+    Assert-Contract ($seedFailureObj.phases.backend.stages.baseline.status -eq "passed") "seed 失败不应影响已通过的 baseline 阶段。"
     Assert-Contract ($seedFailureObj.phases.backend.stages.legacy.status -eq "passed") "seed 失败不应影响已通过的 legacy 基线库阶段。"
     Assert-Contract ($seedFailureObj.phases.backend.stages.hardening.seed.status -eq "failed") "seed 失败未在摘要中标记 failed。"
     Assert-Contract ($seedFailureObj.phases.backend.stages.hardening.status -eq "failed") "hardening 阶段未因 seed 失败标记 failed。"
@@ -853,10 +938,13 @@ exit 0
     Assert-Contract ($null -ne $backendParentObj.phases.backend.tests) "backend 父级缺少 tests 聚合。"
     Assert-Contract ($null -ne $backendParentObj.phases.backend.failures) "backend 父级缺少 failures 聚合。"
     Assert-Contract ($null -ne $backendParentObj.phases.backend.skipped) "backend 父级缺少 skipped 聚合。"
-    Assert-Contract ($backendParentObj.phases.backend.tests -eq 4) "backend 父级 tests 未汇总两个已运行 stage（期望 4，实际 $($backendParentObj.phases.backend.tests)）。"
+    Assert-Contract ($backendParentObj.phases.backend.tests -eq 6) "backend 父级 tests 未汇总三个已运行 stage（期望 6，实际 $($backendParentObj.phases.backend.tests)）。"
     Assert-Contract ($backendParentObj.phases.backend.failures -eq 0) "backend 父级 failures 应为 0。"
     Assert-Contract ($backendParentObj.phases.backend.skipped -eq 0) "backend 父级 skipped 应为 0。"
     Assert-Contract ($backendParentObj.phases.backend.status -eq "passed") "backend 父级未标记 passed。"
+    Assert-Contract ($backendParentObj.phases.backend.stages.baseline.tests -eq 2) "backend 父级聚合前 baseline stage 未记录 tests=2。"
+    Assert-Contract ($backendParentObj.phases.backend.stages.legacy.tests -eq 2) "backend 父级聚合前 legacy stage 未记录 tests=2。"
+    Assert-Contract ($backendParentObj.phases.backend.stages.hardening.tests -eq 2) "backend 父级聚合前 hardening stage 未记录 tests=2。"
 
     Set-ContractMode -Mode "pytest-failure-with-report"
     $backendParentFail = Invoke-Entry -Script $probeEntryScript -Arguments @("-Suite", "backend", "-Tests", "tests/test_health.py")
@@ -866,6 +954,48 @@ exit 0
     Assert-Contract ($backendParentFailObj.phases.backend.failures -eq 1) "backend 父级失败时未聚合 failures（期望 1）。"
     Assert-Contract ($backendParentFailObj.phases.backend.status -eq "failed") "backend 父级失败时未标记 failed。"
     $result.checks.parent_aggregate_backend = "passed"
+
+    # 三阶段父级聚合：baseline 通过、legacy 带报告失败时，只汇总这两个已运行 stage，hardening 记 not-run。
+    Set-ContractMode -Mode "baseline-pass-legacy-failure"
+    $threeStageFail = Invoke-Entry -Script $probeEntryScript -Arguments @("-Suite", "backend")
+    Assert-Contract ($threeStageFail.exit_code -eq 3) "legacy 带报告失败退出码 3 未被传播。"
+    $threeStageFailObj = ConvertFrom-OutputJson -Text $threeStageFail.text
+    Assert-Contract ($null -ne $threeStageFailObj) "三阶段聚合场景未输出摘要。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.baseline.status -eq "passed") "三阶段聚合场景 baseline 未通过。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.baseline.tests -eq 2) "三阶段聚合场景 baseline tests 应为 2。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.legacy.status -eq "failed") "三阶段聚合场景 legacy 未标记 failed。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.legacy.tests -eq 5) "三阶段聚合场景 legacy tests 应为 5。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.legacy.failures -eq 1) "三阶段聚合场景 legacy failures 应为 1。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.hardening.status -eq "not-run") "三阶段聚合场景 hardening 未记 not-run。"
+    Assert-Contract ($threeStageFailObj.phases.backend.stages.hardening.reason -eq "preceding-stage-failed") "legacy 失败后 hardening 未记 preceding-stage-failed（实际 $($threeStageFailObj.phases.backend.stages.hardening.reason)）。"
+    Assert-Contract ($threeStageFailObj.phases.backend.tests -eq 7) "三阶段父级 tests 未汇总两个已运行 stage（期望 7，实际 $($threeStageFailObj.phases.backend.tests)）。"
+    Assert-Contract ($threeStageFailObj.phases.backend.failures -eq 1) "三阶段父级 failures 应为 1。"
+    Assert-Contract ($threeStageFailObj.phases.backend.status -eq "failed") "三阶段父级未标记 failed。"
+    $result.checks.backend_three_stage_aggregate = "passed"
+
+    # baseline 失败 fail-fast：legacy/hardening 记 preceding-stage-failed，不再启动新栈、不再执行 pytest 或 seed。
+    Set-ContractMode -Mode "pytest-failure"
+    $baselineFailFast = Invoke-Entry -Script $probeEntryScript -Arguments @(
+        "-Suite", "backend", "-Tests", "tests/test_e2e_seed.py,tests/test_health.py,tests/test_hardening_integration.py"
+    )
+    Assert-Contract ($baselineFailFast.exit_code -eq 7) "baseline 失败退出码 7 未被传播。"
+    $baselineFailFastCalls = @(Read-DockerCalls)
+    $baselineFailFastIntervals = @(Split-StackIntervals -Calls $baselineFailFastCalls)
+    Assert-Contract ($baselineFailFastIntervals.Count -eq 1) "baseline 失败后不得再启动新库栈（期望 1，实际 $($baselineFailFastIntervals.Count)）。"
+    Assert-Contract (
+        @($baselineFailFastCalls | Where-Object { @($_.arguments) -contains "pytest" }).Count -eq 1
+    ) "baseline 失败后不得再执行 pytest。"
+    Assert-Contract (
+        @($baselineFailFastCalls | Where-Object { (@($_.arguments) -contains "python") -and (@($_.arguments) -contains "tests/seed_hardening_e2e.py") }).Count -eq 0
+    ) "baseline 失败后仍执行了 hardening seed。"
+    $baselineFailFastObj = ConvertFrom-OutputJson -Text $baselineFailFast.text
+    Assert-Contract ($null -ne $baselineFailFastObj) "baseline 失败场景未输出摘要。"
+    Assert-Contract ($baselineFailFastObj.phases.backend.stages.baseline.status -eq "failed") "baseline 失败未在摘要中标记 failed。"
+    Assert-Contract ($baselineFailFastObj.phases.backend.stages.legacy.status -eq "not-run") "baseline 失败后 legacy 未记 not-run。"
+    Assert-Contract ($baselineFailFastObj.phases.backend.stages.legacy.reason -eq "preceding-stage-failed") "baseline 失败后 legacy 未记 preceding-stage-failed（实际 $($baselineFailFastObj.phases.backend.stages.legacy.reason)）。"
+    Assert-Contract ($baselineFailFastObj.phases.backend.stages.hardening.status -eq "not-run") "baseline 失败后 hardening 未记 not-run。"
+    Assert-Contract ($baselineFailFastObj.phases.backend.stages.hardening.reason -eq "preceding-stage-failed") "baseline 失败后 hardening 未记 preceding-stage-failed（实际 $($baselineFailFastObj.phases.backend.stages.hardening.reason)）。"
+    $result.checks.backend_baseline_fail_fast = "passed"
 
     # 父级 phases.e2e 聚合：仅汇总已运行 spec 的 Playwright 计数。
     Set-ContractMode -Mode "normal"

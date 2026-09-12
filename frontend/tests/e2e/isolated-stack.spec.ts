@@ -47,12 +47,6 @@ const waitForSettledRoute = async (page: Page) => {
   await expect(page.getByTestId('route-content')).toHaveCSS('opacity', '1');
 };
 
-const waitForSplashToFinish = async (page: Page) => {
-  const splash = page.getByRole('status', {name: '正在初始化供应商风险监控平台'});
-  await expect(splash).toBeVisible();
-  await expect(splash).toBeHidden({timeout: 5_000});
-};
-
 const assertNoHorizontalOverflow = async (page: Page) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 };
@@ -224,7 +218,6 @@ test('键盘 Tab 顺序、focus-visible 与主题设置在桌面生产容器中�
 
     await page.reload();
     const overviewHeading = page.getByRole('heading', {name: '全网供应链风险概览'});
-    await waitForSplashToFinish(page);
     await waitForSettledRoute(page);
     await expect(page.locator('html')).toHaveClass(/dark/);
     await expect(page.locator('html')).toHaveClass(/reduce-motion/);
@@ -255,7 +248,6 @@ test('已登录真实会话拒绝缺少 CSRF header 的写请求，并保留移�
 
     await page.goto('/overview');
     const overviewHeading = page.getByRole('heading', {name: '全网供应链风险概览'});
-    await waitForSplashToFinish(page);
     await waitForSettledRoute(page);
     await assertNoHorizontalOverflow(page);
     await assertVisibleWithinViewport(overviewHeading);

@@ -1,8 +1,16 @@
 from datetime import datetime, timedelta
+from typing import Final
 
 from sqlalchemy.orm import Session
 
 from app.signals.models import RawSignal
+from app.signals.validity import ValidityState
+
+LEGACY_VALIDITY_REASON_JSON: Final = {
+    "code": "legacy_unmigrated",
+    "anchor_source": "legacy",
+    "details": {},
+}
 
 
 def add_source_signal_fixtures(
@@ -36,5 +44,7 @@ def add_source_signal_fixtures(
                 collected_at=occurred_at,
                 fingerprint=f"e2e-source-signal-fingerprint-{index:02d}",
                 raw_data={"fixture": True, "source_signal_sequence": index},
+                validity_state=ValidityState.LEGACY,
+                validity_reason=LEGACY_VALIDITY_REASON_JSON,
             )
         )

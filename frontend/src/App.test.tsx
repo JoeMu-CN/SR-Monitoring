@@ -399,6 +399,12 @@ const renderApp = (path: string) => render(
   </MemoryRouter>,
 );
 
+beforeEach(() => {
+  // 既有用例统一视为「刚刚完成过自检」：走 simple 模式，避免完整自检流程干扰其断言。
+  localStorage.clear();
+  localStorage.setItem('sr-selfcheck-at', String(Date.now()));
+});
+
 afterEach(() => {
   cleanup();
   // reset 而非 clear：mockResolvedValueOnce 等一次性实现若跨测试残留，
@@ -804,6 +810,71 @@ describe('App 监控健康只读诊断', () => {
 
     const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
     expect(within(routeContent).getAllByText('自然环境').length).toBeGreaterThan(0);
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+});
+
+describe('App 开屏自检', () => {
+  it('无自检记录时 /overview 展示完整自检（真实项与接口调用），完成后进入应用', async () => {
+    defaultMocks();
+    localStorage.removeItem('sr-selfcheck-at');
+    renderApp('/overview');
+
+    // 先等真实自检项出现，再取当前 splash 节点：authLoading 阶段的 simple 层很快被完整自检层替换。
+    await screen.findByText('数据库连接', {}, {timeout: 5000});
+    const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
+    expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
+    expect(within(splash).getByRole('progressbar', {name: '自检进度'})).toBeInTheDocument();
+    expect(api.health).toHaveBeenCalled();
+
+    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
+    }, {timeout: 8000});
+  });
+
+  it('存在 30 分钟内的自检记录时直接进入应用，不展示完整自检项', async () => {
+    defaultMocks();
+    renderApp('/overview');
+
+    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
+    expect(screen.queryByText('数据库连接')).not.toBeInTheDocument();
+  });
+
+  it('完整自检完成后写入可解析的自检时间戳', async () => {
+    defaultMocks();
+    localStorage.removeItem('sr-selfcheck-at');
+    renderApp('/overview');
+
+    await screen.findByRole('status', {name: '正在初始化供应商风险监控平台'});
+    await waitFor(() => {
+      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
+    }, {timeout: 8000});
+
+    const raw = localStorage.getItem('sr-selfcheck-at');
+    expect(raw).not.toBeNull();
+    const parsed = Number(raw);
+    expect(Number.isFinite(parsed)).toBe(true);
+    expect(parsed).toBeGreaterThan(0);
+  });
+
+  it('仅 risk_view 权限时自检不含 AI/调度器/数据源项，也不请求 monitoring-health', async () => {
+    defaultMocks({permissions: ['risk_view']});
+    localStorage.removeItem('sr-selfcheck-at');
+    renderApp('/overview');
+
+    await screen.findByText('数据库连接', {}, {timeout: 5000});
+    const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
+    expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
+    expect(within(splash).queryByText('AI 引擎')).not.toBeInTheDocument();
+    expect(within(splash).queryByText('调度器心跳')).not.toBeInTheDocument();
+    expect(within(splash).queryByText('数据源状态')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
+    }, {timeout: 8000});
+    // loadData 会无条件调用 api.agentStatus（与自检无关），但自检本身不得请求 monitoring-health。
     expect(api.monitoringHealth).not.toHaveBeenCalled();
   });
 });

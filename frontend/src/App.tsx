@@ -13,6 +13,7 @@ import {
   type AuthMeResponse,
   type AuthUser,
   type AgentStatusRead,
+  type MonitoringHealthRead,
   type SupplierDeletionImpactRead,
   type SupplierRead,
   type SystemHealth,
@@ -27,7 +28,8 @@ import {MobileNav} from './components/MobileNav';
 import {NewSupplierModal} from './components/NewSupplierModal';
 import {SettingsModal} from './components/SettingsModal';
 import {Sidebar} from './components/Sidebar';
-import {SystemSplashScreen} from './components/SystemSplashScreen';
+import {SystemSplashScreen, type SelfCheckItem, type SelfCheckState} from './components/SystemSplashScreen';
+import {readLastSelfCheckAt, SELF_CHECK_TTL_MS, shouldRunFullSelfCheck, writeLastSelfCheckAt} from './selfCheck';
 import {LoginView} from './components/LoginView';
 import {DataSourcesView} from './components/DataSourcesView';
 import {SourceSignalsView} from './components/SourceSignalsView';
@@ -39,6 +41,10 @@ import {SuppliersView} from './components/SuppliersView';
 import {UsersManagementView} from './components/UsersManagementView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
 import {useMonitoringHealth} from './useMonitoringHealth';
+
+// 完整自检的观感与容错预算：既让状态变化可感知，也不让开屏长时间停留。
+const SELF_CHECK_MIN_DISPLAY_MS = 3000;
+const SELF_CHECK_ITEM_TIMEOUT_MS = 4000;
 
 export function App() {
   const location = useLocation();
@@ -53,7 +59,10 @@ export function App() {
   const [agentStatus, setAgentStatus] = useState<AgentStatusRead | null>(null);
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [loading, setLoading] = useState(true);
-  const [splashFinished, setSplashFinished] = useState(false);
+  // 开屏模式：full = 登录后或距上次完整自检 ≥30 分钟，展示真实逐项自检；simple = 仅品牌加载动画。
+  const [selfCheckMode, setSelfCheckMode] = useState<'full' | 'simple'>('simple');
+  const [selfCheckDone, setSelfCheckDone] = useState(true);
+  const [selfCheckItems, setSelfCheckItems] = useState<SelfCheckItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pendingAssistantQuery, setPendingAssistantQuery] = useState<string | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -67,6 +76,8 @@ export function App() {
   const [deletionImpactError, setDeletionImpactError] = useState<string | null>(null);
   const editSupplierAbortRef = useRef<AbortController | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  // 自检只启动一次（含 StrictMode 双跑保护）。
+  const selfCheckStartedRef = useRef(false);
   const permissions = auth?.permissions ?? [];
   const canManageSources = permissions.includes(routePermissions.sourceManage);
   const canManageSuppliers = permissions.includes(routePermissions.supplierManage);
@@ -84,16 +95,25 @@ export function App() {
     document.documentElement.classList.toggle('reduce-motion', localStorage.getItem('sr-reduce-motion') === 'true');
   }, []);
 
+  // 统一会话建立入口：登录成功或会话恢复后决定开屏模式，并允许本次会话重新启动一次自检。
+  const establishAuth = useCallback((response: AuthMeResponse, forceFull: boolean) => {
+    selfCheckStartedRef.current = false;
+    const due = forceFull || shouldRunFullSelfCheck(Date.now(), readLastSelfCheckAt(), SELF_CHECK_TTL_MS);
+    setSelfCheckMode(due ? 'full' : 'simple');
+    setSelfCheckDone(!due);
+    setAuth(response);
+  }, []);
+
   useEffect(() => {
     api.auth.me()
-      .then(setAuth)
+      .then((response) => establishAuth(response, false))
       .catch((caught) => {
         if (!(caught instanceof ApiError && caught.status === 401)) {
           setAuthError(caught instanceof Error ? caught.message : '登录状态检查失败');
         }
       })
       .finally(() => setAuthLoading(false));
-  }, []);
+  }, [establishAuth]);
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -132,15 +152,149 @@ export function App() {
 
   useEffect(() => { if (auth) void loadData(); }, [auth, loadData]);
 
-  // 一旦停留在 /overview（不受全局 loading/splash 遮挡），开屏动画视为已完成，
-  // 避免核心数据加载结束后切到其他路由再补放一次开屏。
-  useEffect(() => { if (onOverviewRoute) setSplashFinished(true); }, [onOverviewRoute]);
+  // 完整自检：按权限组装真实检查项，调用真实后端接口逐项更新；401 统一退回登录页，
+  // 单项失败只影响该项（绝不触发全局错误横幅），最短展示 + 单项超时保证开屏不会长时间卡住。
+  const runSelfCheck = useCallback(async (session: AuthMeResponse) => {
+    const canViewSourceStatus = session.permissions.includes(routePermissions.sourceStatusView);
+    const canUseRiskQuery = session.permissions.includes(routePermissions.riskQueryUse);
+
+    const initialItems: SelfCheckItem[] = [
+      {id: 'database', label: '数据库连接', detail: '正在检查…', state: 'pending'},
+    ];
+    if (canViewSourceStatus) {
+      initialItems.push(
+        {id: 'scheduler', label: '调度器心跳', detail: '正在检查…', state: 'pending'},
+        {id: 'sources', label: '数据源状态', detail: '正在检查…', state: 'pending'},
+      );
+    }
+    if (canUseRiskQuery) {
+      initialItems.push({id: 'ai', label: 'AI 引擎', detail: '正在检查…', state: 'pending'});
+    }
+    setSelfCheckItems(initialItems);
+
+    let sessionExpired = false;
+    const updateItem = (id: string, state: SelfCheckState, detail: string) => {
+      setSelfCheckItems((current) => current.map((item) => item.id === id ? {...item, state, detail} : item));
+    };
+    const expireSession = () => {
+      sessionExpired = true;
+      setAuth(null);
+      setAuthError('登录已失效，请重新登录');
+    };
+
+    type SelfCheckOutcome = {readonly state: SelfCheckState; readonly detail: string};
+
+    // scheduler 与 sources 共享同一次 monitoring-health 结果，避免重复请求。
+    let monitoringPromise: Promise<MonitoringHealthRead> | null = null;
+    const loadMonitoringHealth = () => {
+      monitoringPromise ??= api.monitoringHealth();
+      return monitoringPromise;
+    };
+
+    const runItem = (id: string, failureDetail: string, check: () => Promise<SelfCheckOutcome>): Promise<void> =>
+      new Promise((resolve) => {
+        let finished = false;
+        const finish = () => {
+          finished = true;
+          resolve();
+        };
+        const timer = window.setTimeout(() => {
+          if (finished) return;
+          updateItem(id, 'unavailable', '检查超时');
+          finish();
+        }, SELF_CHECK_ITEM_TIMEOUT_MS);
+        void check().then(
+          (outcome) => {
+            window.clearTimeout(timer);
+            if (finished) return;
+            updateItem(id, outcome.state, outcome.detail);
+            finish();
+          },
+          (caught: unknown) => {
+            window.clearTimeout(timer);
+            if (caught instanceof ApiError && caught.status === 401) {
+              // 401 无论是否已超时都必须回退登录页，不能让开屏永久停留。
+              expireSession();
+              if (!finished) finish();
+              return;
+            }
+            if (finished) return;
+            updateItem(id, 'error', failureDetail);
+            finish();
+          },
+        );
+      });
+
+    const tasks: Array<Promise<void>> = [
+      runItem('database', '数据库检查失败', async () => {
+        const health = await api.health();
+        if (health.status === 'ok' && health.database === 'ok') {
+          return {state: 'ok', detail: 'PostgreSQL 连接正常'};
+        }
+        return {state: 'error', detail: '数据库不可用'};
+      }),
+    ];
+
+    if (canViewSourceStatus) {
+      tasks.push(
+        runItem('scheduler', '调度器检查失败', async () => {
+          const health = await loadMonitoringHealth();
+          const heartbeat = typeof health.scheduler.age_seconds === 'number'
+            ? `心跳正常（${health.scheduler.age_seconds} 秒前）`
+            : '心跳正常';
+          if (health.scheduler.status === 'ok') {
+            return health.overall === 'degraded'
+              ? {state: 'warn', detail: `${heartbeat}，但部分链路降级`}
+              : {state: 'ok', detail: heartbeat};
+          }
+          if (health.scheduler.status === 'stale') return {state: 'warn', detail: '心跳延迟'};
+          return {state: 'warn', detail: '心跳状态未知'};
+        }),
+        runItem('sources', '数据源检查失败', async () => {
+          const health = await loadMonitoringHealth();
+          const total = health.sources.length;
+          if (total === 0) return {state: 'warn', detail: '暂无启用的数据源'};
+          const okCount = health.sources.filter((source) => source.state === 'ok').length;
+          return okCount === total
+            ? {state: 'ok', detail: `${okCount}/${total} 数据源正常`}
+            : {state: 'warn', detail: `${okCount}/${total} 数据源正常`};
+        }),
+      );
+    }
+
+    if (canUseRiskQuery) {
+      tasks.push(runItem('ai', 'AI 状态检查失败', async () => {
+        const status = await api.agentStatus();
+        return status.llm_configured
+          ? {state: 'ok', detail: `模型已配置（${status.model}）`}
+          : {state: 'warn', detail: '未配置真实模型'};
+      }));
+    }
+
+    // allSettled 收敛全部检查项；与最短展示时间并行等待，保证状态变化可感知。
+    await Promise.all([
+      Promise.allSettled(tasks),
+      new Promise((resolve) => { window.setTimeout(resolve, SELF_CHECK_MIN_DISPLAY_MS); }),
+    ]);
+
+    if (sessionExpired) return;
+    writeLastSelfCheckAt(Date.now());
+    setSelfCheckDone(true);
+  }, []);
+
+  // 仅在完整模式且 auth 就绪时启动一次真实自检；ref 同时防止 React StrictMode 双跑。
+  useEffect(() => {
+    if (!auth || selfCheckMode !== 'full' || selfCheckDone || selfCheckStartedRef.current) return;
+    selfCheckStartedRef.current = true;
+    void runSelfCheck(auth);
+  }, [auth, selfCheckMode, selfCheckDone, runSelfCheck]);
 
   const handleLogin = async (username: string, password: string) => {
     setAuthError(null);
     try {
       await api.auth.login(username, password);
-      setAuth(await api.auth.me());
+      // 登录成功必须走完整自检，不因 30 分钟内的旧时间戳静默跳过。
+      establishAuth(await api.auth.me(), true);
     } catch (caught) {
       setAuthError(caught instanceof Error ? caught.message : '登录失败');
       throw caught;
@@ -160,8 +314,6 @@ export function App() {
   const handleCurrentUserUpdated = (updatedUser: AuthUser) => {
     setAuth((current) => current ? {...current, user: updatedUser} : current);
   };
-
-  const completeSplash = useCallback(() => setSplashFinished(true), []);
 
   const p1RiskCount = useMemo(
     () => riskItems.filter((item) => item.level === 'P1').length,
@@ -399,8 +551,12 @@ export function App() {
     userSettings: auth ? <UsersManagementView currentUser={auth.user} onRequestError={handleDetailRequestError} onCurrentUserUpdated={handleCurrentUserUpdated} /> : null,
   };
 
+  const showFullSelfCheck = !authLoading && auth !== null && selfCheckMode === 'full' && !selfCheckDone;
+  // 非 /overview 路由的数据加载统一用品牌加载动画呈现，取代旧的纯文字占位。
+  const showSimpleSplash = auth !== null && !showFullSelfCheck && loading && !onOverviewRoute;
+
   if (authLoading) {
-    return <div className="flex min-h-screen items-center justify-center bg-slate-100/90 text-sm text-slate-500 dark:bg-[#0b131e]">正在验证登录状态…</div>;
+    return <SystemSplashScreen variant="simple" />;
   }
   if (!auth) return <LoginView onSubmit={handleLogin} error={authError} />;
 
@@ -428,9 +584,8 @@ export function App() {
             </div>
           )}
           {loading && !onOverviewRoute ? (
-            <div className="min-h-[50vh] flex items-center justify-center text-[#424751]">
-              <span className="material-symbols-outlined animate-spin mr-2">progress_activity</span>
-              正在加载供应链风险数据…
+            <div className="min-h-[50vh] flex items-center justify-center text-[#424751]" aria-hidden="true">
+              <span className="material-symbols-outlined animate-spin">progress_activity</span>
             </div>
           ) : (
             <AnimatePresence mode="wait">
@@ -469,7 +624,10 @@ export function App() {
       />
       <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} />
       <AnimatePresence>
-        {(!splashFinished || loading) && !onOverviewRoute && <SystemSplashScreen onComplete={completeSplash} />}
+        {showFullSelfCheck && <SystemSplashScreen variant="full" items={selfCheckItems} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showSimpleSplash && <SystemSplashScreen variant="simple" />}
       </AnimatePresence>
     </div>
   );

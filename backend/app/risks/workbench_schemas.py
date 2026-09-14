@@ -40,7 +40,24 @@ class ForcedRuleUpdate(BaseModel):
     reason: str = Field(min_length=1)
 
 
-class DimensionConfigPatch(BaseModel):
+class _ForcedRuleNamesValidated(BaseModel):
+    """强制规则列表的共用校验：名称非空（字段约束）且不重复（新增安全校验）。"""
+
+    forced_rules: list[ForcedRuleUpdate] | None = None
+
+    @field_validator("forced_rules")
+    @classmethod
+    def unique_forced_rule_names(
+        cls, value: list[ForcedRuleUpdate] | None
+    ) -> list[ForcedRuleUpdate] | None:
+        if value is not None:
+            names = [rule.name for rule in value]
+            if len(names) != len(set(names)):
+                raise ValueError("强制规则名称不能重复")
+        return value
+
+
+class DimensionConfigPatch(_ForcedRuleNamesValidated):
     """允许持久化的规则覆盖；拒绝未知键和越界值。"""
 
     model_config = ConfigDict(extra="forbid")
@@ -58,7 +75,6 @@ class DimensionConfigPatch(BaseModel):
     p3_min: Score | None = None
     strong_match_types: list[MatchType] | None = None
     alert_expiry_days: int | None = Field(default=None, ge=1, le=3650)
-    forced_rules: list[ForcedRuleUpdate] | None = None
 
     @field_validator("match_columns", "event_types", "strong_match_types")
     @classmethod
@@ -66,6 +82,63 @@ class DimensionConfigPatch(BaseModel):
         if value is not None and len(value) != len(set(value)):
             raise ValueError("列表中不能包含重复项")
         return value
+
+
+class GlobalScoringPatch(_ForcedRuleNamesValidated):
+    """全局评分与强制规则覆盖（PUT 为合并语义，只更新传入字段）。
+
+    confirm_disable_forced_rules 是仅查询参数，不在本模型内；extra=forbid
+    确保它不能混进请求体，也绝不会被写入配置行。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    severity_scores: dict[Severity, Annotated[int, Field(ge=0, le=35)]] | None = None
+    association_scores: dict[MatchType, Annotated[int, Field(ge=0, le=30)]] | None = None
+    credibility_weight: float | None = Field(default=None, ge=0, le=1)
+    timeliness_with_date: int | None = Field(default=None, ge=0, le=10)
+    timeliness_without_date: int | None = Field(default=None, ge=0, le=10)
+    product_relevance_score: int | None = Field(default=None, ge=0, le=5)
+    p1_min: Score | None = None
+    p2_min: Score | None = None
+    p3_min: Score | None = None
+    strong_match_types: list[MatchType] | None = None
+    alert_expiry_days: int | None = Field(default=None, ge=1, le=3650)
+
+    @field_validator("strong_match_types")
+    @classmethod
+    def unique_strong_match_types(
+        cls, value: list[MatchType] | None
+    ) -> list[MatchType] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("列表中不能包含重复项")
+        return value
+
+
+class GlobalScoringConfigRead(BaseModel):
+    """全局评分与强制规则配置读模型（只描述全局层，不含维度增量）。
+
+    - effective：全局层当前生效值（代码默认 + 全局行）；defaults：全局层默认值，
+      其中 forced_rules 默认 = 代码默认（含 RISK_SCORING_CONFIG）∪ 可全局化的
+      维度追加；两者均不含维度增量，维度遮蔽通过 shadowed_by 表达。
+    - source=configured 表示存在启用中的全局行（enabled 与之一致）。
+    - shadowed_by：口径为**全部声明维度**（含未启用者，如 policy）的
+      scoring_overrides 中的 severity/association 子键 → 会覆盖它的维度 key 列表。
+    - forced_rules_shadowed_by：**已声明维度**（default_dimensions()，含当前停用者）
+      中持久化行 config 写了 forced_rules 的维度 key（第五层会整体替换全局强制
+      规则，重新启用后即生效）；rule_dimension_configs 中未声明的同表行（如
+      signal-filter）不计入。
+    - dropped_dimension_rules：因维度未声明事件类型而被排除出全局默认的维度
+      强制规则（含 dimension 字段），供 UI 提示保存后不再生效。
+    """
+
+    source: Literal["configured", "default"]
+    enabled: bool
+    effective: dict[str, object]
+    defaults: dict[str, object]
+    shadowed_by: dict[str, list[str]]
+    forced_rules_shadowed_by: list[str]
+    dropped_dimension_rules: list[dict[str, object]]
 
 
 class DimensionSourceRead(BaseModel):

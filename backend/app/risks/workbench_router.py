@@ -5,9 +5,10 @@
 业务规则的维护全部通过这些接口落到 DB 配置。
 """
 
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, select
@@ -20,11 +21,22 @@ from app.auth.security import (
     PERM_RULE_SUMMARY_VIEW,
     require_permission,
     verify_csrf,
+    write_audit,
 )
 from app.database import get_session
 from app.risks.engine.config import ALL_COLUMNS
+from app.risks.engine.dimensions import default_dimensions
 from app.risks.engine.engine import evaluate_event
-from app.risks.engine.registry import RuntimeDimension, load_dimensions
+from app.risks.engine.registry import (
+    GLOBAL_SCORING_CONFIG_KEY,
+    GLOBAL_SCORING_LABEL,
+    RuntimeDimension,
+    effective_global_forced_rules,
+    global_forced_rule_defaults,
+    load_dimensions,
+    load_global_scoring_config,
+    merge_scoring_config,
+)
 from app.risks.models import (
     RiskAlert,
     RiskEvent,
@@ -36,6 +48,7 @@ from app.risks.query_validity import (
     current_alert_condition,
     valid_signal_condition,
 )
+from app.risks.scoring import load_scoring_settings
 from app.risks.workbench_schemas import (
     DimensionInputSourceRead,
     DimensionInputsRead,
@@ -43,6 +56,8 @@ from app.risks.workbench_schemas import (
     DimensionSourceRead,
     DimensionToggle,
     DimensionUpdate,
+    GlobalScoringConfigRead,
+    GlobalScoringPatch,
     SandboxRequest,
 )
 from app.signals.models import CollectionRun, DataSource, RawSignal
@@ -243,6 +258,114 @@ def _load_state(
     return dimensions, override_keys, counts, source_map
 
 
+def _shadowed_score_keys() -> dict[str, list[str]]:
+    """维度增量会覆盖全局层的 severity/association 子键 → 维度 key 列表。
+
+    口径为全部**声明维度**（default_dimensions 的代码声明，含未启用者如
+    policy），不含维度 DB 行：未启用维度重新启用后会按此遮蔽全局层。
+    """
+    shadowed: dict[str, list[str]] = {}
+    for dim in default_dimensions():
+        for dict_key in ("severity_scores", "association_scores"):
+            values = dim.scoring_overrides.get(dict_key)
+            if isinstance(values, dict):
+                for sub_key in values:
+                    shadowed.setdefault(str(sub_key), []).append(dim.key)
+    return {key: sorted(keys) for key, keys in sorted(shadowed.items())}
+
+
+def _global_config_read(session: Session) -> GlobalScoringConfigRead:
+    """组装 GET/PUT/DELETE 共用的全局层读模型（只含全局层，不含维度增量）。"""
+    settings = load_scoring_settings()
+    forced_defaults = global_forced_rule_defaults()
+    defaults: dict[str, object] = {
+        "severity_scores": dict(settings.severity_scores),
+        "association_scores": dict(settings.association_scores),
+        "credibility_weight": settings.credibility_weight,
+        "timeliness_with_date": settings.timeliness_with_date,
+        "timeliness_without_date": settings.timeliness_without_date,
+        "product_relevance_score": settings.product_relevance_score,
+        "p1_min": settings.p1_min,
+        "p2_min": settings.p2_min,
+        "p3_min": settings.p3_min,
+        "strong_match_types": sorted(settings.strong_match_types),
+        "alert_expiry_days": settings.alert_expiry_days,
+        "forced_rules": [asdict(rule) for rule in forced_defaults.rules],
+    }
+    global_config = load_global_scoring_config(session)
+    declared_keys = {dim.key for dim in default_dimensions()}
+    forced_shadowed_by = sorted(
+        row.key
+        for row in session.scalars(select(RuleDimensionConfig))
+        if row.key in declared_keys
+        and isinstance(row.config, dict)
+        and "forced_rules" in row.config
+    )
+    return GlobalScoringConfigRead(
+        source="configured" if global_config is not None else "default",
+        enabled=global_config is not None,
+        effective=merge_scoring_config(defaults, global_config or {}),
+        defaults=defaults,
+        shadowed_by=_shadowed_score_keys(),
+        forced_rules_shadowed_by=forced_shadowed_by,
+        dropped_dimension_rules=list(forced_defaults.dropped),
+    )
+
+
+def _ensure_forced_rules_confirmed(
+    *, old_names: Iterable[str], new_names: Iterable[str], confirmed: bool
+) -> None:
+    """全部强制规则均视为安全关键：替换前后存在被移除的名称且未确认时拒绝。"""
+    removed = sorted(set(old_names) - set(new_names))
+    if removed and not confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "移除当前生效的强制规则需要二次确认"
+                "（confirm_disable_forced_rules=true）",
+                "removed": removed,
+            },
+        )
+
+
+def _validate_global_thresholds(
+    stored: dict[str, object], patch: dict[str, object]
+) -> None:
+    """按全局层"stored ∪ patch"合并结果校验 p1 > p2 > p3（含停用行的遗留值）。
+
+    stored 是配置行存储的原始 config（无论 enabled）：PUT 总会重新启用行，
+    因此校验必须覆盖停用行里的遗留阈值，否则非法顺序会被静默启用。
+    支持只传部分阈值的合并语义，缺省键回退代码默认。
+    """
+    settings = load_scoring_settings()
+    base: dict[str, object] = {
+        "p1_min": settings.p1_min,
+        "p2_min": settings.p2_min,
+        "p3_min": settings.p3_min,
+        **stored,
+    }
+    probe = merge_scoring_config(base, patch)
+    p1_min, p2_min, p3_min = probe["p1_min"], probe["p2_min"], probe["p3_min"]
+    if not (
+        isinstance(p1_min, int)
+        and isinstance(p2_min, int)
+        and isinstance(p3_min, int)
+        and p1_min > p2_min > p3_min
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="等级阈值必须满足 p1_min > p2_min > p3_min",
+        )
+
+
+def _patch_forced_rule_names(patch: dict[str, object]) -> list[str]:
+    """取出 patch 中强制规则名称（GlobalScoringPatch/DimensionConfigPatch 已校验）。"""
+    return [
+        str(item["name"])
+        for item in cast(list[dict[str, object]], patch["forced_rules"])
+    ]
+
+
 @router.get("/dimensions", response_model=list[DimensionRead])
 def list_dimensions(
     session: SessionDependency, _user: RuleSummaryView
@@ -260,6 +383,113 @@ def get_dimension(
     if dim is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
     return _to_read(dim, override_keys, counts, source_map)
+
+
+@router.get("/global-config", response_model=GlobalScoringConfigRead)
+def get_global_config(
+    session: SessionDependency, _user: RuleSummaryView
+) -> GlobalScoringConfigRead:
+    """读取全局评分配置（仅全局层：代码默认 + 全局行 + 遮蔽披露）。"""
+    return _global_config_read(session)
+
+
+@router.put("/global-config", response_model=GlobalScoringConfigRead)
+def update_global_config(
+    payload: GlobalScoringPatch,
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
+    confirm_disable_forced_rules: Annotated[bool, Query()] = False,
+) -> GlobalScoringConfigRead:
+    """合并写入全局配置行（key=__global_scoring__，写入时 enabled=True）。
+
+    只更新传入字段（severity/association 按键级深合并）；forced_rules 整体替换
+    且此时跳过维度追加（见 registry 合成语义）。PUT 总会启用该行，因此确认门
+    不依赖 patch 是否显式包含 forced_rules：始终比较"操作起始状态"与"结果状态"
+    的全局层生效强制规则名称差集，非空时必须显式
+    confirm_disable_forced_rules=true，否则 422。起始状态按当前 enabled 计算：
+    停用行视为全局层缺席（回退默认列表），避免"仅 PUT p1_min 就把停用行里旧的
+    forced_rules=[] 连带启用并静默清空默认规则"。阈值顺序按 stored ∪ patch
+    合并结果校验（含停用行的遗留值）。
+    """
+    patch = payload.model_dump(exclude_none=True)
+    row = session.scalar(
+        select(RuleDimensionConfig).where(
+            RuleDimensionConfig.key == GLOBAL_SCORING_CONFIG_KEY
+        )
+    )
+    stored: dict[str, object] = dict(row.config or {}) if row is not None else {}
+    effective_before: dict[str, object] | None = (
+        stored if row is not None and row.enabled else None
+    )
+    next_config = merge_scoring_config(stored, patch)
+    _validate_global_thresholds(stored, patch)
+    _ensure_forced_rules_confirmed(
+        old_names=[
+            rule.name for rule in effective_global_forced_rules(effective_before)
+        ],
+        new_names=[
+            rule.name for rule in effective_global_forced_rules(next_config)
+        ],
+        confirmed=confirm_disable_forced_rules,
+    )
+    if row is None:
+        row = RuleDimensionConfig(
+            key=GLOBAL_SCORING_CONFIG_KEY, label=GLOBAL_SCORING_LABEL, enabled=True
+        )
+        session.add(row)
+    else:
+        row.enabled = True
+    row.config = next_config
+    write_audit(
+        session,
+        action="rule_global_config_update",
+        resource_type="rule_engine",
+        resource_id=GLOBAL_SCORING_CONFIG_KEY,
+        actor_user_id=_user.id,
+        detail=f"更新全局评分与强制规则配置，字段：{sorted(patch)}",
+    )
+    session.commit()
+    session.expire_all()
+    return _global_config_read(session)
+
+
+@router.delete("/global-config", response_model=GlobalScoringConfigRead)
+def delete_global_config(
+    session: SessionDependency,
+    _user: RuleManage,
+    _csrf: CsrfGuard,
+    confirm_disable_forced_rules: Annotated[bool, Query()] = False,
+) -> GlobalScoringConfigRead:
+    """删除全局配置行并回退代码默认；会移除当前生效强制规则时需确认。"""
+    row = session.scalar(
+        select(RuleDimensionConfig).where(
+            RuleDimensionConfig.key == GLOBAL_SCORING_CONFIG_KEY
+        )
+    )
+    if row is not None:
+        _ensure_forced_rules_confirmed(
+            old_names=[
+                rule.name
+                for rule in effective_global_forced_rules(
+                    load_global_scoring_config(session)
+                )
+            ],
+            new_names=[rule.name for rule in global_forced_rule_defaults().rules],
+            confirmed=confirm_disable_forced_rules,
+        )
+        session.delete(row)
+        write_audit(
+            session,
+            action="rule_global_config_delete",
+            resource_type="rule_engine",
+            resource_id=GLOBAL_SCORING_CONFIG_KEY,
+            actor_user_id=_user.id,
+            detail="删除全局评分与强制规则配置，回退代码默认",
+        )
+        session.commit()
+        session.expire_all()
+    return _global_config_read(session)
 
 
 @router.get("/dimensions/{key}/inputs", response_model=DimensionInputsRead)
@@ -340,6 +570,7 @@ def update_dimension(
     session: SessionDependency,
     _user: RuleManage,
     _csrf: CsrfGuard,
+    confirm_disable_forced_rules: Annotated[bool, Query()] = False,
 ) -> DimensionRead:
     dimensions, _, _, _ = _load_state(session)
     base = next((d for d in dimensions if d.key == key), None)
@@ -363,6 +594,19 @@ def update_dimension(
                 },
             )
 
+    patch: dict[str, object] | None = (
+        payload.config.model_dump(exclude_none=True)
+        if payload.config is not None
+        else None
+    )
+    if patch is not None and "forced_rules" in patch:
+        # 维度 PUT 与全局 PUT 同一安全门：移除当前生效规则必须显式确认。
+        _ensure_forced_rules_confirmed(
+            old_names=[rule.name for rule in base.scoring.forced_rules],
+            new_names=_patch_forced_rule_names(patch),
+            confirmed=confirm_disable_forced_rules,
+        )
+
     row = session.scalar(
         select(RuleDimensionConfig).where(RuleDimensionConfig.key == key)
     )
@@ -372,9 +616,9 @@ def update_dimension(
         session.flush()
     if payload.enabled is not None:
         row.enabled = payload.enabled
-    if payload.config is not None:
-        merged = dict(row.config or {})
-        merged.update(payload.config.model_dump(exclude_none=True))
+    if patch is not None:
+        # 键级深合并：部分 diff 不丢 severity/association 子键（列表键整体替换）。
+        merged = merge_scoring_config(dict(row.config or {}), patch)
         p1_value = merged.get("p1_min", base.scoring.p1_min)
         p2_value = merged.get("p2_min", base.scoring.p2_min)
         p3_value = merged.get("p3_min", base.scoring.p3_min)
@@ -387,6 +631,14 @@ def update_dimension(
                 detail="等级阈值必须满足 p1_min > p2_min > p3_min",
             )
         row.config = merged
+    write_audit(
+        session,
+        action="rule_dimension_update",
+        resource_type="rule_engine",
+        resource_id=key,
+        actor_user_id=_user.id,
+        detail=f"更新维度配置：{key}",
+    )
     session.commit()
     session.expire_all()
 

@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {api, SignalFilterConfig} from '../api';
 import type {RuleEngineMode} from './RuleEngineContext';
+import {SIGNAL_FILTER_EXPLAINER_COPY} from './ruleEngineExplainerCopy';
 
 interface SignalFilterSectionProps {
   role: 'viewer' | 'admin';
@@ -164,8 +165,7 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, m
             )}
           </h3>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-            LLM 分析前的确定性预筛：命中高影响关键词或重点关注国家（海外供应链）的信号强制放行；
-            未命中的国外事件被过滤；清单类信源仅当命中供应商名时进入分析。修改后立即生效（≤60 秒）。
+            {SIGNAL_FILTER_EXPLAINER_COPY}
           </p>
         </div>
       </div>

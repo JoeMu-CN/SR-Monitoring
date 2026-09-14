@@ -93,7 +93,12 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
   };
 
   if (loading || !isCanonical) {
-    return <div role="status" className="flex min-h-[50vh] items-center justify-center text-sm text-slate-600 dark:text-slate-300">正在加载采集记录…</div>;
+    return (
+      <div role="status" className="flex min-h-[50vh] items-center justify-center text-slate-600 dark:text-slate-300">
+        <span className="material-symbols-outlined animate-spin text-2xl text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
+        <span className="sr-only">正在加载采集记录…</span>
+      </div>
+    );
   }
 
   if (error) {

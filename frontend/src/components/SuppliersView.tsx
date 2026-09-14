@@ -190,7 +190,7 @@ export const SuppliersView = ({
             </thead>
             <tbody className="divide-y divide-[#c2c6d2]/50 text-[13px]">
               {loading && (
-                <tr><td className="p-8 text-center text-slate-500" colSpan={7}><span role="status">正在加载供应商…</span></td></tr>
+                <tr><td className="p-8 text-center text-slate-500" colSpan={7}><span role="status" className="inline-flex items-center gap-2"><span className="material-symbols-outlined animate-spin text-[18px] text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span><span className="sr-only">正在加载供应商…</span></span></td></tr>
               )}
               {!loading && error !== null && (
                 <tr>

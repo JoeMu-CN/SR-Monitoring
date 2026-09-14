@@ -99,7 +99,14 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
     void loadEvent(alert.event_id, sequence);
   };
 
-  if (alertLoading) return <DetailState title="正在加载风险提醒详情" detail="正在取得提醒记录与对应事件证据。" />;
+  if (alertLoading) {
+    return (
+      <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-center justify-center gap-3" role="status">
+        <span className="material-symbols-outlined animate-spin text-2xl text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
+        <span className="sr-only">正在加载风险提醒详情</span>
+      </section>
+    );
+  }
 
   if (alertError !== null) {
     const isNotFound = alertError instanceof ApiError && alertError.status === 404;
@@ -162,7 +169,12 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
         </dl>
       </section>
 
-      {eventLoading && <DetailState title="正在加载事件证据" detail="提醒详情已加载，正在取得事件、信号、主体与地点证据。" />}
+      {eventLoading && (
+        <section className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/80" role="status">
+          <span className="material-symbols-outlined animate-spin text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
+          <span className="sr-only">正在加载事件证据</span>
+        </section>
+      )}
       {eventError !== null && (
         <section className="flex flex-col items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/60 dark:bg-red-950/30" role="alert">
           <div className="flex items-center gap-2 text-red-700 dark:text-red-300"><ShieldAlert className="h-5 w-5" /><h2 className="font-bold">事件详情加载失败</h2></div>

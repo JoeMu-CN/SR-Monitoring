@@ -279,7 +279,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                           {inputsError ? (
                             <span className="text-red-700 dark:text-red-300">输入健康度加载失败</span>
                           ) : inputs === null ? (
-                            <span className="text-slate-400 dark:text-slate-500">输入健康度加载中…</span>
+                            <span className="inline-flex items-center gap-1 text-slate-400 dark:text-slate-500"><span className="material-symbols-outlined animate-spin text-[12px] leading-none" aria-hidden="true">progress_activity</span><span className="sr-only">输入健康度加载中…</span></span>
                           ) : inputs.has_input ? (
                             <span className="text-slate-600 dark:text-slate-300">近 30 天 {inputs.observed.length} 个信源有输入</span>
                           ) : (

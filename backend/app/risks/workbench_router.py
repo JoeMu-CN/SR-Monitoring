@@ -57,12 +57,19 @@ from app.risks.workbench_schemas import (
     DimensionRead,
     DimensionSourceRead,
     DimensionToggle,
+    DimensionTraceRead,
     DimensionUpdate,
     GlobalScoringConfigRead,
     GlobalScoringPatch,
     SandboxRequest,
+    TraceEventRead,
+    TraceMatchRead,
+    TraceRoutingRead,
+    TraceSampleRead,
+    TraceScoreRead,
 )
 from app.signals.models import CollectionRun, DataSource, RawSignal
+from app.suppliers.models import Supplier
 
 router = APIRouter(prefix="/api/v1/rule-engine", tags=["规则引擎工作台"])
 SessionDependency = Annotated[Session, Depends(get_session)]
@@ -589,6 +596,176 @@ def get_dimension_inputs(
         declared_enabled=declared_enabled,
         observed=observed,
         has_input=has_input,
+    )
+
+
+def _representative_source(
+    session: Session, event_id: int
+) -> tuple[datetime | None, str | None] | None:
+    """事件支持信号中的确定性代表：发布（空则采集）时间最新，并列取最大 signal_id。
+
+    多信号事件直接 join 会返回多行且顺序不定，因此必须在 SQL 内排序并取首行，
+    保证 source_name/published_at 可复现。
+    """
+    effective_at = func.coalesce(RawSignal.published_at, RawSignal.collected_at)
+    row = session.execute(
+        select(RawSignal.published_at, DataSource.name)
+        .select_from(RiskEventSignal)
+        .join(RawSignal, RawSignal.id == RiskEventSignal.signal_id)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(RiskEventSignal.event_id == event_id)
+        .order_by(effective_at.desc(), RawSignal.id.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    return row[0], row[1]
+
+
+def _trace_samples(session: Session, key: str) -> list[TraceSampleRead]:
+    """该维度最近 10 条 current 提醒摘要（updated_at DESC，id DESC 兜底稳定序）。"""
+    dimension_col = RiskAlert.score_detail["dimension"].astext.label("dimension")
+    rows = session.execute(
+        select(
+            RiskAlert.id,
+            Supplier.id,
+            Supplier.legal_name,
+            RiskAlert.level,
+            RiskEvent.summary,
+            RiskAlert.updated_at,
+        )
+        .select_from(RiskAlert)
+        .join(SupplierEventMatch, SupplierEventMatch.id == RiskAlert.match_id)
+        .join(Supplier, Supplier.id == SupplierEventMatch.supplier_id)
+        .join(RiskEvent, RiskEvent.id == SupplierEventMatch.event_id)
+        .where(RiskAlert.status == "current", dimension_col == key)
+        .order_by(RiskAlert.updated_at.desc(), RiskAlert.id.desc())
+        .limit(10)
+    ).all()
+    return [
+        TraceSampleRead(
+            id=int(alert_id),
+            supplier_id=int(supplier_id),
+            supplier_name=str(supplier_name),
+            level=str(level),
+            event_summary=str(event_summary),
+            updated_at=updated_at,
+        )
+        for alert_id, supplier_id, supplier_name, level, event_summary, updated_at in rows
+    ]
+
+
+def _forced_rule_value(detail: dict[str, object]) -> dict[str, object] | None:
+    """提取 score_detail.forced_rule；非字典（历史脏数据）时视为未命中。"""
+    value = detail.get("forced_rule")
+    if not isinstance(value, dict):
+        return None
+    return {str(name): item for name, item in value.items()}
+
+
+@router.get("/dimensions/{key}/trace", response_model=DimensionTraceRead)
+def get_dimension_trace(
+    key: str,
+    session: SessionDependency,
+    _user: RuleSummaryView,
+    alert_id: Annotated[int | None, Query(ge=1)] = None,
+) -> DimensionTraceRead:
+    """维度运行轨迹：最近一条 current 提醒的路由/匹配/评分/等级路径 + 样例列表。
+
+    取数口径与维度卡片 active_alerts 计数完全一致（``score_detail["dimension"]
+    == key`` 且 ``status == "current"``，不做 expires_at 实时判活），避免同一维度
+    在卡片与轨迹上数量不一致；"最近一条"与 samples 同序：updated_at DESC、
+    id DESC。event.source_name/published_at 取支持信号中的确定性代表
+    （coalesce(published_at, collected_at) 最新，并列取最大 signal_id）。
+    ``?alert_id=`` 直接返回指定提醒（含已失效者），但其维度必须与 key 一致。
+
+    routing.key/label 是该提醒自身保存的历史归属维度（``score_detail["dimension"]``
+    == key）及其身份/代码标签（base.label，不可被 DB 覆盖），而不是按当前配置重新
+    resolve_dimension——配置漂移（事件类型被改派到其它维度）时当前结果会与
+    ``score.detail.dimension`` 自相矛盾。提醒行没有配置快照，因此仅 match_columns
+    取自该维度**当前**的合并配置，是本响应中唯一"当前"的数据（见 TraceRoutingRead
+    docstring）。
+    """
+    dimensions = load_dimensions(session)
+    dim = next((d for d in dimensions if d.key == key), None)
+    if dim is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
+
+    if alert_id is not None:
+        alert = session.get(RiskAlert, alert_id)
+        if alert is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="提醒不存在"
+            )
+        if alert.score_detail.get("dimension") != key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="提醒不属于该维度"
+            )
+    else:
+        alert = session.scalar(
+            select(RiskAlert)
+            .where(
+                RiskAlert.status == "current",
+                RiskAlert.score_detail["dimension"].astext == key,
+            )
+            .order_by(RiskAlert.updated_at.desc(), RiskAlert.id.desc())
+            .limit(1)
+        )
+        if alert is None:
+            return DimensionTraceRead(
+                available=False,
+                event=None,
+                routing=None,
+                match=None,
+                score=None,
+                samples=[],
+            )
+
+    match = session.get(SupplierEventMatch, alert.match_id)
+    assert match is not None
+    event = session.get(RiskEvent, match.event_id)
+    assert event is not None
+
+    # routing 必须还原这条提醒评分时的历史归属维度（score_detail["dimension"]），
+    # 而不是按当前配置重新 resolve_dimension：配置漂移（事件类型被改派到其它
+    # 维度）时，当前结果会与 score.detail.dimension 自相矛盾。默认取数口径与
+    # ?alert_id= 校验都已保证历史归属 == key。
+    historical_key = alert.score_detail.get("dimension")
+    assert isinstance(historical_key, str) and historical_key == key
+    representative = _representative_source(session, event.id)
+    detail = dict(alert.score_detail)
+    level_cap_value = detail.get("level_cap")
+    return DimensionTraceRead(
+        available=True,
+        event=TraceEventRead(
+            event_type=event.event_type,
+            event_subtype=event.event_subtype,
+            severity=event.severity,
+            summary=event.summary,
+            confidence=event.confidence,
+            published_at=representative[0] if representative is not None else None,
+            source_name=representative[1] if representative is not None else None,
+        ),
+        routing=TraceRoutingRead(
+            # key/label 取历史归属维度（label 为 base.label 身份标签）；无逐提醒
+            # 配置快照，因此仅 match_columns 取该维度当前合并配置
+            key=historical_key,
+            label=dim.config.label,
+            match_columns=list(dim.config.match_columns),
+        ),
+        match=TraceMatchRead(
+            match_type=match.match_type,
+            match_reasons=list(match.reasons),
+            match_evidence=list(match.evidence),
+        ),
+        score=TraceScoreRead(
+            total=alert.score,
+            level=alert.level,
+            detail=detail,
+            level_cap=level_cap_value if isinstance(level_cap_value, str) else None,
+            forced_rule=_forced_rule_value(detail),
+        ),
+        samples=_trace_samples(session, key),
     )
 
 

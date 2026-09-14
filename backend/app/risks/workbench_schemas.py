@@ -199,6 +199,87 @@ class DimensionRead(BaseModel):
     scoring: dict[str, object]  # 评分参数摘要（severity/关联权重/阈值/强制规则/有效期）
 
 
+class TraceEventRead(BaseModel):
+    """轨迹事件摘要。
+
+    source_name/published_at 来自支持信号中的确定性代表信号
+    （coalesce(published_at, collected_at) 最新者，并列取最大 signal_id）；
+    事件没有支持信号时两者均为 None，不伪造来源。
+    """
+
+    event_type: str
+    event_subtype: str | None
+    severity: str
+    summary: str
+    confidence: float
+    published_at: datetime | None
+    source_name: str | None
+
+
+class TraceRoutingRead(BaseModel):
+    """事件路由：该提醒评分时的历史归属维度。
+
+    key 恒等于提醒自身的 ``score_detail["dimension"]``（不做当前配置的
+    resolve_dimension，配置漂移时二者会不一致）；label 是该历史归属维度的
+    身份/代码标签（base.label，不可被 DB 覆盖）。提醒行没有逐提醒配置快照，
+    因此仅 match_columns 取自该维度**当前**的合并配置，是本结构中唯一的
+    "当前"数据。
+    """
+
+    key: str
+    label: str
+    match_columns: list[str]
+
+
+class TraceMatchRead(BaseModel):
+    """供应商匹配柱命中：来自 supplier_event_matches 行，不做二次解释。"""
+
+    match_type: str
+    match_reasons: list[str]
+    match_evidence: list[dict[str, object]]
+
+
+class TraceScoreRead(BaseModel):
+    """评分构成与最终等级。
+
+    total/level 以提醒行为准（强制规则命中会改写为满分/强制等级），detail 是
+    原始的 score_detail 全量；level_cap 与 forced_rule 是从中提取的命中信息，
+    未命中时为 None。
+    """
+
+    total: int
+    level: str
+    detail: dict[str, object]
+    level_cap: str | None
+    forced_rule: dict[str, object] | None
+
+
+class TraceSampleRead(BaseModel):
+    """样例选择器条目：本维度最近一条 current 提醒的摘要。"""
+
+    id: int
+    supplier_id: int
+    supplier_name: str
+    level: str
+    event_summary: str
+    updated_at: datetime
+
+
+class DimensionTraceRead(BaseModel):
+    """维度运行轨迹。
+
+    available=false 表示该维度当前没有任何 current 提醒（event/routing/match/
+    score 均为 None 且 samples 为空，HTTP 仍为 200）。
+    """
+
+    available: bool
+    event: TraceEventRead | None
+    routing: TraceRoutingRead | None
+    match: TraceMatchRead | None
+    score: TraceScoreRead | None
+    samples: list[TraceSampleRead]
+
+
 class DimensionUpdate(BaseModel):
     """更新维度配置：启停与/或参数覆盖。仅提供的字段生效。"""
 

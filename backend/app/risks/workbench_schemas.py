@@ -211,7 +211,14 @@ class DimensionToggle(BaseModel):
 
 
 class SandboxRequest(BaseModel):
-    """沙箱测试：构造样例事件，不落库地评估各维度命中与评分。"""
+    """沙箱测试：构造样例事件，不落库地评估各维度命中与评分。
+
+    可选草稿字段用于在保存前预览未持久化配置的效果：
+    - dimension_key 指定草稿作用的维度（不存在返回 404）；
+    - draft_config 是该维度的草稿覆盖（与保存路径相同的合并与边界校验）；
+    - global_config 是全局评分/强制规则的草稿覆盖（与全局 PUT 同构的合并语义）。
+    预览只评估、不写任何业务表或配置行；不传草稿字段时行为与旧请求完全一致。
+    """
 
     event_type: EventType
     event_subtype: EventSubtype | None = None
@@ -223,3 +230,6 @@ class SandboxRequest(BaseModel):
     summary: str = "沙箱测试事件"
     credibility: int = Field(default=80, ge=0, le=100)
     has_published_at: bool = True
+    dimension_key: str | None = None
+    draft_config: DimensionConfigPatch | None = None
+    global_config: GlobalScoringPatch | None = None

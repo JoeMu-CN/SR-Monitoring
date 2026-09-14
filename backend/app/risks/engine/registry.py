@@ -262,13 +262,13 @@ def build_scoring(
     )
 
 
-def merge_dimension(
+def _merge_dimension_config(
     base: DimensionConfig,
-    row: RuleDimensionConfig,
-    global_overrides: dict[str, object] | None = None,
+    overrides: dict[str, object],
+    global_overrides: dict[str, object] | None,
+    enabled: bool,
 ) -> RuntimeDimension:
-    """DB 行覆盖维度默认，返回运行时维度（全局覆盖显式传入）。"""
-    overrides = row.config or {}
+    """把配置覆盖合并到维度声明，返回运行时维度（保存与草稿预览共用）。"""
     scoring = build_scoring(base, overrides, global_overrides)
     match_columns = base.match_columns
     if isinstance(overrides.get("match_columns"), list):
@@ -284,11 +284,41 @@ def merge_dimension(
         content_items=base.content_items,
         data_sources=base.data_sources,
         match_columns=match_columns,
-        enabled=row.enabled,
+        enabled=enabled,
         scoring_overrides=base.scoring_overrides,
         forced_rules_add=base.forced_rules_add,
     )
     return RuntimeDimension(config=config, scoring=scoring)
+
+
+def merge_dimension(
+    base: DimensionConfig,
+    row: RuleDimensionConfig,
+    global_overrides: dict[str, object] | None = None,
+) -> RuntimeDimension:
+    """DB 行覆盖维度默认，返回运行时维度（全局覆盖显式传入）。"""
+    return _merge_dimension_config(
+        base, dict(row.config or {}), global_overrides, row.enabled
+    )
+
+
+def build_draft_dimension(
+    base: DimensionConfig,
+    *,
+    stored_overrides: dict[str, object] | None,
+    draft_overrides: dict[str, object] | None,
+    global_overrides: dict[str, object] | None,
+    enabled: bool,
+) -> RuntimeDimension:
+    """构造草稿运行时维度：已存 DB 覆盖 → 草稿覆盖（与保存路径同构）。
+
+    与 merge_dimension 共用同一合并实现：先对已存行 config 与草稿做键级深
+    合并（merge_scoring_config，浅合并会整体替换 severity/association 子
+    字典），再走同一个 build_scoring（含全局覆盖、维度 scoring_overrides
+    与 forced_rules_add）。纯函数：不写库、不依赖维度行对象。
+    """
+    overrides = merge_scoring_config(stored_overrides or {}, draft_overrides or {})
+    return _merge_dimension_config(base, overrides, global_overrides, enabled)
 
 
 def _global_overrides_from_rows(

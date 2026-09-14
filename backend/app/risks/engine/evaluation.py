@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.ai.schemas import SignalAnalysisResult
 from app.risks.engine.matching import MatchCandidate
 from app.risks.engine.processing import MATCHERS, load_suppliers, match_type, resolve_dimension
-from app.risks.engine.registry import load_dimensions
+from app.risks.engine.registry import RuntimeDimension, load_dimensions
 from app.risks.scoring import apply_forced_rules, apply_level_cap, compute_level, compute_score
 
 
@@ -18,6 +18,29 @@ def evaluate_event(
 ) -> dict[str, object]:
     """按当前维度配置执行匹配与评分，但不落库。"""
     dimension = resolve_dimension(load_dimensions(session), result.event_type)
+    return evaluate_event_with_dimension(
+        session,
+        dimension,
+        result,
+        credibility=credibility,
+        has_published_at=has_published_at,
+    )
+
+
+def evaluate_event_with_dimension(
+    session: Session,
+    dimension: RuntimeDimension | None,
+    result: SignalAnalysisResult,
+    *,
+    credibility: int = 80,
+    has_published_at: bool = True,
+) -> dict[str, object]:
+    """按预构造的运行时维度执行匹配与评分，但不落库。
+
+    草稿预览（/test 携带 draft_config/global_config）与实时评估共用本入口，
+    评分链路完全复用 compute_score/compute_level/apply_level_cap/
+    apply_forced_rules，不存在第二份公式。
+    """
     if dimension is None:
         return {
             "dimension": None,

@@ -26,11 +26,13 @@ from app.auth.security import (
 from app.database import get_session
 from app.risks.engine.config import ALL_COLUMNS
 from app.risks.engine.dimensions import default_dimensions
-from app.risks.engine.engine import evaluate_event
+from app.risks.engine.engine import evaluate_event, evaluate_event_with_dimension
+from app.risks.engine.processing import resolve_dimension
 from app.risks.engine.registry import (
     GLOBAL_SCORING_CONFIG_KEY,
     GLOBAL_SCORING_LABEL,
     RuntimeDimension,
+    build_draft_dimension,
     effective_global_forced_rules,
     global_forced_rule_defaults,
     load_dimensions,
@@ -366,6 +368,33 @@ def _patch_forced_rule_names(patch: dict[str, object]) -> list[str]:
     ]
 
 
+def _raise_on_event_type_conflicts(
+    dimensions: Iterable[RuntimeDimension],
+    target_key: str,
+    new_event_types: Iterable[str],
+) -> None:
+    """目标维度声明的事件类型与其它启用维度冲突时返回 422（保存与预览共用）。
+
+    与维度 PUT 完全相同的判定：只有目标维度显式声明的事件类型与非自身启用
+    维度交集非空即拒绝；预览复用本函数，避免预览出一个保存不了的状态。
+    """
+    conflicts: list[dict[str, str]] = []
+    new_types = set(new_event_types)
+    for other in dimensions:
+        if other.key == target_key or not other.enabled:
+            continue
+        for event_type in sorted(new_types & set(other.config.event_types)):
+            conflicts.append({"event_type": event_type, "dimension": other.key})
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "事件类型已被其它启用维度占用",
+                "conflicts": conflicts,
+            },
+        )
+
+
 @router.get("/dimensions", response_model=list[DimensionRead])
 def list_dimensions(
     session: SessionDependency, _user: RuleSummaryView
@@ -578,21 +607,7 @@ def update_dimension(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
 
     if payload.config is not None and payload.config.event_types:
-        new_event_types = set(payload.config.event_types)
-        conflicts: list[dict[str, str]] = []
-        for other in dimensions:
-            if other.key == key or not other.enabled:
-                continue
-            for event_type in sorted(new_event_types & set(other.config.event_types)):
-                conflicts.append({"event_type": event_type, "dimension": other.key})
-        if conflicts:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail={
-                    "message": "事件类型已被其它启用维度占用",
-                    "conflicts": conflicts,
-                },
-            )
+        _raise_on_event_type_conflicts(dimensions, key, payload.config.event_types)
 
     patch: dict[str, object] | None = (
         payload.config.model_dump(exclude_none=True)
@@ -683,7 +698,14 @@ def sandbox_test(
     _user: RuleManage,
     _csrf: CsrfGuard,
 ) -> dict[str, object]:
-    """沙箱：构造样例事件，不落库评估维度命中与评分明细。"""
+    """沙箱：构造样例事件，不落库评估维度命中与评分明细。
+
+    携带 dimension_key/draft_config/global_config 时按未保存草稿评估：先按
+    "代码默认 → 已存 DB 覆盖 → 草稿覆盖"重建完整维度列表（与保存路径同构，
+    共用 merge_scoring_config/build_scoring），再用 resolve_dimension 判定
+    接管维度；草稿把事件类型改到已启用维度占用时复用保存路径的 422。
+    全过程只读：不写任何业务表或配置行。
+    """
     result = SignalAnalysisResult(
         event_type=payload.event_type,
         event_subtype=payload.event_subtype,
@@ -696,8 +718,67 @@ def sandbox_test(
         evidence_sentences=[payload.summary],
         confidence=1.0,
     )
-    return evaluate_event(
+    dimension_key = payload.dimension_key
+    if dimension_key is None and payload.draft_config is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="draft_config 需要同时提供 dimension_key",
+        )
+    if dimension_key is None and payload.global_config is None:
+        return evaluate_event(
+            session,
+            result,
+            credibility=payload.credibility,
+            has_published_at=payload.has_published_at,
+        )
+    if dimension_key is not None and dimension_key not in {
+        dim.key for dim in default_dimensions()
+    }:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="维度不存在")
+
+    rows = {row.key: row for row in session.scalars(select(RuleDimensionConfig))}
+    global_row = rows.get(GLOBAL_SCORING_CONFIG_KEY)
+    if payload.global_config is None:
+        global_overrides = (
+            dict(global_row.config or {})
+            if global_row is not None and global_row.enabled
+            else None
+        )
+    else:
+        # 与全局 PUT 同构：stored ∪ 草稿（PUT 总会启用行）。
+        global_overrides = merge_scoring_config(
+            dict(global_row.config or {}) if global_row is not None else {},
+            payload.global_config.model_dump(exclude_none=True),
+        )
+
+    draft_overrides = (
+        payload.draft_config.model_dump(exclude_none=True)
+        if payload.draft_config is not None
+        else {}
+    )
+    draft_dimensions: list[RuntimeDimension] = []
+    for base in default_dimensions():
+        row = rows.get(base.key)
+        draft_dimensions.append(
+            build_draft_dimension(
+                base,
+                stored_overrides=(
+                    dict(row.config or {}) if row is not None else None
+                ),
+                draft_overrides=draft_overrides if base.key == dimension_key else {},
+                global_overrides=global_overrides,
+                enabled=row.enabled if row is not None else base.enabled,
+            )
+        )
+    if payload.draft_config is not None and payload.draft_config.event_types:
+        assert dimension_key is not None  # 上方已拒绝无 dimension_key 的草稿
+        _raise_on_event_type_conflicts(
+            draft_dimensions, dimension_key, payload.draft_config.event_types
+        )
+
+    return evaluate_event_with_dimension(
         session,
+        resolve_dimension(draft_dimensions, result.event_type),
         result,
         credibility=payload.credibility,
         has_published_at=payload.has_published_at,

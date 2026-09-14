@@ -12,6 +12,8 @@ import type {
   DataSourceRead,
   DimensionRead,
   DimensionInputsRead,
+  DimensionTraceRead,
+  GlobalScoringConfigRead,
   MonitoringHealthRead,
   RuleEngineOptions,
   RiskAlertRead,
@@ -46,6 +48,19 @@ vi.mock('./api', async (importOriginal) => {
       sourcesAdmin: vi.fn(),
       collectionRuns: vi.fn(),
       dimensions: vi.fn(),
+      dimensionTrace: vi.fn(),
+      globalConfig: {
+        ...actual.api.globalConfig,
+        get: vi.fn(),
+        update: vi.fn(),
+        reset: vi.fn(),
+      },
+      filterConfig: {
+        ...actual.api.filterConfig,
+        get: vi.fn(),
+        update: vi.fn(),
+        reset: vi.fn(),
+      },
       health: vi.fn(),
       monitoringHealth: vi.fn(),
       agentStatus: vi.fn(),
@@ -363,6 +378,21 @@ const optionsOk: RuleEngineOptions = {
 
 const noCollectionRuns: {items: CollectionRunRead[]; total: number} = {items: [], total: 0};
 
+// 规则引擎页新增数据源：轨迹与全局配置必须有默认 mock，否则 hook 会走真实网络
+const dimensionTraceEmpty: DimensionTraceRead = {
+  available: false, event: null, routing: null, match: null, score: null, samples: [],
+};
+
+const globalConfigDefault: GlobalScoringConfigRead = {
+  source: 'default',
+  enabled: false,
+  effective: {forced_rules: []},
+  defaults: {forced_rules: []},
+  shadowed_by: {},
+  forced_rules_shadowed_by: [],
+  dropped_dimension_rules: [],
+};
+
 const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agentStatus?: () => Promise<AgentStatusRead>} = {}) => {
   const user = overrides.user ?? viewerUser;
   const permissions = overrides.permissions ?? VIEWER_PERMISSIONS;
@@ -382,6 +412,15 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.agentStatus).mockImplementation(overrides.agentStatus ?? (async () => agentStatusOk));
   vi.mocked(api.dimensionInputs).mockResolvedValue(inputsOk);
   vi.mocked(api.ruleEngineOptions).mockResolvedValue(optionsOk);
+  vi.mocked(api.dimensionTrace).mockResolvedValue(dimensionTraceEmpty);
+  vi.mocked(api.globalConfig.get).mockResolvedValue(globalConfigDefault);
+  vi.mocked(api.globalConfig.update).mockResolvedValue(globalConfigDefault);
+  vi.mocked(api.globalConfig.reset).mockResolvedValue(globalConfigDefault);
+  // 观察态默认挂载 SignalFilterSection，必须固定 filterConfig，否则其 effect 会走真实网络
+  const filterConfigDefault = {high_impact: [], priority_countries: [], list_sources: [] as string[], source: 'default' as const};
+  vi.mocked(api.filterConfig.get).mockResolvedValue(filterConfigDefault);
+  vi.mocked(api.filterConfig.update).mockResolvedValue(filterConfigDefault);
+  vi.mocked(api.filterConfig.reset).mockResolvedValue(undefined);
   vi.mocked(api.supplierDeletionImpact).mockResolvedValue({
     can_delete: true,
     match_count: 0,
@@ -418,7 +457,7 @@ beforeAll(() => {
 });
 
 describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据', () => {
-  it('agentStatus 返回 403 时 /rules 六个维度仍全部渲染、写控件禁用、无全局「权限不足」横幅', async () => {
+  it('agentStatus 返回 403 时 /rules 六个维度仍全部渲染、写控件不可用（只读账号仅可观察）、无全局「权限不足」横幅', async () => {
     defaultMocks({agentStatus: async () => { throw denied403; }});
     renderApp('/rules');
 
@@ -428,8 +467,11 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     for (const label of DIMENSION_LABELS) {
       expect(within(routeContent).getAllByText(label).length).toBeGreaterThan(0);
     }
-    // viewer 写控件禁用
-    expect(screen.getByRole('button', {name: '保存配置'})).toBeDisabled();
+    // viewer 默认观察态：写控件不可用（模式切换按钮禁用、页面无「保存配置」）
+    expect(screen.getByTestId('rule-engine-mode-toggle')).toBeDisabled();
+    expect(screen.queryByRole('button', {name: '保存配置'})).not.toBeInTheDocument();
+    // 密闭性：观察态挂载 SignalFilterSection，其配置读取必须命中 mock，不得执行真实客户端路径
+    await waitFor(() => expect(api.filterConfig.get).toHaveBeenCalled());
     // 全局错误横幅未被 agentStatus 的 403 触发
     expect(screen.queryByText('权限不足')).not.toBeInTheDocument();
   });

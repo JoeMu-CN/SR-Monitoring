@@ -1,16 +1,21 @@
 import React, {useEffect, useState} from 'react';
 import {api, SignalFilterConfig} from '../api';
+import type {RuleEngineMode} from './RuleEngineContext';
 
 interface SignalFilterSectionProps {
   role: 'viewer' | 'admin';
+  /** 观察态只读展示说明与当前值；配置态（且 admin）才渲染编辑控件 */
+  mode: RuleEngineMode;
 }
 
 /**
  * 信号过滤规则（LLM 前确定性预筛）配置区块 —— 运营可自主维护。
  * 高影响关键词 / 重点关注国家可编辑（PUT /api/v1/signals/filter-config），
  * 清单类信源只读展示；修改立即生效（≤60 秒，TTL 缓存热更新）。
+ * 分态门控：mode==='config' 且 role==='admin' 时才出现输入框与保存按钮。
  */
-export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role}) => {
+export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, mode}) => {
+  const canEdit = role === 'admin' && mode === 'config';
   const [config, setConfig] = useState<SignalFilterConfig | null>(null);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [countries, setCountries] = useState<string[]>([]);
@@ -87,22 +92,22 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role}) 
     input: string; setInput: (v: string) => void; placeholder: string;
   }) => (
     <div className="space-y-1.5">
-      <div className="flex gap-1.5">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ',') {
-              e.preventDefault();
-              addTag(list, setList, input, setInput);
-            }
-          }}
-          placeholder={placeholder}
-          disabled={role !== 'admin'}
-          className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        {role === 'admin' && (
+      {/* 观察态只读：不渲染输入框与增删按钮，仅展示当前值 */}
+      {canEdit && (
+        <div className="flex gap-1.5">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault();
+                addTag(list, setList, input, setInput);
+              }
+            }}
+            placeholder={placeholder}
+            className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-[12px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
           <button
             type="button"
             onClick={() => addTag(list, setList, input, setInput)}
@@ -110,13 +115,13 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role}) 
           >
             添加
           </button>
-        )}
-      </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5">
         {list.map((tag) => (
           <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300">
             {tag}
-            {role === 'admin' && (
+            {canEdit && (
               <button
                 type="button"
                 onClick={() => removeTag(list, setList, tag)}
@@ -152,6 +157,11 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role}) 
             }`}>
               {config?.source === 'configured' ? '已自定义' : '默认规则'}
             </span>
+            {mode === 'observation' && (
+              <span className="ml-2 text-[10px] font-bold rounded-full px-2 py-0.5 align-middle bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                只读查看
+              </span>
+            )}
           </h3>
           <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
             LLM 分析前的确定性预筛：命中高影响关键词或重点关注国家（海外供应链）的信号强制放行；
@@ -186,7 +196,7 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role}) 
         </div>
       )}
 
-      {role === 'admin' && (
+      {canEdit && (
         <div className="flex gap-2 justify-end pt-1">
           <button
             type="button"

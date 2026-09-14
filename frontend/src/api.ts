@@ -514,6 +514,114 @@ export interface ForcedRuleRead {
   reason: string;
 }
 
+/**
+ * 全局评分与强制规则草稿（对应后端 GlobalScoringPatch；PUT 为合并语义）。
+ * 只包含全局层可写字段：不含 match_columns/event_types（那是维度层）。
+ */
+export interface GlobalScoringPatchPayload {
+  severity_scores?: Record<string, number>;
+  association_scores?: Record<string, number>;
+  credibility_weight?: number;
+  timeliness_with_date?: number;
+  timeliness_without_date?: number;
+  product_relevance_score?: number;
+  p1_min?: number;
+  p2_min?: number;
+  p3_min?: number;
+  strong_match_types?: string[];
+  alert_expiry_days?: number;
+  forced_rules?: ForcedRuleRead[];
+}
+
+/**
+ * 维度配置草稿（对应后端 DimensionConfigPatch；维度 PUT 与 /test 草稿预览共用）。
+ */
+export interface DimensionConfigPatchPayload {
+  match_columns?: string[];
+  event_types?: string[];
+  severity_scores?: Record<string, number>;
+  association_scores?: Record<string, number>;
+  credibility_weight?: number;
+  timeliness_with_date?: number;
+  timeliness_without_date?: number;
+  product_relevance_score?: number;
+  p1_min?: number;
+  p2_min?: number;
+  p3_min?: number;
+  strong_match_types?: string[];
+  alert_expiry_days?: number;
+  forced_rules?: ForcedRuleRead[];
+}
+
+/**
+ * 全局评分与强制规则配置读模型（GET/PUT/DELETE /rule-engine/global-config）。
+ * 只描述全局层：effective = 代码默认 + 全局行；defaults = 代码默认（forced_rules
+ * 含可全局化的维度追加）。维度增量造成的遮蔽通过 shadowed_by 披露。
+ */
+export interface GlobalScoringConfigRead {
+  source: 'configured' | 'default';
+  enabled: boolean;
+  effective: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+  shadowed_by: Record<string, string[]>;
+  forced_rules_shadowed_by: string[];
+  dropped_dimension_rules: Array<Record<string, unknown>>;
+}
+
+export interface DimensionTraceEventRead {
+  event_type: string;
+  event_subtype: string | null;
+  severity: string;
+  summary: string;
+  confidence: number;
+  published_at: string | null;
+  source_name: string | null;
+}
+
+/** 轨迹路由：该提醒评分时的历史归属维度；match_columns 取该维度当前合并配置。 */
+export interface DimensionTraceRoutingRead {
+  key: string;
+  label: string;
+  match_columns: string[];
+}
+
+export interface DimensionTraceMatchRead {
+  match_type: string;
+  match_reasons: string[];
+  match_evidence: Array<Record<string, unknown>>;
+}
+
+export interface DimensionTraceScoreRead {
+  total: number;
+  level: string;
+  detail: Record<string, unknown>;
+  level_cap: string | null;
+  forced_rule: Record<string, unknown> | null;
+}
+
+/** 样例选择器条目：该维度最近一条 current 提醒的摘要。 */
+export interface DimensionTraceSampleRead {
+  id: number;
+  supplier_id: number;
+  supplier_name: string;
+  level: string;
+  event_summary: string;
+  updated_at: string;
+}
+
+/**
+ * 维度运行轨迹（GET /rule-engine/dimensions/{key}/trace）。
+ * available=false 表示该维度当前没有 current 提醒（HTTP 仍为 200）。
+ */
+export interface DimensionTraceRead {
+  available: boolean;
+  event: DimensionTraceEventRead | null;
+  routing: DimensionTraceRoutingRead | null;
+  match: DimensionTraceMatchRead | null;
+  score: DimensionTraceScoreRead | null;
+  samples: DimensionTraceSampleRead[];
+}
+
 export interface DimensionRead {
   key: string;
   label: string;
@@ -562,6 +670,13 @@ export interface SandboxRequest {
   summary: string;
   credibility: number;
   has_published_at: boolean;
+  // —— 未保存草稿预览（与后端 SandboxRequest 对齐；不传时行为与旧请求一致） ——
+  /** 草稿作用的维度 key；提供 draft_config 时必填 */
+  dimension_key?: string | null;
+  /** 该维度的草稿覆盖（与保存路径同构的合并与边界校验） */
+  draft_config?: DimensionConfigPatchPayload | null;
+  /** 全局评分/强制规则的草稿覆盖（与全局 PUT 同构的合并语义） */
+  global_config?: GlobalScoringPatchPayload | null;
 }
 
 export interface SandboxCandidate {
@@ -897,6 +1012,23 @@ export const api = {
   testRuleEngine: (payload: SandboxRequest) => request<SandboxResult>('/api/v1/rule-engine/test', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),
+  // 维度运行轨迹（观察态真实数据）；alert_id 为空时取该维度最近一条 current 提醒
+  dimensionTrace: (key: string, alertId?: number) => request<DimensionTraceRead>(
+    `/api/v1/rule-engine/dimensions/${key}/trace${alertId ? `?alert_id=${alertId}` : ''}`,
+  ),
+  globalConfig: {
+    get: () => request<GlobalScoringConfigRead>('/api/v1/rule-engine/global-config'),
+    // PUT 为合并语义：只更新传入字段；移除当前生效强制规则时须显式确认
+    update: (payload: GlobalScoringPatchPayload, confirmDisableForcedRules = false) => request<GlobalScoringConfigRead>(
+      `/api/v1/rule-engine/global-config${confirmDisableForcedRules ? '?confirm_disable_forced_rules=true' : ''}`,
+      {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)},
+    ),
+    // DELETE 删除全局行、回退代码默认；会移除当前生效强制规则时须显式确认
+    reset: (confirmDisableForcedRules = false) => request<GlobalScoringConfigRead>(
+      `/api/v1/rule-engine/global-config${confirmDisableForcedRules ? '?confirm_disable_forced_rules=true' : ''}`,
+      {method: 'DELETE'},
+    ),
+  },
   filterConfig: {
     get: () => request<SignalFilterConfig>('/api/v1/signals/filter-config'),
     update: (payload: SignalFilterConfigUpdate) => request<SignalFilterConfig>('/api/v1/signals/filter-config', {

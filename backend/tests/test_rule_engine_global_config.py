@@ -394,6 +394,52 @@ def test_put_rejects_unknown_keys(client: TestClient, db_session: Session) -> No
     assert _global_row(db_session) is None
 
 
+def test_put_rejects_blank_forced_rule_name_or_reason(
+    client: TestClient, db_session: Session
+) -> None:
+    """纯空白名称或原因（min_length 无法拦截）→ 422 且不落库。"""
+    cases: list[dict[str, object]] = [
+        {"forced_rules": [_rule("   ")]},
+        {"forced_rules": [_rule("\t\n")]},
+        {"forced_rules": [_rule("blank_reason", reason="   ")]},
+        {"forced_rules": [_rule("blank_reason", reason="\t\n")]},
+    ]
+    for payload in cases:
+        _put(client, payload, confirm=True, expect=422)
+    assert _global_row(db_session) is None
+
+
+def test_put_rejects_forced_rule_names_duplicated_after_strip(
+    client: TestClient, db_session: Session
+) -> None:
+    """去重按 strip 后的规范形式判定：\"dup\" 与 \" dup \" 视为同名 → 422。"""
+    response = client.put(
+        URL,
+        json={"forced_rules": [_rule("dup"), _rule(" dup ")]},
+        params=_confirm_params(True),
+    )
+    assert response.status_code == 422, response.text
+    assert _global_row(db_session) is None
+
+
+def test_put_forced_rules_round_trip_verbatim(
+    client: TestClient, db_session: Session
+) -> None:
+    """校验仅用 strip 形式判空/去重，不改写存储值：合法名称/原因逐字落库与回读。"""
+    rules = [_rule("plain_rule"), _rule(" padded_rule ", reason=" 原因含首尾空白 ")]
+    _put(client, {"forced_rules": rules}, confirm=True)
+
+    row = _global_row(db_session)
+    assert row is not None
+    stored = row.config["forced_rules"]
+    assert isinstance(stored, list)
+    assert [item["name"] for item in stored] == ["plain_rule", " padded_rule "]
+    assert stored[1]["reason"] == " 原因含首尾空白 "
+
+    body = client.get(URL).json()
+    assert _names(body["effective"]["forced_rules"]) == ["plain_rule", " padded_rule "]
+
+
 # ── 审计 ─────────────────────────────────────────────────────────────
 
 

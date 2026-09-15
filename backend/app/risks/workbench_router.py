@@ -337,23 +337,24 @@ def _ensure_forced_rules_confirmed(
         )
 
 
-def _validate_global_thresholds(
-    stored: dict[str, object], patch: dict[str, object]
+def _validate_merged_thresholds(
+    *,
+    defaults: dict[str, object],
+    stored: dict[str, object],
+    patch: dict[str, object],
 ) -> None:
-    """按全局层"stored ∪ patch"合并结果校验 p1 > p2 > p3（含停用行的遗留值）。
+    """按"defaults ∪ stored ∪ patch"合并结果校验 p1 > p2 > p3（保存与预览共用）。
 
-    stored 是配置行存储的原始 config（无论 enabled）：PUT 总会重新启用行，
-    因此校验必须覆盖停用行里的遗留阈值，否则非法顺序会被静默启用。
-    支持只传部分阈值的合并语义，缺省键回退代码默认。
+    defaults 是该层的缺省回退（全局层=代码默认；维度层=该维度当前生效值，
+    含全局覆盖与维度声明增量）。stored 是配置行存储的原始 config（无论
+    enabled）：保存总会重新启用行，因此校验必须覆盖停用行里的遗留阈值，
+    否则非法顺序会被静默启用。patch 是本次写入或草稿覆盖，支持只传部分
+    阈值的合并语义（缺省键回退 defaults）。
+
+    全局 PUT、维度 PUT 与 /test 的两条草稿路径共用本函数，保证预览与保存
+    对阈值顺序给出完全相同的 422。
     """
-    settings = load_scoring_settings()
-    base: dict[str, object] = {
-        "p1_min": settings.p1_min,
-        "p2_min": settings.p2_min,
-        "p3_min": settings.p3_min,
-        **stored,
-    }
-    probe = merge_scoring_config(base, patch)
+    probe = merge_scoring_config({**defaults, **stored}, patch)
     p1_min, p2_min, p3_min = probe["p1_min"], probe["p2_min"], probe["p3_min"]
     if not (
         isinstance(p1_min, int)
@@ -459,7 +460,16 @@ def update_global_config(
         stored if row is not None and row.enabled else None
     )
     next_config = merge_scoring_config(stored, patch)
-    _validate_global_thresholds(stored, patch)
+    settings = load_scoring_settings()
+    _validate_merged_thresholds(
+        defaults={
+            "p1_min": settings.p1_min,
+            "p2_min": settings.p2_min,
+            "p3_min": settings.p3_min,
+        },
+        stored=stored,
+        patch=patch,
+    )
     _ensure_forced_rules_confirmed(
         old_names=[
             rule.name for rule in effective_global_forced_rules(effective_before)
@@ -811,17 +821,15 @@ def update_dimension(
     if patch is not None:
         # 键级深合并：部分 diff 不丢 severity/association 子键（列表键整体替换）。
         merged = merge_scoring_config(dict(row.config or {}), patch)
-        p1_value = merged.get("p1_min", base.scoring.p1_min)
-        p2_value = merged.get("p2_min", base.scoring.p2_min)
-        p3_value = merged.get("p3_min", base.scoring.p3_min)
-        p1_min = p1_value if isinstance(p1_value, int) else base.scoring.p1_min
-        p2_min = p2_value if isinstance(p2_value, int) else base.scoring.p2_min
-        p3_min = p3_value if isinstance(p3_value, int) else base.scoring.p3_min
-        if not p1_min > p2_min > p3_min:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="等级阈值必须满足 p1_min > p2_min > p3_min",
-            )
+        _validate_merged_thresholds(
+            defaults={
+                "p1_min": base.scoring.p1_min,
+                "p2_min": base.scoring.p2_min,
+                "p3_min": base.scoring.p3_min,
+            },
+            stored=dict(row.config or {}),
+            patch=patch,
+        )
         row.config = merged
     write_audit(
         session,
@@ -915,17 +923,25 @@ def sandbox_test(
 
     rows = {row.key: row for row in session.scalars(select(RuleDimensionConfig))}
     global_row = rows.get(GLOBAL_SCORING_CONFIG_KEY)
+    stored_global = dict(global_row.config or {}) if global_row is not None else {}
     if payload.global_config is None:
         global_overrides = (
-            dict(global_row.config or {})
-            if global_row is not None and global_row.enabled
-            else None
+            stored_global if global_row is not None and global_row.enabled else None
         )
     else:
-        # 与全局 PUT 同构：stored ∪ 草稿（PUT 总会启用行）。
-        global_overrides = merge_scoring_config(
-            dict(global_row.config or {}) if global_row is not None else {},
-            payload.global_config.model_dump(exclude_none=True),
+        # 与全局 PUT 同构：stored ∪ 草稿（PUT 总会启用行）；阈值顺序同样
+        # 按合并结果校验，避免预览出一个保存不了的全局草稿。
+        global_draft = payload.global_config.model_dump(exclude_none=True)
+        global_overrides = merge_scoring_config(stored_global, global_draft)
+        settings = load_scoring_settings()
+        _validate_merged_thresholds(
+            defaults={
+                "p1_min": settings.p1_min,
+                "p2_min": settings.p2_min,
+                "p3_min": settings.p3_min,
+            },
+            stored=stored_global,
+            patch=global_draft,
         )
 
     draft_overrides = (
@@ -936,15 +952,35 @@ def sandbox_test(
     draft_dimensions: list[RuntimeDimension] = []
     for base in default_dimensions():
         row = rows.get(base.key)
+        stored_overrides = dict(row.config or {}) if row is not None else None
+        enabled = row.enabled if row is not None else base.enabled
+        is_target = base.key == dimension_key
+        if is_target and payload.draft_config is not None:
+            # 与维度 PUT 同构：按"已存行 ∪ 草稿"合并结果校验阈值顺序。回退值
+            # 取该维度当前生效值（含全局覆盖；全局草稿已在上方同构校验）。
+            current = build_draft_dimension(
+                base,
+                stored_overrides=stored_overrides,
+                draft_overrides={},
+                global_overrides=global_overrides,
+                enabled=enabled,
+            )
+            _validate_merged_thresholds(
+                defaults={
+                    "p1_min": current.scoring.p1_min,
+                    "p2_min": current.scoring.p2_min,
+                    "p3_min": current.scoring.p3_min,
+                },
+                stored=stored_overrides or {},
+                patch=draft_overrides,
+            )
         draft_dimensions.append(
             build_draft_dimension(
                 base,
-                stored_overrides=(
-                    dict(row.config or {}) if row is not None else None
-                ),
-                draft_overrides=draft_overrides if base.key == dimension_key else {},
+                stored_overrides=stored_overrides,
+                draft_overrides=draft_overrides if is_target else {},
                 global_overrides=global_overrides,
-                enabled=row.enabled if row is not None else base.enabled,
+                enabled=enabled,
             )
         )
     if payload.draft_config is not None and payload.draft_config.event_types:

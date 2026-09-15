@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from app.ai.schemas import (
     EventSubtype,
@@ -39,9 +39,18 @@ class ForcedRuleUpdate(BaseModel):
     forced_level: Level
     reason: str = Field(min_length=1)
 
+    @field_validator("name", "reason")
+    @classmethod
+    def reject_blank(cls, value: str, info: ValidationInfo) -> str:
+        """拒绝纯空白值；不改写原值（仅用 strip 判空），保证逐字存储与回读。"""
+        if not value.strip():
+            label = "名称" if info.field_name == "name" else "原因"
+            raise ValueError(f"强制规则{label}不能为空白")
+        return value
+
 
 class _ForcedRuleNamesValidated(BaseModel):
-    """强制规则列表的共用校验：名称非空（字段约束）且不重复（新增安全校验）。"""
+    """强制规则列表的共用校验：名称/原因非空白（字段约束）且名称不重复。"""
 
     forced_rules: list[ForcedRuleUpdate] | None = None
 
@@ -51,7 +60,8 @@ class _ForcedRuleNamesValidated(BaseModel):
         cls, value: list[ForcedRuleUpdate] | None
     ) -> list[ForcedRuleUpdate] | None:
         if value is not None:
-            names = [rule.name for rule in value]
+            # 去重按 strip 后的规范形式判定；不修改存储值，保证逐字回存。
+            names = [rule.name.strip() for rule in value]
             if len(names) != len(set(names)):
                 raise ValueError("强制规则名称不能重复")
         return value

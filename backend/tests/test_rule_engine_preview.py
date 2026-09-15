@@ -324,6 +324,86 @@ def test_preview_draft_bounds_aligned_with_save(
     assert _counts(db_session) == before
 
 
+# ── 草稿合并阈值顺序必须与保存路径同构（F2 修复） ─────────────────────
+
+
+def test_preview_dimension_draft_invalid_threshold_order_rejected(
+    client: TestClient, db_session: Session
+) -> None:
+    """草稿 p2_min=90 使合并后 p2 > p1 → /test 与维度 PUT 一样 422，预览只读。"""
+    before = _counts(db_session)
+    draft: dict[str, object] = {"p2_min": 90}
+    preview = client.post(
+        TEST_URL,
+        json={"event_type": "weather", "dimension_key": "natural", "draft_config": draft},
+    )
+    assert preview.status_code == 422, preview.text
+    assert _counts(db_session) == before  # 预览不写库
+
+    save = client.put(f"{DIMENSION_URL}/natural", json={"config": draft})
+    assert save.status_code == 422, save.text
+    assert preview.json()["detail"] == save.json()["detail"]
+
+
+def test_preview_dimension_draft_merges_stored_row_for_threshold_check(
+    client: TestClient, db_session: Session
+) -> None:
+    """已存行 p1_min=90 + 草稿 p2_min=91 → 校验覆盖合并结果，与保存同为 422。"""
+    db_session.add(
+        RuleDimensionConfig(
+            key="natural",
+            label="天气与气象预警",
+            enabled=True,
+            config={"p1_min": 90},
+        )
+    )
+    db_session.flush()
+    before = _counts(db_session)
+    draft: dict[str, object] = {"p2_min": 91}
+    preview = client.post(
+        TEST_URL,
+        json={"event_type": "weather", "dimension_key": "natural", "draft_config": draft},
+    )
+    save = client.put(f"{DIMENSION_URL}/natural", json={"config": draft})
+
+    assert preview.status_code == 422, preview.text
+    assert save.status_code == 422, save.text
+    assert preview.json()["detail"] == save.json()["detail"]
+    assert _counts(db_session) == before
+
+
+def test_preview_global_draft_invalid_threshold_order_rejected(
+    client: TestClient, db_session: Session
+) -> None:
+    """全局草稿 p2_min=90 使合并后 p2 > p1 → /test 与全局 PUT 一样 422 且不写库。"""
+    before = _counts(db_session)
+    draft: dict[str, object] = {"p2_min": 90}
+    preview = client.post(TEST_URL, json={"event_type": "weather", "global_config": draft})
+    save = client.put(GLOBAL_URL, json=draft)
+
+    assert preview.status_code == 422, preview.text
+    assert save.status_code == 422, save.text
+    assert preview.json()["detail"] == save.json()["detail"]
+    assert _counts(db_session) == before
+
+
+def test_preview_global_draft_merges_stored_row_for_threshold_check(
+    client: TestClient, db_session: Session
+) -> None:
+    """已存全局行 p1_min=90 + 草稿 p2_min=91 → 校验覆盖合并结果，与保存同为 422。"""
+    saved = client.put(GLOBAL_URL, json={"p1_min": 90})
+    assert saved.status_code == 200, saved.text
+    before = _counts(db_session)
+    draft: dict[str, object] = {"p2_min": 91}
+    preview = client.post(TEST_URL, json={"event_type": "weather", "global_config": draft})
+    save = client.put(GLOBAL_URL, json=draft)
+
+    assert preview.status_code == 422, preview.text
+    assert save.status_code == 422, save.text
+    assert preview.json()["detail"] == save.json()["detail"]
+    assert _counts(db_session) == before
+
+
 def test_preview_global_draft_bounds_aligned_with_save(
     client: TestClient, db_session: Session
 ) -> None:
@@ -361,7 +441,7 @@ def test_preview_legacy_request_shape_unchanged(
 def test_preview_lower_p1_threshold_upgrades_level(
     client: TestClient, db_session: Session
 ) -> None:
-    """QA happy：草稿 p1_min=60 后，同一候选等级由 P2 变 P1（预览不写库）。"""
+    """QA happy：草稿 p1_min=70 后，同一候选等级由 P2 变 P1（预览不写库）。"""
     supplier = _add_supplier(db_session, code="PREV-8", name="阈值供应商", city="上海市")
     sample: dict[str, object] = {
         "event_type": "weather",
@@ -377,7 +457,7 @@ def test_preview_lower_p1_threshold_upgrades_level(
     assert baseline_candidate["score"] == 71
     assert baseline_candidate["level"] == "P2"
 
-    preview = _post_test(client, {**sample, "draft_config": {"p1_min": 60}})
+    preview = _post_test(client, {**sample, "draft_config": {"p1_min": 70}})
     assert _counts(db_session) == before
     preview_candidate = _first_candidate(preview)
     assert preview_candidate["score"] == 71
@@ -406,7 +486,7 @@ def test_qa_transcript_preview_status_body_and_db_counts(
 
     with_draft = client.post(
         TEST_URL,
-        json={**sample, "draft_config": {"p1_min": 60, "severity_scores": {"medium": 21}}},
+        json={**sample, "draft_config": {"p1_min": 70, "severity_scores": {"medium": 21}}},
     )
     print(f"[QA] draft status={with_draft.status_code} body={with_draft.text}")
 

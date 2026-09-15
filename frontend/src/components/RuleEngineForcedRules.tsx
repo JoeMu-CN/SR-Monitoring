@@ -1,6 +1,6 @@
 import React from 'react';
 import {ForcedRuleRead, GlobalScoringConfigRead} from '../api';
-import {RuleEngineMode, useRuleEngineContext} from './RuleEngineContext';
+import {GLOBAL_DRAFT_NOT_LOADED_ERROR, RuleEngineMode, useRuleEngineContext} from './RuleEngineContext';
 
 /** 匹配类型展示标签：与后端 MatchType 字面量一一对应（无独立选项接口，直接作为可选项） */
 const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -294,6 +294,7 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     saveGlobalConfig,
     options,
     setGlobalDraft,
+    setGlobalDraftValidity,
   } = useRuleEngineContext();
 
   const canEdit = role === 'admin';
@@ -326,6 +327,15 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   );
 
   const [rows, setRows] = React.useState<ForcedRuleRow[]>(() => seedRows(serverRules));
+  /**
+   * rows 是否已由「真实加载到的 globalConfig」播种。
+   *
+   * 挂载时 globalConfig 已就绪则 useState 初始化器已按真实行播种，直接为 true；
+   * globalConfig 为 null（加载中/失败）时初始 rows 为空，只是「尚未同步」——
+   * 在服务端快照到达并写入 rows 之前，草稿门控必须保持非法（F2 窗口 1），
+   * 否则空表会被当成合法草稿（forced_rules: []）发给解算预览。
+   */
+  const [rowsSeeded, setRowsSeeded] = React.useState(() => globalConfig !== null);
   const [dirty, setDirty] = React.useState(false);
   const [expandedIds, setExpandedIds] = React.useState<ReadonlySet<string>>(() => new Set<string>());
   const [pendingDeleteId, setPendingDeleteId] = React.useState<string | null>(null);
@@ -342,6 +352,7 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     if (dirty) return;
     syncedFromRef.current = globalConfig;
     setRows(seedRows(serverRules));
+    setRowsSeeded(true);
     setDirty(false);
     setShowValidation(false);
   }, [dirty, globalConfig, seedRows, serverRules]);
@@ -384,12 +395,24 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   );
 
   // 冻结的共享点：把当前（可能未保存的）强制规则表并入壳组件持有的全局草稿，供解算预览使用。
-  // 草稿非法时不写入，避免把预览请求带成 422；合法时也经 buildSubmittableRules 边界过滤，
-  // 保证保留名称即使存在也不会进入预览草稿。
+  // 合法时经 buildSubmittableRules 边界过滤后写入（保留名称绝不进入预览草稿）；
+  // 非法时不上报旧草稿可用——显式标记为非法，让解算预览被禁用并给出可访问错误，
+  // 绝不用上一次合法的旧规则冒充当前表格（缺陷 C）。
   React.useEffect(() => {
-    if (validationErrors.length > 0) return;
+    // F2 窗口 1：globalConfig 尚未加载（加载中或加载失败）时 rows 为空只是「尚未同步」，
+    // 不是「服务端就是空表」。此时必须保持非法且跳过 globalDraft 写入，
+    // 否则解算预览会把 forced_rules: [] 当成合法草稿发出，静默禁用真实强制规则。
+    if (globalConfig === null || !rowsSeeded) {
+      setGlobalDraftValidity(false, GLOBAL_DRAFT_NOT_LOADED_ERROR);
+      return;
+    }
+    if (validationErrors.length > 0) {
+      setGlobalDraftValidity(false, validationErrors.join('；'));
+      return;
+    }
+    setGlobalDraftValidity(true);
     setGlobalDraft((current) => ({...current, forced_rules: buildSubmittableRules(rows)}));
-  }, [rows, setGlobalDraft, validationErrors]);
+  }, [globalConfig, rowsSeeded, rows, setGlobalDraft, setGlobalDraftValidity, validationErrors]);
 
   const markEdited = () => {
     setDirty(true);

@@ -35,6 +35,30 @@ export interface RuleEngineEventTypeConflict {
   dimension: string;
 }
 
+/**
+ * 全局配置尚未加载（加载中或加载失败）时的草稿门控原因。
+ *
+ * 此期间强制规则编辑器的 rows 为空并不代表「服务端就是空表」，只是尚未同步；
+ * 解算预览必须保持禁用，绝不能把 `forced_rules: []` 当成合法草稿发出。
+ */
+export const GLOBAL_DRAFT_NOT_LOADED_ERROR = '全局配置未加载，暂不能解算预览';
+
+/**
+ * 全局草稿门控的实时快照。
+ *
+ * `globalDraftValid`/`globalDraftError` 是渲染用的状态值；解算预览等异步流程在
+ * `await` 之后不能读闭包里的它们（值停留在点击那一刻），必须通过 `readGlobalDraftGate`
+ * 同步读取，并用单调递增的 `revision` 判断等待期间草稿是否发生过变化。
+ */
+export interface GlobalDraftGate {
+  /** 强制规则表当前草稿是否可用（默认 false，直到编辑器真正加载并校验 globalConfig） */
+  valid: boolean;
+  /** 不可用原因；可用时为空串 */
+  error: string;
+  /** 单调修订号：`globalDraft` 或其有效性任何一次变化都会 +1 */
+  revision: number;
+}
+
 /** 解算预览与沙箱测试共用的样例事件字段（与后端 /test 请求字段一一对应）。 */
 export interface RuleEngineSampleEvent {
   eventType: string;
@@ -73,6 +97,27 @@ export interface RuleEngineContextValue {
   /** 全局层草稿：解算预览（todo 7）与强制规则编辑器（todo 8）共用 */
   globalDraft: GlobalScoringPatchPayload;
   setGlobalDraft: React.Dispatch<React.SetStateAction<GlobalScoringPatchPayload>>;
+  /**
+   * 全局层草稿是否与当前强制规则表一致且通过校验。
+   *
+   * **默认非法**：在强制规则编辑器真正加载 `globalConfig` 并校验过真实行之前保持
+   * false（全局配置加载中/加载失败时 `globalConfig === null`，rows 为空并不代表
+   * 服务端就是空表）。强制规则编辑器校验失败时也不会写 `globalDraft`（避免把 422
+   * 发给后端），但 `globalDraft` 仍保留上一次合法的旧规则；解算预览必须依据本标志
+   * 禁用，绝不能用陈旧草稿冒充当前表格。
+   */
+  globalDraftValid: boolean;
+  /** 全局层草稿非法原因（解算预览以 role="alert" 呈现）；合法时为空串 */
+  globalDraftError: string;
+  /** 由强制规则编辑器在上报草稿有效性的同一副作用点调用 */
+  setGlobalDraftValidity: (valid: boolean, error?: string) => void;
+  /**
+   * 同步读取全局草稿门控（valid/error/单调修订号）。
+   *
+   * 解算预览在 baseline `await` 之后必须重新调用本函数复核：等待期间草稿被改坏或
+   * 改动时中止第二次请求，迟到的响应也不渲染（闭包里的 context 值不会更新）。
+   */
+  readGlobalDraftGate: () => GlobalDraftGate;
   globalSaving: boolean;
   globalSaveError: string;
   /** 合并写入全局层（PUT /global-config）；返回是否成功 */

@@ -1,5 +1,6 @@
 import React from 'react';
-import {cleanup, fireEvent, render, screen, within} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {MemoryRouter} from 'react-router-dom';
 import {
@@ -374,6 +375,64 @@ describe('规则引擎观察/配置双态：模式感知壳层挂载', () => {
     expect(screen.getByTestId('rule-engine-forced-rules')).toBeInTheDocument();
     const alerts = await screen.findAllByRole('alert');
     expect(alerts.length).toBeGreaterThan(0);
+  });
+});
+
+describe('监控维度选择器：键盘与可访问语义（缺陷 D 回归）', () => {
+  const renderTwoDimensions = () =>
+    renderWithRouter(
+      <RuleEngineView
+        dimensions={[dimension(), geopoliticalDimension()]}
+        onToggleDimension={vi.fn()}
+        onUpdateDimension={vi.fn()}
+        role="viewer"
+      />,
+    );
+
+  it('维度选择项使用原生 button 语义，并暴露 aria-pressed 选中态与分组名', () => {
+    renderTwoDimensions();
+
+    const natural = screen.getByTestId('rule-engine-dimension-natural');
+    const geopolitical = screen.getByTestId('rule-engine-dimension-geopolitical');
+
+    expect(natural.tagName).toBe('BUTTON');
+    expect(natural).toHaveAttribute('type', 'button');
+    expect(natural).toHaveAttribute('aria-pressed', 'true');
+    expect(geopolitical.tagName).toBe('BUTTON');
+    expect(geopolitical).toHaveAttribute('type', 'button');
+    expect(geopolitical).toHaveAttribute('aria-pressed', 'false');
+
+    // 可编程聚焦（键盘可达的前提）；整组以「监控维度」名称暴露
+    natural.focus();
+    expect(natural).toHaveFocus();
+    expect(screen.getByRole('group', {name: '监控维度'})).toContainElement(natural);
+  });
+
+  it('聚焦后按 Enter 即可切换选中维度（无需鼠标）', async () => {
+    const user = userEvent.setup();
+    renderTwoDimensions();
+
+    const geopolitical = screen.getByTestId('rule-engine-dimension-geopolitical');
+    geopolitical.focus();
+    expect(geopolitical).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(geopolitical).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByTestId('rule-engine-dimension-natural')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('聚焦后按空格同样切换选中维度', async () => {
+    const user = userEvent.setup();
+    renderTwoDimensions();
+
+    const geopolitical = screen.getByTestId('rule-engine-dimension-geopolitical');
+    geopolitical.focus();
+
+    await user.keyboard(' ');
+
+    await waitFor(() => expect(geopolitical).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByTestId('rule-engine-dimension-natural')).toHaveAttribute('aria-pressed', 'false');
   });
 });
 

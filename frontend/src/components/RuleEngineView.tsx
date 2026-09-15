@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {AnimatePresence, motion, useReducedMotion} from 'motion/react';
 import {api, ApiError, GlobalScoringPatchPayload, SandboxResult} from '../api';
 import {MonitoringDimension} from '../types';
@@ -15,6 +15,8 @@ import {useRuleEngineData} from './useRuleEngineData';
 import {
   defaultSampleEvent,
   draftFromDimension,
+  GLOBAL_DRAFT_NOT_LOADED_ERROR,
+  GlobalDraftGate,
   RuleEngineContext,
   RuleEngineContextValue,
   RuleEngineDimensionDraft,
@@ -91,9 +93,37 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const [configConflicts, setConfigConflicts] = useState<RuleEngineEventTypeConflict[]>([]);
 
   // —— 全局层草稿（解算预览 todo 7 与强制规则编辑器 todo 8 共用） ——
-  const [globalDraft, setGlobalDraft] = useState<GlobalScoringPatchPayload>({});
+  const globalDraftRevisionRef = useRef(0);
+  const [globalDraftValidity, setGlobalDraftValidityState] = useState<{valid: boolean; error: string}>({
+    // 默认非法（F2 窗口 1）：全局配置未加载时 rows 为空只是「尚未同步」，
+    // 必须保持门控关闭，直到强制规则编辑器真正加载并校验 globalConfig。
+    valid: false,
+    error: GLOBAL_DRAFT_NOT_LOADED_ERROR,
+  });
+  const [globalDraft, setGlobalDraftState] = useState<GlobalScoringPatchPayload>({});
   const [globalSaving, setGlobalSaving] = useState(false);
   const [globalSaveError, setGlobalSaveError] = useState('');
+  // 全局层草稿有效性由强制规则编辑器上报（校验失败时它不会写 globalDraft，但旧规则仍在），
+  // 解算预览据此门控：非法期间禁用预览并给出 role=alert，绝不发送陈旧草稿。
+  // 有效性/修订号另存 ref（同步更新）：解算预览在 await 之后需复核最新状态，
+  // 闭包中的 state 值会停留在点击那一刻；revision 单调递增以识别等待期间的任何变化。
+  const globalDraftValidityRef = useRef(globalDraftValidity);
+  const setGlobalDraft = useCallback<React.Dispatch<React.SetStateAction<GlobalScoringPatchPayload>>>((action) => {
+    globalDraftRevisionRef.current += 1;
+    setGlobalDraftState(action);
+  }, []);
+  const setGlobalDraftValidity = useCallback((valid: boolean, error = '') => {
+    const current = globalDraftValidityRef.current;
+    if (current.valid === valid && current.error === error) return;
+    globalDraftValidityRef.current = {valid, error};
+    globalDraftRevisionRef.current += 1;
+    setGlobalDraftValidityState({valid, error});
+  }, []);
+  const readGlobalDraftGate = useCallback((): GlobalDraftGate => ({
+    valid: globalDraftValidityRef.current.valid,
+    error: globalDraftValidityRef.current.error,
+    revision: globalDraftRevisionRef.current,
+  }), []);
 
   // —— 沙箱/解算预览共享的样例事件 ——
   const [sample, setSample] = useState<RuleEngineSampleEvent>(() => defaultSampleEvent());
@@ -235,6 +265,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
     refreshGlobalConfig: data.refreshGlobalConfig,
     globalDraft,
     setGlobalDraft,
+    globalDraftValid: globalDraftValidity.valid,
+    globalDraftError: globalDraftValidity.error,
+    setGlobalDraftValidity,
+    readGlobalDraftGate,
     globalSaving,
     globalSaveError,
     saveGlobalConfig,
@@ -300,22 +334,28 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 )}
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2" role="group" aria-label="监控维度">
                 {dimensions.map((dim) => {
                   const isSelected = dim.id === activeDimId;
                   return (
                     <div
                       key={dim.id}
-                      data-testid={`rule-engine-dimension-${dim.id}`}
-                      onClick={() => setActiveDimId(dim.id)}
-                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                      className={`p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ${
                         isSelected
                           ? 'bg-[#ecf4ff] dark:bg-slate-800 border-[#004782] shadow-2xs'
                           : 'border-[#c2c6d2]/60 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                       }`}
                     >
-                      <div className="flex items-start gap-3 min-w-0">
-                        <span className="material-symbols-outlined text-[#004782] text-[22px]">
+                      {/* 原生 button：Tab 可达、Enter/Space 可操作，aria-pressed 暴露选中态；
+                          启停开关保持为按钮的兄弟节点，避免交互内容嵌套 */}
+                      <button
+                        type="button"
+                        data-testid={`rule-engine-dimension-${dim.id}`}
+                        aria-pressed={isSelected}
+                        onClick={() => setActiveDimId(dim.id)}
+                        className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400"
+                      >
+                        <span aria-hidden="true" className="material-symbols-outlined text-[#004782] text-[22px]">
                           {dim.icon}
                         </span>
                         <div className="min-w-0">
@@ -342,7 +382,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                             </div>
                           )}
                         </div>
-                      </div>
+                      </button>
 
                       {/* 观察态：只读启停状态；配置态：管理员启停开关 */}
                       {effectiveMode === 'config' ? (

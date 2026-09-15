@@ -306,7 +306,9 @@ describe('全局强制规则编辑器：初始值与数据来源', () => {
     await renderShell();
 
     const warning = within(editorSection()).getByTestId('forced-rules-dropped-warning');
-    expect(warning).toBeVisible();
+    // 配置面板有 motion 入场动画（初始 opacity:0，jsdom 下按真实帧推进到 1）：
+    // 轮询等待到可见再断言，保持「保存前必然可见」的原始意图不变
+    await waitFor(() => expect(warning).toBeVisible());
     expect(warning).toHaveTextContent('policy_industry_hit');
     // 位于保存按钮所在的动作区内（保存前必然可见）
     const actionArea = within(editorSection()).getByTestId('forced-rules-action-area');
@@ -845,6 +847,42 @@ describe('全局强制规则编辑器：失败与陈旧状态', () => {
   });
 });
 
+describe('全局强制规则编辑器：全局配置未加载时的草稿门控（F2 修复轮次 2）', () => {
+  it('globalConfig 为 null 时保持非法且绝不写入 forced_rules: []；配置到达后才报告有效并写入真实行', async () => {
+    const setGlobalDraft = vi.fn();
+    const setGlobalDraftValidity = vi.fn();
+
+    const {rerender} = render(
+      <RuleEngineContext.Provider value={contextValueFor(globalConfigRead(), {
+        globalConfig: null,
+        globalConfigError: '网关超时',
+        setGlobalDraft,
+        setGlobalDraftValidity,
+      })}>
+        <RuleEngineForcedRules mode="config" />
+      </RuleEngineContext.Provider>,
+    );
+
+    // 加载中/失败：绝不报告有效，也绝不把「尚未同步的空表」写成合法草稿
+    // （否则解算预览会发送 forced_rules: []，静默禁用真实强制规则）
+    expect(setGlobalDraftValidity).toHaveBeenCalledWith(false, expect.stringContaining('全局配置未加载'));
+    expect(setGlobalDraft).not.toHaveBeenCalled();
+
+    // 全局配置真正到达后才允许报告有效，并用加载到的真实行写入草稿
+    rerender(
+      <RuleEngineContext.Provider value={contextValueFor(globalConfigRead(), {setGlobalDraft, setGlobalDraftValidity})}>
+        <RuleEngineForcedRules mode="config" />
+      </RuleEngineContext.Provider>,
+    );
+    await waitFor(() => expect(setGlobalDraft).toHaveBeenCalled());
+    expect(setGlobalDraftValidity).toHaveBeenLastCalledWith(true);
+    const updater = setGlobalDraft.mock.calls[0]?.[0] as (current: GlobalScoringPatchPayload) => GlobalScoringPatchPayload;
+    expect(updater({}).forced_rules?.map((rule) => rule.name)).toEqual([
+      'sanctions_entity_hit', 'sanctions_geopolitical_entity_hit', 'sanctions_product_hit',
+    ]);
+  });
+});
+
 /** 独立挂载用的完整 context 值（不经过壳组件，用于 viewer 与查询参数用例） */
 function contextValueFor(
   globalConfig: GlobalScoringConfigRead,
@@ -866,6 +904,11 @@ function contextValueFor(
     refreshGlobalConfig: vi.fn().mockResolvedValue(undefined),
     globalDraft: {},
     setGlobalDraft: vi.fn(),
+    globalDraftValid: true,
+    globalDraftError: '',
+    setGlobalDraftValidity: vi.fn(),
+    // 受控 context：门控稳定且有效（强制规则编辑器本身不读本 getter，仅解算预览使用）
+    readGlobalDraftGate: () => ({valid: true, error: '', revision: 0}),
     globalSaving: false,
     globalSaveError: '',
     saveGlobalConfig: vi.fn().mockResolvedValue(true),

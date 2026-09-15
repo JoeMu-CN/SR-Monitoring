@@ -283,9 +283,15 @@ export interface RuleEngineScoringEditorProps {
  * 阈值顺序（p1>p2>p3）与 0-100 范围是前端实时门控：违反时给出 `role="alert"` 并禁用解算预览，
  * 且不把无效草稿发往后端；壳组件「保存配置」复用同一个 `validateDimensionDraft`，
  * 非法草稿在任何 API 调用之前就被拦截（后端 422 只作为最后防线）。
+ *
+ * 全局层草稿同样门控：强制规则表当前值非法时 `globalDraftValid === false`，
+ * 解算预览被禁用并以 `role="alert"` 说明，绝不使用上一次合法的陈旧 `globalDraft`。
+ * 门控默认为非法（全局配置未加载时不写空草稿）；且两次 `/test` 之间的等待期若草稿
+ * 发生变化，会在发送第二次请求前与渲染结果前复核修订号并中止（F2 窗口 2）。
  */
 export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = ({mode}) => {
-  const {dimension, draft, updateDraft, globalDraft, sample, options, optionsError} = useRuleEngineContext();
+  const {dimension, draft, updateDraft, globalDraft, globalDraftValid, globalDraftError, sample, options, optionsError, readGlobalDraftGate} =
+    useRuleEngineContext();
 
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
@@ -300,7 +306,7 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
   const validation = useMemo(() => validateDimensionDraft(draft), [draft]);
   const hasGlobalDraft = Object.keys(globalDraft).length > 0;
   const eventTypeLabel = options.event_types.find((item) => item.value === sample.eventType)?.label ?? sample.eventType;
-  const canPreview = validation.messages.length === 0 && !previewLoading && options.event_types.length > 0;
+  const canPreview = validation.messages.length === 0 && globalDraftValid && !previewLoading && options.event_types.length > 0;
 
   const rows = useMemo(() => alignCandidatesBySupplierId(baseline, preview), [baseline, preview]);
 
@@ -316,11 +322,32 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
     updateDraft({thresholds: {...draft.thresholds, [key]: value}});
   };
 
-  /** 解算预览：先 baseline（不带草稿）→ 再 preview（带草稿），顺序固定且各只发一次。 */
+  /**
+   * 解算预览：先 baseline（不带草稿）→ 再 preview（带草稿），顺序固定且各只发一次。
+   *
+   * F2 窗口 2：请求开始时冻结全局草稿门控快照（单调修订号）。闭包里的
+   * `globalDraftValid`/`globalDraft` 停留在点击那一刻，await 之后必须用
+   * `readGlobalDraftGate` 同步复核：
+   * - baseline 返回后门控已失效/草稿已变 ⇒ 中止，绝不发送携带陈旧草稿的第二次请求；
+   * - preview 返回后门控再失效/变更 ⇒ 丢弃迟到结果，绝不渲染陈旧预览。
+   */
   const handleSolvePreview = async () => {
     if (!canPreview) return;
     const requestId = latestRequest.current + 1;
     latestRequest.current = requestId;
+    const gateAtStart = readGlobalDraftGate();
+    /** 门控是否已偏离请求开始时的快照；偏离时记录 role=alert 错误并返回 true。 */
+    const abortIfGlobalDraftMoved = (): boolean => {
+      const gate = readGlobalDraftGate();
+      if (gate.valid && gate.revision === gateAtStart.revision) return false;
+      setPreviewErrorStatus(null);
+      setPreviewError(
+        gate.valid
+          ? '全局强制规则草稿在解算等待期间已变更，本次预览已中止（避免使用陈旧草稿）；请重新点击「解算预览」。'
+          : `全局强制规则草稿未通过校验，已中止本次预览${gate.error === '' ? '' : `：${gate.error}`}`,
+      );
+      return true;
+    };
     setPreviewLoading(true);
     setPreviewError('');
     setPreviewErrorStatus(null);
@@ -330,6 +357,8 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
     try {
       const basePayload = buildSandboxPayload(sample, '解算预览', eventTypeLabel);
       const baselineResult = await api.testRuleEngine(basePayload);
+      if (latestRequest.current !== requestId) return;
+      if (abortIfGlobalDraftMoved()) return;
       const previewResult = await api.testRuleEngine({
         ...basePayload,
         dimension_key: dimension.id,
@@ -337,6 +366,7 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
         ...(hasGlobalDraft ? {global_config: globalDraft} : {}),
       });
       if (latestRequest.current !== requestId) return;
+      if (abortIfGlobalDraftMoved()) return;
       setBaseline(baselineResult);
       setPreview(previewResult);
       setPreviewMeta({changedKeys, includedGlobal: hasGlobalDraft});
@@ -625,7 +655,13 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
             data-testid="rule-engine-solve-preview"
             onClick={() => void handleSolvePreview()}
             disabled={!canPreview}
-            title={validation.messages.length > 0 ? '存在校验错误，先修正后再解算' : undefined}
+            title={
+              validation.messages.length > 0
+                ? '存在校验错误，先修正后再解算'
+                : !globalDraftValid
+                  ? '全局强制规则当前草稿未通过校验，先修正后再解算'
+                  : undefined
+            }
             className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg border-2 border-[#004782] px-3 py-1.5 text-[12px] font-bold text-[#004782] transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-400 dark:text-blue-300 dark:hover:bg-slate-800"
           >
             <span className="material-symbols-outlined text-[18px]" aria-hidden="true">calculate</span>
@@ -643,6 +679,19 @@ export const RuleEngineScoringEditor: React.FC<RuleEngineScoringEditorProps> = (
           <p className="text-[11px] text-red-700 dark:text-red-300">
             当前草稿未通过校验，已阻止解算与提交；修正后即可预览。
           </p>
+        )}
+
+        {!globalDraftValid && (
+          <div
+            role="alert"
+            data-testid="rule-engine-solve-preview-global-draft-error"
+            className="space-y-1 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
+            <p className="font-bold">
+              全局强制规则当前草稿未通过校验，已阻止解算预览{globalDraftError === '' ? '' : `：${globalDraftError}`}
+            </p>
+            <p>解算预览不会使用上一次合法的旧规则冒充当前表格；请先在「强制规则（全局表）」修正后重试。</p>
+          </div>
         )}
 
         {previewError && (

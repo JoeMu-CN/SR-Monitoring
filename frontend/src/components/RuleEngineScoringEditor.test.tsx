@@ -7,6 +7,7 @@ import type {
   DimensionInputsRead,
   DimensionRead,
   DimensionTraceRead,
+  ForcedRuleRead,
   GlobalScoringConfigRead,
   GlobalScoringPatchPayload,
   RuleEngineOptions,
@@ -174,6 +175,11 @@ const renderScoringEditorWithContext = (globalDraft: GlobalScoringPatchPayload) 
     refreshGlobalConfig: vi.fn(async () => {}),
     globalDraft,
     setGlobalDraft: vi.fn(),
+    globalDraftValid: true,
+    globalDraftError: '',
+    setGlobalDraftValidity: vi.fn(),
+    // 受控 context：门控稳定且有效，等价于「强制规则编辑器已加载并校验通过」
+    readGlobalDraftGate: () => ({valid: true, error: '', revision: 0}),
     globalSaving: false,
     globalSaveError: '',
     saveGlobalConfig: vi.fn(async () => true),
@@ -327,8 +333,12 @@ describe('配置态评分与阈值可视化编辑（todo 7）', () => {
     fireEvent.change(screen.getByLabelText('严重程度 高'), {target: {value: '20'}});
     fireEvent.click(screen.getByRole('button', {name: '保存配置'}));
 
-    const alerts = await screen.findAllByRole('alert');
-    expect(alerts.some((node) => /超出允许范围/.test(node.textContent ?? ''))).toBe(true);
+    // 全局配置加载完成前，预览门控会先渲染「全局配置未加载」的 role=alert；
+    // 这里轮询等待 422 错误本身出现，而不是任一 alert 出现就断言
+    await waitFor(() => {
+      const alerts = screen.getAllByRole('alert');
+      expect(alerts.some((node) => /超出允许范围/.test(node.textContent ?? ''))).toBe(true);
+    });
   });
 
   it('阈值顺序门控：P2 ≥ P1 时给出 role=alert，保存与预览均被阻止且不发任何请求', async () => {
@@ -452,6 +462,58 @@ describe('配置态评分与阈值可视化编辑（todo 7）', () => {
     expect(secondPayload.global_config).toEqual({severity_scores: {critical: 30}});
   });
 
+  it('缺陷 C 回归：强制规则先合法编辑再改为非法时，解算预览被禁用、不发任何 /test，并以 role=alert 说明', async () => {
+    const testSpy = vi.spyOn(api, 'testRuleEngine').mockResolvedValue(sandboxResult([]));
+    const seededRule: ForcedRuleRead = {
+      name: 'sanctions_entity_hit',
+      description: '供应商主体直接命中制裁或合规事件',
+      event_types: ['compliance'],
+      event_subtypes: [],
+      match_types: ['registry_no'],
+      forced_level: 'P1',
+      reason: '初始原因',
+    };
+    const base = globalConfigMock();
+    vi.mocked(api.globalConfig.get).mockResolvedValue({
+      ...base,
+      source: 'configured',
+      enabled: true,
+      effective: {...base.effective, forced_rules: [seededRule]},
+      defaults: {forced_rules: [seededRule]},
+    });
+
+    renderAdminConfig([naturalDimension()]);
+    const row = await screen.findByTestId('forced-rule-row');
+    fireEvent.click(within(row).getByTestId('forced-rule-expand'));
+
+    // 第一步：合法编辑（只改原因）→ 全局草稿仍有效，解算预览可用，且不显示全局草稿错误
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: '合法编辑后的原因'}});
+    await waitFor(() => expect(previewButton()).toBeEnabled());
+    expect(screen.queryByTestId('rule-engine-solve-preview-global-draft-error')).not.toBeInTheDocument();
+
+    // 第二步：把原因清空 → 表格当前值与上一次合法草稿不再一致，必须立即关闭预览窗口
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: ''}});
+
+    const globalDraftAlert = await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
+    expect(globalDraftAlert).toHaveAttribute('role', 'alert');
+    expect(globalDraftAlert).toHaveTextContent(/全局强制规则/);
+    expect(globalDraftAlert).toHaveTextContent(/原因/);
+
+    expect(previewButton()).toBeDisabled();
+    fireEvent.click(previewButton());
+    await act(async () => {});
+    // 绝不把陈旧的全局层草稿（或静默丢弃 forced_rules 的载荷）发往 /test
+    expect(testSpy).not.toHaveBeenCalled();
+
+    // 修正后恢复可用，且第二次预览请求携带的是修正后的规则，而不是陈旧草稿
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: '修正后的原因'}});
+    await clickSolvePreviewWhenReady();
+    await waitFor(() => expect(testSpy).toHaveBeenCalledTimes(2));
+    const previewPayload = testSpy.mock.calls[1]?.[0] as SandboxRequest;
+    expect(previewPayload.global_config?.forced_rules?.[0]?.reason).toBe('修正后的原因');
+    expect(screen.queryByTestId('rule-engine-solve-preview-global-draft-error')).not.toBeInTheDocument();
+  });
+
   it('候选按 supplier_id 对齐：两次返回顺序不同也不会串行', async () => {
     const testSpy = vi
       .spyOn(api, 'testRuleEngine')
@@ -573,6 +635,154 @@ describe('配置态评分与阈值可视化编辑（todo 7）', () => {
     expect(api.updateDimension).not.toHaveBeenCalled();
     expect(api.globalConfig.update).not.toHaveBeenCalled();
     expect(api.globalConfig.reset).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * F2 修复轮次 2（finding B）回归：解算预览绝不使用陈旧/非法的全局强制规则草稿。
+ *
+ * 窗口 1：`globalConfig === null`（加载中或加载失败）时，空 rows 是「尚未同步」而不是
+ *         「服务端就是空表」，门控必须默认非法且不写 `forced_rules: []`。
+ * 窗口 2：baseline 在途期间强制规则被改坏/改动时，第二次 preview 请求必须中止，
+ *         迟到的响应也绝不渲染。
+ */
+describe('解算预览：全局草稿门控（F2 修复轮次 2）', () => {
+  const seededRule: ForcedRuleRead = {
+    name: 'sanctions_entity_hit',
+    description: '供应商主体直接命中制裁或合规事件',
+    event_types: ['compliance'],
+    event_subtypes: [],
+    match_types: ['registry_no'],
+    forced_level: 'P1',
+    reason: '初始原因',
+  };
+
+  const configWithSeededRule = (): GlobalScoringConfigRead => {
+    const base = globalConfigMock();
+    return {
+      ...base,
+      source: 'configured',
+      enabled: true,
+      effective: {...base.effective, forced_rules: [seededRule]},
+      defaults: {forced_rules: [seededRule]},
+    };
+  };
+
+  const expandFirstForcedRuleRow = async () => {
+    const row = await screen.findByTestId('forced-rule-row');
+    fireEvent.click(within(row).getByTestId('forced-rule-expand'));
+    return row;
+  };
+
+  it('窗口 1：全局配置仍在加载时，解算预览禁用、零 /test 请求，并以 role=alert 说明「全局配置未加载」', async () => {
+    // 永不落地的 GET /global-config：模拟「仍在加载」
+    vi.mocked(api.globalConfig.get).mockImplementation(() => new Promise<GlobalScoringConfigRead>(() => {}));
+    const testSpy = vi.spyOn(api, 'testRuleEngine').mockResolvedValue(sandboxResult([]));
+
+    renderAdminConfig([naturalDimension()]);
+    // 等匹配柱选项加载完成：确保按钮禁用只能来自全局草稿门控，而不是选项未就绪
+    await waitFor(() => expect(screen.getByText('主体')).toBeInTheDocument());
+
+    const alert = await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveTextContent('全局配置未加载');
+
+    expect(previewButton()).toBeDisabled();
+    fireEvent.click(previewButton());
+    await act(async () => {});
+    expect(testSpy).not.toHaveBeenCalled();
+  });
+
+  it('窗口 1：全局配置加载失败时，解算预览禁用、零 /test 请求，并以 role=alert 说明「全局配置未加载」', async () => {
+    vi.mocked(api.globalConfig.get).mockRejectedValue(new Error('网关超时'));
+    const testSpy = vi.spyOn(api, 'testRuleEngine').mockResolvedValue(sandboxResult([]));
+
+    renderAdminConfig([naturalDimension()]);
+    await waitFor(() => expect(screen.getByText('主体')).toBeInTheDocument());
+
+    const alert = await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveTextContent('全局配置未加载');
+
+    expect(previewButton()).toBeDisabled();
+    fireEvent.click(previewButton());
+    await act(async () => {});
+    expect(testSpy).not.toHaveBeenCalled();
+  });
+
+  it('窗口 2：baseline 在途期间强制规则变非法 ⇒ 不发送第二次请求、不渲染陈旧结果，并以 role=alert 说明', async () => {
+    vi.mocked(api.globalConfig.get).mockResolvedValue(configWithSeededRule());
+    let releaseBaseline: (result: SandboxResult) => void = () => {};
+    const pendingBaseline = new Promise<SandboxResult>((resolve) => { releaseBaseline = resolve; });
+    const testSpy = vi
+      .spyOn(api, 'testRuleEngine')
+      .mockImplementationOnce(() => pendingBaseline)
+      .mockResolvedValue(sandboxResult([candidate({supplier_id: 42})]));
+
+    renderAdminConfig([naturalDimension()]);
+    const row = await expandFirstForcedRuleRow();
+    await clickSolvePreviewWhenReady();
+    expect(testSpy).toHaveBeenCalledTimes(1);
+
+    // baseline 仍在飞行中：清空原因 ⇒ 强制规则表当前值非法（上一次合法的陈旧草稿仍在）
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: ''}});
+    await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
+
+    await act(async () => { releaseBaseline(sandboxResult([candidate({supplier_id: 42})])); });
+
+    expect(testSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('rule-engine-solve-preview-result')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-preview-candidate-42')).not.toBeInTheDocument();
+    const error = await screen.findByTestId('rule-engine-solve-preview-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(error).toHaveTextContent('已中止');
+  });
+
+  it('窗口 2：baseline 在途期间强制规则被改成另一个合法值 ⇒ 同样中止第二次请求，不渲染陈旧结果', async () => {
+    vi.mocked(api.globalConfig.get).mockResolvedValue(configWithSeededRule());
+    let releaseBaseline: (result: SandboxResult) => void = () => {};
+    const pendingBaseline = new Promise<SandboxResult>((resolve) => { releaseBaseline = resolve; });
+    const testSpy = vi
+      .spyOn(api, 'testRuleEngine')
+      .mockImplementationOnce(() => pendingBaseline)
+      .mockResolvedValue(sandboxResult([candidate({supplier_id: 42})]));
+
+    renderAdminConfig([naturalDimension()]);
+    const row = await expandFirstForcedRuleRow();
+    await clickSolvePreviewWhenReady();
+    expect(testSpy).toHaveBeenCalledTimes(1);
+
+    // 改成另一个合法值：有效性仍为 true，但草稿已变化，不能再用旧草稿发第二次请求
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: '另一个合法原因'}});
+    await act(async () => {});
+
+    await act(async () => { releaseBaseline(sandboxResult([candidate({supplier_id: 42})])); });
+
+    expect(testSpy).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('rule-engine-solve-preview-result')).not.toBeInTheDocument();
+    const error = await screen.findByTestId('rule-engine-solve-preview-error');
+    expect(error).toHaveAttribute('role', 'alert');
+    expect(error).toHaveTextContent('已中止');
+  });
+
+  it('happy path：合法草稿稳定不变时基线→预览恰好两次，第二次携带当前（非陈旧）规则草稿', async () => {
+    vi.mocked(api.globalConfig.get).mockResolvedValue(configWithSeededRule());
+    const testSpy = vi
+      .spyOn(api, 'testRuleEngine')
+      .mockResolvedValueOnce(sandboxResult([candidate({supplier_id: 1, score: 60, level: 'P3'})]))
+      .mockResolvedValueOnce(sandboxResult([candidate({supplier_id: 1, score: 97, level: 'P2'})]));
+
+    renderAdminConfig([naturalDimension()]);
+    const row = await expandFirstForcedRuleRow();
+    fireEvent.change(within(row).getByLabelText('原因'), {target: {value: '稳定合法原因'}});
+
+    await clickSolvePreviewWhenReady();
+    await waitFor(() => expect(testSpy).toHaveBeenCalledTimes(2));
+
+    const secondPayload = testSpy.mock.calls[1]?.[0] as SandboxRequest;
+    expect(secondPayload.global_config?.forced_rules?.[0]?.reason).toBe('稳定合法原因');
+    expect(await screen.findByTestId('rule-engine-solve-preview-result')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-solve-preview-error')).not.toBeInTheDocument();
   });
 });
 

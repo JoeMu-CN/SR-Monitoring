@@ -9,7 +9,11 @@ import {
   updateDimensionConfig,
   type DataSourceRead,
   type DimensionRead,
+  type DimensionTraceRead,
+  type GlobalScoringConfigRead,
   type RiskAlertRead,
+  type SandboxRequest,
+  type SandboxResult,
   type SupplierListItem,
   type SupplierRead,
 } from './api';
@@ -371,6 +375,267 @@ describe('供应商删除影响 API 请求契约', () => {
     );
     expect(impact.can_delete).toBe(false);
     expect(impact.blocked_reason).toBe('supplier_has_risk_history');
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('规则引擎全局配置与轨迹 API 请求契约', () => {
+  const okJson = (payload: unknown) => ({ok: true, status: 200, json: async () => payload});
+
+  /**
+   * 完整响应夹具，类型锚定 `api.ts` 导出的真实读模型：
+   * 字段缺失、改名或类型不符都会让 `npm run typecheck` 失败。
+   */
+  const globalConfigFixture = {
+    source: 'configured',
+    enabled: true,
+    effective: {
+      severity_scores: {critical: 40, high: 25, medium: 12, low: 4},
+      association_scores: {strong: 35, medium: 20, weak: 8},
+      p1_min: 85,
+      p2_min: 65,
+      p3_min: 40,
+      alert_expiry_days: 90,
+      forced_rules: [{name: 'sanctions_entity_hit', dimension_key: 'sanctions'}],
+    },
+    defaults: {
+      severity_scores: {critical: 35, high: 20, medium: 10, low: 3},
+      p1_min: 80,
+      p2_min: 60,
+      p3_min: 40,
+    },
+    shadowed_by: {severity_scores: ['geopolitical']},
+    forced_rules_shadowed_by: ['geopolitical'],
+    dropped_dimension_rules: [{dimension_key: 'geopolitical', name: 'policy_industry_hit'}],
+  } satisfies GlobalScoringConfigRead;
+
+  const dimensionTraceFixture = {
+    available: true,
+    event: {
+      event_type: 'geopolitical',
+      event_subtype: 'sanctions',
+      severity: 'critical',
+      summary: '制裁清单命中示例事件',
+      confidence: 0.92,
+      published_at: '2026-09-15T01:00:00Z',
+      source_name: 'OFAC SDN',
+    },
+    routing: {key: 'geopolitical', label: '地缘政治', match_columns: ['entity', 'country']},
+    match: {
+      match_type: 'legal_name',
+      match_reasons: ['法人全称精确匹配'],
+      match_evidence: [{supplier_id: 3, decision: 'exact'}],
+    },
+    score: {
+      total: 92,
+      level: 'P1',
+      detail: {severity: 40, association: 32},
+      level_cap: 'P2',
+      forced_rule: {name: 'sanctions_entity_hit'},
+    },
+    samples: [
+      {
+        id: 7,
+        supplier_id: 3,
+        supplier_name: '示例供应商',
+        level: 'P1',
+        event_summary: '制裁清单命中示例事件',
+        updated_at: '2026-09-15T02:00:00Z',
+      },
+    ],
+  } satisfies DimensionTraceRead;
+
+  const sandboxFixture = {
+    dimension: {key: 'geopolitical', label: '地缘政治', match_columns: ['entity', 'country']},
+    candidates: [
+      {
+        supplier_id: 42,
+        supplier_name: '示例公司',
+        match_type: 'legal_name',
+        association_score: 20,
+        reasons: ['法人全称精确匹配'],
+        score: 88,
+        level: 'P1',
+        score_detail: {severity: 40, association: 20},
+      },
+    ],
+  } satisfies SandboxResult;
+
+  it('GET /global-config 是只读请求：携带会话、不带 CSRF，并解析完整读模型', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(globalConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = await api.globalConfig.get();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/rule-engine/global-config',
+      expect.objectContaining({credentials: 'include'}),
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method ?? 'GET').toBe('GET');
+    expect(new Headers(options.headers).has('X-CSRF-Token')).toBe(false);
+
+    // 响应契约：返回 `{}`、字段改名或嵌套值被丢弃时，以下断言必须失败
+    expect(config.source).toBe('configured');
+    expect(config.enabled).toBe(true);
+    expect(config.effective.severity_scores).toEqual({critical: 40, high: 25, medium: 12, low: 4});
+    expect(config.effective.p1_min).toBe(85);
+    expect(config.defaults.p2_min).toBe(60);
+    expect(config.shadowed_by).toEqual({severity_scores: ['geopolitical']});
+    expect(config.forced_rules_shadowed_by).toEqual(['geopolitical']);
+    expect(config.dropped_dimension_rules).toEqual([
+      {dimension_key: 'geopolitical', name: 'policy_industry_hit'},
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  it('PUT /global-config 只发送传入字段、带 CSRF，未确认时不追加确认参数', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(globalConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-global'});
+
+    const config = await api.globalConfig.update({severity_scores: {critical: 30}});
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/rule-engine/global-config');
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method).toBe('PUT');
+    expect(JSON.parse(String(options.body))).toEqual({severity_scores: {critical: 30}});
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-global');
+    expect(config.effective.alert_expiry_days).toBe(90);
+    expect(config.defaults.p3_min).toBe(40);
+    vi.unstubAllGlobals();
+  });
+
+  it('移除当前生效强制规则时确认标记走查询参数而不是请求体', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(globalConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-global'});
+
+    const config = await api.globalConfig.update({forced_rules: []}, true);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/rule-engine/global-config?confirm_disable_forced_rules=true',
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(options.body)) as Record<string, unknown>;
+    expect(body).toEqual({forced_rules: []});
+    expect(Object.keys(body)).not.toContain('confirm_disable_forced_rules');
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-global');
+    expect(config.forced_rules_shadowed_by).toEqual(['geopolitical']);
+    vi.unstubAllGlobals();
+  });
+
+  it('DELETE /global-config 恢复默认：确认标记走查询参数、无请求体', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(globalConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-global'});
+
+    const config = await api.globalConfig.reset(true);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/rule-engine/global-config?confirm_disable_forced_rules=true',
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method).toBe('DELETE');
+    expect(options.body).toBeUndefined();
+    expect(config.source).toBe('configured');
+    vi.unstubAllGlobals();
+  });
+
+  it('dimensionTrace 默认取该维度最近提醒，显式 alert_id 时附带查询参数', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(dimensionTraceFixture));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const trace = await api.dimensionTrace('natural');
+    await api.dimensionTrace('natural', 17);
+
+    expect(fetchMock.mock.calls.map(([path]) => path)).toEqual([
+      '/api/v1/rule-engine/dimensions/natural/trace',
+      '/api/v1/rule-engine/dimensions/natural/trace?alert_id=17',
+    ]);
+    for (const [, options] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+      expect(options.credentials).toBe('include');
+      expect(options.method ?? 'GET').toBe('GET');
+    }
+
+    // 响应契约：available/event/routing/match/score/samples 六段必须是真实读模型
+    expect(trace.available).toBe(true);
+    expect(trace.event?.event_type).toBe('geopolitical');
+    expect(trace.event?.source_name).toBe('OFAC SDN');
+    expect(trace.routing?.key).toBe('geopolitical');
+    expect(trace.routing?.match_columns).toEqual(['entity', 'country']);
+    expect(trace.match?.match_type).toBe('legal_name');
+    expect(trace.match?.match_reasons).toEqual(['法人全称精确匹配']);
+    expect(trace.match?.match_evidence).toEqual([{supplier_id: 3, decision: 'exact'}]);
+    expect(trace.score?.total).toBe(92);
+    expect(trace.score?.level).toBe('P1');
+    expect(trace.score?.level_cap).toBe('P2');
+    expect(trace.score?.forced_rule).toEqual({name: 'sanctions_entity_hit'});
+    expect(trace.samples).toEqual([
+      {
+        id: 7,
+        supplier_id: 3,
+        supplier_name: '示例供应商',
+        level: 'P1',
+        event_summary: '制裁清单命中示例事件',
+        updated_at: '2026-09-15T02:00:00Z',
+      },
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  it('testRuleEngine 透传未保存草稿字段，且不带草稿时保持旧载荷形状', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(sandboxFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-sandbox'});
+
+    const legacy: SandboxRequest = {
+      event_type: 'geopolitical',
+      event_subtype: null,
+      severity: 'critical',
+      organizations: [{name: '示例公司', aliases: [], registry_no: null}],
+      locations: [],
+      affected_products: [],
+      affected_industries: [],
+      summary: '草稿预览样例事件',
+      credibility: 80,
+      has_published_at: true,
+    };
+    const legacyResult = await api.testRuleEngine(legacy);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/rule-engine/test');
+    const [, legacyOptions] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(legacyOptions.method).toBe('POST');
+    expect(JSON.parse(String(legacyOptions.body))).toEqual(legacy);
+
+    // 响应契约：dimension 与候选 supplier_id/score/level 必须来自真实读模型
+    expect(legacyResult.dimension).toEqual({
+      key: 'geopolitical',
+      label: '地缘政治',
+      match_columns: ['entity', 'country'],
+    });
+    expect(legacyResult.candidates).toHaveLength(1);
+    expect(legacyResult.candidates[0]?.supplier_id).toBe(42);
+    expect(legacyResult.candidates[0]?.supplier_name).toBe('示例公司');
+    expect(legacyResult.candidates[0]?.score).toBe(88);
+    expect(legacyResult.candidates[0]?.level).toBe('P1');
+    expect(legacyResult.candidates[0]?.reasons).toEqual(['法人全称精确匹配']);
+
+    const draftResult = await api.testRuleEngine({
+      ...legacy,
+      dimension_key: 'geopolitical',
+      draft_config: {match_columns: ['entity'], severity_scores: {critical: 30}},
+      global_config: {severity_scores: {high: 20}},
+    });
+
+    const [, draftOptions] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const draftBody = JSON.parse(String(draftOptions.body)) as Record<string, unknown>;
+    expect(draftBody.dimension_key).toBe('geopolitical');
+    expect(draftBody.draft_config).toEqual({match_columns: ['entity'], severity_scores: {critical: 30}});
+    expect(draftBody.global_config).toEqual({severity_scores: {high: 20}});
+    expect(new Headers(draftOptions.headers).get('X-CSRF-Token')).toBe('csrf-sandbox');
+    expect(draftResult.dimension?.key).toBe('geopolitical');
+    expect(draftResult.candidates[0]?.level).toBe('P1');
     vi.unstubAllGlobals();
   });
 });

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.auth.security import require_permission
@@ -172,6 +172,63 @@ def _seed_alert(
         created_at=created_at,
         updated_at=updated_at,
     )
+
+
+def _cleanup_committed_probe(
+    supplier_codes: tuple[str, ...],
+    source_codes: tuple[str, ...],
+    usernames: tuple[str, ...],
+) -> None:
+    """删除测试用真实提交（真实 SessionLocal）的探针数据。
+
+    这些探针必须先提交才能被独立会话读到；提交后不会随 db_session 事务回滚，
+    因此必须在测试末尾显式清理，否则会污染后续文件的确定性断言
+    （如 test_e2e_seed 的全量供应商/提醒/证据闭包契约）。
+    """
+    from app.auth.models import AuthSession, User
+    from app.database import SessionLocal
+
+    with SessionLocal.begin() as session:
+        supplier_ids = list(
+            session.scalars(
+                select(Supplier.id).where(Supplier.supplier_code.in_(supplier_codes))
+            )
+        )
+        match_ids = list(
+            session.scalars(
+                select(SupplierEventMatch.id).where(
+                    SupplierEventMatch.supplier_id.in_(supplier_ids)
+                )
+            )
+        )
+        event_ids = list(
+            session.scalars(
+                select(SupplierEventMatch.event_id).where(
+                    SupplierEventMatch.supplier_id.in_(supplier_ids)
+                )
+            )
+        )
+        session.execute(delete(RiskAlert).where(RiskAlert.match_id.in_(match_ids)))
+        session.execute(
+            delete(SupplierEventMatch).where(
+                SupplierEventMatch.supplier_id.in_(supplier_ids)
+            )
+        )
+        session.execute(
+            delete(RiskEventSignal).where(RiskEventSignal.event_id.in_(event_ids))
+        )
+        session.execute(delete(RiskEvent).where(RiskEvent.id.in_(event_ids)))
+        source_ids = list(
+            session.scalars(select(DataSource.id).where(DataSource.code.in_(source_codes)))
+        )
+        session.execute(delete(RawSignal).where(RawSignal.source_id.in_(source_ids)))
+        session.execute(delete(DataSource).where(DataSource.id.in_(source_ids)))
+        session.execute(delete(Supplier).where(Supplier.id.in_(supplier_ids)))
+        user_ids = list(
+            session.scalars(select(User.id).where(User.username.in_(usernames)))
+        )
+        session.execute(delete(AuthSession).where(AuthSession.user_id.in_(user_ids)))
+        session.execute(delete(User).where(User.id.in_(user_ids)))
 
 
 def test_dashboard_summary_requires_session_returns_401_no_data(
@@ -798,6 +855,13 @@ def test_dashboard_summary_snapshot_consistent_under_concurrent_write() -> None:
         f"近期提醒泄漏并发写入：{recent_ids}"
     )
 
+    # 清理真实提交的探针数据，避免泄漏到其他测试文件的确定性断言
+    _cleanup_committed_probe(
+        ("DASH-snap-base", "DASH-snap-writer"),
+        ("dash-snap-base", "dash-snap-writer"),
+        ("dash-snapshot-viewer",),
+    )
+
 
 # ---------------------------------------------------------------------------
 # 真实 /dashboard/summary 权限拒绝（monkeypatch 移除 viewer 的 risk_view）
@@ -1003,4 +1067,11 @@ def test_dashboard_summary_business_queries_run_in_readonly_repeatable_read_snap
     )
     assert probe["write_rejected"] is True, (
         f"只读事务内的写入未被 Postgres 拒绝：{probe.get('write_error')!r}"
+    )
+
+    # 清理真实提交的探针数据，避免泄漏到其他测试文件的确定性断言
+    _cleanup_committed_probe(
+        ("DASH-ro-probe",),
+        ("dash-ro-probe",),
+        ("dash-readonly-probe-viewer",),
     )

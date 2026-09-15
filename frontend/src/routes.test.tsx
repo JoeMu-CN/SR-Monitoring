@@ -7,6 +7,7 @@ import {
   allRoutePermissions,
   isSupplierStatusFilter,
   routeDefinitions,
+  routePermissions,
   supplierSearchParams,
   suppliersPath,
 } from './routes';
@@ -95,6 +96,20 @@ describe('显式路由白名单', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('无权访问');
   });
 
+  it('仅持有 rule_summary_view 时允许直接访问 /rules', () => {
+    renderRoute(['/rules'], [routePermissions.ruleSummaryView]);
+
+    expect(screen.getByText('规则页面')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('持有其它任一页面权限但缺少 rule_summary_view 时拒绝 /rules', () => {
+    renderRoute(['/rules'], [routePermissions.ruleManage]);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('无权访问');
+    expect(screen.queryByText('规则页面')).not.toBeInTheDocument();
+  });
+
   it.each(['/missing', '/research', '/source-agent'])('将未知或冻结路径 %s 渲染为 404', (path) => {
     renderRoute([path]);
 
@@ -143,6 +158,12 @@ describe('路由元数据', () => {
     ]);
     expect(routeDefinitions.find((route) => route.id === 'assistant')?.permission).toBe('risk_query_use');
     expect(routeDefinitions.find((route) => route.id === 'userSettings')?.permission).toBe('user_manage');
+    // /rules 的页面权限锚定为 rule_summary_view（不是 rule_manage/source_status_view）
+    expect(routePermissions.ruleSummaryView).toBe('rule_summary_view');
+    expect(routeDefinitions.find((route) => route.id === 'rules')?.path).toBe('/rules');
+    expect(routeDefinitions.find((route) => route.id === 'rules')?.permission).toBe(
+      routePermissions.ruleSummaryView,
+    );
   });
 
   it('供应商清单地址省略默认值，只为非默认状态保留查询参数', () => {

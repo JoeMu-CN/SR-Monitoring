@@ -30,7 +30,7 @@ from seed_hardening_e2e import (
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.auth.models import User
+from app.auth.models import SecurityAuditEvent, User
 from app.config import CSRF_COOKIE_NAME, RetentionSettings
 from app.database import SessionLocal, get_session
 from app.main import app
@@ -202,6 +202,17 @@ def test_supplier_with_history_rejects_delete_and_keeps_history(admin_client: Te
     after = admin_client.get(f"/api/v1/suppliers/{supplier_id}/deletion-impact").json()
     assert (after["match_count"], after["alert_count"]) == (
         impact["match_count"], impact["alert_count"])
+
+    # 清理：拒绝审计由产品接口独立提交，删除本探针写入的审计行，
+    # 避免污染 test_supplier_delete_guard 的“不得写供应商审计”契约
+    with SessionLocal.begin() as session:
+        session.execute(
+            delete(SecurityAuditEvent).where(
+                SecurityAuditEvent.action == "supplier_delete_rejected",
+                SecurityAuditEvent.resource_type == "supplier",
+                SecurityAuditEvent.resource_id == str(supplier_id),
+            )
+        )
 
 
 def test_lossless_edit_keeps_paused_state_and_child_rows(admin_client: TestClient) -> None:

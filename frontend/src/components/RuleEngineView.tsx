@@ -320,8 +320,13 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                         </span>
                         <div className="min-w-0">
                           <div className="font-bold text-[14px] text-[#101d28] dark:text-white">{dim.name}</div>
-                          <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                            {dim.contentItems.slice(0, 3).join(' · ') || '待配置监控内容'}
+                          {/* 「具体监控内容」卡片已按 todo 9 移除：完整清单改挂维度项悬浮/详情，
+                              文本节点保留全部条目（truncate 仅做视觉裁剪），信息不丢失 */}
+                          <div
+                            className="text-[11px] text-slate-500 mt-0.5 truncate"
+                            title={dim.contentItems.length > 0 ? dim.contentItems.join(' · ') : undefined}
+                          >
+                            {dim.contentItems.join(' · ') || '待配置监控内容'}
                           </div>
                           {isSelected && (
                             <div className="text-[11px] mt-0.5">
@@ -464,17 +469,8 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <section className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3">
-                        <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">具体监控内容</h3>
-                        <div className="flex flex-wrap gap-1.5">
-                          {selectedDim.contentItems.map((item) => (
-                            <span key={item} className="px-2 py-1 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300">{item}</span>
-                          ))}
-                        </div>
-                      </section>
-                      <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
-                    </div>
+                    {/* 监控内容改挂左栏维度项悬浮/详情；信源列表为两态共用的只读信息（todo 9：具体监控内容独立卡片已移除） */}
+                    <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
 
                     {/* 匹配柱与事件类型配置 */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -7,13 +7,12 @@ import {RuleEngineDimensionSources} from './RuleEngineDimensionSources';
 import {RuleEngineMatchColumns} from './RuleEngineMatchColumns';
 import {RuleEngineEventTypes} from './RuleEngineEventTypes';
 import {RuleEngineForcedRules} from './RuleEngineForcedRules';
-import {RuleEngineScoringEditor} from './RuleEngineScoringEditor';
+import {RuleEngineScoringEditor, validateDimensionDraft} from './RuleEngineScoringEditor';
 import {RuleEnginePipeline} from './RuleEnginePipeline';
 import {RuleEngineRuleMatrix} from './RuleEngineRuleMatrix';
 import {RuleEngineExplainers} from './RuleEngineExplainers';
 import {useRuleEngineData} from './useRuleEngineData';
 import {
-  ASSOCIATION_MAX,
   defaultSampleEvent,
   draftFromDimension,
   RuleEngineContext,
@@ -22,7 +21,6 @@ import {
   RuleEngineEventTypeConflict,
   RuleEngineMode,
   RuleEngineSampleEvent,
-  SEVERITY_MAX,
 } from './RuleEngineContext';
 import {routePaths} from '../routes';
 
@@ -132,16 +130,11 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
   const handleSaveConfig = async () => {
     if (!selectedDim) return;
-    // 前端阻止超范围提交：严重程度 0-35，关联类型 0-30
-    const severityOutOfRange = Object.entries(draft.severityScores).some(([, value]) => value < 0 || value > SEVERITY_MAX);
-    const associationOutOfRange = Object.entries(draft.associationScores).some(([, value]) => value < 0 || value > ASSOCIATION_MAX);
-    if (severityOutOfRange || associationOutOfRange) {
-      setConfigError('分值超出允许范围：严重程度 0-35，关联类型 0-30');
-      return;
-    }
-    // 前端阻止提交：至少保留一柱
-    if (draft.matchColumns.length === 0) {
-      setConfigError('至少保留一个匹配柱，不能全部取消');
+    // 保存路径复用评分编辑器的完整校验（severity 0-35、association 0-30、阈值 0-100、
+    // p1>p2>p3、至少一柱）：任何非法草稿都在发出 API 请求之前被拦截，后端 422 只作最后防线
+    const draftValidation = validateDimensionDraft(draft);
+    if (draftValidation.messages.length > 0) {
+      setConfigError(draftValidation.messages.join('；'));
       return;
     }
     const updated: MonitoringDimension = {

@@ -55,7 +55,15 @@ class AcceptanceProvider:
             event_subtype="weather_alert",
             suggested_severity="high",
             organizations=[{"name": "上海华辰精密制造有限公司", "aliases": []}],
-            locations=[{"name": "上海市", "country_code": "CN", "city": "上海市"}],
+            locations=[
+                {
+                    "name": "上海市浦东新区",
+                    "country_code": "CN",
+                    "region": "上海市",
+                    "city": "上海市",
+                    "district": "浦东新区",
+                }
+            ],
             affected_activities=["production"],
             affected_products=[],
             start_at="2026-08-18T08:00:00+08:00",

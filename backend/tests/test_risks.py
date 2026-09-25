@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
 from app.ai.schemas import SignalAnalysisResult
+from app.risks.engine.processing import match_type
 from app.risks.models import (
     EventEntity,
     EventLocation,
@@ -16,7 +17,7 @@ from app.risks.models import (
     RiskEventSignal,
     SupplierEventMatch,
 )
-from app.signals.models import DataSource, RawSignal
+from app.signals.models import RawSignal
 
 
 class StaticProvider:
@@ -217,11 +218,12 @@ def test_alias_match_persists_entity_and_structured_evidence(
     assert db_session.scalar(select(func.count()).select_from(EventEntity)) == 1
 
 
-def test_postgis_distance_match_caps_weak_association_at_p2(
+def test_coordinate_radius_without_district_no_longer_matches(
     client: TestClient,
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
+    """地点匹配不再使用经纬度与影响半径：坐标与生产地点完全重合也不生成匹配。"""
     result = SignalAnalysisResult(
         event_type="weather",
         event_subtype="weather_alert",
@@ -231,8 +233,8 @@ def test_postgis_distance_match_caps_weak_association_at_p2(
             {
                 "name": "台风中心",
                 "country_code": "CN",
-                "latitude": 31.23,
-                "longitude": 121.47,
+                "latitude": 31.2304,
+                "longitude": 121.4737,
                 "radius_km": 50,
             }
         ],
@@ -246,25 +248,269 @@ def test_postgis_distance_match_caps_weak_association_at_p2(
     monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
     create_rich_supplier(client)
     import_signals(client)
-    source = db_session.scalar(select(DataSource).where(DataSource.code == "manual-json"))
-    assert source is not None
-    source.credibility = 100
-    db_session.flush()
     signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
     assert signal_id is not None
 
     response = client.post(f"/api/v1/signals/{signal_id}/process")
 
     assert response.status_code == 200
-    alert = db_session.scalar(select(RiskAlert))
-    match = db_session.scalar(select(SupplierEventMatch))
-    assert alert is not None and match is not None
-    assert match.match_type == "site_distance"
-    assert match.evidence[0]["distance_km"] < 1
-    assert alert.score == 85
-    assert alert.level == "P2"
-    assert alert.score_detail["level_cap"] == "weak_association_max_p2"
+    assert response.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+    assert db_session.scalar(select(func.count()).select_from(RiskAlert)) == 0
+    # 事件地点本身仍正常持久化，只是不再参与供应商关联
     assert db_session.scalar(select(func.count()).select_from(EventLocation)) == 1
+
+
+def test_same_district_match_only_produces_site_text(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """同区县命中只产生 site_text；事件携带坐标与半径也不再生成 site_distance。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        event_subtype="weather_alert",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "上海市浦东新区",
+                "country_code": "CN",
+                "region": "上海市",
+                "city": "上海市",
+                "district": "浦东新区",
+                "latitude": 31.2304,
+                "longitude": 121.4737,
+                "radius_km": 50,
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="浦东新区天气影响",
+        evidence_sentences=["浦东新区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_rich_supplier(client, district="浦东新区")
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 200
+    assert len(response.json()["alert_ids"]) == 1
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert match.match_type == "site_text"
+    assert match.evidence[0]["method"] == "text"
+    assert match.evidence[0]["precision"] == "district"
+    assert match.evidence[0]["district"] == "浦东"
+    assert "distance_km" not in match.evidence[0]
+
+
+def test_county_level_city_district_matches_explicitly(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """显式 district 为县级市（如张家港市）时不受“区县旗”后缀限制，可精确匹配。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        event_subtype="weather_alert",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "张家港市",
+                "country_code": "CN",
+                "region": "江苏省",
+                "city": "苏州市",
+                "district": "张家港市",
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="张家港市天气影响",
+        evidence_sentences=["张家港市发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    response = client.post(
+        "/api/v1/suppliers",
+        json={
+            "supplier_code": "D7-COUNTY",
+            "legal_name": "张家港精工制造有限公司",
+            "country_code": "CN",
+            "registry_no": "91320000D7COUNTY01",
+            "aliases": [],
+            "sites": [
+                {
+                    "site_name": "张家港工厂",
+                    "country_code": "CN",
+                    "region": "江苏省",
+                    "city": "苏州市",
+                    "district": "张家港市",
+                    "address": "江苏省苏州市张家港市测试路1号",
+                    "latitude": None,
+                    "longitude": None,
+                }
+            ],
+            "products": [],
+        },
+    )
+    assert response.status_code == 201
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    processed = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert processed.status_code == 200
+    assert len(processed.json()["alert_ids"]) == 1
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert match.match_type == "site_text"
+    assert match.evidence[0]["method"] == "text"
+    assert match.evidence[0]["precision"] == "district"
+    assert match.evidence[0]["district"] == "张家港市"
+
+
+def test_city_only_event_no_longer_matches_site_text(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """仅市级事件不命中：事件无法解析区县时，不回退到 name/city 文本包含。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        event_subtype="weather_alert",
+        suggested_severity="high",
+        organizations=[],
+        locations=[
+            {
+                "name": "上海市",
+                "country_code": "CN",
+                "region": "上海市",
+                "city": "上海市",
+            }
+        ],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="上海市天气影响",
+        evidence_sentences=["上海地区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_rich_supplier(client, district="浦东新区")
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 200
+    assert response.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+
+
+def test_province_only_event_no_longer_matches_site_text(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """仅省级事件不命中：事件无法解析区县时，不回退到 region 文本包含。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        event_subtype="weather_alert",
+        suggested_severity="high",
+        organizations=[],
+        locations=[{"name": "江苏省", "country_code": "CN", "region": "江苏省"}],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="江苏省天气影响",
+        evidence_sentences=["江苏地区发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    response = client.post(
+        "/api/v1/suppliers",
+        json={
+            "supplier_code": "D7-PROVINCE",
+            "legal_name": "昆山精工制造有限公司",
+            "country_code": "CN",
+            "registry_no": "91320000D7PROVINCE1",
+            "aliases": [],
+            "sites": [
+                {
+                    "site_name": "昆山工厂",
+                    "country_code": "CN",
+                    "region": "江苏省",
+                    "city": "苏州市",
+                    "district": "昆山市",
+                    "address": "江苏省苏州市昆山市测试路1号",
+                    "latitude": None,
+                    "longitude": None,
+                }
+            ],
+            "products": [],
+        },
+    )
+    assert response.status_code == 201
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    processed = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert processed.status_code == 200
+    assert processed.json()["alert_ids"] == []
+    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+
+
+def test_address_text_resolves_district_and_matches(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """事件地点名是地址文本时仍可解析出区县，并与同区县生产地点命中。"""
+    result = SignalAnalysisResult(
+        event_type="weather",
+        event_subtype="weather_alert",
+        suggested_severity="high",
+        organizations=[],
+        locations=[{"name": "上海市浦东新区华辰路1号", "country_code": "CN"}],
+        affected_activities=["production"],
+        affected_products=[],
+        summary_zh="浦东地址天气影响",
+        evidence_sentences=["上海市浦东新区华辰路1号发布天气风险预警。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_rich_supplier(client, district="浦东新区")
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    response = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert response.status_code == 200
+    assert len(response.json()["alert_ids"]) == 1
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert match.match_type == "site_text"
+    assert match.evidence[0]["district"] == "浦东"
+    assert match.evidence[0]["precision"] == "district"
+
+
+def test_match_type_order_keeps_legacy_site_distance() -> None:
+    """历史匹配行含 site_distance 时排序不抛 KeyError（新匹配已不再产生该类型）。"""
+    assert match_type({"site_distance", "site_text"}) == "site_distance+site_text"
 
 
 def test_district_location_match_rejects_same_city_other_district(
@@ -375,11 +621,12 @@ def test_district_in_location_name_rejects_site_city_other_district(
     assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
 
 
-def test_district_spatial_match_rejects_same_district_in_wrong_city(
+def test_district_match_rejects_same_district_in_wrong_city(
     client: TestClient,
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
+    """区县相同但省份/城市不一致仍拒绝；事件坐标与生产地点重合也不放行。"""
     result = SignalAnalysisResult(
         event_type="weather",
         event_subtype="weather_alert",

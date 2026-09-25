@@ -2,7 +2,7 @@
 
 五个匹配柱独立成函数，维度模块按需声明启用哪些柱：
 - entity    主体：注册号 / 法人全称 / 别名（强关联，复用现有确定性逻辑）
-- location  地点：文本（省市区/地址）+ PostGIS 空间半径（复用现有逻辑）
+- location  地点：区县行政区名称精确匹配，不使用经纬度与影响半径；无法解析区县的事件地点不匹配
 - product   产品：受影响产品关键词 vs 供应产品
 - country   国家：事件国家 vs 供应商国别/生产地国别（宏观维度，弱关联）
 - industry  行业：受影响产品 vs 供应商行业标签/关键原材料（宏观维度）
@@ -14,10 +14,9 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.ai.schemas import LocationReference, SignalAnalysisResult
+from app.ai.schemas import SignalAnalysisResult
 from app.suppliers.models import Supplier, SupplierSite
 from app.suppliers.schemas import normalize_alias
 
@@ -25,6 +24,8 @@ MATCH_ORDER = {
     "registry_no": 0,
     "legal_name": 1,
     "alias": 2,
+    # site_distance 已不再由新匹配产生；保留仅为历史 SupplierEventMatch 排序兼容，
+    # 避免既有行在 match_type() 重组时触发 KeyError。
     "site_distance": 3,
     "site_text": 4,
     "country": 5,
@@ -124,19 +125,6 @@ def match_entities(
                     )
 
 
-def _matches_text_location(location_values: list[str], site: SupplierSite) -> bool:
-    site_values = {
-        normalize_alias(value)
-        for value in (site.site_name, site.region, site.city, site.district)
-        if value
-    }
-    normalized_address = normalize_alias(site.address)
-    return any(
-        value in site_values or (len(value) >= 2 and value in normalized_address)
-        for value in location_values
-    )
-
-
 def _district_key(value: str | None) -> str | None:
     if not value:
         return None
@@ -163,100 +151,55 @@ def _infer_district(*values: str | None) -> str | None:
 
 
 def _location_district(location: object) -> str | None:
+    """优先取显式 district（可含县级市名），仅对 name/city 做保守后缀推断。"""
+    explicit = getattr(location, "district", None)
+    if explicit:
+        return _district_key(explicit)
     return _infer_district(
-        getattr(location, "district", None),
         getattr(location, "name", None),
         getattr(location, "city", None),
     )
 
 
 def _site_district(site: SupplierSite) -> str | None:
-    return _infer_district(site.district, site.city, site.site_name, site.address)
+    """优先取显式 district（可含县级市名），仅对 city/名称/地址做保守后缀推断。"""
+    if site.district:
+        return _district_key(site.district)
+    return _infer_district(site.city, site.site_name, site.address)
 
 
 def matches_location_reference(location: object, site: SupplierSite) -> bool:
-    """判断事件地点与生产地点是否满足区县级精确匹配。"""
-    location_district = _location_district(location)
-    site_district = _site_district(site)
-    if location_district:
-        if not site_district or location_district != site_district:
-            return False
-        for location_value, site_value in (
-            (getattr(location, "country_code", None), site.country_code),
-            (getattr(location, "region", None), site.region),
-        ):
-            if location_value and (
-                not site_value or normalize_alias(site_value) != normalize_alias(location_value)
-            ):
-                return False
-        location_city = getattr(location, "city", None)
-        site_city = site.city
-        # “上海市/宝山区”这类数据中，city 字段可能实际承载区县；
-        # 区县已单独严格校验时不再用错位的 city 字段拒绝同一城市。
-        if (
-            location_city
-            and site_city
-            and _infer_district(location_city) is None
-            and _infer_district(site_city) is None
-            and normalize_alias(location_city) != normalize_alias(site_city)
-        ):
-            return False
-        return True
-    return _matches_text_location(
-        [
-            normalize_alias(value)
-            for value in (
-                getattr(location, "name", None),
-                getattr(location, "region", None),
-                getattr(location, "city", None),
-            )
-            if value
-        ],
-        site,
-    )
+    """判断事件地点与生产地点是否满足区县级精确匹配。
 
-
-def _matches_district_location(location: LocationReference, site: SupplierSite) -> bool:
-    """区级信息存在时按已提供的行政层级逐级精确匹配。
-
-    缺少供应商区级字段时不回退到地址包含，避免同城不同区被误关联。
+    事件无法解析出区县时一律不匹配，不回退到省/市/地址文本包含。
     """
-    return bool(_location_district(location)) and matches_location_reference(location, site)
-
-
-def _spatial_site_distances(
-    session: Session, *, latitude: float, longitude: float, radius_km: float,
-    country_code: str | None,
-) -> dict[int, float]:
-    rows = session.execute(
-        text(
-            """
-            SELECT id,
-                   ST_Distance(
-                       geom,
-                       ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography
-                   ) / 1000.0 AS distance_km
-            FROM supplier_sites
-            WHERE geom IS NOT NULL
-              AND (
-                  CAST(:country_code AS text) IS NULL
-                  OR country_code = CAST(:country_code AS text)
-              )
-              AND ST_DWithin(
-                  geom,
-                  ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-                  :radius_meters
-              )
-            """
-        ),
-        {
-            "latitude": latitude,
-            "longitude": longitude,
-            "country_code": country_code,
-            "radius_meters": radius_km * 1000,
-        },
-    ).mappings()
-    return {int(row["id"]): float(row["distance_km"]) for row in rows}
+    location_district = _location_district(location)
+    if not location_district:
+        return False
+    site_district = _site_district(site)
+    if not site_district or location_district != site_district:
+        return False
+    for location_value, site_value in (
+        (getattr(location, "country_code", None), site.country_code),
+        (getattr(location, "region", None), site.region),
+    ):
+        if location_value and (
+            not site_value or normalize_alias(site_value) != normalize_alias(location_value)
+        ):
+            return False
+    location_city = getattr(location, "city", None)
+    site_city = site.city
+    # “上海市/宝山区”这类数据中，city 字段可能实际承载区县；
+    # 区县已单独严格校验时不再用错位的 city 字段拒绝同一城市。
+    if (
+        location_city
+        and site_city
+        and _infer_district(location_city) is None
+        and _infer_district(site_city) is None
+        and normalize_alias(location_city) != normalize_alias(site_city)
+    ):
+        return False
+    return True
 
 
 def match_locations(
@@ -266,99 +209,33 @@ def match_locations(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """地点柱：文本（省市区/地址包含）+ 空间半径（WGS84 geography）。"""
-    supplier_list = list(suppliers)
-    site_by_id = {
-        site.id: (supplier, site)
-        for supplier in supplier_list
-        for site in supplier.sites
-    }
+    """地点柱：仅区县行政区名称精确匹配；无法解析区县的事件地点不参与匹配。"""
+    del session  # 保持 MatcherFn 签名兼容，地点柱不再访问数据库
     for location in result.locations:
-        location_values = list(
-            dict.fromkeys(
-                normalize_alias(value)
-                for value in (location.name, location.region, location.city)
-                if value
-            )
-        )
-        for supplier in supplier_list:
+        inferred_district = _location_district(location)
+        if not inferred_district:
+            continue
+        for supplier in suppliers:
             for site in supplier.sites:
                 if location.country_code and site.country_code != location.country_code:
                     continue
-                inferred_district = _location_district(location)
-                district_match = bool(inferred_district) and _matches_district_location(
-                    location, site
-                )
-                text_match = district_match if inferred_district else _matches_text_location(
-                    location_values, site
-                )
-                if text_match:
-                    reason = (
-                        f"事件地点区级行政区精确匹配：{location.name}（{inferred_district}）"
-                        f" → {site.site_name}"
-                        if district_match
-                        else f"事件地点与生产地点匹配：{location.name} → {site.site_name}"
-                    )
-                    _candidate(matches, supplier).add(
-                        "site_text",
-                        assoc.get("site_text", 20),
-                        reason,
-                        {
-                            "object_type": "site",
-                            "site_id": site.id,
-                            "site_name": site.site_name,
-                            "event_location": location.name,
-                            "method": "text",
-                            **(
-                                {"district": inferred_district, "precision": "district"}
-                                if district_match
-                                else {}
-                            ),
-                        },
-                    )
-
-        if (
-            location.latitude is not None
-            and location.longitude is not None
-            and location.radius_km is not None
-        ):
-            distances = _spatial_site_distances(
-                session,
-                latitude=location.latitude,
-                longitude=location.longitude,
-                radius_km=location.radius_km,
-                country_code=location.country_code,
-            )
-            for site_id, distance_km in distances.items():
-                supplier_site = site_by_id.get(site_id)
-                if supplier_site is None:
+                if not matches_location_reference(location, site):
                     continue
-                supplier, site = supplier_site
-                if _location_district(location) and not _matches_district_location(location, site):
-                    continue
-                reason = (
-                    f"生产地点距事件中心 {distance_km:.1f} km，"
-                    f"位于 {location.radius_km:g} km 影响范围内"
-                )
-                if _location_district(location):
-                    reason += f"；区级行政区匹配：{_location_district(location)}"
                 _candidate(matches, supplier).add(
-                    "site_distance",
-                    assoc.get("site_distance", 20),
-                    reason,
+                    "site_text",
+                    assoc.get("site_text", 20),
+                    (
+                        f"事件地点区级行政区精确匹配：{location.name}"
+                        f"（{inferred_district}） → {site.site_name}"
+                    ),
                     {
                         "object_type": "site",
                         "site_id": site.id,
                         "site_name": site.site_name,
                         "event_location": location.name,
-                        "method": "distance",
-                        "distance_km": round(distance_km, 2),
-                        "radius_km": location.radius_km,
-                        **(
-                            {"district": _location_district(location), "precision": "district"}
-                            if _location_district(location)
-                            else {}
-                        ),
+                        "method": "text",
+                        "district": inferred_district,
+                        "precision": "district",
                     },
                 )
 

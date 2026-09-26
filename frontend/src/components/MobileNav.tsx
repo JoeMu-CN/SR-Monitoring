@@ -30,7 +30,7 @@ const MobileNavItem = ({route, p1RiskCount}: {readonly route: NavigationRoute; r
     {({isActive}) => (
       <motion.span whileTap={{scale: 0.85}} className="relative flex min-w-0 flex-col items-center">
         {icons[route.navigation.icon]}
-        <span className="mt-1 text-[10px] font-medium leading-none">{route.navigation.mobileLabel}</span>
+        <span className="mt-1 text-[10px] font-medium leading-none whitespace-nowrap">{route.navigation.mobileLabel}</span>
         {isActive && <span className="mt-0.5 h-1 w-1 rounded-full bg-white" />}
         {route.id === 'risks' && p1RiskCount > 0 ? <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#C92A2A] text-[9px] font-bold text-white">{p1RiskCount}</span> : null}
       </motion.span>

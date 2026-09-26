@@ -1,8 +1,8 @@
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import type {MonitoringHealthRead} from '../api';
+import {api, type MonitoringHealthRead} from '../api';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {DataSourcesView} from './DataSourcesView';
@@ -81,7 +81,10 @@ const readyHealth = monitoringHealthWith(healthySource);
 // 与组件同源的 Intl 格式化：断言时间数据流，而不是硬编码某台机器的时区字符串。
 const expectedTime = (value: string) => new Date(value).toLocaleString('zh-CN', {hour12: false});
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('数据源采集记录入口', () => {
   it('将有效数和累计数分别链接到对应范围的第一页', () => {
@@ -127,6 +130,65 @@ describe('数据源采集记录入口', () => {
 
     expect(screen.getByText('长期有效')).toHaveClass('whitespace-nowrap');
   });
+
+  it('有效期策略是独立列：表头与专属单元承载策略文字', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('有效期策略')).toBeInTheDocument();
+    expect(screen.getByTestId('source-validity-policy-17')).toHaveTextContent('固定天数 30 天');
+  });
+
+  it('无有效期策略时不渲染移动端“有效期:”悬空前缀', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{
+            ...source,
+            validityPolicy: null,
+            validityMode: null,
+            signalValidityDays: null,
+          }]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+
+    const policyCell = screen.getByTestId('source-validity-policy-17');
+    expect(policyCell).not.toHaveTextContent('有效期:');
+    expect(policyCell.textContent).toBe('');
+  });
+
+  it('记录数单元只承载有效/累计数，不再混入有效期策略文字', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+
+    const recordCell = screen.getByTestId('source-record-count-17');
+    expect(within(recordCell).getByTestId('source-valid-17')).toHaveTextContent('7');
+    expect(within(recordCell).getByTestId('source-total-17')).toHaveTextContent('25');
+    expect(recordCell).not.toHaveTextContent('固定天数 30 天');
+  });
 });
 
 describe('数据源有效期策略表单', () => {
@@ -148,7 +210,7 @@ describe('数据源有效期策略表单', () => {
 
   const openForm = async () => {
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', {name: '编辑'}));
+    await user.click(screen.getByRole('button', {name: /编辑/}));
     return user;
   };
 
@@ -158,6 +220,20 @@ describe('数据源有效期策略表单', () => {
 
     expect(screen.getByLabelText('有效期策略')).toHaveValue('fixed_days');
     expect(screen.getByLabelText('固定天数（天）')).toHaveValue(30);
+  });
+
+  it('天眼查编辑表单展示按需调用与每日批量核查策略', async () => {
+    renderAdmin({
+      code: 'tianyancha',
+      name: '天眼查企业核查',
+      type: 'external_tool',
+      schedule: null,
+      enabled: false,
+    });
+    await openForm();
+
+    expect(screen.getByText(/人工查询按需调用；Scheduler 不按 cron 刷新/)).toBeInTheDocument();
+    expect(screen.getByText(/每天北京时间 06:00 批量核查已启用供应商/)).toBeInTheDocument();
   });
 
   it('五种模式可选且条件字段随模式切换', async () => {
@@ -349,5 +425,373 @@ describe('数据源健康新鲜度（任务8 只读诊断）', () => {
       </MemoryRouter>,
     );
     expect(screen.queryByTestId(/^source-health-/)).not.toBeInTheDocument();
+  });
+});
+
+describe('数据源列表信息架构与操作区', () => {
+  const renderView = (
+    dataSources: DataSource[],
+    role: 'viewer' | 'admin' = 'viewer',
+    monitoringHealth: MonitoringHealthSnapshot = {status: 'hidden'},
+  ) => render(
+    <MemoryRouter>
+      <DataSourcesView
+        dataSources={dataSources}
+        role={role}
+        onUpdateSource={vi.fn()}
+        onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+        monitoringHealth={monitoringHealth}
+      />
+    </MemoryRouter>,
+  );
+
+  const tianyancha: DataSource = {
+    ...source,
+    id: '23',
+    code: 'tianyancha',
+    name: '天眼查企业核查（按需核查）',
+    type: 'external_tool',
+    schedule: null,
+    enabled: false,
+    status: 'disabled',
+    latency: '已停用',
+    adapterStatus: 'builtin',
+    accessLastHttpStatus: null,
+    apiKeyConfigured: true,
+    apiKeyHint: 'tyc_••••1234',
+    lastSyncTime: '按需调用',
+  };
+
+  it('分类标签使用中文业务类别，未识别编码回退中文兜底', () => {
+    renderView([
+      {...source, id: '1', code: 'tianyancha', type: 'external_tool'},
+      {...source, id: '2', code: 'nmc-weather'},
+      {...source, id: '3', code: 'ofac-sdn'},
+      {...source, id: '4', code: 'uflpa-entity-list'},
+      {...source, id: '5', code: 'bis-entity-list'},
+      {...source, id: '6', code: 'commodity-futures'},
+      {...source, id: '7', code: 'pbc-lpr'},
+      {...source, id: '8', code: 'wto-news'},
+      {...source, id: '9', code: 'unknown-code-x'},
+    ]);
+
+    expect(screen.getByTestId('source-category-1')).toHaveTextContent('主体核查');
+    expect(screen.getByTestId('source-category-2')).toHaveTextContent('天气预警');
+    expect(screen.getByTestId('source-category-3')).toHaveTextContent('制裁合规');
+    expect(screen.getByTestId('source-category-4')).toHaveTextContent('制裁合规');
+    expect(screen.getByTestId('source-category-5')).toHaveTextContent('制裁合规');
+    expect(screen.getByTestId('source-category-6')).toHaveTextContent('宏观市场');
+    expect(screen.getByTestId('source-category-7')).toHaveTextContent('宏观市场');
+    expect(screen.getByTestId('source-category-8')).toHaveTextContent('政策法规');
+    expect(screen.getByTestId('source-category-9')).toHaveTextContent('官方接口');
+  });
+
+  it('记录数列标题为“记录数（有效/累计）”，两个数字分别链接到对应范围', () => {
+    renderView([{...source, validSignalCount: 7, totalSignalCount: 25}]);
+
+    expect(screen.getByText('记录数（有效/累计）')).toBeInTheDocument();
+    expect(screen.getByTestId('source-valid-17')).toHaveAttribute('href', '/sources/17/signals?scope=valid&page=1');
+    expect(screen.getByTestId('source-total-17')).toHaveAttribute('href', '/sources/17/signals?scope=all&page=1');
+  });
+
+  it('有效数与累计数相等时两个数字仍分别可点击', () => {
+    renderView([{...source, validSignalCount: 25, totalSignalCount: 25}]);
+
+    expect(screen.getByTestId('source-valid-17')).toHaveTextContent('25');
+    expect(screen.getByTestId('source-total-17')).toHaveTextContent('25');
+  });
+
+  it('列表不再重复展示最近同步时间，状态只保留在新鲜度标签中', () => {
+    renderView([{...source, lastSyncTime: '2026-09-01 09:00', latency: '运行正常'}], 'viewer', readyHealth);
+
+    expect(screen.queryByText('最近同步时间')).not.toBeInTheDocument();
+    expect(screen.queryByText('2026-09-01 09:00')).not.toBeInTheDocument();
+    expect(screen.queryByText('运行正常')).not.toBeInTheDocument();
+    expect(screen.getByTestId('source-connectivity-17')).toHaveTextContent('连通正常');
+    expect(screen.getByTestId('source-health-17')).toHaveTextContent('采集正常');
+  });
+
+  it('列表表头为「连通状态」，与名称下方的采集新鲜度区分职责', () => {
+    renderView([{...source, enabled: true}]);
+
+    expect(screen.getByText('连通状态')).toBeInTheDocument();
+    expect(screen.queryByText('采集方式')).not.toBeInTheDocument();
+  });
+
+  it('普通已启用联网来源显示连通正常，普通停用来源显示已停用', () => {
+    renderView([
+      {...source, enabled: true},
+      {...source, id: '18', enabled: false, status: 'disabled', latency: '已停用'},
+    ]);
+
+    expect(screen.getByTestId('source-connectivity-17')).toHaveTextContent('连通正常');
+    expect(screen.getByTestId('source-connectivity-18')).toHaveTextContent('已停用');
+  });
+
+  it('访问错误显示连通异常，未配置地址显示未配置', () => {
+    renderView([
+      {...source, id: '17', accessLastErrorKind: 'upstream_error', accessLastHttpStatus: 503},
+      {...source, id: '18', endpointUrl: null, accessLastHttpStatus: null, accessLastErrorKind: null},
+    ]);
+
+    expect(screen.getByTestId('source-connectivity-17')).toHaveTextContent('连通异常');
+    expect(screen.getByTestId('source-connectivity-18')).toHaveTextContent('未配置');
+  });
+
+  it('全网累计记录数取已入库累计信号数而非最近一次新增数', () => {
+    renderView([
+      {...source, id: '17', itemCount: 2, totalSignalCount: 25},
+      {...source, id: '18', itemCount: 40, totalSignalCount: 100},
+    ]);
+
+    const summary = screen.getByText('全网累计记录数').parentElement;
+    expect(summary).toHaveTextContent('125');
+    expect(summary).not.toHaveTextContent('42');
+  });
+
+  it('来源名称展示去掉括号及括号内容，编码与 ID 保持不变', () => {
+    renderView([tianyancha]);
+
+    expect(screen.getByTestId('source-name-23')).toHaveTextContent('天眼查企业核查');
+    expect(screen.getByTestId('source-name-23').textContent).not.toContain('按需核查');
+    expect(screen.getByText('tianyancha')).toBeInTheDocument();
+  });
+
+  it('操作按刷新、编辑、停用/启用排列，按钮均带明确 aria-label 与 title', () => {
+    renderView([{...source, enabled: true}], 'admin');
+
+    const actions = screen.getByTestId('source-actions-17');
+    const buttons = within(actions).getAllByRole('button');
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+      '刷新官方风险源',
+      '编辑官方风险源',
+      '停用官方风险源',
+    ]);
+    expect(within(actions).getByRole('button', {name: '刷新官方风险源'})).toBeEnabled();
+    expect(within(actions).getByRole('button', {name: '刷新官方风险源'})).toHaveAttribute('title', '立即触发一次采集');
+    expect(within(actions).getByRole('button', {name: '停用官方风险源'})).toHaveAttribute('title', '停用该数据源，停止自动采集');
+  });
+
+  it('已启用且可拉取的来源点击刷新调用 api.runSource 并反馈结果', async () => {
+    const runSource = vi.spyOn(api, 'runSource').mockResolvedValue({
+      id: 1,
+      source_id: 17,
+      started_at: '2026-09-11T06:00:00Z',
+      finished_at: '2026-09-11T06:00:05Z',
+      status: 'succeeded',
+      fetched_count: 5,
+      created_count: 3,
+      duplicate_count: 2,
+      error: null,
+    });
+    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="admin"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={onRefreshSources}
+          monitoringHealth={{status: 'hidden'}}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新官方风险源'}));
+
+    expect(runSource).toHaveBeenCalledWith(17);
+    expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('刷新完成，新增 3 条记录');
+    expect(onRefreshSources).toHaveBeenCalled();
+  });
+
+  it('刷新失败时按行反馈业务化错误，不触发列表刷新', async () => {
+    vi.spyOn(api, 'runSource').mockRejectedValue(new Error('数据源已停用'));
+    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="admin"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={onRefreshSources}
+          monitoringHealth={{status: 'hidden'}}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新官方风险源'}));
+
+    expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('数据源已停用');
+    expect(onRefreshSources).not.toHaveBeenCalled();
+  });
+
+  it('外部核查与人工录入来源不调用 /run，刷新按钮为禁用占位并给出业务化原因', async () => {
+    const runSource = vi.spyOn(api, 'runSource');
+    renderView([tianyancha, {...source, id: '18', code: 'manual-json', name: '手工 JSON 导入', type: 'manual'}], 'admin');
+
+    const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
+    expect(tycButton).toBeDisabled();
+    expect(tycButton).toHaveAttribute('title', '外部核查工具按需调用，不支持页面刷新');
+    const manualButton = screen.getByRole('button', {name: '刷新手工 JSON 导入'});
+    expect(manualButton).toBeDisabled();
+    expect(manualButton).toHaveAttribute('title', '人工录入数据源不支持刷新');
+
+    const user = userEvent.setup();
+    await user.click(tycButton);
+    await user.click(manualButton);
+    expect(runSource).not.toHaveBeenCalled();
+  });
+
+  it('未启用来源的刷新按钮为禁用态并说明启用后可用', () => {
+    renderView([{...source, enabled: false, status: 'disabled', latency: '已停用'}], 'admin');
+
+    const refreshButton = screen.getByRole('button', {name: '刷新官方风险源'});
+    expect(refreshButton).toBeDisabled();
+    expect(refreshButton).toHaveAttribute('title', '数据源已停用，启用后可刷新');
+  });
+
+  it('天眼查停用时展示按需核查而非已停用，最近核查为真实时间且无下次预期', () => {
+    renderView([tianyancha], 'viewer', monitoringHealthWith({
+      ...healthySource,
+      source_id: 23,
+      code: 'tianyancha',
+      name: '天眼查企业核查（按需核查）',
+      state: 'disabled',
+      reason_code: 'disabled',
+      next_expected_at: null,
+      last_success_at: null,
+      last_attempt_at: '2026-09-10T03:00:00Z',
+    }));
+
+    const connectivity = screen.getByTestId('source-connectivity-23');
+    expect(connectivity).toHaveTextContent('按需核查');
+    expect(connectivity).toHaveAttribute('title', '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新');
+
+    const health = screen.getByTestId('source-health-23');
+    expect(health).toHaveTextContent('按需核查');
+    expect(health).toHaveTextContent(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
+    expect(health).not.toHaveTextContent('下次预期');
+    expect(screen.queryByText('已停用')).not.toBeInTheDocument();
+  });
+
+  it('连通标签悬浮说明使用通俗文本，不向用户暴露 HTTP 状态码', () => {
+    renderView([{...source, accessLastHttpStatus: 200}], 'viewer');
+
+    expect(screen.getByTestId('source-connectivity-17')).toHaveAttribute('title', '最近一次采集请求成功，接口连通正常');
+    expect(screen.queryByText(/HTTP\s*\d+/)).not.toBeInTheDocument();
+  });
+
+  it('采集失败时悬浮说明给出通俗原因，不展示状态码', () => {
+    renderView([{...source, accessLastHttpStatus: 503, accessLastErrorKind: 'upstream_error'}], 'viewer');
+
+    expect(screen.getByTestId('source-connectivity-17')).toHaveAttribute('title', '目标网站暂时不可用，系统稍后会自动重试');
+    expect(screen.queryByText(/HTTP\s*\d+/)).not.toBeInTheDocument();
+  });
+});
+
+// 缺陷回归：连通标签文案取自访问语义，但徽标配色曾错误沿用采集状态映射，
+// 导致「连通正常」被染成采集失败的红色（或「连通异常」被染成绿色）误导用户。
+describe('数据源连通徽标配色与采集状态解耦', () => {
+  const renderView = (dataSources: DataSource[], role: 'viewer' | 'admin' = 'viewer') => render(
+    <MemoryRouter>
+      <DataSourcesView
+        dataSources={dataSources}
+        role={role}
+        onUpdateSource={vi.fn()}
+        onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+        monitoringHealth={{status: 'hidden'}}
+      />
+    </MemoryRouter>,
+  );
+
+  const connectivityBadge = (id: string) => screen.getByTestId(`source-connectivity-${id}`);
+  const connectivityDot = (id: string) => screen.getByTestId(`source-connectivity-dot-${id}`);
+  const connectivityRing = (id: string) => screen.getByTestId(`source-connectivity-ring-${id}`);
+
+  it('采集失败但访问就绪的来源显示成功绿徽标，行与图标仍保持采集状态的红色', () => {
+    renderView([{
+      ...source,
+      status: 'error',
+      latency: '采集失败',
+      accessStatus: 'ready',
+      accessLastHttpStatus: 200,
+      accessLastErrorKind: null,
+    }]);
+
+    expect(connectivityBadge('17')).toHaveTextContent('连通正常');
+    expect(connectivityBadge('17')).toHaveClass('bg-emerald-100', 'text-emerald-800');
+    expect(connectivityDot('17')).toHaveClass('bg-emerald-600');
+    expect(connectivityRing('17')).toHaveClass('bg-emerald-500/60');
+
+    expect(screen.getByRole('listitem')).toHaveClass('bg-red-50/30');
+    expect(screen.getByTestId('source-icon-17')).toHaveClass('bg-red-100');
+  });
+
+  it('采集正常但访问异常的来源显示警示红徽标，图标仍保持采集状态的正常色', () => {
+    renderView([{
+      ...source,
+      status: 'normal',
+      latency: '运行正常',
+      accessStatus: 'ready',
+      accessLastHttpStatus: 503,
+      accessLastErrorKind: 'upstream_error',
+    }]);
+
+    expect(connectivityBadge('17')).toHaveTextContent('连通异常');
+    expect(connectivityBadge('17')).toHaveClass('bg-red-100', 'text-[#ba1a1a]');
+    expect(connectivityDot('17')).toHaveClass('bg-[#ba1a1a]');
+    expect(connectivityRing('17')).toHaveClass('bg-red-500/60');
+
+    expect(screen.getByTestId('source-icon-17')).toHaveClass('bg-[#ecf4ff]');
+  });
+
+  it('访问冷却与间隔保护使用警示橙，请求执行中使用进行中蓝', () => {
+    renderView([
+      {...source, id: '1', accessStatus: 'cooldown', latency: '冷却中'},
+      {...source, id: '2', accessStatus: 'busy', latency: '执行中'},
+      {...source, id: '3', accessStatus: 'throttled', latency: '限速中'},
+    ]);
+
+    expect(connectivityBadge('1')).toHaveTextContent('访问冷却中');
+    expect(connectivityBadge('1')).toHaveClass('bg-orange-100', 'text-orange-700');
+    expect(connectivityDot('1')).toHaveClass('bg-orange-600');
+
+    expect(connectivityBadge('2')).toHaveTextContent('请求执行中');
+    expect(connectivityBadge('2')).toHaveClass('bg-blue-100', 'text-blue-700');
+    expect(connectivityDot('2')).toHaveClass('bg-blue-600');
+
+    expect(connectivityBadge('3')).toHaveTextContent('间隔保护中');
+    expect(connectivityBadge('3')).toHaveClass('bg-orange-100', 'text-orange-700');
+    expect(connectivityDot('3')).toHaveClass('bg-orange-600');
+  });
+
+  it('停用、按需核查、人工录入与未配置来源使用中性灰徽标而非故障色', () => {
+    renderView([
+      {...source, id: '1', enabled: false, status: 'disabled', latency: '已停用'},
+      {...source, id: '2', code: 'tianyancha', name: '天眼查企业核查', type: 'external_tool', enabled: false, status: 'disabled', latency: '已停用'},
+      {...source, id: '3', code: 'manual-json', name: '手工 JSON 导入', type: 'manual', enabled: false, status: 'disabled', latency: '已停用'},
+      {...source, id: '4', endpointUrl: null, accessLastHttpStatus: null, accessLastErrorKind: null},
+    ]);
+
+    expect(connectivityBadge('1')).toHaveTextContent('已停用');
+    expect(connectivityBadge('2')).toHaveTextContent('按需核查');
+    expect(connectivityBadge('3')).toHaveTextContent('人工录入');
+    expect(connectivityBadge('4')).toHaveTextContent('未配置');
+
+    for (const id of ['1', '2', '3', '4']) {
+      expect(connectivityBadge(id)).toHaveClass('bg-slate-200', 'text-slate-700');
+      expect(connectivityDot(id)).toHaveClass('bg-slate-600');
+    }
+    expect(connectivityBadge('1')).not.toHaveClass('bg-red-100');
+    expect(connectivityBadge('1')).not.toHaveClass('bg-orange-100');
+  });
+
+  it('连通徽标为不可拆分的 nowrap 胶囊，375px 下「连通异常」等 CJK 标签不拆字换行', () => {
+    renderView([{...source, accessStatus: 'ready', accessLastHttpStatus: 503, accessLastErrorKind: 'upstream_error'}]);
+
+    expect(connectivityBadge('17')).toHaveTextContent('连通异常');
+    expect(connectivityBadge('17')).toHaveClass('whitespace-nowrap');
   });
 });

@@ -41,6 +41,143 @@ const emptyForm: DataSourceWritePayload = {
   adapter_config: adapterTemplate, enabled: false, signal_validity_days: null,
 };
 
+// —— 展示层工具（只影响页面呈现，不改变后端存储值） ——
+
+// 来源名称展示规范化：去掉半角/全角括号及其内容，避免括号里的技术标识挤占名称位置。
+const displaySourceName = (name: string): string => {
+  const stripped = name.replace(/[（(][^）)]*[）)]/g, '').replace(/\s+/g, ' ').trim();
+  return stripped || name;
+};
+
+// 中文业务分类：按来源编码关键词优先匹配，未知编码回退来源类型或通用兜底。
+const SOURCE_CODE_CATEGORY_RULES: ReadonlyArray<readonly [readonly string[], string]> = [
+  [['tianyancha'], '主体核查'],
+  [['weather', 'nmc'], '天气预警'],
+  [['ofac', 'uflpa', 'bis', 'sanction', 'compliance', 'un-consolidated', 'mofcom'], '制裁合规'],
+  [['commodity', 'pbc', 'stats', 'fx', 'shipping'], '宏观市场'],
+  [['journal', 'announcement', 'notice', 'press', 'bulletin', 'customs', 'fmprc', 'wto', 'mem-', 'mee-', 'policy'], '政策法规'],
+  [['manual'], '人工录入'],
+];
+
+const SOURCE_TYPE_CATEGORY: Record<string, string> = {
+  official_api: '官方接口',
+  external_tool: '外部核查',
+  sanctions: '制裁合规',
+  'export-control': '制裁合规',
+  policy: '政策法规',
+  incident: '突发事件',
+  manual: '人工录入',
+};
+
+const sourceCategory = (source: DataSource): string => {
+  const code = source.code.toLowerCase();
+  for (const [keywords, label] of SOURCE_CODE_CATEGORY_RULES) {
+    if (keywords.some((keyword) => code.includes(keyword))) return label;
+  }
+  return SOURCE_TYPE_CATEGORY[source.type] ?? '其他信源';
+};
+
+// 连通状态标签：与名称下方「采集正常/失败」的新鲜度状态区分职责，只描述连通与访问能力。
+// 徽标的文案与配色必须同源：先判定连通变体，再由变体唯一决定标签与色调，
+// 避免文案取自访问语义、颜色却沿用采集状态（如「连通正常」被染成采集失败的红色）。
+type ConnectivityVariant =
+  | 'connected' | 'cooldown' | 'busy' | 'throttled'
+  | 'access_error' | 'disabled' | 'on_demand' | 'manual' | 'unconfigured';
+
+type ConnectivityTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral';
+
+// 判定顺序与此前的标签实现保持一致：非联网来源 → 停用 → 访问执行态 → 访问错误 → 未配置 → 正常。
+const sourceConnectivityVariant = (source: DataSource): ConnectivityVariant => {
+  if (source.type === 'external_tool') return 'on_demand';
+  if (source.code === 'manual-json') return 'manual';
+  if (!source.enabled) return 'disabled';
+  if (source.accessStatus === 'cooldown') return 'cooldown';
+  if (source.accessStatus === 'busy') return 'busy';
+  if (source.accessStatus === 'throttled') return 'throttled';
+  if (source.accessLastErrorKind !== null
+    || (source.accessLastHttpStatus !== null && source.accessLastHttpStatus >= 400)) return 'access_error';
+  if (!source.endpointUrl) return 'unconfigured';
+  return 'connected';
+};
+
+const CONNECTIVITY_META: Record<ConnectivityVariant, {label: string; tone: ConnectivityTone}> = {
+  connected: {label: '连通正常', tone: 'success'},
+  cooldown: {label: '访问冷却中', tone: 'warning'},
+  busy: {label: '请求执行中', tone: 'info'},
+  throttled: {label: '间隔保护中', tone: 'warning'},
+  access_error: {label: '连通异常', tone: 'danger'},
+  disabled: {label: '已停用', tone: 'neutral'},
+  on_demand: {label: '按需核查', tone: 'neutral'},
+  manual: {label: '人工录入', tone: 'neutral'},
+  unconfigured: {label: '未配置', tone: 'neutral'},
+};
+
+// 五种色调直接复用采集状态色板已有的类名，不引入新的原始色值：
+// 绿色=连通正常，橙色=冷却/间隔保护，蓝色=请求执行中，红色=连通异常，中性灰=停用/按需/人工/未配置。
+const CONNECTIVITY_TONE_CLASSES: Record<ConnectivityTone, {
+  pill: string; dot: string; dotCore: string; ringDur: number;
+}> = {
+  success: {pill: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300', dot: 'bg-emerald-500/60', dotCore: 'bg-emerald-600', ringDur: 2},
+  info: {pill: 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300', dot: 'bg-blue-500/60', dotCore: 'bg-blue-600', ringDur: 1.2},
+  warning: {pill: 'bg-orange-100 text-orange-700 dark:bg-orange-950/80 dark:text-orange-300', dot: 'bg-orange-500/60', dotCore: 'bg-orange-600', ringDur: 1.6},
+  danger: {pill: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300', dot: 'bg-red-500/60', dotCore: 'bg-[#ba1a1a]', ringDur: 1.2},
+  neutral: {pill: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300', dot: 'bg-slate-500/60', dotCore: 'bg-slate-600', ringDur: 2},
+};
+
+// 节点详情通俗说明：挂在标签悬浮提示上，面向业务用户，不直接暴露 HTTP 状态码。
+const ACCESS_ERROR_HINTS: Record<string, string> = {
+  access_blocked: '目标网站限制了自动访问，已进入保护冷却，稍后自动恢复',
+  rate_limited: '目标网站请求过于频繁，系统已自动降速保护',
+  authentication_required: '目标网站要求认证，请检查运行密钥或凭据配置',
+  upstream_error: '目标网站暂时不可用，系统稍后会自动重试',
+  http_error: '接口返回异常，请检查接口地址或参数配置',
+  network_error: '网络连接异常，系统稍后会自动重试',
+};
+
+const sourceNodeHint = (source: DataSource): string => {
+  if (source.accessStatus === 'cooldown') return `访问冷却中：${source.latency}，冷却结束后自动恢复`;
+  if (source.accessStatus === 'busy') return '同一域名的请求正在执行，稍后自动继续';
+  if (source.accessStatus === 'throttled') return '为保护目标网站，当前处于请求间隔保护中';
+  if (source.accessLastErrorKind) {
+    return ACCESS_ERROR_HINTS[source.accessLastErrorKind] ?? '最近一次采集未成功，系统稍后会自动重试';
+  }
+  if (source.type === 'external_tool') {
+    return source.apiKeyConfigured
+      ? '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新'
+      : '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新';
+  }
+  if (source.code === 'manual-json') return '通过人工上传文件录入信号，不进行联网采集';
+  if (!source.enabled) return '数据源已停用，启用后才会恢复自动采集';
+  if (!source.endpointUrl) return '尚未配置接口地址，暂不可采集';
+  if (source.accessLastHttpStatus !== null && source.accessLastHttpStatus >= 200 && source.accessLastHttpStatus < 300) {
+    return '最近一次采集请求成功，接口连通正常';
+  }
+  if (source.accessLastHttpStatus !== null && source.accessLastHttpStatus >= 400) {
+    return '最近一次采集请求未成功，请检查接口地址或凭据配置';
+  }
+  if (source.accessLastHttpStatus !== null) return '最近一次采集结果异常，系统会按计划重试';
+  return '采集请求按域名保护策略执行，当前连通正常';
+};
+
+// 单来源刷新的业务化禁用原因；null 表示当前可触发采集。
+const refreshBlockedReason = (
+  source: DataSource,
+  role: 'viewer' | 'admin',
+  refreshingId: string | null,
+): string | null => {
+  if (role !== 'admin') return '仅管理员可触发采集';
+  if (source.type === 'external_tool') return '外部核查工具按需调用，不支持页面刷新';
+  if (source.code === 'manual-json') return '人工录入数据源不支持刷新';
+  if (source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
+    return source.adapterStatus === 'draft' || source.adapterStatus === 'invalid'
+      ? '适配器尚未发布，暂不可刷新'
+      : '该来源尚未完成适配器配置，暂不可刷新';
+  }
+  if (!source.enabled) return '数据源已停用，启用后可刷新';
+  if (refreshingId !== null && refreshingId !== source.id) return '正在刷新其他数据源，请稍候';
+  return null;
+};
+
 export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   dataSources, role, onUpdateSource, onRefreshSources, monitoringHealth,
 }) => {
@@ -51,6 +188,9 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [runAllLoading, setRunAllLoading] = useState(false);
   const [runAllMsg, setRunAllMsg] = useState<{type: 'ok' | 'err'; text: string} | null>(null);
+  // 单来源刷新：同一时间只允许一个来源刷新，结果按来源行内反馈。
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [refreshMsg, setRefreshMsg] = useState<{sourceId: string; tone: 'ok' | 'err'; text: string} | null>(null);
 
   // 编辑表单状态
   const [showForm, setShowForm] = useState(false);
@@ -241,10 +381,31 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     setRunAllLoading(false);
   };
 
+  // 单来源刷新：仅管理员、且仅对已启用且可拉取的来源可用；失败原因按行反馈。
+  const handleRunSource = async (source: DataSource) => {
+    if (role !== 'admin' || refreshingId !== null) return;
+    setRefreshingId(source.id);
+    setRefreshMsg(null);
+    setError(null);
+    try {
+      const run = await api.runSource(Number(source.id));
+      setRefreshMsg({sourceId: source.id, tone: 'ok', text: `刷新完成，新增 ${run.created_count} 条记录`});
+      await onRefreshSources();
+    } catch (caught) {
+      setRefreshMsg({
+        sourceId: source.id,
+        tone: 'err',
+        text: caught instanceof Error ? caught.message : '刷新失败，请稍后重试',
+      });
+    } finally {
+      setRefreshingId(null);
+    }
+  };
+
   const handleToggleSource = async (source: DataSource) => {
     if (role !== 'admin' || togglingId !== null) return;
     const action = source.enabled ? '停用' : '启用';
-    if (!window.confirm(`确认${action}“${source.name}”？`)) return;
+    if (!window.confirm(`确认${action}“${displaySourceName(source.name)}”？`)) return;
     setTogglingId(source.id);
     setError(null);
     try {
@@ -270,8 +431,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     }
   };
 
-  const delayedSources = dataSources.filter((source) => source.status !== 'normal');
-  const totalItems = dataSources.reduce((total, source) => total + source.itemCount, 0);
+  // 运行提示只针对真实异常（冷却/失败/超期等），停用不是运行异常，不再进入提示区。
+  const delayedSources = dataSources.filter((source) => source.status === 'warning' || source.status === 'error');
+  // 全网累计记录数取已入库累计信号数（totalSignalCount），不是最近一次采集新增数（itemCount）。
+  const totalSignals = dataSources.reduce((total, source) => total + source.totalSignalCount, 0);
   const isExternalForm = form.source_type === 'external_tool';
   const isTycForm = isExternalForm && form.code === 'tianyancha';
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
@@ -316,7 +479,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             <div>
               <h4 className="text-[13px] font-bold text-amber-900 dark:text-amber-200">数据源运行提示</h4>
               <p className="mt-0.5 text-[12px] leading-relaxed text-amber-800/90 dark:text-amber-300/80">
-                {delayedSources.map((source) => `${source.name}：${source.latency}`).join('；')}
+                {delayedSources.map((source) => `${displaySourceName(source.name)}：${source.latency}`).join('；')}
               </p>
             </div>
           </div>
@@ -356,7 +519,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         <div className="space-y-0.5">
           <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">全网累计记录数</div>
           <div className="text-xl font-bold font-mono text-[#004782] dark:text-blue-400">
-            {totalItems.toLocaleString()} <span className="text-xs font-normal text-slate-500">条</span>
+            {totalSignals.toLocaleString()} <span className="text-xs font-normal text-slate-500">条</span>
           </div>
         </div>
       </div>
@@ -386,11 +549,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         aria-label="数据源列表"
       >
         <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-12 md:gap-4">
-          <div className="col-span-4">数据源名称与类型</div>
-          <div className="col-span-2">连通状态 / 延迟</div>
-          <div className="col-span-2">最近同步时间</div>
-          <div className="col-span-2">有效记录数</div>
-          <div className="col-span-2 text-right">节点与操作</div>
+          <div className="col-span-3">数据源名称与类别</div>
+          <div className="col-span-2">连通状态</div>
+          <div className="col-span-2">有效期策略</div>
+          <div className="col-span-2">记录数（有效/累计）</div>
+          <div className="col-span-3 text-right">操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
           {dataSources.length === 0 && (
@@ -398,120 +561,152 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           )}
           {dataSources.map((source) => {
             const isExternalTool = source.type === 'external_tool';
-            // 状态配色映射：disabled (灰停用) / running (蓝执行) / error (红失败) /
-            //               warning (橙异常) / normal (绿正常)
+            // 采集状态配色（只用于行底色与来源图标）：disabled (灰停用) / running (蓝执行) /
+            //               error (红失败) / warning (橙异常) / normal (绿正常)
             const statusStyle = ({
-              disabled: { row: 'bg-slate-100/40 dark:bg-slate-800/30', icon: 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400', pill: 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300', dot: 'bg-slate-500/60', dotCore: 'bg-slate-600', ringDur: 2, pulse: 'bg-slate-400' },
-              running: { row: 'bg-blue-50/40 dark:bg-blue-950/10', icon: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300', pill: 'bg-blue-100 text-blue-700 dark:bg-blue-950/80 dark:text-blue-300', dot: 'bg-blue-500/60', dotCore: 'bg-blue-600', ringDur: 1.2, pulse: 'bg-blue-400' },
-              error: { row: 'bg-red-50/30 dark:bg-red-950/10', icon: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300', pill: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950/80 dark:text-red-300', dot: 'bg-red-500/60', dotCore: 'bg-[#ba1a1a]', ringDur: 1.2, pulse: 'bg-red-400' },
-              warning: { row: 'bg-orange-50/40 dark:bg-orange-950/10', icon: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300', pill: 'bg-orange-100 text-orange-700 dark:bg-orange-950/80 dark:text-orange-300', dot: 'bg-orange-500/60', dotCore: 'bg-orange-600', ringDur: 1.6, pulse: 'bg-orange-400' },
-              normal: { row: '', icon: 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300', pill: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300', dot: 'bg-emerald-500/60', dotCore: 'bg-emerald-600', ringDur: 2, pulse: 'bg-emerald-400' },
+              disabled: { row: 'bg-slate-100/40 dark:bg-slate-800/30', icon: 'bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400' },
+              running: { row: 'bg-blue-50/40 dark:bg-blue-950/10', icon: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' },
+              error: { row: 'bg-red-50/30 dark:bg-red-950/10', icon: 'bg-red-100 text-[#ba1a1a] dark:bg-red-950 dark:text-red-300' },
+              warning: { row: 'bg-orange-50/40 dark:bg-orange-950/10', icon: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300' },
+              normal: { row: '', icon: 'bg-[#ecf4ff] text-[#004782] dark:bg-slate-800 dark:text-blue-300' },
             } as const)[source.status];
+            // 连通徽标配色只由访问/连通语义决定，与采集状态彻底解耦。
+            const connectivity = CONNECTIVITY_META[sourceConnectivityVariant(source)];
+            const connectivityStyle = CONNECTIVITY_TONE_CLASSES[connectivity.tone];
             const canToggle = source.adapterStatus === 'builtin' || source.adapterStatus === 'published' || isExternalTool;
             const isToggling = togglingId === source.id;
-            const typeLabel = isExternalTool ? '按需外部核查' : source.type === 'official_api' ? '官方 API' : source.type.replaceAll('_', ' ');
+            const displayName = displaySourceName(source.name);
+            const isRefreshing = refreshingId === source.id;
+            const refreshBlocked = refreshBlockedReason(source, role, refreshingId);
             return (
               <motion.div
                 key={source.id}
                 role="listitem"
                 className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${statusStyle.row}`}
               >
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-4 items-center">
-                  <div className="col-span-12 md:col-span-4 flex items-center gap-3 min-w-0">
-                    <div className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${statusStyle.icon}`}>
+                <div className="grid grid-cols-12 gap-3 md:gap-4 items-center">
+                  <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
+                    <div data-testid={`source-icon-${source.id}`} className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${statusStyle.icon}`}>
                       <span className="material-symbols-outlined text-[20px]">
                         {source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}
                       </span>
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
-                        <h3 className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{source.name}</h3>
-                        <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                          {typeLabel}
+                        <h3 data-testid={`source-name-${source.id}`} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{displayName}</h3>
+                        <span data-testid={`source-category-${source.id}`} className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                          {sourceCategory(source)}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                         数据源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
                       </p>
-                      <MonitoringSourceFreshness health={healthBySource?.get(Number(source.id))} />
+                      <MonitoringSourceFreshness health={healthBySource?.get(Number(source.id))} onDemand={isExternalTool} />
                     </div>
                   </div>
                   <div className="col-span-6 md:col-span-2 flex items-center gap-2">
-                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${statusStyle.pill}`}>
+                    <span
+                      data-testid={`source-connectivity-${source.id}`}
+                      title={sourceNodeHint(source)}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 cursor-help whitespace-nowrap ${connectivityStyle.pill}`}
+                    >
                       <span className="relative flex items-center justify-center w-2 h-2">
                         <motion.span
-                          className={`absolute inline-flex h-full w-full rounded-full ${statusStyle.dot}`}
+                          data-testid={`source-connectivity-ring-${source.id}`}
+                          className={`absolute inline-flex h-full w-full rounded-full ${connectivityStyle.dot}`}
                           animate={{scale: [1, 2.2, 1], opacity: [0.8, 0, 0.8]}}
-                          transition={{duration: statusStyle.ringDur, repeat: Infinity, ease: 'easeInOut'}}
+                          transition={{duration: connectivityStyle.ringDur, repeat: Infinity, ease: 'easeInOut'}}
                         />
-                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${statusStyle.dotCore}`} />
+                        <span data-testid={`source-connectivity-dot-${source.id}`} className={`relative inline-flex rounded-full h-1.5 w-1.5 ${connectivityStyle.dotCore}`} />
                       </span>
-                      {source.latency}
+                      {connectivity.label}
                     </span>
                   </div>
-                  <div className="col-span-6 md:col-span-2 text-[12px] font-mono text-slate-700 dark:text-slate-300">
-                    <span className="md:hidden text-slate-400 text-[11px] font-sans mr-1">同步:</span>
-                    {source.lastSyncTime}
+                  <div
+                    data-testid={`source-validity-policy-${source.id}`}
+                    className="col-span-6 md:col-span-2 flex flex-wrap items-baseline gap-x-1 text-[13px]"
+                  >
+                    {source.validityPolicy && (
+                      <>
+                        <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-0.5">有效期:</span>
+                        <span className="whitespace-nowrap text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
+                          {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
+                          {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
+                        </span>
+                      </>
+                    )}
                   </div>
-                  <div className="col-span-6 md:col-span-2 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400">
-                    <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-1">有效:</span>
+                  <div
+                    data-testid={`source-record-count-${source.id}`}
+                    className="col-span-6 md:col-span-2 flex flex-wrap items-baseline gap-x-1 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400"
+                  >
+                    <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-0.5">记录:</span>
                     <Link
                       to={sourceSignalsPath(source.id, 'valid')}
-                      aria-label={`${source.name} 有效记录 ${source.validSignalCount} 条`}
+                      aria-label={`${displayName} 有效记录 ${source.validSignalCount} 条`}
+                      data-testid={`source-valid-${source.id}`}
                       className="rounded-sm underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                     >
                       {source.validSignalCount.toLocaleString()}
-                    </Link>{' '}
+                    </Link>
+                    <span className="font-normal text-slate-400">/</span>
+                    <Link
+                      to={sourceSignalsPath(source.id, 'all')}
+                      aria-label={`${displayName} 全部历史记录 ${source.totalSignalCount} 条`}
+                      data-testid={`source-total-${source.id}`}
+                      title="累计历史存量（含已过期）"
+                      className="rounded-sm underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    >
+                      {source.totalSignalCount.toLocaleString()}
+                    </Link>
                     <span className="text-[11px] font-normal text-slate-500">条</span>
-                    {source.totalSignalCount > source.validSignalCount && (
-                      <Link
-                        to={sourceSignalsPath(source.id, 'all')}
-                        aria-label={`${source.name} 全部历史记录 ${source.totalSignalCount} 条`}
-                        className="ml-1.5 rounded-sm text-[10px] font-mono font-normal text-slate-500 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-400"
-                        title="累计历史存量（含已过期）"
-                      >
-                        （累计 {source.totalSignalCount.toLocaleString()}）
-                      </Link>
-                    )}
-                    {source.validityPolicy && (
-                      <span className="ml-1 whitespace-nowrap text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
-                        {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
-                        {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
-                      </span>
-                    )}
                   </div>
-                  <div className="col-span-6 md:col-span-2 flex flex-wrap items-center justify-end gap-2 text-right">
-                    <span className="text-[11px] font-mono text-slate-500 hidden xl:inline-block">
-                      {isExternalTool
-                        ? (source.apiKeyConfigured ? (source.apiKeyHint ? `运行密钥 ${source.apiKeyHint}` : '运行密钥已配置') : '运行密钥未配置')
-                        : source.code === 'manual-json'
-                          ? '非联网数据源'
-                          : !source.endpointUrl
-                            ? '等待配置地址'
-                            : source.accessLastHttpStatus
-                              ? `HTTP ${source.accessLastHttpStatus}`
-                              : '域名保护已启用'}
+                  <div data-testid={`source-actions-${source.id}`} className="col-span-12 md:col-span-3 flex flex-wrap items-center justify-end gap-2 text-right">
+                    <span title={isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集')} className="inline-flex">
+                      <button
+                        type="button"
+                        onClick={() => void handleRunSource(source)}
+                        disabled={refreshBlocked !== null || isRefreshing}
+                        aria-label={`刷新${displayName}`}
+                        title={isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集')}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#004782]/40 text-[#004782] hover:bg-[#ecf4ff] disabled:opacity-40 disabled:cursor-not-allowed dark:border-blue-400/40 dark:text-blue-300 dark:hover:bg-slate-800 transition-colors"
+                      >
+                        <span aria-hidden="true" className={`material-symbols-outlined text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
+                        {isRefreshing ? '刷新中…' : '刷新'}
+                      </button>
                     </span>
+                    {role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => openEdit(source)}
+                        aria-label={`编辑${displayName}`}
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-colors"
+                        title="编辑数据源配置（API Key / 调度周期 / 适配器）"
+                      >
+                        编辑
+                      </button>
+                    )}
                     {canToggle && (
                       <button
                         type="button"
                         onClick={() => void handleToggleSource(source)}
                         disabled={role !== 'admin' || togglingId !== null}
                         aria-pressed={source.enabled}
+                        aria-label={`${source.enabled ? '停用' : '启用'}${displayName}`}
+                        title={source.enabled ? '停用该数据源，停止自动采集' : '启用该数据源，恢复自动采集'}
                         className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}
                       >
                         {isToggling ? '处理中...' : source.enabled ? '停用' : '启用'}
                       </button>
                     )}
-                    {role === 'admin' && (
-                      <button
-                        type="button"
-                        onClick={() => openEdit(source)}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-colors"
-                        title="编辑数据源配置（API Key / 调度周期 / 适配器）"
+                    {refreshMsg?.sourceId === source.id && (
+                      <p
+                        data-testid={`source-run-msg-${source.id}`}
+                        role={refreshMsg.tone === 'err' ? 'alert' : 'status'}
+                        className={`w-full text-[11px] ${refreshMsg.tone === 'err' ? 'text-red-600 dark:text-red-300' : 'text-emerald-700 dark:text-emerald-300'}`}
                       >
-                        编辑
-                      </button>
+                        {refreshMsg.text}
+                      </p>
                     )}
                   </div>
                 </div>
@@ -547,6 +742,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}
                 <input disabled={isExternalForm} value={isExternalForm ? '按需调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
               </label>
+              {isTycForm && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
+                  调度策略：人工查询按需调用；Scheduler 不按 cron 刷新。启用且运行密钥有效、额度充足时，每天北京时间 06:00 批量核查已启用供应商；停用时不执行批量核查。
+                </div>
+              )}
               <label className="text-xs font-bold sm:col-span-2" title="选择信号有效期策略模式；不同模式启用不同配置字段">
                 有效期策略
                 <select

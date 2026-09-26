@@ -1,11 +1,14 @@
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.orm import Session
 
 import app.signals.request_control as request_control
+from app.database import SessionLocal
 from app.signals.models import SourceHostAccess
 from app.signals.request_control import (
     ACCESS_BLOCK_COOLDOWN,
@@ -189,6 +192,77 @@ def test_pinned_transport_requires_non_empty_ips() -> None:
         PinnedIPTransport(["", ""], "example.com")
     with pytest.raises(ValueError, match="pinned_ips 不能为空"):
         PinnedIPBackend([])
+
+
+def test_controlled_get_explicit_lease_enforcement_consults_guard(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """显式 enforce_host_lease=True 时，即使传入自定义 transport 也走域名级风控。"""
+    def session_factory() -> Session:
+        return Session(
+            bind=db_session.connection(),
+            join_transaction_mode="create_savepoint",
+        )
+
+    monkeypatch.setattr(request_control, "SessionLocal", session_factory)
+    db_session.add(
+        SourceHostAccess(
+            hostname="official.example",
+            cooldown_until=datetime.now(UTC) + timedelta(minutes=10),
+        )
+    )
+    db_session.flush()
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, text="ok"))
+
+    with pytest.raises(SourceRequestFailed) as exc_info:
+        asyncio.run(
+            controlled_get(
+                "https://official.example/events",
+                maximum_bytes=1024,
+                transport=transport,
+                enforce_host_lease=True,
+            )
+        )
+
+    assert exc_info.value.error_kind == "deferred"
+
+
+def test_host_lease_independent_sessions_defer_loser() -> None:
+    """真实独立会话并发抢占同一域名租约：恰好一个成功、另一个受控延后。"""
+    hostname = "concurrent-deferred.example"
+    url = f"https://{hostname}/events"
+
+    def _cleanup() -> None:
+        with SessionLocal() as session:
+            session.execute(
+                sa_delete(SourceHostAccess).where(SourceHostAccess.hostname == hostname)
+            )
+            session.commit()
+
+    _cleanup()
+    results: list[tuple[str, object]] = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def worker() -> None:
+        barrier.wait()
+        try:
+            lease = request_control.acquire_host_lease(url)
+            outcome: tuple[str, object] = ("acquired", lease)
+        except request_control.SourceAccessDeferred as exc:
+            outcome = ("deferred", exc)
+        with lock:
+            results.append(outcome)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert sorted(name for name, _ in results) == ["acquired", "deferred"]
+    finally:
+        _cleanup()
 
 
 def test_pinned_backend_preserves_port() -> None:

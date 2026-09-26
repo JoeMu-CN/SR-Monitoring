@@ -76,7 +76,12 @@ from app.signals.schemas import (
     SourceValidityPolicyRead,
 )
 from app.signals.secret_store import decrypt_secret, encrypt_secret
-from app.signals.service import CollectionFailed, SourceNotCollectable, collect_source
+from app.signals.service import (
+    CollectionDeferred,
+    CollectionFailed,
+    SourceNotCollectable,
+    collect_source,
+)
 from app.signals.sources import (
     BisEntityListAdapter,
     CommodityFuturesAdapter,
@@ -239,13 +244,14 @@ def _serialize_source(
     elif effective_endpoint != source.endpoint_url:
         payload = payload.model_copy(update={"endpoint_url": effective_endpoint})
     if source.code == "tianyancha":
-        # 运行密钥优先取控制台加密存库；环境变量仅在非生产环境兼容回退
+        # 运行密钥优先取控制台加密存库；环境变量仅在非生产环境兼容回退。
+        # 只覆盖密钥展示字段，继续执行下方通用计数逻辑，不因密钥分支漏掉记录数。
         db_configured = (
             source.api_key_encrypted is not None
             and decrypt_secret(source.api_key_encrypted) is not None
-    )
+        )
         env_configured = bool(config.get_tyc_env_fallback())
-        return payload.model_copy(
+        payload = payload.model_copy(
             update={
                 "api_key_configured": db_configured or env_configured,
                 "api_key_hint": (
@@ -634,6 +640,12 @@ async def preview_source_adapter(
             login_config=_sanitize_login_config(payload.login_config),
         )
     except SourceFetchError as exc:
+        if exc.error_kind == "deferred":
+            # 受控延后：可重试的稳定 409，不冒充实时预览失败（502）。
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "collection_deferred", "message": f"实时预览延后: {exc}"},
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"实时预览失败: {exc}",
@@ -663,6 +675,20 @@ async def publish_source_adapter(
             login_config=source.login_config,
         )
     except SourceFetchError as exc:
+        if exc.error_kind == "deferred":
+            # 受控延后：不是验证失败，不得误标 invalid/停用；审计延期并返回 409。
+            _audit(
+                session,
+                source_id=source.id,
+                action="adapter_validation_deferred",
+                actor=user,
+                changes={"message": str(exc)[:500], "error_kind": exc.error_kind},
+            )
+            session.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "collection_deferred", "message": f"发布前验证延后: {exc}"},
+            ) from exc
         if not exc.error_kind:
             source.adapter_status = "invalid"
             source.enabled = False
@@ -860,6 +886,12 @@ def run_source_collection(
         ) from exc
     try:
         run = collect_source(session, source, pull_adapter)
+    except CollectionDeferred as exc:
+        # 受控延后（域名冷却/租约/节流）可重试：稳定 409，不伪装成采集失败。
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "collection_deferred", "message": str(exc)},
+        ) from exc
     except CollectionFailed as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -928,6 +960,17 @@ def run_all_sources_collection(
                     reason=run.error if run.error else None,
                 )
             )
+        except CollectionDeferred as exc:
+            # 受控延后：既非成功也非失败，单列 deferred，不计入 failed。
+            session.rollback()
+            items.append(
+                RunAllSourcesItem(
+                    source_id=source.id,
+                    code=source.code,
+                    status="deferred",
+                    reason=str(exc)[:200],
+                )
+            )
         except Exception as exc:  # noqa: BLE001 —— 单源失败不阻塞全量
             session.rollback()
             items.append(
@@ -942,6 +985,7 @@ def run_all_sources_collection(
         total=len(items),
         succeeded=sum(1 for it in items if it.status == "succeeded"),
         failed=sum(1 for it in items if it.status in {"failed", "error"}),
+        deferred=sum(1 for it in items if it.status == "deferred"),
         skipped=sum(1 for it in items if it.status == "skipped"),
         items=items,
     )

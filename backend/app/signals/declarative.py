@@ -192,6 +192,8 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 pinned_ips,
                 parsed.hostname or "",
             )
+            # 真实抓取：必须走域名级 host lease，不得因传入 transport 而绕过。
+            enforce_host_lease = True
         else:
             # 测试或自定义 transport：不解析、不 pin，调用方负责。
             await validate_public_https_url(
@@ -200,6 +202,8 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 allow_http_hosts=self.spec.request.allow_http_hosts,
             )
             request_transport = self._transport
+            # 显式旁路：仅测试/自定义 transport 使用。
+            enforce_host_lease = False
         headers = dict(self.spec.request.headers)
         headers.update(_credential_headers(self.auth_type, self.credential_ref, self.login_config))
         fallback_used = False
@@ -212,6 +216,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 maximum_bytes=self.spec.request.max_response_bytes,
                 transport=request_transport,
                 follow_redirects=False,
+                enforce_host_lease=enforce_host_lease,
             )
             body = response.content
         except SourceFetchError as exc:

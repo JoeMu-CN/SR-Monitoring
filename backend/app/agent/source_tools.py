@@ -11,7 +11,7 @@ from app.agent.models import SourceOnboardingDraft
 from app.signals.declarative import AdapterSpec, inspect_source_url, preview_adapter
 from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.router import build_pull_adapter
-from app.signals.service import collect_source_async
+from app.signals.service import CollectionDeferred, collect_source_async
 from app.signals.sources import SourceFetchError
 
 _ENV_REF = re.compile(r"env:[A-Z][A-Z0-9_]{0,127}\Z")
@@ -200,10 +200,15 @@ class PublishSourceAdapterTool:
             )
         except (ValidationError, SourceFetchError) as exc:
             if isinstance(exc, SourceFetchError) and exc.error_kind:
+                action = (
+                    "adapter_validation_deferred"
+                    if exc.error_kind == "deferred"
+                    else "adapter_access_blocked"
+                )
                 _audit(
                     session,
                     source,
-                    "adapter_access_blocked",
+                    action,
                     self.actor_id,
                     {"message": str(exc)[:500], "error_kind": exc.error_kind},
                 )
@@ -277,6 +282,15 @@ class RunSourceNowTool:
         try:
             adapter = build_pull_adapter(source)
             run = await collect_source_async(session, source, adapter)
+        except CollectionDeferred as exc:
+            # 受控延后：显式可重试，不冒充采集失败。
+            return {
+                "status": "deferred",
+                "message": str(exc)[:500],
+                "retryable": True,
+                "source_id": source.id,
+                "code": source.code,
+            }
         except Exception as exc:  # noqa: BLE001
             return {
                 "status": "error",
@@ -362,6 +376,15 @@ def _int_value(value: object) -> int:
 
 
 def _source_error(exc: ValueError | SourceFetchError) -> dict[str, object]:
+    if isinstance(exc, SourceFetchError) and exc.error_kind == "deferred":
+        # 受控延后：显式可重试语义，区别于 access_blocked 等终止性拦截。
+        return {
+            "status": "deferred",
+            "message": str(exc)[:500],
+            "retryable": True,
+            "error_kind": exc.error_kind,
+            "http_status": exc.http_status,
+        }
     result: dict[str, object] = {
         "status": "blocked" if isinstance(exc, SourceFetchError) and exc.error_kind else "error",
         "message": str(exc)[:500],

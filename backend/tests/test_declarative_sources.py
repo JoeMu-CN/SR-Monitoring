@@ -25,7 +25,7 @@ from app.signals.declarative import (
     preview_adapter,
     validate_public_https_url,
 )
-from app.signals.models import DataSource
+from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import SourceFetchError
 
@@ -794,3 +794,180 @@ def test_fallback_classifies_rate_limited() -> None:
 
 def _transport(handler):
     return httpx.MockTransport(handler)
+
+
+def _empty_json_response() -> object:
+    from app.signals.request_control import ControlledResponse
+
+    return ControlledResponse(
+        200,
+        {"content-type": "application/json"},
+        b'{"data":{"items":[]}}',
+    )
+
+
+def test_declarative_real_transport_enforces_host_lease(monkeypatch) -> None:
+    """真实抓取（PinnedIPTransport）必须走域名级风控，不得绕过 host lease。"""
+    import app.signals.declarative as declarative_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_validate(url: str, **kwargs: object) -> list[str]:
+        del url, kwargs
+        return ["1.1.1.1"]
+
+    async def fake_get(url: str, **kwargs: object) -> object:
+        del url
+        captured["enforce_host_lease"] = kwargs.get("enforce_host_lease")
+        return _empty_json_response()
+
+    monkeypatch.setattr(declarative_module, "validate_public_https_url", fake_validate)
+    monkeypatch.setattr(declarative_module, "controlled_get", fake_get)
+
+    adapter = DeclarativeSourceAdapter("lease-real", _spec())
+    asyncio.run(adapter.fetch())
+
+    assert captured["enforce_host_lease"] is True
+
+
+def test_declarative_test_transport_bypasses_lease_explicitly(monkeypatch) -> None:
+    """测试/自定义 transport 走显式 bypass（仅测试路径），显式传递 False。"""
+    import app.signals.declarative as declarative_module
+
+    captured: dict[str, object] = {}
+
+    async def fake_get(url: str, **kwargs: object) -> object:
+        del url
+        captured["enforce_host_lease"] = kwargs.get("enforce_host_lease")
+        return _empty_json_response()
+
+    monkeypatch.setattr(declarative_module, "controlled_get", fake_get)
+
+    adapter = DeclarativeSourceAdapter(
+        "lease-test", _spec(), transport=_transport(lambda _r: httpx.Response(200))
+    )
+    asyncio.run(adapter.fetch())
+
+    assert captured["enforce_host_lease"] is False
+
+
+def test_run_source_now_reports_deferred_retryable(db_session, monkeypatch) -> None:
+    """Agent 立即采集：受控延后表达为 deferred + retryable，且不落失败运行。"""
+    from sqlalchemy import func, select
+
+    from app.signals.models import CollectionRun
+    from app.signals.service import CollectionDeferred
+
+    source = DataSource(
+        code="deferred-run-now",
+        name="受控延后源",
+        source_type="official_api",
+        credibility=90,
+        endpoint_url="https://official.example/events",
+        adapter_config=_spec().model_dump(mode="json"),
+        adapter_status="published",
+        adapter_version=1,
+        enabled=True,
+    )
+    db_session.add(source)
+    db_session.flush()
+
+    import app.agent.source_tools as source_tools_module
+
+    async def _deferred(session: object, src: object, adapter: object) -> object:
+        del session, src, adapter
+        raise CollectionDeferred("数据源域名冷却中")
+
+    monkeypatch.setattr(source_tools_module, "collect_source_async", _deferred)
+
+    result = asyncio.run(
+        RunSourceNowTool().execute(
+            {"source_id": source.id, "confirmation": "立即采集"}, db_session
+        )
+    )
+
+    assert result["status"] == "deferred"
+    assert result["retryable"] is True
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(CollectionRun)
+            .where(CollectionRun.source_id == source.id)
+        )
+        == 0
+    )
+
+
+def test_source_error_marks_deferred_as_retryable() -> None:
+    from app.agent.source_tools import _source_error
+
+    result = _source_error(SourceFetchError("域名冷却中", error_kind="deferred"))
+
+    assert result["status"] == "deferred"
+    assert result["retryable"] is True
+
+
+def test_preview_endpoint_reports_deferred(client, monkeypatch) -> None:
+    """实时预览遇受控延后：稳定 409 collection_deferred，而非 502 失败。"""
+    import app.signals.router as source_router
+
+    async def _deferred(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise SourceFetchError("数据源域名冷却中", error_kind="deferred")
+
+    monkeypatch.setattr(source_router, "preview_adapter", _deferred)
+
+    response = client.post(
+        "/api/v1/sources/preview",
+        json={
+            "source_code": "deferred-preview",
+            "adapter_config": _spec().model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "collection_deferred"
+
+
+def test_publish_endpoint_reports_deferred_without_invalidating(
+    client, db_session, monkeypatch
+) -> None:
+    """发布前验证遇受控延后：不误标 invalid，审计延期，返回 409。"""
+    from sqlalchemy import select
+
+    source = DataSource(
+        code="deferred-publish",
+        name="受控延后发布源",
+        source_type="official_api",
+        credibility=90,
+        endpoint_url="https://official.example/events",
+        adapter_config=_spec().model_dump(mode="json"),
+        adapter_status="draft",
+        adapter_version=0,
+        enabled=False,
+    )
+    db_session.add(source)
+    db_session.flush()
+    source_id = source.id
+
+    import app.signals.router as source_router
+
+    async def _deferred(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise SourceFetchError("数据源域名冷却中", error_kind="deferred")
+
+    monkeypatch.setattr(source_router, "preview_adapter", _deferred)
+
+    response = client.post(f"/api/v1/sources/{source_id}/publish")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "collection_deferred"
+    db_session.refresh(source)
+    assert source.adapter_status == "draft"
+    log = db_session.scalar(
+        select(DataSourceAuditLog)
+        .where(DataSourceAuditLog.source_id == source_id)
+        .order_by(DataSourceAuditLog.id.desc())
+    )
+    assert log is not None
+    assert log.action == "adapter_validation_deferred"

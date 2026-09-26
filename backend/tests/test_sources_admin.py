@@ -1,8 +1,9 @@
 import hashlib
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.signals.models import DataSource, DataSourceAuditLog
+from app.signals.models import DataSource, DataSourceAuditLog, RawSignal
 from app.signals.secret_store import decrypt_secret
 from app.signals.sources import NmcWeatherAdapter, OfacSdnAdapter
 
@@ -191,3 +192,39 @@ def test_builtin_http_sources_report_effective_endpoint_and_access_state(client)
     assert by_code["ofac-sdn"]["endpoint_url"] == OfacSdnAdapter.endpoint
     assert by_code["nmc-weather"]["access_status"] == "ready"
     assert by_code["ofac-sdn"]["access_status"] == "ready"
+
+
+def test_tianyancha_serialization_keeps_signal_counts(client, db_session) -> None:
+    """密钥配置覆盖分支不得提前返回：天眼查同样要带上累计/有效记录数。"""
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    now = datetime.now(UTC)
+    db_session.add(
+        RawSignal(
+            source_id=source.id,
+            external_id="tyc-count-regression",
+            title="天眼查核查：计数回归测试",
+            content="用于验证序列化不再漏掉累计与有效记录数。",
+            fingerprint="tyc-count-regression",
+            raw_data={},
+            collected_at=now,
+            validity_state="active",
+            validity_profile="adverse_registry",
+            validity_mode="fixed_days",
+            valid_from=now,
+            valid_until=now + timedelta(days=30),
+            validity_policy_version="test-policy-v1",
+            validity_reason={
+                "code": "test_active",
+                "anchor_source": "collected_at",
+                "details": {},
+            },
+        )
+    )
+    db_session.flush()
+
+    response = client.get("/api/v1/sources/admin")
+    assert response.status_code == 200
+    tianyancha = next(item for item in response.json() if item["code"] == "tianyancha")
+    assert tianyancha["total_signal_count"] >= 1
+    assert tianyancha["valid_signal_count"] >= 1

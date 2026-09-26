@@ -108,10 +108,19 @@ async def controlled_get(
     maximum_bytes: int,
     follow_redirects: bool = False,
     transport: httpx.AsyncBaseTransport | None = None,
+    enforce_host_lease: bool | None = None,
 ) -> ControlledResponse:
-    """执行一次受控 GET；MockTransport 测试不访问数据库风控状态。"""
+    """执行一次受控 GET。
+
+    ``enforce_host_lease`` 决定是否走域名级租约/冷却/节流：
+    - ``None``：沿用历史行为，仅当 ``transport is None`` 时启用；
+    - ``True``：显式启用（真实抓取含 ``PinnedIPTransport`` 必须显式启用，
+      不得因传入 transport 而绕过 host lease）；
+    - ``False``：显式旁路（仅测试/自定义 transport 专用）。
+    """
     lease: HostLease | None = None
-    if transport is None:
+    guard = (transport is None) if enforce_host_lease is None else enforce_host_lease
+    if guard:
         try:
             lease = acquire_host_lease(url)
         except SourceAccessDeferred as exc:

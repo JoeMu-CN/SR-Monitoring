@@ -64,7 +64,7 @@ from app.signals.relevance import (
     load_filter_rules,
 )
 from app.signals.router import build_pull_adapter
-from app.signals.service import CollectionFailed, collect_source
+from app.signals.service import CollectionDeferred, CollectionFailed, collect_source
 from app.suppliers.models import Supplier
 from app.suppliers.schemas import normalize_alias
 
@@ -111,6 +111,11 @@ def _collect_enabled_sources(
             runtime.record_job_started(runtime.source_collection_job_key(source.id))
             try:
                 run = collect_source(session, source, pull_adapter)
+            except CollectionDeferred as exc:
+                # 请求受控延后：中性完成，不写失败观测、不计入失败摘要。
+                logger.info("数据源 %s 采集受控延后: %s", source.code, exc)
+                runtime.record_source_collection_deferred(source.id)
+                continue
             except CollectionFailed as exc:
                 logger.error("数据源 %s 采集失败: %s", source.code, exc)
                 summary[source.code] = -1
@@ -147,13 +152,14 @@ def collect_tyc_for_suppliers_job() -> None:
     """每日批量核查启用的供应商：调用天眼查 MCP 并把结果写入信号池。
 
     只对 suppliers.enabled=true 的供应商执行；受天眼查每日/每月额度控制
-    （get_tyc_usage.allowed），额度耗尽即停止。结果写入 raw_signals，
-    随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
+    （get_tyc_usage.allowed），额度耗尽即停止。每次调用结果统一写入
+    tyc_usage_records（success/empty/error/not_configured）；仅 success 结果
+    写入 raw_signals，随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
     """
     try:
         import asyncio as _asyncio
 
-        from app.agent.budget import get_tyc_usage
+        from app.agent.budget import get_tyc_usage, record_tyc_usage
         from app.agent.supplier_tyc import upsert_supplier_tyc_signal
         from app.agent.tyc_gateway import build_tyc_gateway
 
@@ -192,9 +198,27 @@ def collect_tyc_for_suppliers_job() -> None:
                     result = _asyncio.run(gateway.verify(supplier.legal_name))
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
+                    # 调用已发生（网络/鉴权/服务异常）：按 error 记账并立即提交，
+                    # 不因后续流程中断而丢失真实调用事实。
+                    record_tyc_usage(
+                        session,
+                        tool_name=_TYC_VERIFY_TOOL_NAME,
+                        company_name=supplier.legal_name,
+                        status="error",
+                    )
+                    session.commit()
                     logger.warning("天眼查核查 %s 失败: %s", supplier.legal_name, exc)
                     continue
-                if result.get("status") != "success":
+                call_status = _tyc_usage_status(result)
+                record_tyc_usage(
+                    session,
+                    tool_name=_TYC_VERIFY_TOOL_NAME,
+                    company_name=supplier.legal_name,
+                    status=call_status,
+                )
+                # 记账独立提交：真实调用已计入额度，信号入库失败也不回滚计费事实。
+                session.commit()
+                if call_status != "success":
                     skipped += 1
                     continue
                 title = f"天眼查核查：{supplier.legal_name}"
@@ -218,6 +242,21 @@ def collect_tyc_for_suppliers_job() -> None:
             _process_pending_signals()
     except Exception as exc:
         logger.exception("天眼查批量核查异常: %s", exc)
+
+
+# 与 VerifyCompanyTool.name 一致：批量与实时核查共用同一计费口径和工具标识。
+_TYC_VERIFY_TOOL_NAME = "verify_company"
+_TYC_USAGE_STATUSES: frozenset[str] = frozenset(
+    {"success", "empty", "error", "not_configured"}
+)
+
+
+def _tyc_usage_status(result: dict[str, object]) -> str:
+    """按天眼查计费口径归类 verify 结果：仅四态合法，其余一律按 error 记账。"""
+    status = result.get("status")
+    if isinstance(status, str) and status in _TYC_USAGE_STATUSES:
+        return status
+    return "error"
 
 
 def _format_tyc_content(result: dict[str, object]) -> str:

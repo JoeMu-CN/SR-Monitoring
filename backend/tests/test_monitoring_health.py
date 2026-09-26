@@ -25,12 +25,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import inspect, select, update
+from sqlalchemy import delete, inspect, select, update
 from sqlalchemy.orm import Session
 
 import app.scheduler.health as health_module
 import app.scheduler.jobs as scheduler_jobs
 import app.scheduler.runtime as scheduler_runtime
+from app.agent.models import TycUsageRecord
 from app.auth import security as auth_security
 from app.scheduler.health import build_monitoring_health
 from app.scheduler.health_schemas import MonitoringHealthRead
@@ -115,6 +116,32 @@ def _pull_source(
         source.created_at = created_at
     if updated_at is not None:
         source.updated_at = updated_at
+    session.flush()
+    return source
+
+
+def _tyc_source(session: Session, *, enabled: bool = True) -> DataSource:
+    """真实的天眼查 external_tool 信源：测试库已有迁移种子行则就地启停。"""
+    source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    if source is None:
+        source = DataSource(
+            code="tianyancha",
+            name="天眼查企业核查",
+            source_type="external_tool",
+            credibility=90,
+            enabled=enabled,
+            schedule=None,
+            adapter_status="builtin",
+            adapter_version=0,
+            auth_type="api_key",
+            login_config={},
+            adapter_config={},
+        )
+        session.add(source)
+    else:
+        source.enabled = enabled
+        source.source_type = "external_tool"
+        source.adapter_status = "builtin"
     session.flush()
     return source
 
@@ -673,6 +700,70 @@ def test_newer_success_recovers_from_earlier_failure(db_session: Session) -> Non
     assert item.last_attempt_at == NOW - timedelta(minutes=10)
 
 
+def test_tianyancha_last_success_at_uses_latest_successful_usage(
+    db_session: Session,
+) -> None:
+    """外部核查工具无 CollectionRun/runtime 观测：成功锚点取记账表最新 success。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=True)
+    db_session.add_all(
+        [
+            TycUsageRecord(
+                tool_name="verify_company",
+                company_name="甲公司",
+                status="success",
+                called_at=NOW - timedelta(hours=3),
+            ),
+            TycUsageRecord(
+                tool_name="verify_company",
+                company_name="乙公司",
+                status="success",
+                called_at=NOW - timedelta(minutes=30),
+            ),
+            TycUsageRecord(
+                tool_name="verify_company",
+                company_name="丙公司",
+                status="error",
+                called_at=NOW - timedelta(minutes=1),
+            ),
+        ]
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    # 按需外部工具：状态与下一预期保持不变，只用记账表补最近成功时间。
+    assert item.state == "on_demand"
+    assert item.reason_code == "on_demand"
+    assert item.next_expected_at is None
+    # 最新一条是 error，不得冒充成功；取最近 success。
+    assert item.last_success_at == NOW - timedelta(minutes=30)
+
+
+def test_tianyancha_without_successful_usage_has_no_last_success(
+    db_session: Session,
+) -> None:
+    """无 success 记账时不得凭空推导成功时间。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=True)
+    db_session.add(
+        TycUsageRecord(
+            tool_name="verify_company",
+            company_name="丁公司",
+            status="error",
+            called_at=NOW - timedelta(minutes=5),
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "on_demand"
+    assert item.last_success_at is None
+
+
 # --------------------------------------------------------------------------- #
 # 6. pending 口径
 # --------------------------------------------------------------------------- #
@@ -935,6 +1026,65 @@ def test_collect_source_failure_records_failed_observation(
     assert row.status == "failed"
     assert row.error_code == "collect_failed"
     assert row.last_success_at is None
+
+
+def test_collect_source_deferred_records_neutral_observation(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """受控延后：中性完成（清空当前状态/错误），保留 last_success_at，不写失败观测。"""
+    from app.signals.service import CollectionDeferred
+
+    monkeypatch.setattr(
+        scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="ofac-sdn", schedule="*/30 * * * *")
+    scheduler_runtime.record_source_collection(
+        source.id, succeeded=True, now=NOW - timedelta(hours=1)
+    )
+
+    def _deferred(session: object, src: object, adapter: object) -> object:
+        del session, src, adapter
+        raise CollectionDeferred("数据源域名冷却中")
+
+    monkeypatch.setattr(scheduler_jobs, "collect_source", _deferred)
+
+    summary = scheduler_jobs._collect_enabled_sources(source_ids=[source.id])
+
+    assert summary == {}
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(
+            SchedulerRuntimeState.job_key == source_collection_job_key(source.id)
+        )
+    )
+    assert row is not None
+    assert row.status == "idle"
+    assert row.error_code is None
+    assert row.last_finished_at is not None
+    assert row.last_success_at == NOW - timedelta(hours=1)
+
+
+def test_runtime_success_anchor_survives_neutral_completion(db_session: Session) -> None:
+    """健康成功锚点只认已持久化的 last_success_at，与当前状态无关。"""
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="ofac-sdn", schedule="0 9 1 * *")
+    db_session.add(
+        SchedulerRuntimeState(
+            job_key=source_collection_job_key(source.id),
+            status="idle",
+            last_success_at=NOW - timedelta(days=3),
+            last_finished_at=NOW - timedelta(days=3),
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "ofac-sdn")
+    assert item.state == "ok"
+    assert item.last_success_at == NOW - timedelta(days=3)
 
 
 # --------------------------------------------------------------------------- #

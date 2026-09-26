@@ -980,3 +980,121 @@ def test_verify_company_registered_supplier_without_signal_returns_empty(
     assert result["source"] == "database"  # type: ignore[index]
     assert gateway.calls == []
     assert get_tyc_usage(clean_agent_tables).daily_used == 0
+
+
+def test_collect_tyc_for_suppliers_persists_usage_and_signal_on_success(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """每日批量核查成功：写 success 记账、落信号池、复用既有处理链。"""
+    from contextlib import nullcontext
+
+    import app.agent.tyc_gateway as tyc_gateway_module
+    import app.scheduler.jobs as scheduler_jobs
+    from app.signals.models import RawSignal
+
+    class _SuccessGateway:
+        async def verify(self, company_name: str) -> dict[str, object]:
+            return {
+                "status": "success",
+                "company_name": company_name,
+                "reg_status": "存续",
+            }
+
+    supplier = Supplier(
+        supplier_code="SUP-TYC-JOB-SUCCESS",
+        legal_name="批量核查成功有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    monkeypatch.setattr(
+        scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables)
+    )
+    monkeypatch.setattr(
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _SuccessGateway()
+    )
+    processed: list[int] = []
+    monkeypatch.setattr(
+        scheduler_jobs,
+        "_process_pending_signals",
+        lambda *args, **kwargs: processed.append(1),
+    )
+
+    scheduler_jobs.collect_tyc_for_suppliers_job()
+
+    records = list(clean_agent_tables.scalars(select(TycUsageRecord)))
+    assert [(r.tool_name, r.company_name, r.status) for r in records] == [
+        ("verify_company", "批量核查成功有限公司", "success")
+    ]
+    assert get_tyc_usage(clean_agent_tables).daily_used == 1
+    signals = list(
+        clean_agent_tables.scalars(
+            select(RawSignal).where(
+                RawSignal.external_id.like("tyc-SUP-TYC-JOB-SUCCESS-%")
+            )
+        )
+    )
+    assert len(signals) == 1
+    assert signals[0].raw_data["status"] == "success"
+    assert processed == [1]
+
+
+@pytest.mark.parametrize(
+    ("gateway_status", "expected_status"),
+    [
+        ("success", "success"),
+        ("empty", "empty"),
+        ("error", "error"),
+        ("not_configured", "not_configured"),
+    ],
+)
+def test_collect_tyc_for_suppliers_records_every_result_status(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+    gateway_status: str,
+    expected_status: str,
+) -> None:
+    """每次调用结果都写 TycUsageRecord 四态；只有 success 计 1 次额度。"""
+    from contextlib import nullcontext
+
+    import app.agent.tyc_gateway as tyc_gateway_module
+    import app.scheduler.jobs as scheduler_jobs
+
+    class _FixedStatusGateway:
+        async def verify(self, company_name: str) -> dict[str, object]:
+            if gateway_status == "error":
+                raise RuntimeError("天眼查服务暂时不可用")
+            return {"status": gateway_status, "company_name": company_name}
+
+    supplier = Supplier(
+        supplier_code="SUP-TYC-JOB-STATUS",
+        legal_name="批量核查状态有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    monkeypatch.setattr(
+        scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables)
+    )
+    monkeypatch.setattr(
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _FixedStatusGateway()
+    )
+    monkeypatch.setattr(
+        scheduler_jobs, "_process_pending_signals", lambda *args, **kwargs: 0
+    )
+
+    scheduler_jobs.collect_tyc_for_suppliers_job()
+
+    records = list(clean_agent_tables.scalars(select(TycUsageRecord)))
+    assert [(r.company_name, r.status) for r in records] == [
+        ("批量核查状态有限公司", expected_status)
+    ]
+    usage = get_tyc_usage(clean_agent_tables)
+    assert usage.daily_used == (1 if expected_status == "success" else 0)

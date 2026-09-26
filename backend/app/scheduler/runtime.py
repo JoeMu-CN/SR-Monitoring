@@ -97,6 +97,30 @@ def record_source_collection(
     )
 
 
+def record_source_collection_deferred(
+    source_id: int, *, now: datetime | None = None
+) -> bool:
+    """记录单个信源本次采集受控延后（域名冷却/租约/节流）。
+
+    延后既非成功也非失败：中性完成，不刷新成功锚点，也不写入失败。
+    """
+    return record_job_neutral(source_collection_job_key(source_id), now=now)
+
+
+def record_job_neutral(job_key: str, *, now: datetime | None = None) -> bool:
+    """中性完成：状态收敛为 idle 并清空当前 error_code，保留 last_success_at。"""
+    moment = now or datetime.now(UTC)
+    return _write(
+        job_key,
+        {
+            "status": "idle",
+            "last_finished_at": moment,
+            "error_code": None,
+            "updated_at": moment,
+        },
+    )
+
+
 def record_job_started(job_key: str, *, now: datetime | None = None) -> bool:
     """任务开始时标记观测点为 running（独立短事务；写失败不影响业务）。"""
     moment = now or datetime.now(UTC)

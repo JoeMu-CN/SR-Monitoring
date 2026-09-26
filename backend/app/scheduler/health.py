@@ -6,7 +6,9 @@
 - 信源：与采集链同款能力判定（``build_pull_adapter``）区分拉取源与按需源；
   ``schedule=NULL`` 的可调度拉取源使用 ``SCHEDULER_COLLECT_CRON`` 推导下一预期；
   仅 manual-json / external_tool / 无法构建拉取适配器的来源为 on_demand。
-- 锚点：最近成功（runtime 优先于可被 30 天清理的 collection_runs），
+- 锚点：最近成功（runtime 优先于可被 30 天清理的 collection_runs）；
+  tianyancha 外部核查工具无 CollectionRun/runtime 观测，最近成功取
+  ``tyc_usage_records`` 最新一条 ``success`` 的 ``called_at``；
   无成功时用首次创建/最近配置更新时间推导首个预期触发点，再加 300 秒宽限。
 - pending：复用业务候选谓词（不含 batch limit），classification_failed 另列。
 - 状态判定全部在 ``health_rules``（纯函数）；本模块只做数据聚合。
@@ -19,6 +21,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.agent.budget import TYC_SOURCE_CODE
+from app.agent.models import TycUsageRecord
 from app.config import SCHEDULER_COLLECT_CRON
 from app.scheduler.health_rules import (
     ACTIVE_ADAPTER_STATES,
@@ -83,7 +87,12 @@ def _is_pull_source(source: DataSource) -> bool:
 
 
 def _runtime_success_at(row: SchedulerRuntimeState | None) -> datetime | None:
-    if row is not None and row.status == "succeeded":
+    """最近成功锚点只认已持久化的 ``last_success_at``，与当前状态无关。
+
+    受控延后会把状态收敛为中性 ``idle`` 且保留 ``last_success_at``；
+    若按状态过滤，延后期间会丢失成功锚点、误报 never_run/overdue。
+    """
+    if row is not None and row.last_success_at is not None:
         return _as_utc(row.last_success_at)
     return None
 
@@ -92,6 +101,17 @@ def _runtime_failure_at(row: SchedulerRuntimeState | None) -> datetime | None:
     if row is not None and row.status == "failed":
         return _as_utc(row.last_finished_at)
     return None
+
+
+def _latest_successful_tyc_call(session: Session) -> datetime | None:
+    """天眼查成功锚点：``tyc_usage_records`` 中最新一次 ``success`` 的调用时间。"""
+    return _as_utc(
+        session.scalar(
+            select(func.max(TycUsageRecord.called_at)).where(
+                TycUsageRecord.status == "success"
+            )
+        )
+    )
 
 
 def _heartbeat(row: SchedulerRuntimeState | None, now: datetime) -> SchedulerHealthRead:
@@ -196,6 +216,13 @@ def _source_health(
     by_source: dict[int, tuple[object, object, object]] = {
         int(row[0]): (row[1], row[2], row[3]) for row in run_rows
     }
+    # 外部核查工具（天眼查）不写 CollectionRun/runtime 观测：
+    # 仅有该信源时查询记账表，用最近 success 补全 last_success_at。
+    tyc_success_at = (
+        _latest_successful_tyc_call(session)
+        if any(source.code == TYC_SOURCE_CODE for source in sources)
+        else None
+    )
 
     items: list[SourceHealthRead] = []
     for source in sources:
@@ -209,6 +236,8 @@ def _source_health(
         # 最近成功：runtime 成功锚点优先，collection_runs（可被 30 天清理）作补充，
         # 两者都存在时取更近的一次（“最近成功”）。
         success_at = _max_utc(_runtime_success_at(runtime_row), _as_utc(run_success))  # type: ignore[arg-type]
+        if source.code == TYC_SOURCE_CODE:
+            success_at = _max_utc(success_at, tyc_success_at)
         failure_at = _max_utc(_runtime_failure_at(runtime_row), _as_utc(run_failed))  # type: ignore[arg-type]
         attempt_at = _max_utc(
             _as_utc(runtime_row.last_started_at) if runtime_row is not None else None,

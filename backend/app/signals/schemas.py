@@ -452,7 +452,7 @@ class RunAllSourcesItem(BaseModel):
 
     source_id: int
     code: str
-    status: Literal["succeeded", "failed", "skipped", "error"]
+    status: Literal["succeeded", "failed", "skipped", "error", "deferred"]
     created_count: int = 0
     reason: str | None = None
 
@@ -465,5 +465,6 @@ class RunAllSourcesResult(BaseModel):
     total: int
     succeeded: int
     failed: int
+    deferred: int = 0
     skipped: int
     items: list[RunAllSourcesItem]

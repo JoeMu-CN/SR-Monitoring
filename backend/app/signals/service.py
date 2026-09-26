@@ -40,6 +40,12 @@ class CollectionFailed(RuntimeError):
     """采集执行失败，已记录失败的 collection_run。"""
 
 
+class CollectionDeferred(RuntimeError):
+    """请求受控延后（域名冷却/租约/节流），未产生失败 collection_run。"""
+
+    error_kind = "deferred"
+
+
 def collect_source(
     session: Session, source: DataSource, adapter: PullSourceAdapter
 ) -> CollectionRun:
@@ -56,12 +62,16 @@ async def collect_source_async(
     run = CollectionRun(source_id=source.id, status="running")
     session.add(run)
     session.commit()
-    session.refresh(run)
     try:
         items = None
         try:
             items = await adapter.fetch()
         except SourceFetchError as exc:
+            if exc.error_kind == CollectionDeferred.error_kind:
+                # 受控延后（域名冷却/租约/节流）不是采集失败：删除临时运行，
+                # 不落 failed 记录、不污染健康观测。
+                _discard_provisional_run(session, run.id)
+                raise CollectionDeferred(str(exc)) from exc
             _fail_run(session, run.id, str(exc))
             raise CollectionFailed(str(exc)) from exc
         ingestions: list[SignalIngestion] = []
@@ -103,6 +113,9 @@ async def collect_source_async(
         stored_run.created_count = created
         stored_run.duplicate_count = len(ingestions) - created
         session.commit()
+    except CollectionDeferred:
+        # 已在 fetch 阶段清理临时运行；不得再被下方宽泛捕获包成采集失败。
+        raise
     except Exception as exc:
         if isinstance(exc, CollectionFailed):
             raise
@@ -111,6 +124,15 @@ async def collect_source_async(
     stored_run = session.get(CollectionRun, run.id)
     assert stored_run is not None
     return stored_run
+
+
+def _discard_provisional_run(session: Session, run_id: int) -> None:
+    """删除 fetch 阶段判定延后的临时运行：回滚 -> 按 id 取回 -> 删除 -> 提交。"""
+    session.rollback()
+    run = session.get(CollectionRun, run_id)
+    if run is not None:
+        session.delete(run)
+        session.commit()
 
 
 def _fail_run(session: Session, run_id: int, message: str) -> None:

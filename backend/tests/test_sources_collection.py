@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import RetentionSettings
@@ -19,8 +19,9 @@ from app.risks.models import (
 from app.scheduler.retention import cleanup_retention
 from app.signals.declarative import AdapterSpec, DeclarativeSourceAdapter
 from app.signals.models import CollectionRun, DataSource, RawSignal
-from app.signals.service import CollectionFailed, collect_source
-from app.signals.sources import NmcWeatherAdapter, StatsPmiAdapter
+from app.signals.schemas import ManualSignalInput
+from app.signals.service import CollectionDeferred, CollectionFailed, collect_source
+from app.signals.sources import NmcWeatherAdapter, RawSourceItem, SourceFetchError, StatsPmiAdapter
 from app.suppliers.models import Supplier
 
 
@@ -927,3 +928,122 @@ def test_collection_supersession_when_two_pmi_months_collected(
         .where(RawSignal.source_id == source.id, RawSignal.validity_state == "active")
     )
     assert active == 1
+
+
+class _DeferredFetchAdapter:
+    """fetch 阶段抛受控延后（域名冷却/租约/节流）的最小适配器。"""
+
+    source_code = "deferred-test"
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        raise SourceFetchError(
+            "数据源域名 official.example 已有请求正在执行，请稍后重试",
+            error_kind="deferred",
+        )
+
+
+def test_collect_source_deferred_leaves_no_failed_run(db_session: Session) -> None:
+    """受控延后是类型化结果：临时运行记录被删除，不落 failed 运行。"""
+    # Given
+    source = _get_nmc_source(db_session)
+
+    # When / Then
+    with pytest.raises(CollectionDeferred) as exc_info:
+        collect_source(db_session, source, _DeferredFetchAdapter())
+    assert exc_info.value.error_kind == "deferred"
+    assert db_session.scalar(select(func.count()).select_from(CollectionRun)) == 0
+    assert db_session.scalar(select(func.count()).select_from(RawSignal)) == 0
+
+
+def test_collect_source_failure_after_fetch_still_records_failed_run(
+    db_session: Session,
+) -> None:
+    """仅在 fetch 阶段延期清理：fetch 之后的异常仍记为失败运行。"""
+    # Given
+    source = _get_nmc_source(db_session)
+
+    class _FingerprintBoomAdapter:
+        source_code = "boom-test"
+
+        async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+            del cursor
+            return [RawSourceItem(external_id="boom-1", title="标题", content="正文")]
+
+        def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+            return ManualSignalInput(
+                external_id=item.external_id, title=item.title, content=item.content
+            )
+
+        def fingerprint(self, signal: ManualSignalInput) -> str:
+            del signal
+            raise RuntimeError("指纹计算失败（测试注入）")
+
+    # When / Then
+    with pytest.raises(CollectionFailed):
+        collect_source(db_session, source, _FingerprintBoomAdapter())
+    run = db_session.scalar(select(CollectionRun).order_by(CollectionRun.id.desc()))
+    assert run is not None
+    assert run.status == "failed"
+
+
+def test_manual_run_returns_409_collection_deferred(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """单源手动触发：受控延后返回稳定 409 collection_deferred，不产生失败运行。"""
+    # Given
+    db_session.execute(update(DataSource).values(enabled=False))
+    source = _get_nmc_source(db_session)
+    source.enabled = True
+    db_session.flush()
+    import app.signals.router as source_router
+
+    def _deferred(session: Session, src: DataSource, adapter: object) -> None:
+        del session, src, adapter
+        raise CollectionDeferred("数据源域名冷却中")
+
+    monkeypatch.setattr(source_router, "collect_source", _deferred)
+
+    # When
+    response = client.post(f"/api/v1/sources/{source.id}/run")
+
+    # Then
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "collection_deferred"
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(CollectionRun)
+            .where(CollectionRun.source_id == source.id)
+        )
+        == 0
+    )
+
+
+def test_run_all_reports_deferred_separately(
+    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """全量刷新：受控延后单列 outcome/count，不计入 failed。"""
+    # Given
+    db_session.execute(update(DataSource).values(enabled=False))
+    source = _get_nmc_source(db_session)
+    source.enabled = True
+    db_session.flush()
+    import app.signals.router as source_router
+
+    def _deferred(session: Session, src: DataSource, adapter: object) -> None:
+        del session, src, adapter
+        raise CollectionDeferred("数据源域名冷却中")
+
+    monkeypatch.setattr(source_router, "collect_source", _deferred)
+
+    # When
+    response = client.post("/api/v1/sources/run-all")
+
+    # Then
+    assert response.status_code == 200
+    body = response.json()
+    assert body["deferred"] == 1
+    assert body["failed"] == 0
+    item = next(entry for entry in body["items"] if entry["code"] == "nmc-weather")
+    assert item["status"] == "deferred"

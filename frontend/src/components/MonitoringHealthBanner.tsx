@@ -104,21 +104,43 @@ const SOURCE_TONE_CLASSES: Record<(typeof SOURCE_STATE_META)[keyof typeof SOURCE
 
 /**
  * 数据源页每来源新鲜度：最后成功、下一预期与失败/超期原因。
+ * 按需核查来源（onDemand 或服务端 state=on_demand）显示「按需核查 + 最近核查真实时间」，不显示下次预期；
+ * 外部核查工具停用时后端归为 disabled，但业务语义仍是按需核查，不允许展示为「已停用」。
  * 停用与按需来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。
  */
-export const MonitoringSourceFreshness = ({health}: {readonly health: MonitoringSourceHealth | undefined}) => {
+export const MonitoringSourceFreshness = ({health, onDemand = false}: {
+  readonly health: MonitoringSourceHealth | undefined;
+  readonly onDemand?: boolean;
+}) => {
   if (health === undefined) return null;
-  const meta = SOURCE_STATE_META[health.state];
+  const effectiveState: MonitoringSourceState = onDemand ? 'on_demand' : health.state;
+  const meta = SOURCE_STATE_META[effectiveState];
+  const lastCheckAt = health.last_attempt_at ?? health.last_success_at;
   return (
     <p
       data-testid={`source-health-${health.source_id}`}
       className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-relaxed"
     >
       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{meta.label}</span>
-      <span className="flex flex-wrap items-center gap-x-2 font-mono text-slate-500 dark:text-slate-400">
-        <span className="whitespace-nowrap">最近成功 {health.last_success_at === null ? '—' : formatHealthTime(health.last_success_at)}</span>
-        {' · '}
-        <span className="whitespace-nowrap">下次预期 {health.next_expected_at === null ? '—' : formatHealthTime(health.next_expected_at)}</span>
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 font-mono text-slate-500 dark:text-slate-400">
+        {/* 标签与时间拆成独立 nowrap token：窄列只在标签-时间边界换行，时间戳自身不可拆。 */}
+        {effectiveState === 'on_demand' ? (
+          <>
+            <span className="whitespace-nowrap">最近核查</span>
+            {' '}
+            <span className="whitespace-nowrap">{lastCheckAt === null ? '—' : formatHealthTime(lastCheckAt)}</span>
+          </>
+        ) : (
+          <>
+            <span className="whitespace-nowrap">最近成功</span>
+            {' '}
+            <span className="whitespace-nowrap">{health.last_success_at === null ? '—' : formatHealthTime(health.last_success_at)}</span>
+            {/* 分隔符并入「下次预期」组：窄列换行时「·」不得单独成行。 */}
+            <span className="whitespace-nowrap">· 下次预期</span>
+            {' '}
+            <span className="whitespace-nowrap">{health.next_expected_at === null ? '—' : formatHealthTime(health.next_expected_at)}</span>
+          </>
+        )}
       </span>
       {meta.tone === 'fault' && <span className="font-mono text-slate-400">原因 {health.reason_code}</span>}
     </p>

@@ -123,12 +123,29 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
     expect(cell.textContent).toContain(`下次预期 ${expectedTime('2026-09-11T06:00:00Z')}`);
   });
 
-  it('「最近成功/下次预期 + 时间」各自为不可拆分的 nowrap 语义组，CJK 标签不与时间断行', () => {
+  it('标签与完整时间戳各自为独立 nowrap token：仅 token 边界允许换行，时间戳不得拆断', () => {
     render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
     const cell = screen.getByTestId('source-health-17');
     const nowrapTexts = Array.from(cell.querySelectorAll('.whitespace-nowrap')).map((el) => el.textContent ?? '');
-    expect(nowrapTexts.some((text) => text.startsWith('最近成功 '))).toBe(true);
-    expect(nowrapTexts.some((text) => text.startsWith('下次预期 '))).toBe(true);
+    // 标签与时间不能合并在同一 token：合并组会把 768px 窄列的 scrollWidth 撑到 clientWidth 之上。
+    expect(nowrapTexts).toContain('最近成功');
+    expect(nowrapTexts).toContain(expectedTime('2026-09-11T05:30:00Z'));
+    // 分隔符必须与「下次预期」同 token：否则 768px 窄列下「·」会单独占一行。
+    expect(nowrapTexts).toContain('· 下次预期');
+    expect(nowrapTexts).toContain(expectedTime('2026-09-11T06:00:00Z'));
+    // 时间组只包含 token 元素子节点，且每个都是 nowrap：换行只发生在 token 之间。
+    const tokenElements = Array.from(cell.querySelector('.min-w-0')?.children ?? []);
+    expect(tokenElements).toHaveLength(4);
+    expect(tokenElements.every((token) => token.classList.contains('whitespace-nowrap'))).toBe(true);
+  });
+
+  it('时间组容器启用 min-w-0，窄列内允许收缩而不是把 nowrap 组撑成不可收缩整体', () => {
+    render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
+    const cell = screen.getByTestId('source-health-17');
+    const timeGroups = cell.querySelector('.min-w-0');
+    expect(timeGroups).not.toBeNull();
+    expect(timeGroups?.textContent).toContain('最近成功');
+    expect(timeGroups?.textContent).toContain('下次预期');
   });
 
   it('failed 来源显示失败标签与脱敏 reason_code', () => {
@@ -176,5 +193,78 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
   it('健康快照中没有该来源时不渲染任何占位', () => {
     render(<MonitoringSourceFreshness health={undefined} />);
     expect(screen.queryByTestId(/^source-health-/)).not.toBeInTheDocument();
+  });
+
+  it('on_demand 来源显示「按需核查 + 最近核查真实时间」，不显示下次预期与最近成功', () => {
+    render(
+      <MonitoringSourceFreshness
+        health={{
+          ...baseHealth.sources[0],
+          state: 'on_demand',
+          reason_code: 'on_demand',
+          next_expected_at: null,
+          last_success_at: null,
+          last_attempt_at: '2026-09-10T03:00:00Z',
+        }}
+      />,
+    );
+    const cell = screen.getByTestId('source-health-17');
+    expect(cell.textContent).toContain('按需核查');
+    expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
+    expect(cell.textContent).not.toContain('下次预期');
+    expect(cell.textContent).not.toContain('最近成功');
+  });
+
+  it('on_demand 分支同样拆分「最近核查」标签与时间戳为独立 nowrap token', () => {
+    render(
+      <MonitoringSourceFreshness
+        health={{
+          ...baseHealth.sources[0],
+          state: 'on_demand',
+          reason_code: 'on_demand',
+          next_expected_at: null,
+          last_success_at: null,
+          last_attempt_at: '2026-09-10T03:00:00Z',
+        }}
+      />,
+    );
+    const cell = screen.getByTestId('source-health-17');
+    const nowrapTexts = Array.from(cell.querySelectorAll('.whitespace-nowrap')).map((el) => el.textContent ?? '');
+    expect(nowrapTexts).toContain('最近核查');
+    expect(nowrapTexts).toContain(expectedTime('2026-09-10T03:00:00Z'));
+    // on_demand 只有「标签 + 时间」两个 token，时间戳必须自身不可拆。
+    const tokenElements = Array.from(cell.querySelector('.min-w-0')?.children ?? []);
+    expect(tokenElements).toHaveLength(2);
+    expect(tokenElements.every((token) => token.classList.contains('whitespace-nowrap'))).toBe(true);
+  });
+
+  it('onDemand 覆盖后端 disabled：外部核查工具停用时显示按需核查而非已停用', () => {
+    render(
+      <MonitoringSourceFreshness
+        onDemand
+        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
+      />,
+    );
+    const cell = screen.getByTestId('source-health-17');
+    expect(cell.textContent).toContain('按需核查');
+    expect(cell.textContent).not.toContain('已停用');
+    expect(cell.textContent).not.toContain('下次预期');
+  });
+
+  it('on_demand 且无核查记录时展示「最近核查 —」，不编造时间', () => {
+    render(
+      <MonitoringSourceFreshness
+        onDemand
+        health={{
+          ...baseHealth.sources[0],
+          state: 'disabled',
+          reason_code: 'disabled',
+          next_expected_at: null,
+          last_success_at: null,
+          last_attempt_at: null,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('source-health-17').textContent).toContain('最近核查 —');
   });
 });

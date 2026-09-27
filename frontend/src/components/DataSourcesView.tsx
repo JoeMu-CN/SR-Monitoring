@@ -55,6 +55,9 @@ const SOURCE_CODE_CATEGORY_RULES: ReadonlyArray<readonly [readonly string[], str
   [['weather', 'nmc'], '天气预警'],
   [['ofac', 'uflpa', 'bis', 'sanction', 'compliance', 'un-consolidated', 'mofcom'], '制裁合规'],
   [['commodity', 'pbc', 'stats', 'fx', 'shipping'], '宏观市场'],
+  // 自然灾害类（USGS 地震速报、中国地震台网 CENC）：须先于政策法规规则匹配，
+  // 保证地震速报编码不会落入其他关键词组，未被 code 命中时仍回退 source_type。
+  [['usgs', 'earthquake', 'cenc'], '自然灾害'],
   [['journal', 'announcement', 'notice', 'press', 'bulletin', 'customs', 'fmprc', 'wto', 'mem-', 'mee-', 'policy'], '政策法规'],
   [['manual'], '人工录入'],
 ];
@@ -185,7 +188,9 @@ const refreshBlockedReason = (
   if (role !== 'admin') return '仅管理员可触发采集';
   if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具按需调用，不支持页面刷新';
   if (source.code === 'manual-json') return '人工录入数据源不支持刷新';
-  if (source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
+  // adapterStatus 只描述声明式适配器的发布状态；external_tool（如天眼查）不走适配器
+  // 发布流程，真实后端返回 unconfigured，不能据此禁用其行内核查。
+  if (source.type !== 'external_tool' && source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
     return source.adapterStatus === 'draft' || source.adapterStatus === 'invalid'
       ? '适配器尚未发布，暂不可刷新'
       : '该来源尚未完成适配器配置，暂不可刷新';

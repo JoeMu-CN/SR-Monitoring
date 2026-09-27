@@ -455,7 +455,9 @@ describe('数据源列表信息架构与操作区', () => {
     enabled: false,
     status: 'disabled',
     latency: '已停用',
-    adapterStatus: 'builtin',
+    // 真实运行时 /api/v1/sources/admin 返回 adapter_status=unconfigured：声明式适配器
+    // 不适用于天眼查这类 external_tool，旧 fixture 错设为 builtin 掩盖了误禁用缺陷。
+    adapterStatus: 'unconfigured',
     accessLastHttpStatus: null,
     apiKeyConfigured: true,
     apiKeyHint: 'tyc_••••1234',
@@ -473,6 +475,8 @@ describe('数据源列表信息架构与操作区', () => {
       {...source, id: '7', code: 'pbc-lpr'},
       {...source, id: '8', code: 'wto-news'},
       {...source, id: '9', code: 'unknown-code-x'},
+      {...source, id: '10', code: 'usgs-earthquake-day'},
+      {...source, id: '11', code: 'mem-incident-bulletin'},
     ]);
 
     expect(screen.getByTestId('source-category-1')).toHaveTextContent('主体核查');
@@ -484,6 +488,10 @@ describe('数据源列表信息架构与操作区', () => {
     expect(screen.getByTestId('source-category-7')).toHaveTextContent('宏观市场');
     expect(screen.getByTestId('source-category-8')).toHaveTextContent('政策法规');
     expect(screen.getByTestId('source-category-9')).toHaveTextContent('官方接口');
+    // USGS 地震速报（source_type=official_api）须命中 code 关键词规则，不再回退“官方接口”。
+    expect(screen.getByTestId('source-category-10')).toHaveTextContent('自然灾害');
+    // 规则顺序回归：自然灾害规则插入后，mem- 编码仍命中政策法规规则。
+    expect(screen.getByTestId('source-category-11')).toHaveTextContent('政策法规');
   });
 
   it('记录数列标题为“记录数（有效/累计）”，两个数字分别链接到对应范围', () => {
@@ -675,6 +683,24 @@ describe('数据源列表信息架构与操作区', () => {
     await user.click(manualButton);
     await user.click(otherToolButton);
     expect(runSource).not.toHaveBeenCalled();
+  });
+
+  // 缺陷回归：真实 /api/v1/sources/admin 返回天眼查 source_type=external_tool、
+  // adapter_status=unconfigured、enabled=true。旧逻辑在豁免外部工具后，又被通用
+  // adapterStatus 检查二次禁用，刷新按钮被错误置灰（title: 该来源尚未完成适配器配置）。
+  it('已启用、未配置声明式适配器的天眼查仍可刷新，普通拉取来源仍要求已发布适配器', () => {
+    renderView([
+      {...tianyancha, adapterStatus: 'unconfigured', enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...source, id: '24', code: 'official-unconfigured', name: '未配置适配器接口来源', adapterStatus: 'unconfigured'},
+    ], 'admin');
+
+    const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
+    expect(tycButton).toBeEnabled();
+    expect(tycButton).toHaveAttribute('title', '立即发起一次批量主体核查');
+
+    const apiButton = screen.getByRole('button', {name: '刷新未配置适配器接口来源'});
+    expect(apiButton).toBeDisabled();
+    expect(apiButton).toHaveAttribute('title', '该来源尚未完成适配器配置，暂不可刷新');
   });
 
   it('天眼查核查失败时按行反馈错误且不触发列表刷新', async () => {

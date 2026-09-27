@@ -489,9 +489,23 @@ describe('数据源列表信息架构与操作区', () => {
   it('记录数列标题为“记录数（有效/累计）”，两个数字分别链接到对应范围', () => {
     renderView([{...source, validSignalCount: 7, totalSignalCount: 25}]);
 
-    expect(screen.getByText('记录数（有效/累计）')).toBeInTheDocument();
+    expect(
+      screen.getByText((_content, element) => element?.textContent?.replace(/\s+/g, '') === '记录数（有效/累计）'),
+    ).toBeInTheDocument();
     expect(screen.getByTestId('source-valid-17')).toHaveAttribute('href', '/sources/17/signals?scope=valid&page=1');
     expect(screen.getByTestId('source-total-17')).toHaveAttribute('href', '/sources/17/signals?scope=all&page=1');
+  });
+
+  // 768px CJK 回归：表头曾把「累计」从中间断开。要求按两个语义短语组织，
+  // 括号短语整体 nowrap，同时表头整体仍可作为一个短语通过文本查询。
+  it('记录数列标题把「记录数」与「（有效/累计）」拆为两个语义短语，括号短语整段不拆字', () => {
+    renderView([source]);
+
+    expect(screen.getByText('记录数')).toBeInTheDocument();
+    expect(screen.getByText('（有效/累计）')).toHaveClass('whitespace-nowrap');
+    expect(
+      screen.getByText((_content, element) => element?.textContent?.replace(/\s+/g, '') === '记录数（有效/累计）'),
+    ).toBeInTheDocument();
   });
 
   it('有效数与累计数相等时两个数字仍分别可点击', () => {
@@ -555,6 +569,16 @@ describe('数据源列表信息架构与操作区', () => {
     expect(screen.getByTestId('source-name-23')).toHaveTextContent('天眼查企业核查');
     expect(screen.getByTestId('source-name-23').textContent).not.toContain('按需核查');
     expect(screen.getByText('tianyancha')).toBeInTheDocument();
+  });
+
+  // 768px CJK 回归：名称与类别挤在同一不可换行 flex 行，名称被压到 36px 全部截断。
+  // 要求名称标题行可换行，且名称节点以 title 暴露完整名称以兜底截断。
+  it('名称标题行可换行且名称节点以 title 暴露完整名称', () => {
+    renderView([source]);
+
+    const nameNode = screen.getByTestId('source-name-17');
+    expect(nameNode).toHaveAttribute('title', '官方风险源');
+    expect(nameNode.parentElement).toHaveClass('flex-wrap');
   });
 
   it('操作按刷新、编辑、停用/启用排列，按钮均带明确 aria-label 与 title', () => {

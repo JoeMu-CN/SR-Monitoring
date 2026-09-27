@@ -552,7 +552,12 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <div className="col-span-3">数据源名称与类别</div>
           <div className="col-span-2">连通状态</div>
           <div className="col-span-2">有效期策略</div>
-          <div className="col-span-2">记录数（有效/累计）</div>
+          {/* 768px CJK 回归：表头曾把「累计」从中间断开。拆为两个不可拆语义短语，
+              md 下有意分行，lg 起恢复同行；DOM 顺序保持可访问文本为「记录数（有效/累计）」。 */}
+          <div className="col-span-2 flex flex-col lg:block">
+            <span className="whitespace-nowrap">记录数</span>
+            <span className="whitespace-nowrap">（有效/累计）</span>
+          </div>
           <div className="col-span-3 text-right">操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
@@ -592,8 +597,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       </span>
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <h3 data-testid={`source-name-${source.id}`} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{displayName}</h3>
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{displayName}</h3>
                         <span data-testid={`source-category-${source.id}`} className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                           {sourceCategory(source)}
                         </span>

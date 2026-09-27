@@ -468,3 +468,18 @@ class RunAllSourcesResult(BaseModel):
     deferred: int = 0
     skipped: int
     items: list[RunAllSourcesItem]
+
+
+class TycBatchRunRead(BaseModel):
+    """天眼查手动批量刷新（run-tyc-batch）的稳定汇总。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: int
+    targeted_count: int
+    attempted_count: int
+    created_count: int
+    duplicate_count: int
+    empty_count: int
+    failed_count: int
+    quota_exhausted: bool

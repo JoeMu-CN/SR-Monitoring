@@ -2,7 +2,7 @@ import React, {useState} from 'react';
 import {motion} from 'motion/react';
 import {AlertTriangle, X} from 'lucide-react';
 import {Link} from 'react-router-dom';
-import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
+import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type TycBatchRunResult, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
@@ -142,6 +142,12 @@ const sourceNodeHint = (source: DataSource): string => {
     return ACCESS_ERROR_HINTS[source.accessLastErrorKind] ?? '最近一次采集未成功，系统稍后会自动重试';
   }
   if (source.type === 'external_tool') {
+    // 天眼查已支持页面内手动批量核查，提示不再声称不支持页面刷新；每日调度语义保持不变。
+    if (source.code === TYC_SOURCE_CODE) {
+      return source.apiKeyConfigured
+        ? '外部核查工具：运行密钥已配置，支持页面手动批量核查全部启用供应商；每天北京时间 06:00 仍自动批量核查'
+        : '外部核查工具：运行密钥未配置，请先在编辑中配置运行密钥后再发起批量核查';
+    }
     return source.apiKeyConfigured
       ? '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新'
       : '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新';
@@ -159,6 +165,17 @@ const sourceNodeHint = (source: DataSource): string => {
   return '采集请求按域名保护策略执行，当前连通正常';
 };
 
+// 天眼查是唯一支持在数据源页手动触发批量主体核查的外部工具；其他外部工具仍仅按需调用。
+const TYC_SOURCE_CODE = 'tianyancha';
+
+// 批量核查汇总：全部字段取自后端同步返回，不补充未披露信息。
+const formatTycBatchResult = (result: TycBatchRunResult): string => {
+  const summary = `核查完成：目标 ${result.targeted_count} 家，已尝试 ${result.attempted_count} 家，`
+    + `新增 ${result.created_count} 条，重复 ${result.duplicate_count} 条，`
+    + `空结果 ${result.empty_count} 条，失败 ${result.failed_count} 条`;
+  return result.quota_exhausted ? `${summary}；本次调用额度已耗尽` : summary;
+};
+
 // 单来源刷新的业务化禁用原因；null 表示当前可触发采集。
 const refreshBlockedReason = (
   source: DataSource,
@@ -166,7 +183,7 @@ const refreshBlockedReason = (
   refreshingId: string | null,
 ): string | null => {
   if (role !== 'admin') return '仅管理员可触发采集';
-  if (source.type === 'external_tool') return '外部核查工具按需调用，不支持页面刷新';
+  if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具按需调用，不支持页面刷新';
   if (source.code === 'manual-json') return '人工录入数据源不支持刷新';
   if (source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
     return source.adapterStatus === 'draft' || source.adapterStatus === 'invalid'
@@ -382,15 +399,22 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   };
 
   // 单来源刷新：仅管理员、且仅对已启用且可拉取的来源可用；失败原因按行反馈。
+  // 天眼查走专用同步批量核查接口，普通拉取式来源继续走通用 /run。
   const handleRunSource = async (source: DataSource) => {
     if (role !== 'admin' || refreshingId !== null) return;
     setRefreshingId(source.id);
     setRefreshMsg(null);
     setError(null);
+    let completed = false;
     try {
-      const run = await api.runSource(Number(source.id));
-      setRefreshMsg({sourceId: source.id, tone: 'ok', text: `刷新完成，新增 ${run.created_count} 条记录`});
-      await onRefreshSources();
+      if (source.code === TYC_SOURCE_CODE) {
+        const batch = await api.runTycBatch(Number(source.id));
+        setRefreshMsg({sourceId: source.id, tone: 'ok', text: formatTycBatchResult(batch)});
+      } else {
+        const run = await api.runSource(Number(source.id));
+        setRefreshMsg({sourceId: source.id, tone: 'ok', text: `刷新完成，新增 ${run.created_count} 条记录`});
+      }
+      completed = true;
     } catch (caught) {
       setRefreshMsg({
         sourceId: source.id,
@@ -399,6 +423,17 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       });
     } finally {
       setRefreshingId(null);
+    }
+    // 采集/核查已完成后再重载列表：重载失败不得改写已成功的操作结果，只追加次级提示。
+    if (completed) {
+      try {
+        await onRefreshSources();
+      } catch (caught) {
+        const reason = caught instanceof Error ? caught.message : '未知原因';
+        setRefreshMsg((current) => current && current.sourceId === source.id
+          ? {...current, text: `${current.text}（列表刷新失败，请重新加载：${reason}）`}
+          : current);
+      }
     }
   };
 
@@ -583,6 +618,12 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             const displayName = displaySourceName(source.name);
             const isRefreshing = refreshingId === source.id;
             const refreshBlocked = refreshBlockedReason(source, role, refreshingId);
+            // 天眼查执行的是批量主体核查而非通用采集，标题与加载态文案随之区分。
+            const isTycSource = source.code === TYC_SOURCE_CODE;
+            const runTitle = isRefreshing
+              ? (isTycSource ? '正在核查，请稍候' : '正在触发采集，请稍候')
+              : (refreshBlocked ?? (isTycSource ? '立即发起一次批量主体核查' : '立即触发一次采集'));
+            const runLabel = isRefreshing ? (isTycSource ? '核查中…' : '刷新中…') : '刷新';
             return (
               <motion.div
                 key={source.id}
@@ -667,17 +708,17 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     <span className="text-[11px] font-normal text-slate-500">条</span>
                   </div>
                   <div data-testid={`source-actions-${source.id}`} className="col-span-12 md:col-span-3 flex flex-wrap items-center justify-end gap-2 text-right">
-                    <span title={isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集')} className="inline-flex">
+                    <span title={runTitle} className="inline-flex">
                       <button
                         type="button"
                         onClick={() => void handleRunSource(source)}
                         disabled={refreshBlocked !== null || isRefreshing}
                         aria-label={`刷新${displayName}`}
-                        title={isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集')}
+                        title={runTitle}
                         className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#004782]/40 text-[#004782] hover:bg-[#ecf4ff] disabled:opacity-40 disabled:cursor-not-allowed dark:border-blue-400/40 dark:text-blue-300 dark:hover:bg-slate-800 transition-colors"
                       >
                         <span aria-hidden="true" className={`material-symbols-outlined text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
-                        {isRefreshing ? '刷新中…' : '刷新'}
+                        {runLabel}
                       </button>
                     </span>
                     {role === 'admin' && (

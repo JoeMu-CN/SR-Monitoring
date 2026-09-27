@@ -478,6 +478,22 @@ export interface RunAllSourcesResult {
   items: RunAllSourcesItem[];
 }
 
+/** 天眼查专用同步批量核查（POST /api/v1/sources/{id}/run-tyc-batch）结果契约。 */
+export interface TycBatchRunResult {
+  readonly source_id: number;
+  /** 本轮纳入核查的启用供应商总数。 */
+  readonly targeted_count: number;
+  /** 实际发起过天眼查调用的供应商数；额度耗尽时小于 targeted_count。 */
+  readonly attempted_count: number;
+  readonly created_count: number;
+  readonly duplicate_count: number;
+  /** 天眼查返回无命中（empty）的次数。 */
+  readonly empty_count: number;
+  readonly failed_count: number;
+  /** 调用额度耗尽导致本轮提前停止。 */
+  readonly quota_exhausted: boolean;
+}
+
 export interface DimensionSourceRead {
   code: string;
   name: string;
@@ -1081,6 +1097,8 @@ export const api = {
   }),
   deleteSupplier: (id: number) => request<void>(`/api/v1/suppliers/${id}`, {method: 'DELETE'}),
   runSource: (id: number) => request<CollectionRunRead>(`/api/v1/sources/${id}/run`, {method: 'POST'}),
+  // 天眼查专用：同步执行一次批量主体核查并返回本轮汇总（非通用拉取，不走 /run）。
+  runTycBatch: (id: number) => request<TycBatchRunResult>(`/api/v1/sources/${id}/run-tyc-batch`, {method: 'POST'}),
   runAllSources: () => request<RunAllSourcesResult>('/api/v1/sources/run-all', {method: 'POST'}),
   toggleDimension: (key: string, enabled: boolean) => request<DimensionRead>(`/api/v1/rule-engine/dimensions/${key}/toggle`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),

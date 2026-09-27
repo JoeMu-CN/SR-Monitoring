@@ -1098,3 +1098,424 @@ def test_collect_tyc_for_suppliers_records_every_result_status(
     ]
     usage = get_tyc_usage(clean_agent_tables)
     assert usage.daily_used == (1 if expected_status == "success" else 0)
+
+
+# ---------------------------------------------------------------------------
+# 天眼查批量核查服务（tyc_batch）：定时任务与手动 API 共用的结果返回型实现
+# ---------------------------------------------------------------------------
+
+
+def _tyc_source(session: Session) -> DataSource:
+    source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None, "迁移应已注册 tianyancha 数据源"
+    return source
+
+
+def _add_tyc_supplier(
+    session: Session, *, code: str, name: str, enabled: bool = True
+) -> Supplier:
+    supplier = Supplier(
+        supplier_code=code,
+        legal_name=name,
+        country_code="CN",
+        enabled=enabled,
+    )
+    session.add(supplier)
+    session.flush()
+    return supplier
+
+
+class _BatchGateway:
+    """批量核查测试网关：按公司名给出 success/empty/异常，并记录调用顺序。"""
+
+    def __init__(
+        self,
+        *,
+        failing: frozenset[str] = frozenset(),
+        empty: frozenset[str] = frozenset(),
+    ) -> None:
+        self.failing = failing
+        self.empty = empty
+        self.calls: list[str] = []
+
+    async def verify(self, company_name: str) -> dict[str, object]:
+        self.calls.append(company_name)
+        if company_name in self.failing:
+            raise RuntimeError("天眼查服务暂时不可用")
+        if company_name in self.empty:
+            return {"status": "empty", "company_name": company_name}
+        return {"status": "success", "company_name": company_name, "reg_status": "存续"}
+
+
+def test_run_tyc_batch_returns_stable_summary(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 两个启用与一个停用供应商，When 批量核查，Then 汇总只含启用项且分列状态。"""
+    # Given
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.agent.tyc_batch import run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-CREATED", name="成功创建有限公司")
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-EMPTY", name="空结果有限公司")
+    _add_tyc_supplier(
+        clean_agent_tables, code="SUP-BATCH-DISABLED", name="停用供应商", enabled=False
+    )
+    gateway = _BatchGateway(empty=frozenset({"空结果有限公司"}))
+    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
+
+    # When
+    result = run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert result.source_id == source.id
+    assert result.targeted_count == 2
+    assert result.attempted_count == 2
+    assert result.created_count == 1
+    assert result.duplicate_count == 0
+    assert result.empty_count == 1
+    assert result.failed_count == 0
+    assert result.quota_exhausted is False
+    assert gateway.calls == ["成功创建有限公司", "空结果有限公司"]
+    records = list(
+        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
+    )
+    assert [(r.company_name, r.status) for r in records] == [
+        ("成功创建有限公司", "success"),
+        ("空结果有限公司", "empty"),
+    ]
+
+
+def test_run_tyc_batch_counts_duplicate_signal_on_rerun(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 同一供应商连续核查两次，When 结果指纹相同，Then 第二次计入 duplicate。"""
+    # Given
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.agent.tyc_batch import run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-DUP", name="重复核查有限公司")
+    monkeypatch.setattr(
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
+    )
+
+    # When
+    first = run_tyc_batch(clean_agent_tables, source)
+    second = run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert (first.created_count, first.duplicate_count) == (1, 0)
+    assert (second.created_count, second.duplicate_count) == (0, 1)
+    assert second.attempted_count == 1
+    assert second.failed_count == 0
+
+
+def test_run_tyc_batch_isolates_supplier_failure(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 首个供应商调用抛异常，When 批量核查，Then 失败隔离且其余供应商仍被执行。"""
+    # Given
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.agent.tyc_batch import run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-FAIL", name="调用失败有限公司")
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-OK", name="失败隔离成功有限公司")
+    gateway = _BatchGateway(failing=frozenset({"调用失败有限公司"}))
+    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
+
+    # When
+    result = run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert gateway.calls == ["调用失败有限公司", "失败隔离成功有限公司"]
+    assert result.targeted_count == 2
+    assert result.attempted_count == 2
+    assert result.created_count == 1
+    assert result.failed_count == 1
+    records = list(
+        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
+    )
+    assert [(r.company_name, r.status) for r in records] == [
+        ("调用失败有限公司", "error"),
+        ("失败隔离成功有限公司", "success"),
+    ]
+
+
+def test_run_tyc_batch_isolates_signal_persistence_failure(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 首个供应商信号入库触发数据库异常，When 批量核查，
+    Then 回滚该事务、计失败并继续后续落库。
+    """
+    # Given
+    from sqlalchemy import text
+
+    import app.agent.tyc_batch as tyc_batch_module
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.signals.models import RawSignal
+
+    source = _tyc_source(clean_agent_tables)
+    _add_tyc_supplier(
+        clean_agent_tables, code="SUP-BATCH-PERSIST-FAIL", name="入库失败有限公司"
+    )
+    _add_tyc_supplier(
+        clean_agent_tables, code="SUP-BATCH-PERSIST-OK", name="入库成功有限公司"
+    )
+    monkeypatch.setattr(
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
+    )
+
+    real_upsert = tyc_batch_module.upsert_supplier_tyc_signal
+    calls: list[str] = []
+
+    def _failing_upsert(
+        session: Session,
+        *,
+        supplier: Supplier,
+        title: str,
+        content: str,
+        raw_payload: dict[str, object],
+        url: str | None = None,
+    ) -> tuple[str, bool]:
+        calls.append(supplier.supplier_code)
+        if supplier.supplier_code == "SUP-BATCH-PERSIST-FAIL":
+            # 真实把当前事务打成失败状态：模拟 upsert/flush 的数据库异常。
+            # 若无 rollback，后续供应商的额度复查会因事务中止而失败。
+            session.execute(text("SELECT 1 / 0"))
+            raise AssertionError("除零语句应已抛出 SQLAlchemyError")
+        return real_upsert(
+            session,
+            supplier=supplier,
+            title=title,
+            content=content,
+            raw_payload=raw_payload,
+            url=url,
+        )
+
+    monkeypatch.setattr(tyc_batch_module, "upsert_supplier_tyc_signal", _failing_upsert)
+
+    # When
+    result = tyc_batch_module.run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert calls == ["SUP-BATCH-PERSIST-FAIL", "SUP-BATCH-PERSIST-OK"]
+    assert result.attempted_count == 2
+    assert result.created_count == 1
+    assert result.failed_count == 1
+    assert result.duplicate_count == 0
+    # 每次调用结果独立记账并先提交：失败供应商的 usage 记录必须保留
+    records = list(
+        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
+    )
+    assert [(r.company_name, r.status) for r in records] == [
+        ("入库失败有限公司", "success"),
+        ("入库成功有限公司", "success"),
+    ]
+    external_ids = list(clean_agent_tables.scalars(select(RawSignal.external_id)))
+    assert len(external_ids) == 1
+    assert external_ids[0].startswith("tyc-SUP-BATCH-PERSIST-OK-")
+
+
+def test_run_tyc_batch_isolates_signal_ingestion_error(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 首个供应商信号入库抛项目入库异常，When 批量核查，Then 计失败并继续后续落库。"""
+    # Given
+    import app.agent.tyc_batch as tyc_batch_module
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.signals.ingestion import SignalIngestionError
+    from app.signals.models import RawSignal
+
+    source = _tyc_source(clean_agent_tables)
+    _add_tyc_supplier(
+        clean_agent_tables, code="SUP-BATCH-INGEST-FAIL", name="入库校验失败有限公司"
+    )
+    _add_tyc_supplier(
+        clean_agent_tables, code="SUP-BATCH-INGEST-OK", name="入库校验成功有限公司"
+    )
+    monkeypatch.setattr(
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
+    )
+
+    real_upsert = tyc_batch_module.upsert_supplier_tyc_signal
+    calls: list[str] = []
+
+    def _ingestion_failing_upsert(
+        session: Session,
+        *,
+        supplier: Supplier,
+        title: str,
+        content: str,
+        raw_payload: dict[str, object],
+        url: str | None = None,
+    ) -> tuple[str, bool]:
+        calls.append(supplier.supplier_code)
+        if supplier.supplier_code == "SUP-BATCH-INGEST-FAIL":
+            raise SignalIngestionError("validity_conflict")
+        return real_upsert(
+            session,
+            supplier=supplier,
+            title=title,
+            content=content,
+            raw_payload=raw_payload,
+            url=url,
+        )
+
+    monkeypatch.setattr(
+        tyc_batch_module, "upsert_supplier_tyc_signal", _ingestion_failing_upsert
+    )
+
+    # When
+    result = tyc_batch_module.run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert calls == ["SUP-BATCH-INGEST-FAIL", "SUP-BATCH-INGEST-OK"]
+    assert result.attempted_count == 2
+    assert result.created_count == 1
+    assert result.failed_count == 1
+    records = list(
+        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
+    )
+    assert [(r.company_name, r.status) for r in records] == [
+        ("入库校验失败有限公司", "success"),
+        ("入库校验成功有限公司", "success"),
+    ]
+    external_ids = list(clean_agent_tables.scalars(select(RawSignal.external_id)))
+    assert len(external_ids) == 1
+    assert external_ids[0].startswith("tyc-SUP-BATCH-INGEST-OK-")
+
+
+def test_run_tyc_batch_marks_quota_exhausted_midway(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Given 日额度为 1，When 首个供应商成功计费后，Then 提前停止并标记额度耗尽。"""
+    # Given
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.agent.tyc_batch import run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    source.login_config = {"mode": "on_demand", "daily_limit": 1, "monthly_limit": 50}
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-Q1", name="额度首单有限公司")
+    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-Q2", name="额度次单有限公司")
+    clean_agent_tables.flush()
+    gateway = _BatchGateway()
+    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
+
+    # When
+    result = run_tyc_batch(clean_agent_tables, source)
+
+    # Then
+    assert result.targeted_count == 2
+    assert result.attempted_count == 1
+    assert result.created_count == 1
+    assert result.quota_exhausted is True
+    assert gateway.calls == ["额度首单有限公司"]
+    assert get_tyc_usage(clean_agent_tables).daily_used == 1
+
+
+def test_run_tyc_batch_rejects_inactive_source(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+) -> None:
+    """Given 天眼查数据源已停用，When 批量核查，Then 抛出类型化停用错误。"""
+    from app.agent.tyc_batch import TycBatchSourceInactive, run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    source.enabled = False
+    clean_agent_tables.flush()
+
+    with pytest.raises(TycBatchSourceInactive):
+        run_tyc_batch(clean_agent_tables, source)
+
+
+def test_run_tyc_batch_rejects_non_tianyancha_source(
+    clean_agent_tables: Session,
+) -> None:
+    """Given 非天眼查数据源，When 批量核查，Then 抛出类型化 422 前错误。"""
+    from app.agent.tyc_batch import TycBatchNotTianyancha, run_tyc_batch
+
+    manual = clean_agent_tables.scalar(
+        select(DataSource).where(DataSource.code == "manual-json")
+    )
+    assert manual is not None
+
+    with pytest.raises(TycBatchNotTianyancha):
+        run_tyc_batch(clean_agent_tables, manual)
+
+
+def test_run_tyc_batch_rejects_unavailable_start_quota(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+) -> None:
+    """Given 起始额度已耗尽，When 批量核查，Then 抛出类型化额度不可用错误且不调用网关。"""
+    from app.agent.tyc_batch import TycBatchUnavailable, run_tyc_batch
+
+    source = _tyc_source(clean_agent_tables)
+    for index in range(5):
+        record_tyc_usage(
+            clean_agent_tables,
+            tool_name="verify_company",
+            company_name=f"预占额度{index}",
+            status="success",
+        )
+    clean_agent_tables.flush()
+
+    with pytest.raises(TycBatchUnavailable):
+        run_tyc_batch(clean_agent_tables, source)
+
+
+def test_collect_tyc_for_suppliers_reuses_batch_service(
+    clean_agent_tables: Session,
+    enable_tyc: None,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """定时任务复用结果返回型服务，并由汇总的 created_count 驱动后续处理链。"""
+    from contextlib import nullcontext
+
+    import app.scheduler.jobs as scheduler_jobs
+    from app.agent.tyc_batch import TycBatchResult
+
+    source = _tyc_source(clean_agent_tables)
+    calls: list[int] = []
+    processed: list[int] = []
+
+    def _fake_run(session: Session, target_source: DataSource) -> TycBatchResult:
+        del session
+        calls.append(target_source.id)
+        return TycBatchResult(
+            source_id=target_source.id,
+            targeted_count=3,
+            attempted_count=2,
+            created_count=1,
+            duplicate_count=0,
+            empty_count=1,
+            failed_count=0,
+            quota_exhausted=False,
+        )
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables))
+    monkeypatch.setattr(scheduler_jobs, "run_tyc_batch", _fake_run)
+    monkeypatch.setattr(
+        scheduler_jobs,
+        "_process_pending_signals",
+        lambda *args, **kwargs: processed.append(1),
+    )
+
+    scheduler_jobs.collect_tyc_for_suppliers_job()
+
+    assert calls == [source.id]
+    assert processed == [1]

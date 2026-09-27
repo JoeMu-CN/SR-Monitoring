@@ -11,6 +11,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app import config
+from app.agent.tyc_batch import (
+    TycBatchNotTianyancha,
+    TycBatchSourceInactive,
+    TycBatchUnavailable,
+    run_tyc_batch,
+)
 from app.auth.models import User
 from app.auth.security import (
     PERM_BUSINESS_AUDIT_VIEW,
@@ -74,6 +80,7 @@ from app.signals.schemas import (
     SourceSignalSourceRead,
     SourceValidityPolicy,
     SourceValidityPolicyRead,
+    TycBatchRunRead,
 )
 from app.signals.secret_store import decrypt_secret, encrypt_secret
 from app.signals.service import (
@@ -989,6 +996,38 @@ def run_all_sources_collection(
         skipped=sum(1 for it in items if it.status == "skipped"),
         items=items,
     )
+
+
+@router.post("/sources/{source_id}/run-tyc-batch", response_model=TycBatchRunRead)
+def run_tyc_batch_collection(
+    source_id: int,
+    session: SessionDependency,
+    _user: CollectionTrigger,
+    _csrf: CsrfGuard,
+) -> TycBatchRunRead:
+    """手动批量刷新天眼查数据源：核查全部启用供应商并返回稳定汇总。
+
+    source 不存在 404；非天眼查 422；数据源未启用、密钥/起始额度不可用 409；
+    中途额度耗尽或个别供应商失败仍返回 200 汇总。
+    """
+    source = session.get(DataSource, source_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+    try:
+        result = run_tyc_batch(session, source)
+    except TycBatchNotTianyancha as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except TycBatchSourceInactive as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except TycBatchUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    return TycBatchRunRead.model_validate(result)
 
 
 # ---- 信号过滤规则配置（signal-filter，运营可自主维护） ----

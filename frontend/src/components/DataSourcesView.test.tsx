@@ -1,8 +1,8 @@
-import {cleanup, render, screen, within} from '@testing-library/react';
+import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {api, type MonitoringHealthRead} from '../api';
+import {api, type MonitoringHealthRead, type TycBatchRunResult} from '../api';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {DataSourcesView} from './DataSourcesView';
@@ -651,21 +651,153 @@ describe('数据源列表信息架构与操作区', () => {
     expect(onRefreshSources).not.toHaveBeenCalled();
   });
 
-  it('外部核查与人工录入来源不调用 /run，刷新按钮为禁用占位并给出业务化原因', async () => {
+  it('仅启用中的天眼查行内核查可用，其他外部工具与人工录入来源仍禁用', async () => {
     const runSource = vi.spyOn(api, 'runSource');
-    renderView([tianyancha, {...source, id: '18', code: 'manual-json', name: '手工 JSON 导入', type: 'manual'}], 'admin');
+    renderView([
+      {...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...source, id: '18', code: 'manual-json', name: '手工 JSON 导入', type: 'manual'},
+      {...source, id: '19', code: 'other-tool', name: '其他外部核查工具', type: 'external_tool'},
+    ], 'admin');
 
     const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
-    expect(tycButton).toBeDisabled();
-    expect(tycButton).toHaveAttribute('title', '外部核查工具按需调用，不支持页面刷新');
+    expect(tycButton).toBeEnabled();
+    expect(tycButton).toHaveAttribute('title', '立即发起一次批量主体核查');
+
     const manualButton = screen.getByRole('button', {name: '刷新手工 JSON 导入'});
     expect(manualButton).toBeDisabled();
     expect(manualButton).toHaveAttribute('title', '人工录入数据源不支持刷新');
 
+    const otherToolButton = screen.getByRole('button', {name: '刷新其他外部核查工具'});
+    expect(otherToolButton).toBeDisabled();
+    expect(otherToolButton).toHaveAttribute('title', '外部核查工具按需调用，不支持页面刷新');
+
     const user = userEvent.setup();
-    await user.click(tycButton);
     await user.click(manualButton);
+    await user.click(otherToolButton);
     expect(runSource).not.toHaveBeenCalled();
+  });
+
+  it('天眼查核查失败时按行反馈错误且不触发列表刷新', async () => {
+    vi.spyOn(api, 'runTycBatch').mockRejectedValue(new Error('运行密钥未配置'));
+    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}]}
+          role="admin"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={onRefreshSources}
+          monitoringHealth={{status: 'hidden'}}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
+
+    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent('运行密钥未配置');
+    expect(onRefreshSources).not.toHaveBeenCalled();
+  });
+
+  it('未启用的天眼查核查按钮仍禁用并说明启用后可用', () => {
+    renderView([tianyancha], 'admin');
+
+    const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
+    expect(tycButton).toBeDisabled();
+    expect(tycButton).toHaveAttribute('title', '数据源已停用，启用后可刷新');
+  });
+
+  it('天眼查核查调用 api.runTycBatch 并展示目标/已尝试/新增/重复/空结果/失败汇总', async () => {
+    const runTycBatch = vi.spyOn(api, 'runTycBatch').mockResolvedValue({
+      source_id: 23,
+      targeted_count: 12,
+      attempted_count: 10,
+      created_count: 3,
+      duplicate_count: 4,
+      empty_count: 2,
+      failed_count: 1,
+      quota_exhausted: false,
+    });
+    const runSource = vi.spyOn(api, 'runSource');
+    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}]}
+          role="admin"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={onRefreshSources}
+          monitoringHealth={{status: 'hidden'}}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
+
+    expect(runTycBatch).toHaveBeenCalledWith(23);
+    expect(runSource).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent(
+      '核查完成：目标 12 家，已尝试 10 家，新增 3 条，重复 4 条，空结果 2 条，失败 1 条',
+    );
+    expect(onRefreshSources).toHaveBeenCalled();
+  });
+
+  it('天眼查额度耗尽时汇总追加额度耗尽信息', async () => {
+    vi.spyOn(api, 'runTycBatch').mockResolvedValue({
+      source_id: 23,
+      targeted_count: 12,
+      attempted_count: 2,
+      created_count: 0,
+      duplicate_count: 1,
+      empty_count: 1,
+      failed_count: 0,
+      quota_exhausted: true,
+    });
+    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}], 'admin');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
+
+    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent(
+      '核查完成：目标 12 家，已尝试 2 家，新增 0 条，重复 1 条，空结果 1 条，失败 0 条；本次调用额度已耗尽',
+    );
+  });
+
+  it('天眼查核查期间显示「核查中…」并锁定其他来源刷新，完成后恢复可用', async () => {
+    let resolveBatch: (value: TycBatchRunResult) => void = () => undefined;
+    vi.spyOn(api, 'runTycBatch').mockImplementation(() => new Promise((resolve) => {
+      resolveBatch = resolve;
+    }));
+    renderView([
+      {...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...source, enabled: true},
+    ], 'admin');
+
+    const user = userEvent.setup();
+    const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
+    await user.click(tycButton);
+
+    expect(tycButton).toBeDisabled();
+    expect(tycButton).toHaveTextContent('核查中…');
+    expect(tycButton).toHaveAttribute('title', '正在核查，请稍候');
+    const otherButton = screen.getByRole('button', {name: '刷新官方风险源'});
+    expect(otherButton).toBeDisabled();
+    expect(otherButton).toHaveAttribute('title', '正在刷新其他数据源，请稍候');
+
+    resolveBatch({
+      source_id: 23,
+      targeted_count: 0,
+      attempted_count: 0,
+      created_count: 0,
+      duplicate_count: 0,
+      empty_count: 0,
+      failed_count: 0,
+      quota_exhausted: false,
+    });
+    expect(await screen.findByTestId('source-run-msg-23')).toBeInTheDocument();
+    await waitFor(() => expect(tycButton).toBeEnabled());
+    expect(otherButton).toBeEnabled();
   });
 
   it('未启用来源的刷新按钮为禁用态并说明启用后可用', () => {
@@ -691,13 +823,43 @@ describe('数据源列表信息架构与操作区', () => {
 
     const connectivity = screen.getByTestId('source-connectivity-23');
     expect(connectivity).toHaveTextContent('按需核查');
-    expect(connectivity).toHaveAttribute('title', '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新');
+    expect(connectivity).toHaveAttribute(
+      'title',
+      '外部核查工具：运行密钥已配置，支持页面手动批量核查全部启用供应商；每天北京时间 06:00 仍自动批量核查',
+    );
 
     const health = screen.getByTestId('source-health-23');
     expect(health).toHaveTextContent('按需核查');
     expect(health).toHaveTextContent(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
     expect(health).not.toHaveTextContent('下次预期');
     expect(screen.queryByText('已停用')).not.toBeInTheDocument();
+  });
+
+  it('天眼查密钥未配置时提示先配置运行密钥，不再宣称不支持页面刷新', () => {
+    renderView([{...tianyancha, apiKeyConfigured: false, apiKeyHint: null}], 'viewer');
+
+    const connectivity = screen.getByTestId('source-connectivity-23');
+    expect(connectivity).toHaveAttribute(
+      'title',
+      '外部核查工具：运行密钥未配置，请先在编辑中配置运行密钥后再发起批量核查',
+    );
+    expect(connectivity.getAttribute('title')).not.toContain('不支持页面刷新');
+  });
+
+  it('其他外部核查工具的悬浮说明保持「不支持页面刷新」', () => {
+    renderView([
+      {...source, id: '31', code: 'other-tool', name: '其他外部核查工具', type: 'external_tool', apiKeyConfigured: true},
+      {...source, id: '32', code: 'other-tool-b', name: '其他外部核查工具B', type: 'external_tool', apiKeyConfigured: false},
+    ], 'viewer');
+
+    expect(screen.getByTestId('source-connectivity-31')).toHaveAttribute(
+      'title',
+      '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新',
+    );
+    expect(screen.getByTestId('source-connectivity-32')).toHaveAttribute(
+      'title',
+      '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新',
+    );
   });
 
   it('连通标签悬浮说明使用通俗文本，不向用户暴露 HTTP 状态码', () => {

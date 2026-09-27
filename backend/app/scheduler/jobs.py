@@ -22,6 +22,12 @@ from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.agent.tyc_batch import (
+    TycBatchSourceInactive,
+    TycBatchUnavailable,
+    run_tyc_batch,
+)
+from app.agent.tyc_gateway import TYC_SOURCE_CODE
 from app.ai.models import AIAnalysisRecord
 from app.ai.service import analyze_raw_signal
 from app.auth.models import User
@@ -151,127 +157,47 @@ def collect_source_job(source_id: int) -> None:
 def collect_tyc_for_suppliers_job() -> None:
     """每日批量核查启用的供应商：调用天眼查 MCP 并把结果写入信号池。
 
-    只对 suppliers.enabled=true 的供应商执行；受天眼查每日/每月额度控制
-    （get_tyc_usage.allowed），额度耗尽即停止。每次调用结果统一写入
-    tyc_usage_records（success/empty/error/not_configured）；仅 success 结果
-    写入 raw_signals，随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
+    只对 suppliers.enabled=true 的供应商执行；受天眼查每日/每月额度控制，
+    额度耗尽即停止。批量逻辑复用 app.agent.tyc_batch.run_tyc_batch（与手动
+    批量刷新 API 同一实现）：每次调用结果统一写入 tyc_usage_records
+    （success/empty/error/not_configured）；仅 success 结果写入 raw_signals，
+    随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
+
+    本函数保持调度顶层边界：未启用/额度不可用时降级为跳过日志，异常不外抛。
     """
     try:
-        import asyncio as _asyncio
-
-        from app.agent.budget import get_tyc_usage, record_tyc_usage
-        from app.agent.supplier_tyc import upsert_supplier_tyc_signal
-        from app.agent.tyc_gateway import build_tyc_gateway
-
         with SessionLocal() as session:
-            usage = get_tyc_usage(session)
-            if not usage.enabled:
+            source = session.scalar(
+                select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
+            )
+            if source is None:
+                logger.warning("天眼查数据源未配置，跳过供应商批量核查")
+                return
+            try:
+                result = run_tyc_batch(session, source)
+            except TycBatchSourceInactive:
                 logger.warning("天眼查未启用，跳过供应商批量核查")
                 return
-            if not usage.allowed:
-                logger.warning(
-                    "天眼查额度不足（今日 %d/%d，本月 %d/%d），跳过供应商批量核查",
-                    usage.daily_used, usage.daily_limit,
-                    usage.monthly_used, usage.monthly_limit,
-                )
+            except TycBatchUnavailable as exc:
+                logger.warning("天眼查不可用，跳过供应商批量核查：%s", exc)
                 return
-            suppliers = list(
-                session.scalars(
-                    select(Supplier)
-                    .where(Supplier.enabled.is_(True))
-                    .order_by(Supplier.supplier_code)
-                )
-            )
-        if not suppliers:
+        if result.targeted_count == 0:
             logger.info("无启用供应商，跳过天眼查批量核查")
             return
-        gateway = build_tyc_gateway()
-        created = 0
-        skipped = 0
-        failed = 0
-        for supplier in suppliers:
-            with SessionLocal() as session:
-                if not get_tyc_usage(session).allowed:
-                    logger.warning("天眼查额度耗尽，提前停止供应商批量核查")
-                    break
-                try:
-                    result = _asyncio.run(gateway.verify(supplier.legal_name))
-                except Exception as exc:  # noqa: BLE001
-                    failed += 1
-                    # 调用已发生（网络/鉴权/服务异常）：按 error 记账并立即提交，
-                    # 不因后续流程中断而丢失真实调用事实。
-                    record_tyc_usage(
-                        session,
-                        tool_name=_TYC_VERIFY_TOOL_NAME,
-                        company_name=supplier.legal_name,
-                        status="error",
-                    )
-                    session.commit()
-                    logger.warning("天眼查核查 %s 失败: %s", supplier.legal_name, exc)
-                    continue
-                call_status = _tyc_usage_status(result)
-                record_tyc_usage(
-                    session,
-                    tool_name=_TYC_VERIFY_TOOL_NAME,
-                    company_name=supplier.legal_name,
-                    status=call_status,
-                )
-                # 记账独立提交：真实调用已计入额度，信号入库失败也不回滚计费事实。
-                session.commit()
-                if call_status != "success":
-                    skipped += 1
-                    continue
-                title = f"天眼查核查：{supplier.legal_name}"
-                content = _format_tyc_content(result)
-                _, is_created = upsert_supplier_tyc_signal(
-                    session,
-                    supplier=supplier,
-                    title=title,
-                    content=content,
-                    url=None,
-                    raw_payload=result,
-                )
-                if is_created:
-                    created += 1
-                session.commit()
         logger.info(
-            "天眼查批量核查完成: 供应商=%d 新增信号=%d 跳过=%d 失败=%d",
-            len(suppliers), created, skipped, failed,
+            "天眼查批量核查完成: 供应商=%d 调用=%d 新增信号=%d 重复=%d 空=%d 失败=%d 额度耗尽=%s",
+            result.targeted_count,
+            result.attempted_count,
+            result.created_count,
+            result.duplicate_count,
+            result.empty_count,
+            result.failed_count,
+            result.quota_exhausted,
         )
-        if created:
+        if result.created_count:
             _process_pending_signals()
     except Exception as exc:
         logger.exception("天眼查批量核查异常: %s", exc)
-
-
-# 与 VerifyCompanyTool.name 一致：批量与实时核查共用同一计费口径和工具标识。
-_TYC_VERIFY_TOOL_NAME = "verify_company"
-_TYC_USAGE_STATUSES: frozenset[str] = frozenset(
-    {"success", "empty", "error", "not_configured"}
-)
-
-
-def _tyc_usage_status(result: dict[str, object]) -> str:
-    """按天眼查计费口径归类 verify 结果：仅四态合法，其余一律按 error 记账。"""
-    status = result.get("status")
-    if isinstance(status, str) and status in _TYC_USAGE_STATUSES:
-        return status
-    return "error"
-
-
-def _format_tyc_content(result: dict[str, object]) -> str:
-    """把天眼查 verify 结果转成信号正文（含可回溯字段）。"""
-    parts = [f"企业：{result.get('company_name', '')}"]
-    if result.get("credit_code"):
-        parts.append(f"统一社会信用代码：{result['credit_code']}")
-    if result.get("reg_status"):
-        parts.append(f"登记状态：{result['reg_status']}")
-    candidates = result.get("candidates") or []
-    if isinstance(candidates, list):
-        for idx, cand in enumerate(candidates[:3], start=1):
-            if isinstance(cand, dict) and cand.get("name"):
-                parts.append(f"候选{idx}：{cand.get('name')}")
-    return "；".join(parts)
 
 
 def _process_pending_signals(

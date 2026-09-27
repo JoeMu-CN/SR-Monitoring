@@ -114,7 +114,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    restart: "no"
+    # 调度器为常驻进程；崩溃/宿主机重启后应自动恢复，避免采集与提醒静默停摆。
+    restart: unless-stopped
 
   research-worker:
     image: supplierriskmonitoring-app

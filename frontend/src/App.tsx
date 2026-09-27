@@ -576,7 +576,7 @@ export function App() {
           onLogout={() => void handleLogout()}
         />
 
-        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-hidden p-4 pb-28 sm:p-6 sm:pb-24 lg:p-6">
+        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-clip p-4 pb-28 sm:p-6 sm:pb-24 lg:p-6">
           {error && (
             <div className="mb-4 bg-[#ffdad6] border border-[#ba1a1a] text-[#93000a] rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-[13px]">
               <span>{error}</span>

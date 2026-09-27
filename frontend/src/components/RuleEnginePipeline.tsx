@@ -590,13 +590,18 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
             <div data-testid="rule-engine-pipeline-gauge-scroll" className="overflow-x-auto">
               {/* 窄屏不滚出关键信息：刻度数值标签在 sm 以下隐藏（上方文字刻度已给出同样数值），
                   仪表盘最小宽度随之收窄，320px 下也能直接看到当前分数标记。 */}
-              <div className="min-w-[150px] px-3 pb-1 pt-7">
-                <div className="relative">
+              <div className="min-w-[150px] px-3 pb-1">
+                {/* pt-7（28px）必须留在定位容器上：绝对定位的得分标记(top-0)与指针(top-4 + h-3)
+                    都以该容器 padding box 为基准，而彩条是容器内的正常流子元素——只有 padding
+                    能把彩条推到 28px 处（= 指针底端），使标记完整落在彩条上方。
+                    若把 pt-7 挪回外层包裹，彩条会回到 y=0 与标记重叠并被后绘制覆盖。 */}
+                <div className="relative pt-7">
                   {/* 只有 API 明确返回总分才渲染分数标记；字段缺失时整体隐藏，不伪造 0 分。
                       真实位置竖线固定不动；分数字签按边界自适应对齐，避免 0/100 分被滚动容器裁剪 */}
                   {total !== null && (
                     <>
                       <span
+                        data-testid="rule-engine-pipeline-gauge-pointer"
                         className="absolute top-4 h-3 w-px -translate-x-1/2 bg-[#004782] dark:bg-blue-400"
                         style={{left: `${total}%`}}
                         aria-hidden="true"
@@ -615,7 +620,7 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
                       </div>
                     </>
                   )}
-                  <div className="relative h-2.5">
+                  <div data-testid="rule-engine-pipeline-gauge-bar" className="relative h-2.5">
                     <div className="flex h-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                       {zones.map((zone) => (
                         <span key={zone.key} className={`${LEVEL_ZONE_CLASS[zone.key]} h-full`} style={{width: `${zone.width}%`}} />

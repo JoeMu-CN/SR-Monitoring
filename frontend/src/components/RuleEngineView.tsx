@@ -319,7 +319,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         {/* Main Grid Layout (Left: Dimensions List, Right: Observation / Config) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Monitoring Dimensions List (4 cols) */}
-          <div className="lg:col-span-4 space-y-3 h-fit">
+          <div className="lg:col-span-4 lg:sticky lg:top-16 lg:self-start space-y-3 h-fit">
             <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
               <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
                 <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">监控维度</h2>

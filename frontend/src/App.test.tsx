@@ -63,6 +63,8 @@ vi.mock('./api', async (importOriginal) => {
       },
       health: vi.fn(),
       monitoringHealth: vi.fn(),
+      runSource: vi.fn(),
+      runTycBatch: vi.fn(),
       agentStatus: vi.fn(),
       dimensionInputs: vi.fn(),
       ruleEngineOptions: vi.fn(),
@@ -853,6 +855,110 @@ describe('App 监控健康只读诊断', () => {
     const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
     expect(within(routeContent).getAllByText('自然环境').length).toBeGreaterThan(0);
     expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+});
+
+// ---- 单源刷新联动监控健康：成功采集后立即重取诊断，失败不触发 ----
+
+describe('App 单源刷新联动监控健康', () => {
+  const successfulRun: CollectionRunRead = {
+    id: 7,
+    source_id: 1,
+    started_at: '2026-09-11T06:10:00Z',
+    finished_at: '2026-09-11T06:10:05Z',
+    status: 'succeeded',
+    fetched_count: 4,
+    created_count: 2,
+    duplicate_count: 2,
+    error: null,
+  };
+
+  // 初始诊断：来源超期（overdue）；刷新成功后聚合回到 ok。
+  const overdueHealth: MonitoringHealthRead = {
+    ...monitoringHealthOk,
+    overall: 'degraded',
+    sources: [{...monitoringHealthOk.sources[0], state: 'overdue', reason_code: 'overdue'}],
+  };
+
+  // 真实运行时 /api/v1/sources/admin 返回天眼查 source_type=external_tool、adapter_status=unconfigured。
+  const tycBackend: DataSourceRead = {
+    ...sourceBackend,
+    id: 23,
+    code: 'tianyancha',
+    name: '天眼查企业核查（按需核查）',
+    source_type: 'external_tool',
+    schedule: null,
+    endpoint_url: null,
+    access_last_http_status: null,
+    api_key_configured: true,
+    api_key_hint: 'tyc_••••1234',
+    adapter_status: 'unconfigured',
+  };
+
+  it('普通来源单源刷新 2xx 后立即重取 monitoring-health：超期行即刻转为采集正常，无需推进 60 秒周期', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    vi.mocked(api.monitoringHealth).mockResolvedValueOnce(overdueHealth).mockResolvedValue(monitoringHealthOk);
+    vi.mocked(api.runSource).mockResolvedValue(successfulRun);
+    // 初始列表加载成功；点击刷新后的列表重载永不返回——证明健康重取不等待列表请求完成。
+    vi.mocked(api.sourcesAdmin).mockResolvedValueOnce([sourceBackend]).mockImplementation(() => new Promise<never>(() => {}));
+
+    renderApp('/sources');
+    expect(await screen.findByTestId('source-health-1', {}, {timeout: 5000})).toHaveTextContent('已超期');
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新中央气象台预警'}));
+
+    expect(api.runSource).toHaveBeenCalledWith(1);
+    // 不推进任何计时器（60 秒周期未到）：诊断立即发起第二次请求。
+    await waitFor(() => expect(api.monitoringHealth).toHaveBeenCalledTimes(2));
+    // 列表重载第 2 次调用仍未完成，健康请求并未等待 sources/collection-runs。
+    expect(api.sourcesAdmin).toHaveBeenCalledTimes(2);
+    // 来源行新鲜度即刻反映新结论：已超期 → 采集正常。
+    await waitFor(() => expect(screen.getByTestId('source-health-1')).toHaveTextContent('采集正常'));
+    expect(screen.getByTestId('source-health-1')).not.toHaveTextContent('已超期');
+  });
+
+  it('失败的单源刷新不触发诊断重取，行内错误保持且 monitoring-health 仍只有首次请求', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    vi.mocked(api.runSource).mockRejectedValue(new ApiError(503, '采集服务不可用'));
+
+    renderApp('/sources');
+    await screen.findByText('中央气象台预警');
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新中央气象台预警'}));
+
+    expect(await screen.findByTestId('source-run-msg-1')).toHaveTextContent('采集服务不可用');
+    // 留出一个微任务窗口：若失败路径误触发意图，第二次请求会在此暴露。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it('天眼查单源核查 2xx 后同样立即重取 monitoring-health', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    vi.mocked(api.sourcesAdmin).mockResolvedValue([tycBackend]);
+    vi.mocked(api.runTycBatch).mockResolvedValue({
+      source_id: 23,
+      targeted_count: 2,
+      attempted_count: 2,
+      created_count: 1,
+      duplicate_count: 0,
+      empty_count: 1,
+      failed_count: 0,
+      quota_exhausted: false,
+    });
+
+    renderApp('/sources');
+    await screen.findByText('天眼查企业核查');
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
+
+    expect(api.runTycBatch).toHaveBeenCalledWith(23);
+    await waitFor(() => expect(api.monitoringHealth).toHaveBeenCalledTimes(2));
   });
 });
 

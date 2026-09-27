@@ -8,11 +8,19 @@ import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {MonitoringSourceFreshness} from './MonitoringHealthBanner';
 
+/**
+ * 列表重载的最窄副作用意图：单来源刷新/核查 2xx 后，监控健康（monitoring-health）
+ * 需要立即重取，由 App 递增诊断刷新版本号实现；其他刷新入口不传意图，保持原语义。
+ */
+export interface RefreshSourcesIntent {
+  readonly refreshMonitoringHealth: true;
+}
+
 interface DataSourcesViewProps {
   dataSources: DataSource[];
   role: 'viewer' | 'admin';
   onUpdateSource: (id: string, payload: Partial<DataSourceWritePayload>) => Promise<void>;
-  onRefreshSources: () => Promise<void>;
+  onRefreshSources: (intent?: RefreshSourcesIntent) => Promise<void>;
   // 任务8 只读诊断：每来源最后成功/下次预期/失败超期原因；403 或失败时为 hidden/unknown，不渲染。
   monitoringHealth: MonitoringHealthSnapshot;
   // 草稿箱、新增数据源、立即全量同步已下线：平台不再开放人工接入新数据源，
@@ -430,9 +438,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       setRefreshingId(null);
     }
     // 采集/核查已完成后再重载列表：重载失败不得改写已成功的操作结果，只追加次级提示。
+    // 成功后必须携带健康刷新意图：单源刷新改变来源新鲜度，诊断需立即重取而非等待 60 秒周期。
     if (completed) {
       try {
-        await onRefreshSources();
+        await onRefreshSources({refreshMonitoringHealth: true});
       } catch (caught) {
         const reason = caught instanceof Error ? caught.message : '未知原因';
         setRefreshMsg((current) => current && current.sourceId === source.id

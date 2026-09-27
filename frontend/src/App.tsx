@@ -31,7 +31,7 @@ import {Sidebar} from './components/Sidebar';
 import {SystemSplashScreen, type SelfCheckItem, type SelfCheckState} from './components/SystemSplashScreen';
 import {readLastSelfCheckAt, SELF_CHECK_TTL_MS, shouldRunFullSelfCheck, writeLastSelfCheckAt} from './selfCheck';
 import {LoginView} from './components/LoginView';
-import {DataSourcesView} from './components/DataSourcesView';
+import {DataSourcesView, type RefreshSourcesIntent} from './components/DataSourcesView';
 import {SourceSignalsView} from './components/SourceSignalsView';
 import {SupplierImportModal} from './components/SupplierImportModal';
 import {OverviewView} from './components/OverviewView';
@@ -68,6 +68,9 @@ export function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [reportRisk, setReportRisk] = useState<RiskItem | null>(null);
   const [supplierRefreshToken, setSupplierRefreshToken] = useState(0);
+  // 监控健康诊断的刷新版本号：单源刷新/核查成功时递增，useMonitoringHealth 依赖变化后立即重建请求周期，
+  // 不必等待 60 秒轮询到点；列表刷新等入口不递增，保持原有诊断节奏。
+  const [monitoringHealthRefreshVersion, setMonitoringHealthRefreshVersion] = useState(0);
   const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [isSupplierImportModalOpen, setIsSupplierImportModalOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
@@ -511,7 +514,11 @@ export function App() {
     }
   };
 
-  const refreshSources = async () => {
+  const refreshSources = async (intent?: RefreshSourcesIntent) => {
+    // 单源刷新成功意图：先递增诊断刷新版本号，让 useMonitoringHealth 立即重建请求周期；
+    // 健康请求在 hook effect 内发起，不等待下方 sources/collection-runs 完成。
+    // 列表请求失败时版本号已递增：诊断反映的是采集已成功的事实，不应被列表重载失败回退。
+    if (intent?.refreshMonitoringHealth) setMonitoringHealthRefreshVersion((version) => version + 1);
     const [sourcesResponse, runsResponse] = await Promise.all([canManageSources ? api.sourcesAdmin() : api.sources(), api.collectionRuns()]);
     setDataSources(sourcesResponse.map((source) => mapDataSource(source, runsResponse.items)));
   };
@@ -536,6 +543,7 @@ export function App() {
   const monitoringHealth = useMonitoringHealth({
     enabled: canViewSourceStatus,
     active: onOverviewRoute || location.pathname === routePaths.sources,
+    refreshVersion: monitoringHealthRefreshVersion,
     onRequestError: handleDetailRequestError,
   });
   const riskRouteView = <RiskRouteView riskItems={riskItems} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;

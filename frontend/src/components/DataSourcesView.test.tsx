@@ -634,7 +634,8 @@ describe('数据源列表信息架构与操作区', () => {
 
     expect(runSource).toHaveBeenCalledWith(17);
     expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('刷新完成，新增 3 条记录');
-    expect(onRefreshSources).toHaveBeenCalled();
+    // 单源刷新 2xx 后必须以监控健康刷新意图重载：列表重载与 monitoring-health 再请求联动，失败路径不得携带。
+    expect(onRefreshSources).toHaveBeenCalledWith({refreshMonitoringHealth: true});
   });
 
   it('刷新失败时按行反馈业务化错误，不触发列表刷新', async () => {
@@ -657,6 +658,44 @@ describe('数据源列表信息架构与操作区', () => {
 
     expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('数据源已停用');
     expect(onRefreshSources).not.toHaveBeenCalled();
+  });
+
+  // 次级语义回归：重载列表只是采集成功后的附加动作，其失败只能追加提示，不得把已成功的结果改写为失败，
+  // 也不得吞掉健康刷新意图（监控健康再请求应由采集成功触发，与列表重载是否成功无关）。
+  it('单源刷新成功后列表重载失败只追加次级提示，不改变成功语义并仍携带健康刷新意图', async () => {
+    vi.spyOn(api, 'runSource').mockResolvedValue({
+      id: 2,
+      source_id: 17,
+      started_at: '2026-09-11T06:05:00Z',
+      finished_at: '2026-09-11T06:05:05Z',
+      status: 'succeeded',
+      fetched_count: 3,
+      created_count: 3,
+      duplicate_count: 0,
+      error: null,
+    });
+    const onRefreshSources = vi.fn().mockRejectedValue(new Error('网络中断'));
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="admin"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={onRefreshSources}
+          monitoringHealth={{status: 'hidden'}}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新官方风险源'}));
+
+    // 采集成功语义保留：主消息仍是成功文本，重载失败仅追加次级提示且 tone 不降级为 alert。
+    const msg = await screen.findByTestId('source-run-msg-17');
+    expect(msg).toHaveTextContent('刷新完成，新增 3 条记录');
+    expect(msg).toHaveTextContent('（列表刷新失败，请重新加载：网络中断）');
+    expect(msg).toHaveAttribute('role', 'status');
+    expect(onRefreshSources).toHaveBeenCalledWith({refreshMonitoringHealth: true});
   });
 
   it('仅启用中的天眼查行内核查可用，其他外部工具与人工录入来源仍禁用', async () => {
@@ -766,7 +805,8 @@ describe('数据源列表信息架构与操作区', () => {
     expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent(
       '核查完成：目标 12 家，已尝试 10 家，新增 3 条，重复 4 条，空结果 2 条，失败 1 条',
     );
-    expect(onRefreshSources).toHaveBeenCalled();
+    // 天眼查批量核查成功同样触发监控健康再请求：单源刷新两条分支都不得漏掉意图。
+    expect(onRefreshSources).toHaveBeenCalledWith({refreshMonitoringHealth: true});
   });
 
   it('天眼查额度耗尽时汇总追加额度耗尽信息', async () => {

@@ -48,13 +48,25 @@ const onRequestError = vi.fn();
 interface HookOptions {
   readonly enabled?: boolean;
   readonly active?: boolean;
+  readonly refreshVersion?: number;
 }
 
-const renderHealthHook = (options: HookOptions = {}) => renderHook(() => useMonitoringHealth({
-  enabled: options.enabled ?? true,
-  active: options.active ?? true,
-  onRequestError,
-}));
+interface HookProps {
+  readonly enabled: boolean;
+  readonly active: boolean;
+  readonly refreshVersion: number;
+}
+
+const renderHealthHook = (options: HookOptions = {}) => renderHook(
+  (props: HookProps) => useMonitoringHealth({...props, onRequestError}),
+  {
+    initialProps: {
+      enabled: options.enabled ?? true,
+      active: options.active ?? true,
+      refreshVersion: options.refreshVersion ?? 0,
+    },
+  },
+);
 
 const setVisibility = (state: 'visible' | 'hidden') => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(state);
@@ -262,5 +274,115 @@ describe('useMonitoringHealth 竞态与清理', () => {
       await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS * 3);
     });
     expect(vi.mocked(api.monitoringHealth).mock.calls.length).toBe(callsAtUnmount);
+  });
+});
+
+describe('useMonitoringHealth refreshVersion 即时刷新', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it('refreshVersion 递增时立即刷新并重置 60 秒周期', async () => {
+    const {result, rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+
+    // 距首次请求仅过半个周期
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS / 2);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    // refreshVersion 递增：不等周期到点，立即发起新请求
+    rerender({enabled: true, active: true, refreshVersion: 1});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    // 周期从刷新时刻重新计时：从首次请求算满 60 秒也不得触发旧表
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS / 2);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    // 距刷新满 60 秒才触发下一轮
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS / 2);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+  });
+
+  it('refreshVersion 刷新后旧的在途响应晚到也不覆盖新结果', async () => {
+    const staleHealth: MonitoringHealthRead = {...monitoringHealthOk, overall: 'degraded'};
+    let resolveStale: ((value: MonitoringHealthRead) => void) | undefined;
+    vi.mocked(api.monitoringHealth)
+      .mockImplementationOnce(() => new Promise<MonitoringHealthRead>((resolve) => {
+        resolveStale = resolve;
+      }))
+      .mockResolvedValueOnce(monitoringHealthOk);
+
+    const {result, rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    expect(result.current).toEqual({status: 'loading'});
+
+    // refreshVersion 递增：新请求立即发出并成功
+    rerender({enabled: true, active: true, refreshVersion: 1});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+
+    // 旧响应此刻才返回：AbortController/序号保护必须丢弃它
+    await act(async () => {
+      if (resolveStale === undefined) throw new Error('旧请求未处于在途状态');
+      resolveStale(staleHealth);
+    });
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+    expect(onRequestError).not.toHaveBeenCalled();
+  });
+
+  it('refreshVersion 不变时不额外刷新', async () => {
+    const {rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    rerender({enabled: true, active: true, refreshVersion: 0});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it('enabled=false 时 refreshVersion 递增不发请求', async () => {
+    const {rerender} = renderHealthHook({enabled: false});
+    await flushEffects();
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+
+    rerender({enabled: false, active: true, refreshVersion: 1});
+    await flushEffects();
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+
+  it('active=false 时 refreshVersion 递增不发请求', async () => {
+    const {rerender} = renderHealthHook({active: false});
+    await flushEffects();
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+
+    rerender({enabled: true, active: false, refreshVersion: 1});
+    await flushEffects();
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+
+  it('页面隐藏时 refreshVersion 递增不发请求，恢复可见后按可见性机制刷新', async () => {
+    const {rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    dispatchVisibility('hidden');
+    rerender({enabled: true, active: true, refreshVersion: 1});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    dispatchVisibility('visible');
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
   });
 });

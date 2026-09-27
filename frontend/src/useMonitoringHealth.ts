@@ -36,11 +36,21 @@ interface UseMonitoringHealthOptions {
   readonly enabled: boolean;
   /** 当前路由是否展示诊断（总览/数据源）；false 时暂停轮询。 */
   readonly active: boolean;
+  /**
+   * 外部刷新版本号（默认 0）：递增时若 enabled+active 且页面可见，
+   * 立即发起新请求并重置 60 秒周期；旧响应由 AbortController/序号抑制。
+   */
+  readonly refreshVersion?: number;
   /** 401 统一入口：交给 App 会话失效处理（403 不走这里）。 */
   readonly onRequestError: (error: ApiError) => void;
 }
 
-export function useMonitoringHealth({enabled, active, onRequestError}: UseMonitoringHealthOptions): MonitoringHealthSnapshot {
+export function useMonitoringHealth({
+  enabled,
+  active,
+  refreshVersion = 0,
+  onRequestError,
+}: UseMonitoringHealthOptions): MonitoringHealthSnapshot {
   const [snapshot, setSnapshot] = useState<MonitoringHealthSnapshot>({status: 'loading'});
   // 请求序号：慢的旧响应不得覆盖新一轮状态；清理时自增使在途响应全部失效。
   const sequenceRef = useRef(0);
@@ -124,7 +134,9 @@ export function useMonitoringHealth({enabled, active, onRequestError}: UseMonito
       controllerRef.current?.abort();
       sequenceRef.current += 1;
     };
-  }, [enabled, active]);
+    // refreshVersion 递增触发重建：清理会 abort 在途请求并推进序号，
+    // 新周期立即刷新并重置 60 秒表；隐藏或停用时仅重建、不发起请求。
+  }, [enabled, active, refreshVersion]);
 
   return snapshot;
 }

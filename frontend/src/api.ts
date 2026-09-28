@@ -1225,9 +1225,9 @@ export function mapDataSource(source: DataSourceRead, runs: CollectionRunRead[])
       : accessStatus === 'busy' ? '同域名请求执行中'
       : accessStatus === 'throttled' ? '域名请求间隔保护中'
       : !source.enabled ? '已停用' : isExternalTool
-      ? source.api_key_configured ? '按需核查可用' : '运行密钥未配置'
+      ? source.api_key_configured ? '核查可用' : '运行密钥未配置'
       : !lastRun ? '尚未运行' : lastRun.status === 'succeeded' ? '运行正常' : lastRun.status === 'failed' ? '运行失败' : lastRun.status === 'running' ? '运行中' : '运行中',
-    lastSyncTime: isExternalTool ? '按需调用' : lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
+    lastSyncTime: isExternalTool ? '调用' : lastRun ? formatDateTime(lastRun.finished_at ?? lastRun.started_at) : '尚未运行',
     itemCount: lastRun?.created_count ?? 0,
     totalSignalCount: source.total_signal_count ?? 0,
     validSignalCount: source.valid_signal_count ?? source.total_signal_count ?? 0,

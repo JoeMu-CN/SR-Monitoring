@@ -118,13 +118,13 @@ const CONNECTIVITY_META: Record<ConnectivityVariant, {label: string; tone: Conne
   throttled: {label: '间隔保护中', tone: 'warning'},
   access_error: {label: '连通异常', tone: 'danger'},
   disabled: {label: '已停用', tone: 'neutral'},
-  on_demand: {label: '按需核查', tone: 'neutral'},
+  on_demand: {label: '核查', tone: 'neutral'},
   manual: {label: '人工录入', tone: 'neutral'},
   unconfigured: {label: '未配置', tone: 'neutral'},
 };
 
 // 五种色调直接复用采集状态色板已有的类名，不引入新的原始色值：
-// 绿色=连通正常，橙色=冷却/间隔保护，蓝色=请求执行中，红色=连通异常，中性灰=停用/按需/人工/未配置。
+// 绿色=连通正常，橙色=冷却/间隔保护，蓝色=请求执行中，红色=连通异常，中性灰=停用/核查/人工/未配置。
 const CONNECTIVITY_TONE_CLASSES: Record<ConnectivityTone, {
   pill: string; dot: string; dotCore: string; ringDur: number;
 }> = {
@@ -160,7 +160,7 @@ const sourceNodeHint = (source: DataSource): string => {
         : '外部核查工具：运行密钥未配置，请先在编辑中配置运行密钥后再发起批量核查';
     }
     return source.apiKeyConfigured
-      ? '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新'
+      ? '外部核查工具：运行密钥已配置，发起查询，不支持页面刷新'
       : '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新';
   }
   if (source.code === 'manual-json') return '通过人工上传文件录入信号，不进行联网采集';
@@ -176,7 +176,7 @@ const sourceNodeHint = (source: DataSource): string => {
   return '采集请求按域名保护策略执行，当前连通正常';
 };
 
-// 天眼查是唯一支持在数据源页手动触发批量主体核查的外部工具；其他外部工具仍仅按需调用。
+// 天眼查是唯一支持在数据源页手动触发批量主体核查的外部工具；其他外部工具仍仅通过页面调用。
 const TYC_SOURCE_CODE = 'tianyancha';
 
 // 批量核查汇总：全部字段取自后端同步返回，不补充未披露信息。
@@ -194,7 +194,7 @@ const refreshBlockedReason = (
   refreshingId: string | null,
 ): string | null => {
   if (role !== 'admin') return '仅管理员可触发采集';
-  if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具按需调用，不支持页面刷新';
+  if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具调用，不支持页面刷新';
   if (source.code === 'manual-json') return '人工录入数据源不支持刷新';
   // adapterStatus 只描述声明式适配器的发布状态；external_tool（如天眼查）不走适配器
   // 发布流程，真实后端返回 unconfigured，不能据此禁用其行内核查。
@@ -382,7 +382,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         validity_policy: validityPolicy,
       };
       if (editingId) {
-        const {code: _code, adapter_config: _adapterConfig, api_key: _apiKey, ...rest} = payload;
+        const {code: _code, adapter_config: _adapterConfig, ...rest} = payload;
         const changes = adapterConfig ? {...rest, adapter_config: adapterConfig} : rest;
         await onUpdateSource(editingId, changes);
         await onRefreshSources();
@@ -800,11 +800,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                 <input type="url" value={form.endpoint_url ?? ''} onChange={(event) => update('endpoint_url', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
               </label>
               <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}
-                <input disabled={isExternalForm} value={isExternalForm ? '按需调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
+                <input disabled={isExternalForm} value={isExternalForm ? '调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
               </label>
               {isTycForm && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
-                  调度策略：人工查询按需调用；Scheduler 不按 cron 刷新。启用且运行密钥有效、额度充足时，每天北京时间 06:00 批量核查已启用供应商；停用时不执行批量核查。
+                  调度策略：人工查询通过页面调用；Scheduler 不按 cron 刷新。启用且运行密钥有效、额度充足时，每天北京时间 06:00 批量核查已启用供应商；停用时不执行批量核查。
                 </div>
               )}
               <label className="text-xs font-bold sm:col-span-2" title="选择信号有效期策略模式；不同模式启用不同配置字段">
@@ -916,7 +916,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             )}
             <label className="text-xs font-bold flex items-center gap-2">
               <input type="checkbox" disabled={!mayEnable} checked={form.enabled && mayEnable} onChange={(event) => update('enabled', event.target.checked)} />
-              {isExternalForm ? '启用按需核查' : '启用正式采集（仅已发布或内置适配器可用）'}
+              {isExternalForm ? '启用核查' : '启用正式采集（仅已发布或内置适配器可用）'}
             </label>
             {previewText && <pre className="bg-slate-50 border rounded-lg p-3 text-xs whitespace-pre-wrap max-h-56 overflow-auto">{previewText}</pre>}
             <div className="flex justify-end gap-2">

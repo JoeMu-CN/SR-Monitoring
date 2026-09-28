@@ -885,7 +885,7 @@ describe('App 单源刷新联动监控健康', () => {
     ...sourceBackend,
     id: 23,
     code: 'tianyancha',
-    name: '天眼查企业核查（按需核查）',
+    name: '天眼查企业核查',
     source_type: 'external_tool',
     schedule: null,
     endpoint_url: null,

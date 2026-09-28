@@ -1,4 +1,4 @@
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, render, screen, within} from '@testing-library/react';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {MonitoringHealthRead} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
@@ -170,7 +170,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
     expect(cell.textContent).not.toContain('采集正常');
   });
 
-  it('停用与按需来源以中性语义展示，不出现红色故障标签', () => {
+  it('停用与外部核查来源以中性语义展示，不出现红色故障标签', () => {
     const disabled = render(
       <MonitoringSourceFreshness
         health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
@@ -186,7 +186,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
         health={{...baseHealth.sources[0], source_id: 18, state: 'on_demand', reason_code: 'on_demand', next_expected_at: null}}
       />,
     );
-    expect(screen.getByTestId('source-health-18').textContent).toContain('按需核查');
+    expect(within(screen.getByTestId('source-health-18')).getByText('核查')).toBeInTheDocument();
     expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
   });
 
@@ -195,7 +195,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
     expect(screen.queryByTestId(/^source-health-/)).not.toBeInTheDocument();
   });
 
-  it('on_demand 来源显示「按需核查 + 最近核查真实时间」，不显示下次预期与最近成功', () => {
+  it('on_demand 来源显示「核查 + 最近核查真实时间」，不显示下次预期与最近成功', () => {
     render(
       <MonitoringSourceFreshness
         health={{
@@ -209,7 +209,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
       />,
     );
     const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('按需核查');
+    expect(within(cell).getByText('核查')).toBeInTheDocument();
     expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
     expect(cell.textContent).not.toContain('下次预期');
     expect(cell.textContent).not.toContain('最近成功');
@@ -238,7 +238,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
     expect(tokenElements.every((token) => token.classList.contains('whitespace-nowrap'))).toBe(true);
   });
 
-  it('onDemand 覆盖后端 disabled：外部核查工具停用时显示按需核查而非已停用', () => {
+  it('onDemand 覆盖后端 disabled：外部核查工具停用时显示核查而非已停用', () => {
     render(
       <MonitoringSourceFreshness
         onDemand
@@ -246,7 +246,7 @@ describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
       />,
     );
     const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('按需核查');
+    expect(within(cell).getByText('核查')).toBeInTheDocument();
     expect(cell.textContent).not.toContain('已停用');
     expect(cell.textContent).not.toContain('下次预期');
   });

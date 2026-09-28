@@ -84,6 +84,7 @@ const expectedTime = (value: string) => new Date(value).toLocaleString('zh-CN', 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('数据源采集记录入口', () => {
@@ -258,7 +259,7 @@ describe('数据源有效期策略表单', () => {
     expect(screen.getByLabelText('固定天数（天）')).toHaveValue(30);
   });
 
-  it('天眼查编辑表单展示按需调用与每日批量核查策略', async () => {
+  it('天眼查编辑表单展示调用方式与每日批量核查策略', async () => {
     renderAdmin({
       code: 'tianyancha',
       name: '天眼查企业核查',
@@ -268,7 +269,7 @@ describe('数据源有效期策略表单', () => {
     });
     await openForm();
 
-    expect(screen.getByText(/人工查询按需调用；Scheduler 不按 cron 刷新/)).toBeInTheDocument();
+    expect(screen.getByText(/人工查询通过页面调用；Scheduler 不按 cron 刷新/)).toBeInTheDocument();
     expect(screen.getByText(/每天北京时间 06:00 批量核查已启用供应商/)).toBeInTheDocument();
   });
 
@@ -345,6 +346,88 @@ describe('数据源有效期策略表单', () => {
   });
 });
 
+// 缺陷回归（计划 Todo 6）：编辑表单曾在构造 update payload 时解构丢弃 api_key，
+// 导致数据源控制台保存运行密钥无效；留空保存则必须让后端收到"不含该键 = 保持不变"。
+describe('数据源运行密钥提交契约', () => {
+  const tycEditSource: DataSource = {
+    ...source,
+    id: '23',
+    code: 'tianyancha',
+    name: '天眼查企业核查',
+    type: 'external_tool',
+    schedule: null,
+    enabled: false,
+    status: 'disabled',
+    latency: '已停用',
+    adapterStatus: 'unconfigured',
+    accessLastHttpStatus: null,
+    apiKeyConfigured: true,
+    apiKeyHint: 'tyc_••••1234',
+  };
+
+  const renderWithSerializedUpdate = () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({})});
+    vi.stubGlobal('fetch', fetchMock);
+    const updateSourceSpy = vi.spyOn(api, 'updateSource');
+    // spyOn 已把 api.updateSource 替换为 spy；这里再取一次引用以保留"可调用"的编译期类型。
+    const updateSource = api.updateSource;
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[tycEditSource]}
+          role="admin"
+          onUpdateSource={async (id, payload) => {
+            await updateSource(Number(id), payload);
+          }}
+          onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+    // 只认真正被 JSON.stringify 过的 PUT body：内存对象上 api_key 键始终存在（值可能为 undefined），
+    // 只有序列化结果才能证明"留空 = 后端收不到该键"。
+    const putBodies = () => (fetchMock.mock.calls as Array<[string, RequestInit]>)
+      .filter(([path]) => path === '/api/v1/sources/23')
+      .map(([, options]) => JSON.parse(String(options.body)) as Record<string, unknown>);
+    return {updateSourceSpy, putBodies};
+  };
+
+  const openTycForm = async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '编辑天眼查企业核查'}));
+    return user;
+  };
+
+  it('输入运行密钥保存时 api.updateSource 载荷与序列化 PUT body 均包含 api_key', async () => {
+    const {updateSourceSpy, putBodies} = renderWithSerializedUpdate();
+    const user = await openTycForm();
+
+    await user.type(screen.getByLabelText(/运行密钥 API Key/), 'tyc_console_key_1234');
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+
+    await waitFor(() => expect(updateSourceSpy).toHaveBeenCalledTimes(1));
+    expect(updateSourceSpy.mock.calls[0]?.[0]).toBe(23);
+    expect(updateSourceSpy.mock.calls[0]?.[1]?.api_key).toBe('tyc_console_key_1234');
+
+    expect(putBodies()).toHaveLength(1);
+    expect(putBodies()[0]?.api_key).toBe('tyc_console_key_1234');
+  });
+
+  it('留空运行密钥保存时载荷值为 undefined 且序列化 PUT body 不含 api_key 键', async () => {
+    const {updateSourceSpy, putBodies} = renderWithSerializedUpdate();
+    const user = await openTycForm();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+
+    await waitFor(() => expect(updateSourceSpy).toHaveBeenCalledTimes(1));
+    // 禁止对内存对象断言 'api_key' in payload：该键始终存在，必须断言值为 undefined。
+    expect(updateSourceSpy.mock.calls[0]?.[1]?.api_key).toBeUndefined();
+
+    expect(putBodies()).toHaveLength(1);
+    expect('api_key' in (putBodies()[0] ?? {})).toBe(false);
+  });
+});
+
 describe('数据源健康新鲜度（任务8 只读诊断）', () => {
   it('诊断 ok：来源行显示最近成功与下次预期时间', () => {
     render(
@@ -389,7 +472,7 @@ describe('数据源健康新鲜度（任务8 只读诊断）', () => {
     expect(cell.textContent).not.toContain('采集正常');
   });
 
-  it('停用与按需来源不出现红色故障标签', () => {
+  it('停用与外部核查来源不出现红色故障标签', () => {
     const view = render(
       <MemoryRouter>
         <DataSourcesView
@@ -429,7 +512,7 @@ describe('数据源健康新鲜度（任务8 只读诊断）', () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('source-health-17').textContent).toContain('按需核查');
+    expect(within(screen.getByTestId('source-health-17')).getByText('核查')).toBeInTheDocument();
   });
 
   it('诊断 503（unknown/hidden）不渲染任何新鲜度占位，列表照常展示', () => {
@@ -485,7 +568,7 @@ describe('数据源列表信息架构与操作区', () => {
     ...source,
     id: '23',
     code: 'tianyancha',
-    name: '天眼查企业核查（按需核查）',
+    name: '天眼查企业核查（核查）',
     type: 'external_tool',
     schedule: null,
     enabled: false,
@@ -497,7 +580,7 @@ describe('数据源列表信息架构与操作区', () => {
     accessLastHttpStatus: null,
     apiKeyConfigured: true,
     apiKeyHint: 'tyc_••••1234',
-    lastSyncTime: '按需调用',
+    lastSyncTime: '调用',
   };
 
   it('分类标签使用中文业务类别，未识别编码回退中文兜底', () => {
@@ -611,7 +694,7 @@ describe('数据源列表信息架构与操作区', () => {
     renderView([tianyancha]);
 
     expect(screen.getByTestId('source-name-23')).toHaveTextContent('天眼查企业核查');
-    expect(screen.getByTestId('source-name-23').textContent).not.toContain('按需核查');
+    expect(screen.getByTestId('source-name-23').textContent).not.toContain('（核查）');
     expect(screen.getByText('tianyancha')).toBeInTheDocument();
   });
 
@@ -737,7 +820,7 @@ describe('数据源列表信息架构与操作区', () => {
   it('仅启用中的天眼查行内核查可用，其他外部工具与人工录入来源仍禁用', async () => {
     const runSource = vi.spyOn(api, 'runSource');
     renderView([
-      {...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...tianyancha, enabled: true, status: 'normal', latency: '核查可用'},
       {...source, id: '18', code: 'manual-json', name: '手工 JSON 导入', type: 'manual'},
       {...source, id: '19', code: 'other-tool', name: '其他外部核查工具', type: 'external_tool'},
     ], 'admin');
@@ -752,7 +835,7 @@ describe('数据源列表信息架构与操作区', () => {
 
     const otherToolButton = screen.getByRole('button', {name: '刷新其他外部核查工具'});
     expect(otherToolButton).toBeDisabled();
-    expect(otherToolButton).toHaveAttribute('title', '外部核查工具按需调用，不支持页面刷新');
+    expect(otherToolButton).toHaveAttribute('title', '外部核查工具调用，不支持页面刷新');
 
     const user = userEvent.setup();
     await user.click(manualButton);
@@ -765,7 +848,7 @@ describe('数据源列表信息架构与操作区', () => {
   // adapterStatus 检查二次禁用，刷新按钮被错误置灰（title: 该来源尚未完成适配器配置）。
   it('已启用、未配置声明式适配器的天眼查仍可刷新，普通拉取来源仍要求已发布适配器', () => {
     renderView([
-      {...tianyancha, adapterStatus: 'unconfigured', enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...tianyancha, adapterStatus: 'unconfigured', enabled: true, status: 'normal', latency: '核查可用'},
       {...source, id: '24', code: 'official-unconfigured', name: '未配置适配器接口来源', adapterStatus: 'unconfigured'},
     ], 'admin');
 
@@ -784,7 +867,7 @@ describe('数据源列表信息架构与操作区', () => {
     render(
       <MemoryRouter>
         <DataSourcesView
-          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}]}
+          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}]}
           role="admin"
           onUpdateSource={vi.fn()}
           onRefreshSources={onRefreshSources}
@@ -824,7 +907,7 @@ describe('数据源列表信息架构与操作区', () => {
     render(
       <MemoryRouter>
         <DataSourcesView
-          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}]}
+          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}]}
           role="admin"
           onUpdateSource={vi.fn()}
           onRefreshSources={onRefreshSources}
@@ -856,7 +939,7 @@ describe('数据源列表信息架构与操作区', () => {
       failed_count: 0,
       quota_exhausted: true,
     });
-    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'}], 'admin');
+    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
@@ -872,7 +955,7 @@ describe('数据源列表信息架构与操作区', () => {
       resolveBatch = resolve;
     }));
     renderView([
-      {...tianyancha, enabled: true, status: 'normal', latency: '按需核查可用'},
+      {...tianyancha, enabled: true, status: 'normal', latency: '核查可用'},
       {...source, enabled: true},
     ], 'admin');
 
@@ -910,12 +993,12 @@ describe('数据源列表信息架构与操作区', () => {
     expect(refreshButton).toHaveAttribute('title', '数据源已停用，启用后可刷新');
   });
 
-  it('天眼查停用时展示按需核查而非已停用，最近核查为真实时间且无下次预期', () => {
+  it('天眼查停用时展示核查而非已停用，最近核查为真实时间且无下次预期', () => {
     renderView([tianyancha], 'viewer', monitoringHealthWith({
       ...healthySource,
       source_id: 23,
       code: 'tianyancha',
-      name: '天眼查企业核查（按需核查）',
+      name: '天眼查企业核查（核查）',
       state: 'disabled',
       reason_code: 'disabled',
       next_expected_at: null,
@@ -924,14 +1007,14 @@ describe('数据源列表信息架构与操作区', () => {
     }));
 
     const connectivity = screen.getByTestId('source-connectivity-23');
-    expect(connectivity).toHaveTextContent('按需核查');
+    expect(connectivity).toHaveTextContent('核查');
     expect(connectivity).toHaveAttribute(
       'title',
       '外部核查工具：运行密钥已配置，支持页面手动批量核查全部启用供应商；每天北京时间 06:00 仍自动批量核查',
     );
 
     const health = screen.getByTestId('source-health-23');
-    expect(health).toHaveTextContent('按需核查');
+    expect(within(health).getByText('核查')).toBeInTheDocument();
     expect(health).toHaveTextContent(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
     expect(health).not.toHaveTextContent('下次预期');
     expect(screen.queryByText('已停用')).not.toBeInTheDocument();
@@ -956,7 +1039,7 @@ describe('数据源列表信息架构与操作区', () => {
 
     expect(screen.getByTestId('source-connectivity-31')).toHaveAttribute(
       'title',
-      '外部核查工具：运行密钥已配置，按需发起查询，不支持页面刷新',
+      '外部核查工具：运行密钥已配置，发起查询，不支持页面刷新',
     );
     expect(screen.getByTestId('source-connectivity-32')).toHaveAttribute(
       'title',
@@ -1055,7 +1138,7 @@ describe('数据源连通徽标配色与采集状态解耦', () => {
     expect(connectivityDot('3')).toHaveClass('bg-orange-600');
   });
 
-  it('停用、按需核查、人工录入与未配置来源使用中性灰徽标而非故障色', () => {
+  it('停用、核查、人工录入与未配置来源使用中性灰徽标而非故障色', () => {
     renderView([
       {...source, id: '1', enabled: false, status: 'disabled', latency: '已停用'},
       {...source, id: '2', code: 'tianyancha', name: '天眼查企业核查', type: 'external_tool', enabled: false, status: 'disabled', latency: '已停用'},
@@ -1064,7 +1147,7 @@ describe('数据源连通徽标配色与采集状态解耦', () => {
     ]);
 
     expect(connectivityBadge('1')).toHaveTextContent('已停用');
-    expect(connectivityBadge('2')).toHaveTextContent('按需核查');
+    expect(connectivityBadge('2')).toHaveTextContent('核查');
     expect(connectivityBadge('3')).toHaveTextContent('人工录入');
     expect(connectivityBadge('4')).toHaveTextContent('未配置');
 

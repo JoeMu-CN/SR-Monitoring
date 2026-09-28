@@ -65,12 +65,18 @@ describe('SystemSplashScreen full 变体', () => {
 });
 
 describe('SystemSplashScreen simple 变体', () => {
-  it('只展示品牌加载动画与加载指示，无自检列表与自检项文案', () => {
+  it('只展示品牌标识与标题，不再渲染加载指示行、无自检列表与自检项文案', () => {
     render(<SystemSplashScreen variant="simple" />);
     const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
 
-    expect(within(splash).getByTestId('splash-loading-indicator')).toBeInTheDocument();
-    expect(within(splash).getByText('正在加载…')).toBeInTheDocument();
+    // logo 与标题保留
+    expect(within(splash).getByAltText('SR Monitoring')).toBeInTheDocument();
+    expect(within(splash).getByRole('heading', {name: '供应商风险智能监控平台'})).toBeInTheDocument();
+
+    // 刷新时"一闪而逝"的旋转加载行已移除：加载图标、加载指示与文案均不得再渲染。
+    expect(within(splash).queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
+    expect(within(splash).queryByRole('img', {name: '加载中'})).not.toBeInTheDocument();
+    expect(within(splash).queryByText('正在加载…')).not.toBeInTheDocument();
     expect(within(splash).queryByRole('progressbar')).not.toBeInTheDocument();
     expect(within(splash).queryByText('系统状态自检')).not.toBeInTheDocument();
     expect(within(splash).queryByText('数据库连接')).not.toBeInTheDocument();

@@ -968,11 +968,14 @@ describe('App 开屏自检', () => {
     localStorage.removeItem('sr-selfcheck-at');
     renderApp('/overview');
 
-    // 先等真实自检项出现，再取当前 splash 节点：authLoading 阶段的 simple 层很快被完整自检层替换。
+    // 先等真实自检项出现，再取当前 splash 节点：authLoading 阶段的 simple 层（仅品牌标识，无加载指示行）很快被完整自检层替换。
     await screen.findByText('数据库连接', {}, {timeout: 5000});
     const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
     expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
     expect(within(splash).getByRole('progressbar', {name: '自检进度'})).toBeInTheDocument();
+    // simple 变体的旋转加载行已移除：整个开屏过程都不再出现加载指示及"正在加载…"文案。
+    expect(screen.queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在加载…')).not.toBeInTheDocument();
     expect(api.health).toHaveBeenCalled();
 
     expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
@@ -988,6 +991,9 @@ describe('App 开屏自检', () => {
     expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
     expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
     expect(screen.queryByText('数据库连接')).not.toBeInTheDocument();
+    // simple 开屏已不再渲染加载指示行，进入应用后不应残留加载指示或"正在加载…"文案。
+    expect(screen.queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在加载…')).not.toBeInTheDocument();
   });
 
   it('完整自检完成后写入可解析的自检时间戳', async () => {
@@ -1018,6 +1024,9 @@ describe('App 开屏自检', () => {
     expect(within(splash).queryByText('AI 引擎')).not.toBeInTheDocument();
     expect(within(splash).queryByText('调度器心跳')).not.toBeInTheDocument();
     expect(within(splash).queryByText('数据源状态')).not.toBeInTheDocument();
+    // simple 变体的旋转加载行已移除：完整自检层同样不得出现加载指示及"正在加载…"文案。
+    expect(within(splash).queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
+    expect(within(splash).queryByText('正在加载…')).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();

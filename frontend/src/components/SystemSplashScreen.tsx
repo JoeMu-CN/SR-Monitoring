@@ -75,12 +75,6 @@ export function SystemSplashScreen({variant, items = []}: SystemSplashScreenProp
             <h1 className="text-lg font-bold tracking-tight">供应商风险智能监控平台</h1>
             <p className="mt-1 text-[11px] font-mono font-semibold text-[#004782] dark:text-blue-400">SUPPLIER RISK INTELLIGENCE PLATFORM</p>
           </div>
-          <div className="flex items-center gap-2 text-xs font-medium text-[#424751] dark:text-slate-400">
-            <span role="img" aria-label="加载中" data-testid="splash-loading-indicator" className="inline-flex">
-              <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-[#004782] dark:text-blue-400" />
-            </span>
-            <span>正在加载…</span>
-          </div>
         </div>
       </motion.div>
     );

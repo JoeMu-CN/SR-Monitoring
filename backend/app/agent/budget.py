@@ -11,12 +11,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import config
 from app.agent.models import TycUsageRecord
 from app.signals.models import DataSource
 
 BEIJING_OFFSET = timedelta(hours=8)
 TYC_SOURCE_CODE = "tianyancha"
+DEFAULT_DAILY_LIMIT = 80
+DEFAULT_MONTHLY_LIMIT = 900
 
 
 @dataclass(frozen=True)
@@ -52,13 +53,13 @@ class TycUsageSnapshot:
 
 
 def _source_has_key(source: DataSource | None) -> bool:
-    """天眼查是否有可用运行密钥：控制台密文优先，非生产环境允许兼容回退。"""
+    """天眼查是否有可用运行密钥：仅认数据源控制台可解密的密文。"""
     if source is not None and source.api_key_encrypted:
         from app.signals.secret_store import decrypt_secret
 
         if decrypt_secret(source.api_key_encrypted):
             return True
-    return bool(config.get_tyc_env_fallback())
+    return False
 
 
 def _limit_value(value: object, default: int, maximum: int) -> int:
@@ -72,15 +73,14 @@ def _limit_value(value: object, default: int, maximum: int) -> int:
 
 
 def _source_limits(source: DataSource | None) -> tuple[int, int]:
-    daily_default, monthly_default = config.get_tyc_budget_fallback()
     values = (
         source.login_config
         if source is not None and isinstance(source.login_config, dict)
         else {}
     )
     return (
-        _limit_value(values.get("daily_limit"), daily_default, 100000),
-        _limit_value(values.get("monthly_limit"), monthly_default, 1000000),
+        _limit_value(values.get("daily_limit"), DEFAULT_DAILY_LIMIT, 100000),
+        _limit_value(values.get("monthly_limit"), DEFAULT_MONTHLY_LIMIT, 1000000),
     )
 
 

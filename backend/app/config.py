@@ -124,18 +124,6 @@ RESEARCH_BOCHA_SAFETY_RESERVE = _int_env(
 
 # Agent 编排
 AGENT_MAX_STEPS = _int_env("AGENT_MAX_STEPS", 6, minimum=1, maximum=20)
-# 以下四项只保留开发环境旧配置兼容；生产运行时从天眼查数据源记录读取。
-# 2026-08-18 确认：天眼查 API 额度为 10000 次/天、100000 次/月。
-AGENT_TYC_DAILY_LIMIT = _int_env("AGENT_TYC_DAILY_LIMIT", 10000, minimum=1, maximum=100000)
-AGENT_TYC_MONTHLY_LIMIT = _int_env(
-    "AGENT_TYC_MONTHLY_LIMIT", 100000, minimum=1, maximum=1000000
-)
-# 天眼查 MCP 网关（与 AI 平台控制台 API Key 相同，tyc_ 开头）。
-# 生产环境只从数据源控制台读取加密密钥；TYC_API_KEY 仅保留开发环境兼容回退。
-TYC_API_KEY = os.getenv("TYC_API_KEY", "").strip()
-TYC_MCP_ENDPOINT = os.getenv(
-    "TYC_MCP_ENDPOINT", "https://mcp.tianyancha.com/v1"
-).strip()
 # 数据源控制台运行密钥的加密密钥（Fernet base64 32 字节）；
 # 未配置时由 DATABASE_URL 派生，仅建议开发/内部环境使用。
 DATA_SOURCE_SECRET_KEY = os.getenv("DATA_SOURCE_SECRET_KEY", "").strip()
@@ -162,23 +150,6 @@ BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip()
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "").strip()
 # 跨域来源白名单；配置后仅允许名单内 Origin 的写请求，否则要求同源。
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-
-
-def get_tyc_env_fallback() -> str:
-    """返回仅供非生产环境兼容使用的天眼查环境变量密钥。"""
-    return TYC_API_KEY if APP_ENV != "production" else ""
-
-
-def get_tyc_endpoint_fallback() -> str:
-    """返回仅供非生产环境兼容使用的天眼查端点环境变量。"""
-    return TYC_MCP_ENDPOINT if APP_ENV != "production" else ""
-
-
-def get_tyc_budget_fallback() -> tuple[int, int]:
-    """返回仅供非生产环境兼容使用的天眼查额度环境变量。"""
-    if APP_ENV == "production":
-        return 80, 900
-    return AGENT_TYC_DAILY_LIMIT, AGENT_TYC_MONTHLY_LIMIT
 
 
 def validate_auth_config() -> None:

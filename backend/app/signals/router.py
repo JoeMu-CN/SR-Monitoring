@@ -10,7 +10,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from app import config
 from app.agent.tyc_batch import (
     TycBatchNotTianyancha,
     TycBatchSourceInactive,
@@ -145,10 +144,12 @@ def _api_key_fields(api_key: str | None) -> dict[str, str | None]:
 
 
 def _source_has_secret(source: DataSource, pending: dict[str, object]) -> bool:
-    """数据源是否已有可用运行密钥（控制台密文或非生产环境兼容回退）。"""
-    if pending.get("api_key_encrypted") or source.api_key_encrypted:
+    """数据源是否有可用运行密钥：刚加密的待写入密文或已存且可解密的密文。"""
+    if pending.get("api_key_encrypted"):
         return True
-    return source.code == "tianyancha" and bool(config.get_tyc_env_fallback())
+    if source.api_key_encrypted:
+        return decrypt_secret(source.api_key_encrypted) is not None
+    return False
 
 
 def _sanitize_login_config(config: dict[str, object] | None) -> dict[str, object]:
@@ -251,21 +252,16 @@ def _serialize_source(
     elif effective_endpoint != source.endpoint_url:
         payload = payload.model_copy(update={"endpoint_url": effective_endpoint})
     if source.code == "tianyancha":
-        # 运行密钥优先取控制台加密存库；环境变量仅在非生产环境兼容回退。
+        # 运行密钥以数据源控制台加密存库为唯一来源。
         # 只覆盖密钥展示字段，继续执行下方通用计数逻辑，不因密钥分支漏掉记录数。
         db_configured = (
             source.api_key_encrypted is not None
             and decrypt_secret(source.api_key_encrypted) is not None
         )
-        env_configured = bool(config.get_tyc_env_fallback())
         payload = payload.model_copy(
             update={
-                "api_key_configured": db_configured or env_configured,
-                "api_key_hint": (
-                    payload.api_key_hint
-                    if db_configured
-                    else "环境变量已配置" if env_configured else None
-                ),
+                "api_key_configured": db_configured,
+                "api_key_hint": payload.api_key_hint if db_configured else None,
             }
         )
     if session is not None:
@@ -581,6 +577,18 @@ def update_source(
     is_external_tool = (
         str(update_values.get("source_type") or source.source_type) == "external_tool"
     )
+    if "api_key" in payload.model_fields_set:
+        # 先写入本次待更新的密钥字段，使单次 PUT {api_key, enabled:true} 的启用门禁可判定
+        update_values.update(
+            _api_key_fields(payload.api_key)
+            if payload.api_key
+            else {
+                "api_key_hash": None,
+                "api_key_last4": None,
+                "api_key_encrypted": None,
+            }
+        )
+        changes["api_key"] = "updated" if payload.api_key else "cleared"
     if requested_enabled is True:
         if is_external_tool:
             # 按需外部核查工具：不要求适配器发布，但必须已有运行密钥
@@ -598,17 +606,6 @@ def update_source(
         update_values["login_config"] = _sanitize_login_config(update_values["login_config"])
     if "endpoint_url" in update_values and update_values["endpoint_url"] is not None:
         update_values["endpoint_url"] = str(update_values["endpoint_url"])
-    if "api_key" in payload.model_fields_set:
-        update_values.update(
-            _api_key_fields(payload.api_key)
-            if payload.api_key
-            else {
-                "api_key_hash": None,
-                "api_key_last4": None,
-                "api_key_encrypted": None,
-            }
-        )
-        changes["api_key"] = "updated" if payload.api_key else "cleared"
     for key, value in update_values.items():
         if key == "api_key":
             continue

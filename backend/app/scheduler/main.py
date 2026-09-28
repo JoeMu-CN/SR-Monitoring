@@ -155,7 +155,7 @@ def main() -> None:
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
-    # 供应商主体维度：每日批量天眼查核查（额度 10000/天，100000/月），结果落信号池
+    # 供应商主体维度：每日批量天眼查核查（额度由数据源控制台配置，缺省 80/天、900/月），结果落信号池
     scheduler.add_job(
         collect_tyc_for_suppliers_job,
         _trigger("0 6 * * *"),

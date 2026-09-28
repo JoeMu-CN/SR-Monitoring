@@ -258,30 +258,27 @@ def build_tyc_gateway(
 ) -> TycGateway:
     """按配置构建网关：无可用密钥时返回占位实现（不调用、不计费）。
 
-    密钥优先级：显式 ``api_key`` 参数 > 数据源控制台加密存库（传入 session 时）>
-    非生产环境的 TYC_API_KEY 兼容回退。生产环境不读取环境变量密钥；启用/停用状态
-    由控制台 enabled 字段控制，本函数只负责取到可用密钥。
+    密钥优先级：显式 ``api_key`` 参数 > 数据源控制台加密存库（传入 session 时）。
+    启用/停用状态由控制台 enabled 字段控制，本函数只负责取到可用密钥。
     """
     from sqlalchemy import select
 
-    from app import config
     from app.signals.models import DataSource
     from app.signals.secret_store import decrypt_secret
 
     key = api_key
-    active_endpoint = endpoint or config.get_tyc_endpoint_fallback() or DEFAULT_ENDPOINT
+    active_endpoint = endpoint or DEFAULT_ENDPOINT
     if not key and session is not None:
         source = session.scalar(
             select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
         )
+        # 显式 api_key / endpoint 优先；仅当密钥来自控制台密文时采用库内 endpoint_url。
         if source is not None and source.api_key_encrypted:
             db_key = decrypt_secret(source.api_key_encrypted)
             if db_key:
                 key = db_key
                 if source.endpoint_url:
                     active_endpoint = source.endpoint_url
-    if not key:
-        key = config.get_tyc_env_fallback()
     if not key:
         return UnconfiguredTycGateway()
     return McpTycGateway(key, endpoint=active_endpoint, transport=transport)

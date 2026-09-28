@@ -148,6 +148,42 @@ describe('数据源采集记录入口', () => {
     expect(screen.getByTestId('source-validity-policy-17')).toHaveTextContent('固定天数 30 天');
   });
 
+  it('有效期策略值及移动端前缀使用可读的次级文字样式，且不暴露内部策略版本 title', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+
+    const policyValue = screen.getByText('固定天数 30 天');
+    expect(policyValue).toHaveClass(
+      'whitespace-nowrap',
+      'text-xs',
+      'font-semibold',
+      'text-[#424751]',
+      'dark:text-slate-400',
+    );
+    expect(policyValue).not.toHaveAttribute('title');
+
+    const policyPrefix = screen.getByText('有效期:');
+    expect(policyPrefix).toHaveClass(
+      'md:hidden',
+      'whitespace-nowrap',
+      'text-xs',
+      'font-sans',
+      'font-semibold',
+      'text-[#424751]',
+      'dark:text-slate-400',
+      'mr-0.5',
+    );
+  });
+
   it('无有效期策略时不渲染移动端“有效期:”悬空前缀', () => {
     render(
       <MemoryRouter>

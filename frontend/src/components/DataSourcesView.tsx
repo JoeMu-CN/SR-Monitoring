@@ -688,8 +688,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   >
                     {source.validityPolicy && (
                       <>
-                        <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-0.5">有效期:</span>
-                        <span className="whitespace-nowrap text-[10px] font-normal text-slate-400" title={`有效期策略版本 ${source.validityPolicyVersion ?? '未生成'}`}>
+                        <span className="md:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">有效期:</span>
+                        <span className="whitespace-nowrap text-xs font-semibold text-[#424751] dark:text-slate-400">
                           {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
                           {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
                         </span>

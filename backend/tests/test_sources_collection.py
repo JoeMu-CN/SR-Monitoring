@@ -1143,14 +1143,11 @@ def test_run_tyc_batch_endpoint_409_when_source_disabled(
 
 
 def test_run_tyc_batch_endpoint_409_when_key_unavailable(
-    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, db_session: Session
 ) -> None:
-    import app.config as config_module
-
     source = _enable_route_tianyancha(db_session)
     source.api_key_encrypted = None
     db_session.flush()
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
     response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
     assert response.status_code == 409
 

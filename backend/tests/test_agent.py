@@ -11,7 +11,6 @@ from pytest import MonkeyPatch
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.agent import budget as budget_module
 from app.agent.budget import get_tyc_usage, record_tyc_usage
 from app.agent.engine import AgentError, FakeAgentLLM, LLMResponse, ToolCallSpec, run_agent
 from app.agent.models import (
@@ -569,42 +568,52 @@ def test_get_budget_returns_real_counts(
     assert result["monthly_remaining"] == 49  # type: ignore[index]
 
 
-def test_tyc_usage_ignores_env_key_in_production(
+def test_tyc_usage_ignores_env_key(
     clean_agent_tables: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    import app.config as config_module
-
+    """环境变量不构成可用密钥：无库内密文时用量快照保持停用。"""
     source = clean_agent_tables.scalar(
         select(DataSource).where(DataSource.code == "tianyancha")
     )
     assert source is not None
     source.enabled = True
     source.api_key_encrypted = None
-    monkeypatch.setattr(config_module, "APP_ENV", "production")
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+    monkeypatch.setenv("TYC_API_KEY", "tyc_env_key")
 
     assert get_tyc_usage(clean_agent_tables).enabled is False
 
 
-def test_tyc_usage_reads_console_limits_in_production(
+def test_tyc_usage_reads_console_limits(
     clean_agent_tables: Session,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    import app.config as config_module
-
+    """控制台 login_config 的额度优先于常量默认值。"""
     source = clean_agent_tables.scalar(
         select(DataSource).where(DataSource.code == "tianyancha")
     )
     assert source is not None
     source.login_config = {"daily_limit": 17, "monthly_limit": 123}
-    monkeypatch.setattr(config_module, "APP_ENV", "production")
-    monkeypatch.setattr(config_module, "AGENT_TYC_DAILY_LIMIT", 1)
-    monkeypatch.setattr(config_module, "AGENT_TYC_MONTHLY_LIMIT", 2)
+    clean_agent_tables.flush()
 
     usage = get_tyc_usage(clean_agent_tables)
     assert usage.daily_limit == 17
     assert usage.monthly_limit == 123
+
+
+def test_tyc_usage_uses_constant_default_limits(
+    clean_agent_tables: Session,
+) -> None:
+    """控制台未配置额度时使用常量默认值 80/900，不再读取环境变量。"""
+    source = clean_agent_tables.scalar(
+        select(DataSource).where(DataSource.code == "tianyancha")
+    )
+    assert source is not None
+    source.login_config = {}
+    clean_agent_tables.flush()
+
+    usage = get_tyc_usage(clean_agent_tables)
+    assert usage.daily_limit == 80
+    assert usage.monthly_limit == 900
 
 
 CANDIDATES_MD = (
@@ -745,12 +754,7 @@ def test_mcp_gateway_auth_failure_raises() -> None:
         asyncio.run(gateway.verify("测试公司"))
 
 
-def test_build_tyc_gateway_defaults_to_unconfigured(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    import app.config as config_module
-
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
+def test_build_tyc_gateway_defaults_to_unconfigured() -> None:
     gateway = build_tyc_gateway()
     assert isinstance(gateway, UnconfiguredTycGateway)
     result = asyncio.run(gateway.verify("测试公司"))
@@ -759,10 +763,8 @@ def test_build_tyc_gateway_defaults_to_unconfigured(
 
 def test_build_tyc_gateway_reads_console_key_from_db(
     db_session: Session,
-    monkeypatch: MonkeyPatch,
 ) -> None:
-    """网关构建优先取数据源控制台加密存库的运行密钥。"""
-    import app.config as config_module
+    """网关构建只认数据源控制台加密存库的运行密钥。"""
     from app.signals.secret_store import encrypt_secret
 
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
@@ -772,51 +774,27 @@ def test_build_tyc_gateway_reads_console_key_from_db(
     source.api_key_last4 = "key"
     source.endpoint_url = "https://console.example/mcp"
     db_session.flush()
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
 
     gateway = build_tyc_gateway(session=db_session)
     assert isinstance(gateway, McpTycGateway)
     assert gateway.api_key == "tyc_db_key"
     assert gateway.endpoint == "https://console.example/mcp"
 
-    # 控制台密钥优先于环境变量兜底
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
-    gateway = build_tyc_gateway(session=db_session)
-    assert gateway.api_key == "tyc_db_key"
 
-
-def test_build_tyc_gateway_falls_back_to_env_key(
+def test_build_tyc_gateway_ignores_env_key(
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """开发环境在控制台未配置密钥时仍兼容读取 TYC_API_KEY。"""
-    import app.config as config_module
-
+    """环境变量完全不参与密钥解析：即使存在 TYC_API_KEY，无库内密文即未配置。"""
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     assert source.api_key_encrypted is None
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
-
-    gateway = build_tyc_gateway(session=db_session)
-    assert isinstance(gateway, McpTycGateway)
-    assert gateway.api_key == "tyc_env_key"
-
-
-def test_build_tyc_gateway_ignores_env_key_in_production(
-    db_session: Session,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """生产环境即使存在 TYC_API_KEY，也只能由数据源控制台提供密钥。"""
-    import app.config as config_module
-
-    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
-    assert source is not None
-    source.api_key_encrypted = None
-    monkeypatch.setattr(config_module, "APP_ENV", "production")
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_env_key")
+    monkeypatch.setenv("TYC_API_KEY", "tyc_env_key")
 
     gateway = build_tyc_gateway(session=db_session)
     assert isinstance(gateway, UnconfiguredTycGateway)
+    result = asyncio.run(gateway.verify("测试公司"))
+    assert result["status"] == "not_configured"
 
 
 def test_chat_endpoint(
@@ -863,7 +841,6 @@ def test_agent_status_endpoint(
             max_retries=2,
         ),
     )
-    monkeypatch.setattr(budget_module.config, "TYC_API_KEY", "")
     response = client.get("/api/v1/agent/status")
     assert response.status_code == 200
     body = response.json()

@@ -76,12 +76,9 @@ def test_source_console_rejects_invalid_schedule(client):
 
 
 def test_tianyancha_console_key_roundtrip_without_exposing_it(
-    client, db_session, monkeypatch
+    client, db_session
 ) -> None:
     """天眼查运行密钥在数据源控制台配置：加密存库、接口只暴露末四位。"""
-    import app.config as config_module
-
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "")  # 隔离环境变量兜底
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     source_id = source.id
@@ -121,13 +118,8 @@ def test_tianyancha_console_key_roundtrip_without_exposing_it(
     assert "tyc_console_secret_1234" not in listed.text
 
 
-def test_tianyancha_enable_requires_configured_key(
-    client, db_session, monkeypatch
-) -> None:
+def test_tianyancha_enable_requires_configured_key(client, db_session) -> None:
     """外部核查工具启用前置条件：必须已有运行密钥。"""
-    import app.config as config_module
-
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "")
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     source_id = source.id
@@ -156,31 +148,48 @@ def test_tianyancha_enable_requires_configured_key(
     assert enabled.json()["enabled"] is True
 
 
-def test_tianyancha_env_key_fallback_is_development_only(
+def test_tianyancha_env_key_is_not_a_console_secret(
     client, db_session, monkeypatch
 ) -> None:
-    """开发环境可兼容读取环境变量，但生产环境不将其视为已配置。"""
-    import app.config as config_module
-
+    """环境变量不是运行密钥来源：无库内密文时接口仍报告未配置。"""
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     assert source.api_key_encrypted is None
-    monkeypatch.setattr(config_module, "TYC_API_KEY", "tyc_runtime_secret")
+    monkeypatch.setenv("TYC_API_KEY", "tyc_runtime_secret")
 
     response = client.get("/api/v1/sources/admin")
     assert response.status_code == 200
     tianyancha = next(item for item in response.json() if item["code"] == "tianyancha")
     assert tianyancha["source_type"] == "external_tool"
-    assert tianyancha["api_key_configured"] is True
-    assert tianyancha["api_key_hint"] == "环境变量已配置"
-    assert "tyc_runtime_secret" not in response.text
-
-    monkeypatch.setattr(config_module, "APP_ENV", "production")
-    response = client.get("/api/v1/sources/admin")
-    assert response.status_code == 200
-    tianyancha = next(item for item in response.json() if item["code"] == "tianyancha")
     assert tianyancha["api_key_configured"] is False
     assert tianyancha["api_key_hint"] is None
+    assert "tyc_runtime_secret" not in response.text
+
+
+def test_tianyancha_single_put_configures_key_and_enables(client, db_session) -> None:
+    """单次 PUT 同时提交运行密钥与启用：密钥先写入，启用门禁不再误判 409。"""
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    assert source.api_key_encrypted is None
+    source_id = source.id
+
+    response = client.put(
+        f"/api/v1/sources/{source_id}",
+        json={"api_key": "tyc_x", "enabled": True},
+        headers={"X-User-Role": "admin", "X-User-Id": "test-admin"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is True
+    assert body["api_key_configured"] is True
+    assert body["api_key_hint"] == "••••yc_x"
+
+    persisted = db_session.scalar(select(DataSource).where(DataSource.id == source_id))
+    assert persisted is not None
+    assert persisted.enabled is True
+    assert decrypt_secret(persisted.api_key_encrypted) == "tyc_x"
+    assert persisted.api_key_last4 == "yc_x"
+    assert persisted.api_key_hash == hashlib.sha256(b"tyc_x").hexdigest()
 
 
 def test_builtin_http_sources_report_effective_endpoint_and_access_state(client):

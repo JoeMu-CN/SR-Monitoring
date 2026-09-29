@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from threading import Event
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -19,7 +19,8 @@ from app.ai.models import AIAnalysisRecord
 from app.auth.models import User
 from app.config import SearchSettings
 from app.research.models import ResearchBatch, ResearchTask
-from app.signals.models import DataSource, RawSignal
+from app.signals.models import CollectionRun, DataSource, RawSignal
+from app.signals.service import STALE_COLLECTION_RUN_ERROR
 from app.suppliers.models import Supplier
 
 
@@ -55,6 +56,51 @@ def test_source_schedule_registry_adds_updates_and_removes(monkeypatch) -> None:
     rows.clear()
     scheduler_main._register_source_jobs(scheduler)
     assert scheduler.get_job("source-91") is None
+
+
+def test_scheduler_startup_finalizes_stale_collection_runs(db_session, monkeypatch) -> None:
+    """Scheduler 启动时一次性收尾上次异常退出遗留的 running 运行。
+
+    超过 30 分钟阈值的 running 收尾为 failed；阈值内的新鲜 running 保持不动，
+    避免把仍在执行的长任务误判为陈旧。
+    """
+    source = DataSource(
+        code="startup-recovery-source",
+        name="启动恢复测试信源",
+        source_type="api",
+        credibility=80,
+        enabled=True,
+    )
+    db_session.add(source)
+    db_session.flush()
+    now = datetime.now(UTC)
+    stale = CollectionRun(
+        source_id=source.id,
+        status="running",
+        started_at=now - timedelta(minutes=45),
+    )
+    fresh = CollectionRun(
+        source_id=source.id,
+        status="running",
+        started_at=now - timedelta(minutes=5),
+    )
+    db_session.add_all([stale, fresh])
+    db_session.commit()
+    stale_id, fresh_id = stale.id, fresh.id
+    monkeypatch.setattr(scheduler_main, "SessionLocal", lambda: nullcontext(db_session))
+
+    finalized = scheduler_main._finalize_stale_collection_runs_on_startup()
+
+    assert finalized == 1
+    stale_run = db_session.get(CollectionRun, stale_id)
+    fresh_run = db_session.get(CollectionRun, fresh_id)
+    assert stale_run is not None and fresh_run is not None
+    assert stale_run.status == "failed"
+    assert stale_run.finished_at is not None
+    assert stale_run.error == STALE_COLLECTION_RUN_ERROR
+    assert fresh_run.status == "running"
+    assert fresh_run.finished_at is None
+    assert fresh_run.error is None
 
 
 def test_daily_research_job_is_idempotent_and_only_creates_task(db_session, monkeypatch) -> None:

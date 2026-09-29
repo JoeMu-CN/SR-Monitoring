@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import (
     RESEARCH_DAILY_CRON,
@@ -46,6 +48,10 @@ from app.scheduler.runtime import (
 )
 from app.scheduler.validity_job import risk_validity_job
 from app.signals.models import DataSource
+from app.signals.service import (
+    COLLECTION_RUN_STALE_SECONDS,
+    finalize_stale_collection_runs,
+)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -57,6 +63,33 @@ logger = logging.getLogger("scheduler.main")
 
 def _trigger(expr: str) -> CronTrigger:
     return CronTrigger(**cron_to_apscheduler(expr), timezone="Asia/Shanghai")
+
+
+def _finalize_stale_collection_runs_on_startup() -> int:
+    """Scheduler 进程启动时收尾上次异常退出遗留的 running 采集运行。
+
+    仅在启动、注册周期任务之前执行一次；正常采集循环不再扫描或改写 running
+    记录，避免把仍在执行的长任务误判为陈旧（活动网络采集不持行锁，无法从
+    数据库推断外部是否仍在运行）。当前部署为单 Scheduler 进程。使用独立
+    SessionLocal 短事务，只收尾超过 ``COLLECTION_RUN_STALE_SECONDS``
+    （默认 30 分钟）的记录；恢复失败只记日志、不阻塞启动。
+    """
+    now = datetime.now(UTC)
+    try:
+        with SessionLocal() as session:
+            finalized = finalize_stale_collection_runs(
+                session,
+                stale_before=now - timedelta(seconds=COLLECTION_RUN_STALE_SECONDS),
+                now=now,
+            )
+    except SQLAlchemyError:
+        logger.exception("Scheduler 启动收尾遗留采集运行失败，跳过启动恢复")
+        return 0
+    if finalized:
+        logger.warning("Scheduler 启动收尾遗留 running 采集运行 %d 条", finalized)
+    else:
+        logger.info("Scheduler 启动检查：没有超过阈值的遗留 running 采集运行")
+    return finalized
 
 
 def _register_source_jobs(scheduler: BlockingScheduler) -> None:
@@ -152,6 +185,9 @@ def _register_weekly_research_job(scheduler: BlockingScheduler) -> None:
 
 def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+    # 启动恢复：仅本进程启动时收尾一次遗留 running 采集运行，然后才注册周期
+    # 任务；正常采集循环不再扫描 running，避免误伤仍在执行的长任务。
+    _finalize_stale_collection_runs_on_startup()
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )

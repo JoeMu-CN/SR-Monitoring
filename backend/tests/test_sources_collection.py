@@ -1,6 +1,7 @@
 """采集服务、手动触发端点与保留清理测试。"""
 
 import json
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -22,7 +23,14 @@ from app.signals.declarative import AdapterSpec, DeclarativeSourceAdapter
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.schemas import ManualSignalInput
 from app.signals.secret_store import encrypt_secret
-from app.signals.service import CollectionDeferred, CollectionFailed, collect_source
+from app.signals.service import (
+    COLLECTION_RUN_STALE_SECONDS,
+    STALE_COLLECTION_RUN_ERROR,
+    CollectionDeferred,
+    CollectionFailed,
+    collect_source,
+    finalize_stale_collection_runs,
+)
 from app.signals.sources import NmcWeatherAdapter, RawSourceItem, SourceFetchError, StatsPmiAdapter
 from app.suppliers.models import Supplier
 
@@ -987,6 +995,147 @@ def test_collect_source_failure_after_fetch_still_records_failed_run(
     run = db_session.scalar(select(CollectionRun).order_by(CollectionRun.id.desc()))
     assert run is not None
     assert run.status == "failed"
+
+
+def test_finalize_stale_collection_runs_marks_old_running_failed(
+    db_session: Session,
+) -> None:
+    """超过保守阈值的遗留 running 运行被收尾为失败并写入稳定错误文本。"""
+    # Given
+    source = _get_nmc_source(db_session)
+    now = datetime.now(UTC)
+    stale = CollectionRun(
+        source_id=source.id,
+        status="running",
+        started_at=now - timedelta(seconds=COLLECTION_RUN_STALE_SECONDS + 60),
+    )
+    db_session.add(stale)
+    db_session.commit()
+    stale_id = stale.id
+
+    # When
+    finalized = finalize_stale_collection_runs(
+        db_session,
+        stale_before=now - timedelta(seconds=COLLECTION_RUN_STALE_SECONDS),
+        now=now,
+    )
+
+    # Then
+    assert finalized == 1
+    run = db_session.get(CollectionRun, stale_id)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.finished_at == now
+    assert run.error == STALE_COLLECTION_RUN_ERROR
+
+
+def test_finalize_stale_collection_runs_leaves_fresh_and_terminal_unchanged(
+    db_session: Session,
+) -> None:
+    """阈值内的新鲜 running 与终态记录保持原样，不被误收尾。"""
+    # Given
+    source = _get_nmc_source(db_session)
+    now = datetime.now(UTC)
+    fresh = CollectionRun(
+        source_id=source.id,
+        status="running",
+        started_at=now - timedelta(minutes=5),
+    )
+    succeeded = CollectionRun(
+        source_id=source.id,
+        status="succeeded",
+        started_at=now - timedelta(hours=2),
+        finished_at=now - timedelta(hours=2),
+    )
+    db_session.add_all([fresh, succeeded])
+    db_session.commit()
+    fresh_id, succeeded_id = fresh.id, succeeded.id
+
+    # When
+    finalized = finalize_stale_collection_runs(
+        db_session,
+        stale_before=now - timedelta(seconds=COLLECTION_RUN_STALE_SECONDS),
+        now=now,
+    )
+
+    # Then
+    assert finalized == 0
+    db_session.refresh(fresh)
+    db_session.refresh(succeeded)
+    fresh_run = db_session.get(CollectionRun, fresh_id)
+    succeeded_run = db_session.get(CollectionRun, succeeded_id)
+    assert fresh_run is not None and succeeded_run is not None
+    assert fresh_run.status == "running"
+    assert fresh_run.finished_at is None
+    assert fresh_run.error is None
+    assert succeeded_run.status == "succeeded"
+    assert succeeded_run.error is None
+
+
+def test_finalize_stale_collection_runs_rejects_naive_and_future_threshold(
+    db_session: Session,
+) -> None:
+    """收尾入参沿用项目时区校验：朴素时间与晚于当前时间的阈值直接拒绝。"""
+    # Given
+    now = datetime.now(UTC)
+
+    # When / Then
+    with pytest.raises(ValueError):
+        finalize_stale_collection_runs(
+            db_session, stale_before=datetime.now(), now=now
+        )
+    with pytest.raises(ValueError):
+        finalize_stale_collection_runs(
+            db_session,
+            stale_before=now + timedelta(minutes=1),
+            now=now,
+        )
+
+
+def test_collect_enabled_sources_leaves_stale_running_untouched(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """采集循环不再扫描/改写 running 记录，超阈值的活动长任务保持原样。
+
+    误伤场景：活动网络采集不持行锁，若每轮按 started_at 收尾，一个仍在
+    执行的长任务会被另一轮采集误标为失败。收尾只允许发生在 Scheduler 启动时。
+    """
+    # Given
+    import app.scheduler.jobs as jobs_module
+
+    source = _get_nmc_source(db_session)
+    stale = CollectionRun(
+        source_id=source.id,
+        status="running",
+        started_at=datetime.now(UTC) - timedelta(minutes=45),
+    )
+    db_session.add(stale)
+    db_session.commit()
+    stale_id = stale.id
+    visited: list[int] = []
+
+    @contextmanager
+    def _session_factory():
+        yield db_session
+
+    def _skip_adapter(_source: DataSource):
+        visited.append(_source.id)
+        raise ValueError("测试跳过真实适配器构建")
+
+    monkeypatch.setattr(jobs_module, "SessionLocal", _session_factory)
+    monkeypatch.setattr(jobs_module, "build_pull_adapter", _skip_adapter)
+
+    # When
+    summary = jobs_module._collect_enabled_sources(source_ids=[source.id])
+
+    # Then
+    assert summary == {}
+    assert visited == [source.id], "采集循环应实际进入适配器构建步骤"
+    run = db_session.get(CollectionRun, stale_id)
+    assert run is not None
+    assert run.status == "running"
+    assert run.finished_at is None
+    assert run.error is None
 
 
 def test_manual_run_returns_409_collection_deferred(

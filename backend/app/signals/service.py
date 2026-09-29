@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import Final, TypeVar
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.signals.ingestion import (
@@ -25,6 +26,11 @@ from app.signals.models import CollectionRun, DataSource
 from app.signals.sources import PullSourceAdapter, SourceFetchError
 
 _T = TypeVar("_T")
+
+# 遗留 running 采集运行的保守收尾阈值：进程异常退出会留下无终态的 running
+# 记录，超过该时长（默认 30 分钟）才判定为已中断，避免误伤仍在执行的采集。
+COLLECTION_RUN_STALE_SECONDS: Final = 1800
+STALE_COLLECTION_RUN_ERROR: Final = "采集超时未完成（进程异常退出），已自动标记失败"
 
 
 def asyncio_run[T](coro: Coroutine[object, object, T]) -> T:
@@ -143,3 +149,45 @@ def _fail_run(session: Session, run_id: int, message: str) -> None:
         run.finished_at = datetime.now(UTC)
         run.error = message[:2000]
         session.commit()
+
+
+def finalize_stale_collection_runs(
+    session: Session,
+    *,
+    stale_before: datetime,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> int:
+    """保守收尾超过阈值仍停留在 ``running`` 的遗留采集运行。
+
+    进程异常退出会留下永久 ``running`` 的 collection_runs，阻塞来源健康观测
+    与后续判定。外部是否仍在执行无法从数据库可靠推断，因此仅在明显超时
+    （``COLLECTION_RUN_STALE_SECONDS``，默认 30 分钟）后按失败收尾并写入稳定
+    错误文本；新鲜 running 与终态记录保持不变。只操作传入的 Session。
+    """
+    current = now or datetime.now(UTC)
+    if stale_before.tzinfo is None or current.tzinfo is None:
+        raise ValueError("采集运行收尾时间必须带时区")
+    if stale_before > current:
+        raise ValueError("采集运行收尾阈值不能晚于当前时间")
+    if limit < 1:
+        raise ValueError("采集运行收尾批量必须大于 0")
+    stale_runs = list(
+        session.scalars(
+            select(CollectionRun)
+            .where(
+                CollectionRun.status == "running",
+                CollectionRun.started_at < stale_before,
+            )
+            .order_by(CollectionRun.started_at, CollectionRun.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+    )
+    for run in stale_runs:
+        run.status = "failed"
+        run.finished_at = current
+        run.error = STALE_COLLECTION_RUN_ERROR
+    if stale_runs:
+        session.commit()
+    return len(stale_runs)

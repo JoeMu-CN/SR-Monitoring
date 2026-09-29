@@ -234,8 +234,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [editingStatus, setEditingStatus] = useState<DataSource['adapterStatus']>('draft');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [editingKeyHint, setEditingKeyHint] = useState<string | null>(null);
-  const [isPreviewing, setIsPreviewing] = useState(false);
-  const [previewText, setPreviewText] = useState('');
   // 有效期策略编辑状态（独立于 form，避免与 signal_validity_days 冲突）
   const [validityMode, setValidityMode] = useState<ValidityMode>('fixed_days');
   const [validityFixedDays, setValidityFixedDays] = useState<number | null>(null);
@@ -285,7 +283,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     setValidityError(legacyConflict ? 'signal_validity_days 与 validity_policy 配置冲突，请先修正有效期策略' : null);
     setAdapterText(Object.keys(source.adapterConfig).length
       ? JSON.stringify(source.adapterConfig, null, 2) : '');
-    setPreviewText('');
     setApiKeyInput('');
     setEditingKeyHint(source.apiKeyHint);
     setError(null);
@@ -299,28 +296,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       throw new Error('适配器配置必须是 JSON 对象');
     }
     return parsed as Record<string, unknown>;
-  };
-
-  const preview = async () => {
-    setError(null);
-    setIsPreviewing(true);
-    try {
-      const adapterConfig = parseAdapter();
-      if (!adapterConfig) throw new Error('请先填写适配器配置');
-      if (!['none', 'api_key', 'bearer'].includes(form.auth_type ?? 'none')) {
-        throw new Error('声明式适配器当前仅支持无需认证、API Key 和 Bearer Token');
-      }
-      const result = await api.previewSource({
-        source_code: form.code || 'preview-source', adapter_config: adapterConfig,
-        auth_type: (form.auth_type ?? 'none') as 'none' | 'api_key' | 'bearer',
-        credential_ref: form.credential_ref, login_config: form.login_config,
-      });
-      setPreviewText(JSON.stringify(result, null, 2));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '实时预览失败');
-    } finally {
-      setIsPreviewing(false);
-    }
   };
 
   const buildValidityPolicy = (): SourceValidityPolicy | null => {
@@ -806,7 +781,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <label className="text-xs font-bold sm:col-span-2">官方接口 URL
                 <input type="url" value={form.endpoint_url ?? ''} onChange={(event) => update('endpoint_url', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
               </label>
-              <label className="text-xs font-bold">{isExternalForm ? '调用方式' : '调度 cron'}
+              <label className="text-xs font-bold" title="分 时 日 月 周，如 */30 * * * * 表示每 30 分钟一次，北京时间">{isExternalForm ? '调用方式' : '调度 cron'}
                 <input disabled={isExternalForm} value={isExternalForm ? '调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
               </label>
               {isTycForm && (
@@ -925,13 +900,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <input type="checkbox" disabled={!mayEnable} checked={form.enabled && mayEnable} onChange={(event) => update('enabled', event.target.checked)} />
               {isExternalForm ? '启用核查' : '启用正式采集（仅已发布或内置适配器可用）'}
             </label>
-            {previewText && <pre className="bg-slate-50 border rounded-lg p-3 text-xs whitespace-pre-wrap max-h-56 overflow-auto">{previewText}</pre>}
             <div className="flex justify-end gap-2">
-              {!isExternalForm && (
-                <button type="button" onClick={() => void preview()} disabled={isPreviewing} className="border border-emerald-300 text-emerald-800 rounded-lg px-4 py-2 font-bold">
-                  {isPreviewing ? '联网查询中...' : '实时联网预览'}
-                </button>
-              )}
               <button type="button" onClick={() => setShowForm(false)} className="border rounded-lg px-4 py-2">取消</button>
               <button type="submit" className="bg-[#004782] text-white rounded-lg px-4 py-2 font-bold">保存配置</button>
             </div>

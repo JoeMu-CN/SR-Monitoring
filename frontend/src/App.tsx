@@ -592,9 +592,7 @@ export function App() {
             </div>
           )}
           {loading && !onOverviewRoute ? (
-            <div className="min-h-[50vh] flex items-center justify-center text-[#424751]" aria-hidden="true">
-              <span className="material-symbols-outlined animate-spin">progress_activity</span>
-            </div>
+            <div className="min-h-[50vh]" aria-hidden="true" />
           ) : (
             <AnimatePresence mode="wait">
               <motion.div
@@ -606,7 +604,7 @@ export function App() {
                 className="h-full w-full"
                 data-testid="route-content"
               >
-                <AppRoutes permissions={permissions} views={routeViews} />
+                <AppRoutes permissions={permissions} views={routeViews} location={location} />
               </motion.div>
             </AnimatePresence>
           )}

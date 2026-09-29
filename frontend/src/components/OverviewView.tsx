@@ -105,7 +105,6 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
     if (loadError !== null) return <OverviewLoadError message={loadError.message} onRetry={retry} />;
     return (
       <div role="status" className="flex min-h-[50vh] items-center justify-center text-slate-600 dark:text-slate-300">
-        <span className="material-symbols-outlined animate-spin text-2xl text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
         <span className="sr-only">正在加载总览汇总…</span>
       </div>
     );

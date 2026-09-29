@@ -18,14 +18,20 @@ import html
 import io
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
+from urllib.parse import urljoin
 
 import httpx
 from pydantic import HttpUrl, ValidationError
 
-from app.signals.request_control import SourceRequestFailed, controlled_get
+from app.signals.request_control import (
+    SourceRequestFailed,
+    classify_response,
+    controlled_get,
+)
 from app.signals.schemas import ManualSignalInput
 from app.signals.validity import LifecycleAction, ValidityProfile
 
@@ -1779,19 +1785,73 @@ class FmprcPressAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条记者会")
 
 
+_MOFCOM_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+
+
+def _parse_announcement_links_html(
+    body_html: str, *, base_url: str
+) -> list[tuple[str, str]]:
+    """解析直连 HTML 首页中的公告链接（支持相对 URL，基于首页解析）。
+
+    复用 ``declarative`` 的 HTML 节点树：单/双引号 href、锚点内嵌套标签与
+    实体编码文本（``&amp;`` 等）都会按可见文本正确解析。延迟导入以避免与
+    ``declarative`` 顶层对 ``sources`` 的导入形成循环。
+    """
+    from app.signals.declarative import _descendants, _HtmlNode, _HtmlTreeParser
+
+    def _visible_text(node: _HtmlNode) -> str:
+        return "".join(
+            _visible_text(child) if isinstance(child, _HtmlNode) else child
+            for child in node.children
+        )
+
+    parser = _HtmlTreeParser()
+    parser.feed(body_html)
+    parser.close()
+    links: list[tuple[str, str]] = []
+    for node in _descendants(parser.root):
+        if node.tag != "a":
+            continue
+        href = node.attrs.get("href", "").strip()
+        title = " ".join(_visible_text(node).split())
+        if href and title:
+            links.append((title, urljoin(base_url, href)))
+    return links
+
+
+def _parse_announcement_links_markdown(
+    body_markdown: str, *, base_url: str
+) -> list[tuple[str, str]]:
+    """解析 Crawl4AI 首页 Markdown 中的公告链接（支持相对 URL）。"""
+    links: list[tuple[str, str]] = []
+    for match in _MOFCOM_MARKDOWN_LINK_RE.finditer(body_markdown):
+        title = match.group(1).strip()
+        href = match.group(2).strip()
+        if href and title:
+            links.append((title, urljoin(base_url, href)))
+    return links
+
+
 class MofcomEntityDetailAdapter(PullSourceAdapter):
     """商务部实体名单详情解析（G2 制裁：出口管制管控名单 / 不可靠实体清单）。
 
-    列表页（mofcom-entity-control，声明式）只产出公告标题+URL；本适配器对
-    每条"实体/名单"公告详情页做 Crawl4AI 渲染，提取被列入的具体实体
-    （如"拉法特集团等14家欧盟实体"），每个实体生成一条信号，
-    供供应商主体匹配（F2 司法 / G2 制裁命中）。
+    单一专用流水线：自行抓取首页（直连 HTML；403/429/5xx/网络等可恢复失败
+    才回退 Crawl4AI Markdown），解析出"实体/名单"类公告详情 URL 后，用
+    Crawl4AI 渲染详情页并提取被列入的具体实体（如"拉法特集团等14家欧盟实体"），
+    每个实体生成一条信号，供供应商主体匹配（F2 司法 / G2 制裁命中）。
+    不再依赖 mofcom-entity-control（source 4）声明式配置。
     """
 
     source_code = "mofcom-entity-detail"
     _LIST_URL = "http://aqygzj.mofcom.gov.cn/"
     _HTTP_ALLOW_HOSTS = frozenset({"aqygzj.mofcom.gov.cn"})
     _MAX_ENTITIES = 200  # 单次采集实体信号上限（防爆炸）
+    _MAX_DETAIL_PAGES = 8  # 每轮最多解析 8 条详情页
+    _QUALIFY_KEYWORDS = ("列入", "管控名单", "不可靠实体", "反制措施")
+    # 首页直连可恢复失败（403/429/5xx/网络异常）才回退 Crawl4AI。
+    _RECOVERABLE_HOMEPAGE_ERRORS = frozenset(
+        {"access_blocked", "rate_limited", "upstream_error", "network_error"}
+    )
 
     def __init__(
         self,
@@ -1806,66 +1866,198 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
         del cursor
         from app.signals.fallback import read_public_page_with_crawl4ai_for_monitor
 
-        # 1. 抓列表页拿公告标题+URL（复用声明式解析）
-        if self._transport is not None:
-            # 测试：transport 直连列表页 + 详情页（桩响应）
-            return await self._fetch_test_mode()
-        list_items = await _fetch_mofcom_list(self._transport)
-        # 2. 只挑实体/名单类公告（标题含"列入""管控名单""不可靠实体清单"）
-        detail_urls = [
-            (it.title, it.url)
-            for it in list_items
-            if it.url
-            and any(k in it.title for k in ("列入", "管控名单", "不可靠实体", "反制措施"))
-        ]
+        # 1. 自行抓取首页（直连 HTML；可恢复失败时回退 Crawl4AI Markdown），
+        #    拿公告标题 + 详情 URL。首页每轮至多请求一次。
+        body, use_markdown = await self._load_homepage(
+            read_public_page_with_crawl4ai_for_monitor
+        )
+        if use_markdown:
+            links = _parse_announcement_links_markdown(body, base_url=self._LIST_URL)
+        else:
+            links = _parse_announcement_links_html(body, base_url=self._LIST_URL)
+        # 2. 只挑实体/名单类公告（标题含"列入""管控名单""不可靠实体""反制措施"）
+        detail_links = self._qualifying_links(links)
+        if not detail_links:
+            # 直连成功但零合格链接：允许回退 Crawl4AI Markdown 一次再解析；
+            # 回退后仍为零则报错，绝不把解析失败当作成功空采集。
+            detail_links = await self._fallback_qualifying_links(
+                read_public_page_with_crawl4ai_for_monitor,
+                already_markdown=use_markdown,
+            )
+        # 3. 抓详情并提取实体；部分成功可返回，全部失败必须如实报错。
+        candidates = detail_links[: self._MAX_DETAIL_PAGES]
         items: list[RawSourceItem] = []
-        for title, url in detail_urls[:8]:  # 每轮最多 8 条详情页
+        failures: list[SourceFetchError | SourceRequestFailed] = []
+        for title, url in candidates:
             try:
-                md = await read_public_page_with_crawl4ai_for_monitor(
+                markdown = await read_public_page_with_crawl4ai_for_monitor(
                     url, allow_http_hosts=self._HTTP_ALLOW_HOSTS
                 )
-            except SourceFetchError:
+            except (SourceFetchError, SourceRequestFailed) as exc:
+                failures.append(exc)
                 continue
-            entities = _extract_entities_from_detail(md)
-            for entity_name in entities:
+            for item in self._entity_items_from_detail(
+                markdown, announcement_title=title, detail_url=url
+            ):
                 if len(items) >= self._MAX_ENTITIES:
                     break
-                items.append(
-                    RawSourceItem(
-                        external_id="mofcom-entity-"
-                        + hashlib.sha256(
-                            f"{url}|{entity_name}".encode()
-                        ).hexdigest()[:16],
-                        title=f"出口管制名单新增：{entity_name}",
-                        content=(
-                            f"来源公告：{title}；"
-                            f"原文：{url}"
-                        ),
-                        url=url,
-                    )
-                )
+                items.append(item)
+        if failures and len(failures) == len(candidates):
+            first = failures[0]
+            raise SourceFetchError(
+                f"商务部名单详情页全部抓取失败: {first}",
+                error_kind=first.error_kind,
+                http_status=(
+                    first.http_status
+                    if isinstance(first, SourceFetchError)
+                    else first.status_code
+                ),
+            ) from first
+        if not items:
+            # 候选详情存在且至少一次抓取成功，却未解析出任何实体：
+            # 属解析失败，不能把 [] 当作成功空采集记录。
+            raise SourceFetchError(
+                "商务部名单详情页均未解析出实体",
+                error_kind="empty_result",
+            )
         return items
 
-    async def _fetch_test_mode(self) -> list[RawSourceItem]:
-        # 测试桩：直接解析详情页 markdown（transport 场景只测详情解析）
-        import httpx as _httpx
-
-        async with _httpx.AsyncClient(
-            timeout=self._timeout_seconds, transport=self._transport
-        ) as client:
-            raw_response = await client.get(self._LIST_URL)
-        md = raw_response.text
-        entities = _extract_entities_from_detail(md)
+    def _qualifying_links(
+        self, links: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """只保留标题命中实体/名单关键词的公告链接。"""
         return [
-            RawSourceItem(
-                external_id="mofcom-entity-"
-                + hashlib.sha256(f"test|{name}".encode()).hexdigest()[:16],
-                title=f"出口管制名单新增：{name}",
-                content=f"来源公告：测试公告；原文：{self._LIST_URL}",
-                url=self._LIST_URL,
-            )
-            for name in entities
+            (title, url)
+            for title, url in links
+            if any(keyword in title for keyword in self._QUALIFY_KEYWORDS)
         ]
+
+    async def _fallback_qualifying_links(
+        self,
+        read_fallback: Callable[..., Awaitable[str]],
+        *,
+        already_markdown: bool,
+    ) -> list[tuple[str, str]]:
+        """零合格链接时的单次 Crawl4AI 回退；仍为零则抛 ``SourceFetchError``。"""
+        if already_markdown:
+            raise SourceFetchError(
+                "商务部名单首页 Markdown 未解析到合格公告链接",
+                error_kind="empty_result",
+            )
+        try:
+            markdown = await read_fallback(
+                self._LIST_URL, allow_http_hosts=self._HTTP_ALLOW_HOSTS
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"商务部名单首页回退失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        links = self._qualifying_links(
+            _parse_announcement_links_markdown(markdown, base_url=self._LIST_URL)
+        )
+        if not links:
+            raise SourceFetchError(
+                "商务部名单首页回退 Markdown 未解析到合格公告链接",
+                error_kind="empty_result",
+            )
+        return links
+
+    def _entity_items_from_detail(
+        self,
+        markdown: str,
+        *,
+        announcement_title: str,
+        detail_url: str,
+    ) -> list[RawSourceItem]:
+        """从详情 Markdown 提取实体并生成信号（external_id/标题/内容语义不变）。"""
+        items: list[RawSourceItem] = []
+        for entity_name in _extract_entities_from_detail(markdown):
+            if len(items) >= self._MAX_ENTITIES:
+                break
+            items.append(
+                RawSourceItem(
+                    external_id="mofcom-entity-"
+                    + hashlib.sha256(f"{detail_url}|{entity_name}".encode()).hexdigest()[:16],
+                    title=f"出口管制名单新增：{entity_name}",
+                    content=f"来源公告：{announcement_title}；原文：{detail_url}",
+                    url=detail_url,
+                )
+            )
+        return items
+
+    async def _load_homepage(
+        self,
+        read_fallback: Callable[..., Awaitable[str]],
+    ) -> tuple[str, bool]:
+        """返回 (正文, 是否 Markdown)；直连可恢复失败才回退 Crawl4AI。"""
+        try:
+            body = await self._fetch_homepage_body()
+        except SourceFetchError as exc:
+            if exc.error_kind not in self._RECOVERABLE_HOMEPAGE_ERRORS:
+                raise
+            try:
+                markdown = await read_fallback(
+                    self._LIST_URL, allow_http_hosts=self._HTTP_ALLOW_HOSTS
+                )
+            except SourceRequestFailed as fallback_exc:
+                raise SourceFetchError(
+                    f"商务部名单首页回退失败: {fallback_exc}",
+                    error_kind=fallback_exc.error_kind,
+                    http_status=fallback_exc.status_code,
+                ) from fallback_exc
+            return markdown, True
+        return body.decode("utf-8", "ignore"), False
+
+    async def _fetch_homepage_body(self) -> bytes:
+        # transport 存在时（测试桩或自定义链路）直连首页；错误分类复用
+        # controlled_get 的 classify_response，保证 403→access_blocked、
+        # 429→rate_limited、5xx→upstream_error，与生产同样触发回退。
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    response = await client.get(self._LIST_URL, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError(
+                    "商务部名单首页网络请求失败", error_kind="network_error"
+                ) from exc
+            decision = classify_response(
+                response.status_code,
+                dict(response.headers),
+                response.content.decode("utf-8", errors="replace"),
+            )
+            if decision.error_kind is not None:
+                raise SourceFetchError(
+                    decision.message or "商务部名单首页请求失败",
+                    error_kind=decision.error_kind,
+                    http_status=response.status_code,
+                )
+            return response.content
+        try:
+            controlled = await controlled_get(
+                self._LIST_URL,
+                headers=headers,
+                timeout=self._timeout_seconds,
+                maximum_bytes=5 * 1024 * 1024,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"商务部名单首页请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        return controlled.content
 
     def normalize(self, item: RawSourceItem) -> ManualSignalInput:
         try:
@@ -1901,7 +2093,11 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
 async def _fetch_mofcom_list(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[RawSourceItem]:
-    """复用 mofcom-entity-control 的声明式配置抓列表页。"""
+    """（已弃用）复用 mofcom-entity-control 声明式配置抓列表页。
+
+    生产路径已改为适配器自行抓首页；仅为兼容既有测试的 monkeypatch
+    目标而保留，不再被 ``MofcomEntityDetailAdapter.fetch`` 调用。
+    """
     from sqlalchemy import select
 
     from app.database import SessionLocal

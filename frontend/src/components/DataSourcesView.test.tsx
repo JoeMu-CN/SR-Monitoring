@@ -1166,3 +1166,122 @@ describe('信息源连通徽标配色与采集状态解耦', () => {
     expect(connectivityBadge('17')).toHaveClass('whitespace-nowrap');
   });
 });
+
+// 迁移 0050：商务部重复信源收敛为唯一 mofcom-entity-detail（业务库 ID 361）。
+// mofcom-entity-control（业务库 ID 4）停用并取消调度，但行仍保留在库中；
+// 控制台必须按同一可见集合统一排除，禁止退役来源经行、提示、概览或空态判断泄露。
+describe('信息源列表退役来源可见性（迁移0050）', () => {
+  const retiredControl: DataSource = {
+    ...source,
+    id: '4',
+    code: 'mofcom-entity-control',
+    name: '商务部实体控制清单',
+    status: 'warning',
+    latency: '等待下一轮采集',
+    totalSignalCount: 40,
+    validSignalCount: 0,
+  };
+
+  const entityDetail: DataSource = {
+    ...source,
+    id: '361',
+    code: 'mofcom-entity-detail',
+    name: '商务部实体名单详情',
+    status: 'normal',
+    latency: '运行正常',
+    totalSignalCount: 25,
+    validSignalCount: 7,
+  };
+
+  const renderList = (
+    dataSources: DataSource[],
+    role: 'viewer' | 'admin' = 'viewer',
+    monitoringHealth: MonitoringHealthSnapshot = {status: 'hidden'},
+  ) => render(
+    <MemoryRouter>
+      <DataSourcesView
+        dataSources={dataSources}
+        role={role}
+        onUpdateSource={vi.fn()}
+        onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+        monitoringHealth={monitoringHealth}
+      />
+    </MemoryRouter>,
+  );
+
+  // 诊断快照中同时保留退役来源与存续来源的健康条目：
+  // 断言退役来源健康不渲染，是为了证明"来源级健康随可见集合排除"，而不是快照里本就没有它。
+  const healthWithRetiredPair = (): MonitoringHealthSnapshot => {
+    const base = monitoringHealthWith(healthySource);
+    if (base.status !== 'ready') return base;
+    return {
+      status: 'ready',
+      health: {
+        ...base.health,
+        sources: [
+          {...healthySource, source_id: 4, code: 'mofcom-entity-control', name: '商务部实体控制清单'},
+          {...healthySource, source_id: 361, code: 'mofcom-entity-detail', name: '商务部实体名单详情'},
+        ],
+      },
+    };
+  };
+
+  it('隐藏退役来源的行、来源级健康与运行提示，保留 mofcom-entity-detail 行可见', () => {
+    renderList([retiredControl, entityDetail], 'viewer', healthWithRetiredPair());
+
+    expect(screen.queryByTestId('source-name-4')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('source-valid-4')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('source-health-4')).not.toBeInTheDocument();
+    expect(screen.queryByText('信息源运行提示')).not.toBeInTheDocument();
+    expect(screen.queryByText(/商务部实体控制清单/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(1);
+
+    expect(screen.getByTestId('source-name-361')).toHaveTextContent('商务部实体名单详情');
+    expect(screen.getByTestId('source-health-361')).toHaveTextContent('采集正常');
+  });
+
+  it('概览卡只统计可见来源，退役来源不得进入接入数、异常数与累计数', () => {
+    renderList([retiredControl, entityDetail]);
+
+    const accessCard = screen.getByText('信息源接入数').parentElement;
+    expect(accessCard).toHaveTextContent('1 个管道');
+    expect(accessCard).not.toHaveTextContent('2 个管道');
+    const abnormalCard = screen.getByText('异常/延迟节点').parentElement;
+    expect(abnormalCard).toHaveTextContent('0 个');
+    expect(abnormalCard).not.toHaveTextContent('1 个');
+    const totalCard = screen.getByText('全网累计记录数').parentElement;
+    expect(totalCard).toHaveTextContent('25 条');
+    expect(totalCard).not.toHaveTextContent('65 条');
+  });
+
+  it('仅传入退役来源时列表进入空态，概览与累计归零', () => {
+    renderList([{...retiredControl, status: 'normal', latency: '运行正常'}]);
+
+    expect(screen.getByText('暂无信息源配置')).toBeInTheDocument();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+    expect(screen.getByText('信息源接入数').parentElement).toHaveTextContent('0 个管道');
+    expect(screen.getByText('正常运行 (Normal)').parentElement).toHaveTextContent('0 个');
+    expect(screen.getByText('全网累计记录数').parentElement).toHaveTextContent('0 条');
+  });
+
+  it('可见行操作仍使用原始来源对象：mofcom-entity-detail 刷新提交业务库 ID 361', async () => {
+    const runSource = vi.spyOn(api, 'runSource').mockResolvedValue({
+      id: 9,
+      source_id: 361,
+      started_at: '2026-09-29T06:00:00Z',
+      finished_at: '2026-09-29T06:00:05Z',
+      status: 'succeeded',
+      fetched_count: 1,
+      created_count: 1,
+      duplicate_count: 0,
+      error: null,
+    });
+    renderList([retiredControl, entityDetail], 'admin');
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: '刷新商务部实体名单详情'}));
+
+    expect(runSource).toHaveBeenCalledWith(361);
+    expect(screen.queryByRole('button', {name: '刷新商务部实体控制清单'})).not.toBeInTheDocument();
+  });
+});

@@ -179,6 +179,10 @@ const sourceNodeHint = (source: DataSource): string => {
 // 天眼查是唯一支持在信息源页手动触发批量主体核查的外部工具；其他外部工具仍仅通过页面调用。
 const TYC_SOURCE_CODE = 'tianyancha';
 
+// 迁移 0050 退役来源：mofcom-entity-control（业务库 ID 4）已停用并取消调度，
+// 唯一入口收敛到 mofcom-entity-detail（业务库 ID 361）；控制台只隐藏不删除其行。
+const RETIRED_SOURCE_CODE = 'mofcom-entity-control';
+
 // 批量核查汇总：全部字段取自后端同步返回，不补充未披露信息。
 const formatTycBatchResult = (result: TycBatchRunResult): string => {
   const summary = `核查完成：目标 ${result.targeted_count} 家，已尝试 ${result.attempted_count} 家，`
@@ -480,10 +484,13 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     }
   };
 
+  // 退役来源只隐藏不删除：行、运行提示、概览统计与空态判断必须基于同一可见集合，
+  // 避免只过滤行导致统计数字仍把退役来源计入；filter 保留原始对象引用，可见行回调语义不变。
+  const visibleSources = dataSources.filter((source) => source.code !== RETIRED_SOURCE_CODE);
   // 运行提示只针对真实异常（冷却/失败/超期等），停用不是运行异常，不再进入提示区。
-  const delayedSources = dataSources.filter((source) => source.status === 'warning' || source.status === 'error');
+  const delayedSources = visibleSources.filter((source) => source.status === 'warning' || source.status === 'error');
   // 全网累计记录数取已入库累计信号数（totalSignalCount），不是最近一次采集新增数（itemCount）。
-  const totalSignals = dataSources.reduce((total, source) => total + source.totalSignalCount, 0);
+  const totalSignals = visibleSources.reduce((total, source) => total + source.totalSignalCount, 0);
   const isExternalForm = form.source_type === 'external_tool';
   const isTycForm = isExternalForm && form.code === 'tianyancha';
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
@@ -550,19 +557,19 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         <div className="space-y-0.5">
           <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">信息源接入数</div>
           <div className="text-xl font-bold font-mono text-[#101d28] dark:text-white">
-            {dataSources.length} <span className="text-xs font-normal text-slate-500">个管道</span>
+            {visibleSources.length} <span className="text-xs font-normal text-slate-500">个管道</span>
           </div>
         </div>
         <div className="space-y-0.5">
           <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">正常运行 (Normal)</div>
           <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400">
-            {dataSources.filter((source) => source.status === 'normal').length} <span className="text-xs font-normal text-slate-500">个</span>
+            {visibleSources.filter((source) => source.status === 'normal').length} <span className="text-xs font-normal text-slate-500">个</span>
           </div>
         </div>
         <div className="space-y-0.5">
           <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">异常/延迟节点</div>
           <div className="text-xl font-bold font-mono text-[#ba1a1a] dark:text-red-400">
-            {dataSources.filter((source) => source.status === 'warning' || source.status === 'error').length} <span className="text-xs font-normal text-slate-500">个</span>
+            {visibleSources.filter((source) => source.status === 'warning' || source.status === 'error').length} <span className="text-xs font-normal text-slate-500">个</span>
           </div>
         </div>
         <div className="space-y-0.5">
@@ -610,10 +617,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <div className="col-span-3 text-right">操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
-          {dataSources.length === 0 && (
+          {visibleSources.length === 0 && (
             <div className="p-10 text-center text-sm text-slate-500">暂无信息源配置</div>
           )}
-          {dataSources.map((source) => {
+          {visibleSources.map((source) => {
             const isExternalTool = source.type === 'external_tool';
             // 采集状态配色（只用于行底色与来源图标）：disabled (灰停用) / running (蓝执行) /
             //               error (红失败) / warning (橙异常) / normal (绿正常)

@@ -102,7 +102,6 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
   if (alertLoading) {
     return (
       <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-center justify-center gap-3" role="status">
-        <span className="material-symbols-outlined animate-spin text-2xl text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
         <span className="sr-only">正在加载风险提醒详情</span>
       </section>
     );
@@ -171,7 +170,6 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
 
       {eventLoading && (
         <section className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/80" role="status">
-          <span className="material-symbols-outlined animate-spin text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span>
           <span className="sr-only">正在加载事件证据</span>
         </section>
       )}

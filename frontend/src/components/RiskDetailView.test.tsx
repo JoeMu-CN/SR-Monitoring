@@ -185,13 +185,14 @@ describe('RiskDetailView', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v1/risk-alerts/7', '/api/v1/events/70', '/api/v1/events/70']);
   });
 
-  it('加载中显示提醒详情状态', () => {
+  it('加载中显示提醒详情状态：sr-only 提示仍在、不再渲染旋转图标', () => {
     const fetchMock = vi.fn(() => new Promise<MockResponse>(() => undefined));
     vi.stubGlobal('fetch', fetchMock);
 
-    renderAt('/risks/7');
+    const {container} = renderAt('/risks/7');
 
     expect(screen.getByText('正在加载风险提醒详情')).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).toBeNull();
   });
 
   it('快速切换 alertId 时忽略旧提醒响应', async () => {

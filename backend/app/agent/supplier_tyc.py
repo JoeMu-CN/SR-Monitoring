@@ -111,7 +111,7 @@ def _tyc_source_id(session: Session) -> int:
 def _tyc_source(session: Session) -> DataSource:
     source = session.scalar(select(DataSource).where(DataSource.code == TYC_SOURCE_CODE))
     if source is None:
-        raise RuntimeError("天眼查数据源未配置")
+        raise RuntimeError("天眼查信息源未配置")
     return source
 
 

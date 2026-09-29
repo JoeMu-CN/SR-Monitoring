@@ -54,7 +54,7 @@ def _mock_adapter() -> NmcWeatherAdapter:
 
 def _get_nmc_source(session: Session) -> DataSource:
     source = session.scalar(select(DataSource).where(DataSource.code == "nmc-weather"))
-    assert source is not None, "迁移 0009 应已注册 nmc-weather 数据源"
+    assert source is not None, "迁移 0009 应已注册 nmc-weather 信息源"
     return source
 
 
@@ -573,7 +573,7 @@ def test_collect_source_failure_records_failed_run(db_session: Session) -> None:
 
 def test_manual_trigger_endpoint(client: TestClient, db_session: Session) -> None:
     source = _get_nmc_source(db_session)
-    # 测试与共享开发库状态解耦：先确保数据源处于启用状态
+    # 测试与共享开发库状态解耦：先确保信息源处于启用状态
     source.enabled = True
     db_session.flush()
 
@@ -940,7 +940,7 @@ class _DeferredFetchAdapter:
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         del cursor
         raise SourceFetchError(
-            "数据源域名 official.example 已有请求正在执行，请稍后重试",
+            "信息源域名 official.example 已有请求正在执行，请稍后重试",
             error_kind="deferred",
         )
 
@@ -1002,7 +1002,7 @@ def test_manual_run_returns_409_collection_deferred(
 
     def _deferred(session: Session, src: DataSource, adapter: object) -> None:
         del session, src, adapter
-        raise CollectionDeferred("数据源域名冷却中")
+        raise CollectionDeferred("信息源域名冷却中")
 
     monkeypatch.setattr(source_router, "collect_source", _deferred)
 
@@ -1035,7 +1035,7 @@ def test_run_all_reports_deferred_separately(
 
     def _deferred(session: Session, src: DataSource, adapter: object) -> None:
         del session, src, adapter
-        raise CollectionDeferred("数据源域名冷却中")
+        raise CollectionDeferred("信息源域名冷却中")
 
     monkeypatch.setattr(source_router, "collect_source", _deferred)
 
@@ -1059,7 +1059,7 @@ def test_run_all_reports_deferred_separately(
 def _enable_route_tianyancha(session: Session) -> DataSource:
     """启用天眼查并写入控制台密钥，使路由测试与共享库状态解耦。"""
     source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
-    assert source is not None, "迁移应已注册 tianyancha 数据源"
+    assert source is not None, "迁移应已注册 tianyancha 信息源"
     source.enabled = True
     source.api_key_encrypted = encrypt_secret("tyc_route_test_key")
     source.login_config = {"mode": "on_demand", "daily_limit": 5, "monthly_limit": 50}
@@ -1119,7 +1119,7 @@ def test_run_tyc_batch_endpoint_returns_summary(
 def test_run_tyc_batch_endpoint_404_when_source_missing(client: TestClient) -> None:
     response = client.post("/api/v1/sources/999999/run-tyc-batch")
     assert response.status_code == 404
-    assert response.json()["detail"] == "数据源不存在"
+    assert response.json()["detail"] == "信息源不存在"
 
 
 def test_run_tyc_batch_endpoint_422_when_not_tianyancha(

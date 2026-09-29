@@ -112,7 +112,7 @@ def enable_tyc(db_session: Session, monkeypatch: MonkeyPatch) -> None:
             auth_type="api_key",
             login_config={},
             credential_ref=None,
-            description="测试数据源",
+            description="测试信息源",
             enabled=True,
         )
         db_session.add(source)
@@ -221,7 +221,7 @@ def test_two_agents_use_disjoint_tools_and_sessions(
     risk = asyncio.run(
         chat(
             clean_agent_tables,
-            "接入数据源并确认发布立即采集",
+            "接入信息源并确认发布立即采集",
             llm=risk_llm,
             owner_user_id=1,
         )
@@ -421,7 +421,7 @@ def test_source_onboarding_completed_draft_cannot_resume(
     assert started.onboarding_draft is not None
     source = DataSource(
         code="completed-draft-source",
-        name="已生成数据源的草稿",
+        name="已生成信息源的草稿",
         source_type="official_api",
         credibility=80,
         endpoint_url="https://official.example/events",
@@ -434,7 +434,7 @@ def test_source_onboarding_completed_draft_cannot_resume(
     draft.source_id = source.id
     clean_agent_tables.flush()
 
-    with pytest.raises(AgentError, match="已生成正式数据源"):
+    with pytest.raises(AgentError, match="已生成正式信息源"):
         asyncio.run(
             chat_source_onboarding(
                 clean_agent_tables,
@@ -764,7 +764,7 @@ def test_build_tyc_gateway_defaults_to_unconfigured() -> None:
 def test_build_tyc_gateway_reads_console_key_from_db(
     db_session: Session,
 ) -> None:
-    """网关构建只认数据源控制台加密存库的运行密钥。"""
+    """网关构建只认信息源控制台加密存库的运行密钥。"""
     from app.signals.secret_store import encrypt_secret
 
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
@@ -820,7 +820,7 @@ def test_chat_endpoint_validation(client: TestClient) -> None:
 def test_agent_endpoints_have_separate_openapi_groups(client: TestClient) -> None:
     paths = client.get("/api/openapi.json").json()["paths"]
     assert paths["/api/v1/chat"]["post"]["tags"] == ["风险查询助手"]
-    assert paths["/api/v1/source-agent/chat"]["post"]["tags"] == ["数据源接入助手"]
+    assert paths["/api/v1/source-agent/chat"]["post"]["tags"] == ["信息源接入助手"]
 
 
 def test_agent_status_endpoint(
@@ -1084,7 +1084,7 @@ def test_collect_tyc_for_suppliers_records_every_result_status(
 
 def _tyc_source(session: Session) -> DataSource:
     source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
-    assert source is not None, "迁移应已注册 tianyancha 数据源"
+    assert source is not None, "迁移应已注册 tianyancha 信息源"
     return source
 
 
@@ -1408,7 +1408,7 @@ def test_run_tyc_batch_rejects_inactive_source(
     clean_agent_tables: Session,
     enable_tyc: None,
 ) -> None:
-    """Given 天眼查数据源已停用，When 批量核查，Then 抛出类型化停用错误。"""
+    """Given 天眼查信息源已停用，When 批量核查，Then 抛出类型化停用错误。"""
     from app.agent.tyc_batch import TycBatchSourceInactive, run_tyc_batch
 
     source = _tyc_source(clean_agent_tables)
@@ -1422,7 +1422,7 @@ def test_run_tyc_batch_rejects_inactive_source(
 def test_run_tyc_batch_rejects_non_tianyancha_source(
     clean_agent_tables: Session,
 ) -> None:
-    """Given 非天眼查数据源，When 批量核查，Then 抛出类型化 422 前错误。"""
+    """Given 非天眼查信息源，When 批量核查，Then 抛出类型化 422 前错误。"""
     from app.agent.tyc_batch import TycBatchNotTianyancha, run_tyc_batch
 
     manual = clean_agent_tables.scalar(

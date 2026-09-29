@@ -87,7 +87,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('数据源采集记录入口', () => {
+describe('信息源采集记录入口', () => {
   it('将有效数和累计数分别链接到对应范围的第一页', () => {
     render(
       <MemoryRouter>
@@ -228,7 +228,7 @@ describe('数据源采集记录入口', () => {
   });
 });
 
-describe('数据源有效期策略表单', () => {
+describe('信息源有效期策略表单', () => {
   const renderAdmin = (overrides: Partial<DataSource> = {}, monitoringHealth: MonitoringHealthSnapshot = readyHealth) => {
     const onUpdateSource = vi.fn().mockResolvedValue(undefined);
     render(
@@ -347,8 +347,8 @@ describe('数据源有效期策略表单', () => {
 });
 
 // 缺陷回归（计划 Todo 6）：编辑表单曾在构造 update payload 时解构丢弃 api_key，
-// 导致数据源控制台保存运行密钥无效；留空保存则必须让后端收到"不含该键 = 保持不变"。
-describe('数据源运行密钥提交契约', () => {
+// 导致信息源控制台保存运行密钥无效；留空保存则必须让后端收到"不含该键 = 保持不变"。
+describe('信息源运行密钥提交契约', () => {
   const tycEditSource: DataSource = {
     ...source,
     id: '23',
@@ -428,7 +428,7 @@ describe('数据源运行密钥提交契约', () => {
   });
 });
 
-describe('数据源健康新鲜度（任务8 只读诊断）', () => {
+describe('信息源健康新鲜度（任务8 只读诊断）', () => {
   it('诊断 ok：来源行显示最近成功与下次预期时间', () => {
     render(
       <MemoryRouter>
@@ -547,7 +547,7 @@ describe('数据源健康新鲜度（任务8 只读诊断）', () => {
   });
 });
 
-describe('数据源列表信息架构与操作区', () => {
+describe('信息源列表信息架构与操作区', () => {
   const renderView = (
     dataSources: DataSource[],
     role: 'viewer' | 'admin' = 'viewer',
@@ -720,7 +720,7 @@ describe('数据源列表信息架构与操作区', () => {
     ]);
     expect(within(actions).getByRole('button', {name: '刷新官方风险源'})).toBeEnabled();
     expect(within(actions).getByRole('button', {name: '刷新官方风险源'})).toHaveAttribute('title', '立即触发一次采集');
-    expect(within(actions).getByRole('button', {name: '停用官方风险源'})).toHaveAttribute('title', '停用该数据源，停止自动采集');
+    expect(within(actions).getByRole('button', {name: '停用官方风险源'})).toHaveAttribute('title', '停用该信息源，停止自动采集');
   });
 
   it('已启用且可拉取的来源点击刷新调用 api.runSource 并反馈结果', async () => {
@@ -758,7 +758,7 @@ describe('数据源列表信息架构与操作区', () => {
   });
 
   it('刷新失败时按行反馈业务化错误，不触发列表刷新', async () => {
-    vi.spyOn(api, 'runSource').mockRejectedValue(new Error('数据源已停用'));
+    vi.spyOn(api, 'runSource').mockRejectedValue(new Error('信息源已停用'));
     const onRefreshSources = vi.fn().mockResolvedValue(undefined);
     render(
       <MemoryRouter>
@@ -775,7 +775,7 @@ describe('数据源列表信息架构与操作区', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', {name: '刷新官方风险源'}));
 
-    expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('数据源已停用');
+    expect(await screen.findByTestId('source-run-msg-17')).toHaveTextContent('信息源已停用');
     expect(onRefreshSources).not.toHaveBeenCalled();
   });
 
@@ -831,7 +831,7 @@ describe('数据源列表信息架构与操作区', () => {
 
     const manualButton = screen.getByRole('button', {name: '刷新手工 JSON 导入'});
     expect(manualButton).toBeDisabled();
-    expect(manualButton).toHaveAttribute('title', '人工录入数据源不支持刷新');
+    expect(manualButton).toHaveAttribute('title', '人工录入信息源不支持刷新');
 
     const otherToolButton = screen.getByRole('button', {name: '刷新其他外部核查工具'});
     expect(otherToolButton).toBeDisabled();
@@ -888,7 +888,7 @@ describe('数据源列表信息架构与操作区', () => {
 
     const tycButton = screen.getByRole('button', {name: '刷新天眼查企业核查'});
     expect(tycButton).toBeDisabled();
-    expect(tycButton).toHaveAttribute('title', '数据源已停用，启用后可刷新');
+    expect(tycButton).toHaveAttribute('title', '信息源已停用，启用后可刷新');
   });
 
   it('天眼查核查调用 api.runTycBatch 并展示目标/已尝试/新增/重复/空结果/失败汇总', async () => {
@@ -968,7 +968,7 @@ describe('数据源列表信息架构与操作区', () => {
     expect(tycButton).toHaveAttribute('title', '正在核查，请稍候');
     const otherButton = screen.getByRole('button', {name: '刷新官方风险源'});
     expect(otherButton).toBeDisabled();
-    expect(otherButton).toHaveAttribute('title', '正在刷新其他数据源，请稍候');
+    expect(otherButton).toHaveAttribute('title', '正在刷新其他信息源，请稍候');
 
     resolveBatch({
       source_id: 23,
@@ -990,7 +990,7 @@ describe('数据源列表信息架构与操作区', () => {
 
     const refreshButton = screen.getByRole('button', {name: '刷新官方风险源'});
     expect(refreshButton).toBeDisabled();
-    expect(refreshButton).toHaveAttribute('title', '数据源已停用，启用后可刷新');
+    expect(refreshButton).toHaveAttribute('title', '信息源已停用，启用后可刷新');
   });
 
   it('天眼查停用时展示核查而非已停用，最近核查为真实时间且无下次预期', () => {
@@ -1064,7 +1064,7 @@ describe('数据源列表信息架构与操作区', () => {
 
 // 缺陷回归：连通标签文案取自访问语义，但徽标配色曾错误沿用采集状态映射，
 // 导致「连通正常」被染成采集失败的红色（或「连通异常」被染成绿色）误导用户。
-describe('数据源连通徽标配色与采集状态解耦', () => {
+describe('信息源连通徽标配色与采集状态解耦', () => {
   const renderView = (dataSources: DataSource[], role: 'viewer' | 'admin' = 'viewer') => render(
     <MemoryRouter>
       <DataSourcesView

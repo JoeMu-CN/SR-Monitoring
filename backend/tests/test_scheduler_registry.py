@@ -1,4 +1,4 @@
-"""数据源调度注册表动态刷新测试。"""
+"""信息源调度注册表动态刷新测试。"""
 
 from __future__ import annotations
 

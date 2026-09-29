@@ -60,7 +60,7 @@ def _trigger(expr: str) -> CronTrigger:
 
 
 def _register_source_jobs(scheduler: BlockingScheduler) -> None:
-    """刷新数据源控制台中的独立 cron 任务。"""
+    """刷新信息源控制台中的独立 cron 任务。"""
     with SessionLocal() as session:
         sources = list(
             session.scalars(
@@ -89,12 +89,12 @@ def _register_source_jobs(scheduler: BlockingScheduler) -> None:
                     trigger,
                     args=[source.id],
                     id=job_id,
-                    name=f"采集数据源 {source.code}",
+                    name=f"采集信息源 {source.code}",
                 )
             elif str(existing.trigger) != str(trigger):
                 scheduler.reschedule_job(job_id, trigger=trigger)
         except ValueError as exc:
-            logger.error("跳过非法数据源调度周期 %s=%s: %s", source.code, source.schedule, exc)
+            logger.error("跳过非法信息源调度周期 %s=%s: %s", source.code, source.schedule, exc)
 
 
 def _register_weekly_research_job(scheduler: BlockingScheduler) -> None:
@@ -155,7 +155,7 @@ def main() -> None:
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
-    # 供应商主体维度：每日批量天眼查核查（额度由数据源控制台配置，缺省 80/天、900/月），结果落信号池
+    # 供应商主体维度：每日批量天眼查核查（额度由信息源控制台配置，缺省 80/天、900/月），结果落信号池
     scheduler.add_job(
         collect_tyc_for_suppliers_job,
         _trigger("0 6 * * *"),
@@ -178,7 +178,7 @@ def main() -> None:
         minutes=1,
         args=[scheduler],
         id="registry-refresh",
-        name="刷新数据源调度注册表",
+        name="刷新信息源调度注册表",
     )
     scheduler.add_job(
         _register_weekly_research_job,

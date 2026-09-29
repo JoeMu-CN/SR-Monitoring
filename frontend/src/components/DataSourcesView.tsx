@@ -23,8 +23,8 @@ interface DataSourcesViewProps {
   onRefreshSources: (intent?: RefreshSourcesIntent) => Promise<void>;
   // 任务8 只读诊断：每来源最后成功/下次预期/失败超期原因；403 或失败时为 hidden/unknown，不渲染。
   monitoringHealth: MonitoringHealthSnapshot;
-  // 草稿箱、新增数据源、立即全量同步已下线：平台不再开放人工接入新数据源，
-  // 但保留"编辑现有数据源"（API Key / 调度周期 / 适配器等配置项）+ 启停 + 修改日志审计。
+  // 草稿箱、新增信息源、立即全量同步已下线：平台不再开放人工接入新信息源，
+  // 但保留"编辑现有信息源"（API Key / 调度周期 / 适配器等配置项）+ 启停 + 修改日志审计。
 }
 
 const adapterTemplate = {
@@ -164,7 +164,7 @@ const sourceNodeHint = (source: DataSource): string => {
       : '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新';
   }
   if (source.code === 'manual-json') return '通过人工上传文件录入信号，不进行联网采集';
-  if (!source.enabled) return '数据源已停用，启用后才会恢复自动采集';
+  if (!source.enabled) return '信息源已停用，启用后才会恢复自动采集';
   if (!source.endpointUrl) return '尚未配置接口地址，暂不可采集';
   if (source.accessLastHttpStatus !== null && source.accessLastHttpStatus >= 200 && source.accessLastHttpStatus < 300) {
     return '最近一次采集请求成功，接口连通正常';
@@ -176,7 +176,7 @@ const sourceNodeHint = (source: DataSource): string => {
   return '采集请求按域名保护策略执行，当前连通正常';
 };
 
-// 天眼查是唯一支持在数据源页手动触发批量主体核查的外部工具；其他外部工具仍仅通过页面调用。
+// 天眼查是唯一支持在信息源页手动触发批量主体核查的外部工具；其他外部工具仍仅通过页面调用。
 const TYC_SOURCE_CODE = 'tianyancha';
 
 // 批量核查汇总：全部字段取自后端同步返回，不补充未披露信息。
@@ -195,7 +195,7 @@ const refreshBlockedReason = (
 ): string | null => {
   if (role !== 'admin') return '仅管理员可触发采集';
   if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具调用，不支持页面刷新';
-  if (source.code === 'manual-json') return '人工录入数据源不支持刷新';
+  if (source.code === 'manual-json') return '人工录入信息源不支持刷新';
   // adapterStatus 只描述声明式适配器的发布状态；external_tool（如天眼查）不走适配器
   // 发布流程，真实后端返回 unconfigured，不能据此禁用其行内核查。
   if (source.type !== 'external_tool' && source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
@@ -203,8 +203,8 @@ const refreshBlockedReason = (
       ? '适配器尚未发布，暂不可刷新'
       : '该来源尚未完成适配器配置，暂不可刷新';
   }
-  if (!source.enabled) return '数据源已停用，启用后可刷新';
-  if (refreshingId !== null && refreshingId !== source.id) return '正在刷新其他数据源，请稍候';
+  if (!source.enabled) return '信息源已停用，启用后可刷新';
+  if (refreshingId !== null && refreshingId !== source.id) return '正在刷新其他信息源，请稍候';
   return null;
 };
 
@@ -389,12 +389,12 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       }
       setShowForm(false);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : '保存数据源失败');
+      setError(caught instanceof Error ? caught.message : '保存信息源失败');
     }
   };
 
   const handleRunAll = async () => {
-    if (!window.confirm('确认全量刷新所有数据源？将依次触发各信源采集（跳过 5 分钟内已成功的），可能需要 1-3 分钟。')) return;
+    if (!window.confirm('确认全量刷新所有信息源？将依次触发各信源采集（跳过 5 分钟内已成功的），可能需要 1-3 分钟。')) return;
     setRunAllLoading(true);
     setRunAllMsg(null);
     try {
@@ -461,7 +461,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       await api.updateSource(Number(source.id), {enabled: !source.enabled});
       await onRefreshSources();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : `数据源${action}失败`);
+      setError(caught instanceof Error ? caught.message : `信息源${action}失败`);
     } finally {
       setTogglingId(null);
     }
@@ -472,7 +472,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     try {
       const result = await api.sourceAuditLogs();
       setAuditText(result.items.map((item) => (
-        `${new Date(item.created_at).toLocaleString()} · 数据源 ID ${item.source_id ?? '-'} · ${item.action} · ${item.actor_role} · ${JSON.stringify(item.changes)}`
+        `${new Date(item.created_at).toLocaleString()} · 信息源 ID ${item.source_id ?? '-'} · ${item.action} · ${item.actor_role} · ${JSON.stringify(item.changes)}`
       )).join('\n') || '暂无修改记录');
       setShowAudit(true);
     } catch (caught) {
@@ -496,7 +496,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     <div className="space-y-5 pb-20 lg:pb-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">数据源清单</h1>
+          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">信息源清单</h1>
           <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
             监控多维数据 API 接口连通度、网络延迟及全网累计采集记录。
           </p>
@@ -526,7 +526,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-[#D97706]"/>
             <div>
-              <h4 className="text-[13px] font-bold text-amber-900 dark:text-amber-200">数据源运行提示</h4>
+              <h4 className="text-[13px] font-bold text-amber-900 dark:text-amber-200">信息源运行提示</h4>
               <p className="mt-0.5 text-[12px] leading-relaxed text-amber-800/90 dark:text-amber-300/80">
                 {delayedSources.map((source) => `${displaySourceName(source.name)}：${source.latency}`).join('；')}
               </p>
@@ -545,10 +545,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
 
       <div
         className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 md:grid-cols-4"
-        aria-label="数据源概览"
+        aria-label="信息源概览"
       >
         <div className="space-y-0.5">
-          <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">数据源接入数</div>
+          <div className="text-[11px] text-[#727782] dark:text-slate-400 font-medium">信息源接入数</div>
           <div className="text-xl font-bold font-mono text-[#101d28] dark:text-white">
             {dataSources.length} <span className="text-xs font-normal text-slate-500">个管道</span>
           </div>
@@ -582,7 +582,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             className="flex items-center justify-center gap-1.5 rounded-xl border border-[#004782] bg-white/80 px-4 py-2 text-[12px] font-bold text-[#004782] shadow-sm backdrop-blur-md transition hover:bg-blue-50 disabled:opacity-50 dark:border-blue-400 dark:bg-slate-800/60 dark:text-blue-300"
           >
             <span className={`material-symbols-outlined text-[16px] ${runAllLoading ? 'animate-spin' : ''}`}>{runAllLoading ? 'sync' : 'refresh'}</span>
-            {runAllLoading ? '全量刷新中…（串行采集，请稍候）' : '全量刷新所有数据源'}
+            {runAllLoading ? '全量刷新中…（串行采集，请稍候）' : '全量刷新所有信息源'}
           </button>
           {runAllMsg && (
             <span role="status" className={`text-[12px] rounded-lg px-3 py-1.5 ${runAllMsg.type === 'ok' ? 'text-emerald-700 bg-emerald-50 border border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-900' : 'text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/30 dark:border-red-900'}`}>
@@ -595,10 +595,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       <div
         className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
         role="list"
-        aria-label="数据源列表"
+        aria-label="信息源列表"
       >
         <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-12 md:gap-4">
-          <div className="col-span-3">数据源名称与类别</div>
+          <div className="col-span-3">信息源名称与类别</div>
           <div className="col-span-2">连通状态</div>
           <div className="col-span-2">有效期策略</div>
           {/* 768px CJK 回归：表头曾把「累计」从中间断开。拆为两个不可拆语义短语，
@@ -611,7 +611,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
           {dataSources.length === 0 && (
-            <div className="p-10 text-center text-sm text-slate-500">暂无数据源配置</div>
+            <div className="p-10 text-center text-sm text-slate-500">暂无信息源配置</div>
           )}
           {dataSources.map((source) => {
             const isExternalTool = source.type === 'external_tool';
@@ -659,7 +659,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        数据源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
+                        信息源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
                       </p>
                       <MonitoringSourceFreshness health={healthBySource?.get(Number(source.id))} onDemand={isExternalTool} />
                     </div>
@@ -741,7 +741,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         onClick={() => openEdit(source)}
                         aria-label={`编辑${displayName}`}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-colors"
-                        title="编辑数据源配置（API Key / 调度周期 / 适配器）"
+                        title="编辑信息源配置（API Key / 调度周期 / 适配器）"
                       >
                         编辑
                       </button>
@@ -753,7 +753,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         disabled={role !== 'admin' || togglingId !== null}
                         aria-pressed={source.enabled}
                         aria-label={`${source.enabled ? '停用' : '启用'}${displayName}`}
-                        title={source.enabled ? '停用该数据源，停止自动采集' : '启用该数据源，恢复自动采集'}
+                        title={source.enabled ? '停用该信息源，停止自动采集' : '启用该信息源，恢复自动采集'}
                         className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}
                       >
                         {isToggling ? '处理中...' : source.enabled ? '停用' : '启用'}
@@ -780,7 +780,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <form onSubmit={(event) => void submit(event)} className="bg-white rounded-2xl p-6 w-full max-w-3xl space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between">
-              <h2 className="text-lg font-bold">编辑数据源 · ID {editingId}</h2>
+              <h2 className="text-lg font-bold">编辑信息源 · ID {editingId}</h2>
               <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">关闭</button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -936,7 +936,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-3xl space-y-3 shadow-xl">
             <div className="flex justify-between">
-              <h2 className="text-lg font-bold">数据源修改日志</h2>
+              <h2 className="text-lg font-bold">信息源修改日志</h2>
               <button type="button" onClick={() => setShowAudit(false)}>关闭</button>
             </div>
             <pre className="bg-slate-50 rounded-lg p-4 text-xs whitespace-pre-wrap max-h-[60vh] overflow-auto">{auditText}</pre>

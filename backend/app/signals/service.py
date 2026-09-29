@@ -33,7 +33,7 @@ def asyncio_run[T](coro: Coroutine[object, object, T]) -> T:
 
 
 class SourceNotCollectable(ValueError):
-    """数据源不支持 HTTP 拉取（如 manual-json 走文件上传）。"""
+    """信息源不支持 HTTP 拉取（如 manual-json 走文件上传）。"""
 
 
 class CollectionFailed(RuntimeError):

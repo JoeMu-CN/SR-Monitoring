@@ -1,4 +1,4 @@
-"""拉取式数据源适配器。
+"""拉取式信息源适配器。
 
 技术方案 7.2：所有外部来源实现统一 SourceAdapter：
     fetch(cursor) -> RawSourceItem[]
@@ -6,7 +6,7 @@
     fingerprint(signal) -> string
     healthcheck() -> SourceHealth
 
-manual-json 是文件上传式（见 adapter.py），本模块实现 HTTP 拉取式数据源。
+manual-json 是文件上传式（见 adapter.py），本模块实现 HTTP 拉取式信息源。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ MAX_OFAC_BYTES = 20 * 1024 * 1024
 
 
 class SourceFetchError(RuntimeError):
-    """拉取数据源在请求或解析阶段失败。"""
+    """拉取信息源在请求或解析阶段失败。"""
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class SourceHealth:
 
 @dataclass(frozen=True, slots=True)
 class RawSourceItem:
-    """数据源返回的原始条目，未经过校验和标准化。"""
+    """信息源返回的原始条目，未经过校验和标准化。"""
 
     external_id: str
     title: str
@@ -76,7 +76,7 @@ class RawSourceItem:
 
 
 class PullSourceAdapter(Protocol):
-    """拉取式数据源接口约定（协议类，可被任何实现替换）。"""
+    """拉取式信息源接口约定（协议类，可被任何实现替换）。"""
 
     source_code: str
 
@@ -102,11 +102,11 @@ def _to_utc(value: datetime | None) -> datetime | None:
 
 
 class NmcWeatherAdapter(PullSourceAdapter):
-    """中央气象台天气预警数据源（自然灾害/天气类）。
+    """中央气象台天气预警信息源（自然灾害/天气类）。
 
     接口：http://www.nmc.cn/rest/findAlarm
     返回全国各级气象台发布的灾害预警信号（暴雨、台风、山洪、大雾等）。
-    属于官方公开数据源，无需鉴权，符合技术方案 7.2 首批数据源选择原则。
+    属于官方公开信息源，无需鉴权，符合技术方案 7.2 首批信息源选择原则。
     """
 
     source_code = "nmc-weather"
@@ -1438,7 +1438,7 @@ class CustomsAnnouncementAdapter(PullSourceAdapter):
 class FxRatesAdapter(PullSourceAdapter):
     """国际汇率（E1 汇率 / E3 成本维度）。
 
-    数据源：open.er-api.com（免费、无 key、JSON 直达，166 币种实时汇率）。
+    信息源：open.er-api.com（免费、无 key、JSON 直达，166 币种实时汇率）。
     以 USD 为基准取关键币种（CNY/EUR/JPY/GBP），生成汇率信号，
     供供应商成本/结算货币风险匹配。
     """
@@ -1550,7 +1550,7 @@ class FxRatesAdapter(PullSourceAdapter):
 class SseShippingAdapter(PullSourceAdapter):
     """上海航运交易所集装箱运价指数（I4 航运 / E3 物流成本维度）。
 
-    数据源：CCFI 单期查询页（www.sse.net.cn），数据经 JS 渲染，
+    信息源：CCFI 单期查询页（www.sse.net.cn），数据经 JS 渲染，
     走 Crawl4AI 渲染后解析 markdown 表格（综合指数 + 分航线上期/本期/涨跌）。
     """
 
@@ -1662,7 +1662,7 @@ def _parse_sse_shipping(markdown: str, *, limit: int = 30) -> list[RawSourceItem
 class FmprcPressAdapter(PullSourceAdapter):
     """外交部例行记者会（G4 双边关系与外交事件）。
 
-    数据源：外交部发言人栏目（直连 200），列表页含最近记者会标题 + 日期 + 详情 URL。
+    信息源：外交部发言人栏目（直连 200），列表页含最近记者会标题 + 日期 + 详情 URL。
     信号标题含"发言人主持例行记者会"；AI 相关性过滤负责精筛制裁/贸易/出口管制话题。
     """
 

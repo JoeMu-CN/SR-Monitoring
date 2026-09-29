@@ -85,6 +85,41 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     };
   };
 
+  // 清单内供应商的核查只读库内已采集信号（source=database），工商字段仅存在于 content 文本
+  // （格式：企业：X；统一社会信用代码：Y；登记状态：Z；候选1：...），需解析文本补齐卡片。
+  const parseExternalCheckContent = (value: unknown): {
+    companyName?: string;
+    creditCode?: string;
+    regStatus?: string;
+    candidateNames: string[];
+  } | null => {
+    if (typeof value !== 'string' || value.trim() === '') return null;
+    const fields: {companyName?: string; creditCode?: string; regStatus?: string; candidateNames: string[]} = {
+      candidateNames: [],
+    };
+    for (const segment of value.split('；')) {
+      const separator = segment.indexOf('：');
+      if (separator <= 0) continue;
+      const key = segment.slice(0, separator).trim();
+      const fieldValue = segment.slice(separator + 1).trim();
+      if (fieldValue === '') continue;
+      if (key === '企业') fields.companyName = fieldValue;
+      else if (key === '统一社会信用代码') fields.creditCode = fieldValue;
+      else if (key === '登记状态') fields.regStatus = fieldValue;
+      else if (/^候选\d+$/.test(key)) fields.candidateNames.push(fieldValue);
+    }
+    return fields;
+  };
+
+  // 主字段回退顺序：结构化顶层 → content 文本 → 结构化候选 → 占位。
+  // 候选映射里的「未披露」只是占位而非真实值，必须跳过，否则会掩盖 content 解析结果。
+  const firstExternalField = (fallback: string, ...values: Array<unknown>): string => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim() !== '' && value !== '未披露') return value;
+    }
+    return fallback;
+  };
+
   const mapExternalCheck = (result: Record<string, unknown>): ExternalCompanyCheck | undefined => {
     if (result.status !== 'success') return undefined;
     const candidates = asRecords(result.candidates).map((candidate) => ({
@@ -92,13 +127,18 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
       creditCode: String(candidate.credit_code ?? '未披露'),
       status: String(candidate.reg_status ?? '未披露'),
     }));
+    const contentFields = parseExternalCheckContent(result.content);
+    // 库内信号没有结构化候选：候选列表用 content 文本中解析出的候选名补齐。
+    const resolvedCandidates = candidates.length > 0
+      ? candidates
+      : (contentFields?.candidateNames ?? []).map((name) => ({name, creditCode: '未披露', status: '未披露'}));
     return {
-      companyName: String(result.company_name ?? candidates[0]?.name ?? '核查企业'),
-      registrationNo: String(result.credit_code ?? candidates[0]?.creditCode ?? '未披露'),
-      operatingStatus: String(result.reg_status ?? candidates[0]?.status ?? '未披露'),
-      candidates,
+      companyName: firstExternalField('核查企业', result.company_name, contentFields?.companyName, candidates[0]?.name),
+      registrationNo: firstExternalField('未披露', result.credit_code, contentFields?.creditCode, candidates[0]?.creditCode),
+      operatingStatus: firstExternalField('未披露', result.reg_status, contentFields?.regStatus, candidates[0]?.status),
+      candidates: resolvedCandidates,
       checkTime: new Date().toLocaleString('zh-CN'),
-      source: '天眼查 MCP 实时核查',
+      source: result.source === 'database' ? '库内已采集核查' : '天眼查 MCP 实时核查',
       isExternal: true,
     };
   };

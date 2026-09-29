@@ -303,9 +303,6 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
       >
         <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">规则运行流水线</h2>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
-          <span className="material-symbols-outlined animate-spin text-[14px] leading-none" aria-hidden="true">
-            progress_activity
-          </span>
           <span className="sr-only">运行轨迹加载中…</span>
         </p>
       </section>

@@ -196,7 +196,7 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, m
   if (loading) {
     return (
       <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60">
-        <div className="flex items-center gap-2 text-[12px] text-slate-500"><span className="material-symbols-outlined animate-spin text-[16px] text-[#004782] dark:text-blue-400" aria-hidden="true">progress_activity</span><span className="sr-only">信号过滤规则加载中…</span></div>
+        <div className="flex items-center gap-2 text-[12px] text-slate-500"><span className="sr-only">信号过滤规则加载中…</span></div>
       </section>
     );
   }

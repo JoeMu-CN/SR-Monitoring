@@ -545,7 +545,6 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
       <section data-testid="rule-engine-forced-rules" data-mode={mode} className={sectionClasses}>
         <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">强制规则</h3>
         <p className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
-          <span className="material-symbols-outlined animate-spin text-[12px] leading-none" aria-hidden="true">progress_activity</span>
           <span className="sr-only">全局强制规则加载中…</span>
         </p>
       </section>

@@ -893,6 +893,147 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     assert stored is not None
 
 
+def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
+    clean_agent_tables: Session, enable_tyc: None
+) -> None:
+    """回归：清单内供应商卡片的结构化字段（信用代码/登记状态）必须透出。
+
+    raw_data 结构化字段优先；缺失时回退解析 content 正文；确实缺失返回 None。
+    """
+    from app.agent.supplier_tyc import (
+        format_tyc_signal_result,
+        upsert_supplier_tyc_signal,
+    )
+    from app.signals.models import RawSignal
+
+    supplier = Supplier(
+        supplier_code="SUP-TYC-FORMAT",
+        legal_name="格式回归测试有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    clean_agent_tables.add(supplier)
+    clean_agent_tables.flush()
+
+    # Given：raw_data 携带 verify() 原始结构化字段，且与正文值刻意不同以证明优先级
+    raw_title = "天眼查核查：格式回归测试有限公司"
+    raw_external_id, raw_created = upsert_supplier_tyc_signal(
+        clean_agent_tables,
+        supplier=supplier,
+        title=raw_title,
+        content=(
+            "企业：格式回归测试有限公司；统一社会信用代码：91110000MA01OLDX1；"
+            "登记状态：注销；候选1：旧正文候选"
+        ),
+        raw_payload={
+            "status": "success",
+            "company_name": "格式回归测试有限公司",
+            "credit_code": "91310000MA1K3XYZ8N",
+            "reg_status": "存续",
+            "candidates": [
+                {
+                    "name": "格式回归测试有限公司",
+                    "credit_code": "91310000MA1K3XYZ8N",
+                    "reg_status": "存续",
+                },
+                {
+                    "name": "格式回归测试（北京）有限公司",
+                    "credit_code": "91110000MA01ABCD2X",
+                    "reg_status": "注销",
+                },
+            ],
+        },
+    )
+    assert raw_created is True
+    raw_stored = clean_agent_tables.scalar(
+        select(RawSignal).where(
+            RawSignal.external_id == raw_external_id,
+            RawSignal.title == raw_title,
+        )
+    )
+    assert raw_stored is not None
+
+    # When
+    result = format_tyc_signal_result(raw_stored)
+
+    # Then：结构化字段以 raw_data 为准，既有字段保持不变
+    assert result["status"] == "success"
+    assert result["source"] == "database"
+    assert result["title"] == raw_title
+    assert result["company_name"] == "格式回归测试有限公司"
+    assert result["credit_code"] == "91310000MA1K3XYZ8N"
+    assert result["reg_status"] == "存续"
+    assert result["candidates"] == [
+        {
+            "name": "格式回归测试有限公司",
+            "credit_code": "91310000MA1K3XYZ8N",
+            "reg_status": "存续",
+        },
+        {
+            "name": "格式回归测试（北京）有限公司",
+            "credit_code": "91110000MA01ABCD2X",
+            "reg_status": "注销",
+        },
+    ]
+
+    # Given：历史信号 raw_data 缺少结构化字段，仅正文含可回溯文本
+    fallback_title = "天眼查核查：格式回归测试有限公司（历史）"
+    fallback_external_id, _ = upsert_supplier_tyc_signal(
+        clean_agent_tables,
+        supplier=supplier,
+        title=fallback_title,
+        content=(
+            "企业：格式回归测试有限公司；统一社会信用代码：91310000MA1K3XYZ8N；"
+            "登记状态：存续；候选1：格式回归测试有限公司；候选2：格式回归测试（北京）有限公司"
+        ),
+        raw_payload={"status": "success"},
+    )
+    fallback_stored = clean_agent_tables.scalar(
+        select(RawSignal).where(
+            RawSignal.external_id == fallback_external_id,
+            RawSignal.title == fallback_title,
+        )
+    )
+    assert fallback_stored is not None
+
+    # When
+    fallback = format_tyc_signal_result(fallback_stored)
+
+    # Then：缺失字段从 content 正文解析补齐
+    assert fallback["company_name"] == "格式回归测试有限公司"
+    assert fallback["credit_code"] == "91310000MA1K3XYZ8N"
+    assert fallback["reg_status"] == "存续"
+    assert fallback["candidates"] == [
+        {"name": "格式回归测试有限公司", "credit_code": None, "reg_status": None},
+        {"name": "格式回归测试（北京）有限公司", "credit_code": None, "reg_status": None},
+    ]
+
+    # Given：raw_data 与正文均无信用代码/登记状态
+    sparse_title = "天眼查核查：格式回归测试有限公司（稀疏）"
+    sparse_external_id, _ = upsert_supplier_tyc_signal(
+        clean_agent_tables,
+        supplier=supplier,
+        title=sparse_title,
+        content="企业：格式回归测试有限公司",
+        raw_payload={},
+    )
+    sparse_stored = clean_agent_tables.scalar(
+        select(RawSignal).where(
+            RawSignal.external_id == sparse_external_id,
+            RawSignal.title == sparse_title,
+        )
+    )
+    assert sparse_stored is not None
+
+    # When
+    sparse = format_tyc_signal_result(sparse_stored)
+
+    # Then：确实缺失的字段为 None，后端不得输出「未披露」
+    assert sparse["credit_code"] is None
+    assert sparse["reg_status"] is None
+    assert sparse["candidates"] == []
+
+
 def test_tyc_signal_validity_when_published_at_is_missing_records_exact_anchor_fallback(
     clean_agent_tables: Session,
     enable_tyc: None,

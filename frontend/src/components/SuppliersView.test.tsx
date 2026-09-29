@@ -65,7 +65,7 @@ const renderView = (path: string, options: RenderOptions = {}) => {
       <LocationProbe />
     </MemoryRouter>,
   );
-  return {...handlers, rerender: view.rerender};
+  return {...handlers, container: view.container, rerender: view.rerender};
 };
 
 afterEach(() => {
@@ -168,8 +168,9 @@ describe('供应商服务端分页清单', () => {
       .mockImplementationOnce(() => new Promise<SupplierListResponse>((resolve) => { resolveFirst = resolve; }))
       .mockResolvedValueOnce({...makePage(0, 1, 1), items: [makeItem(9, {enabled: false})]});
 
-    renderView('/suppliers');
+    const {container} = renderView('/suppliers');
     expect(await screen.findByRole('status')).toHaveTextContent('正在加载供应商…');
+    expect(container.querySelector('.animate-spin')).toBeNull();
 
     await user.selectOptions(screen.getByLabelText('监控状态:'), 'paused');
     expect(await screen.findByText('供应商 009')).toBeInTheDocument();

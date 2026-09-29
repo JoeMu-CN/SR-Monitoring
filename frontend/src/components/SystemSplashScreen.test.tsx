@@ -37,10 +37,12 @@ describe('SystemSplashScreen full 变体', () => {
       {id: 'database', label: '数据库连接', detail: '正在检查…', state: 'pending'},
       {id: 'ai', label: 'AI 引擎', detail: '正在检查…', state: 'pending'},
     ];
-    const {rerender} = render(<SystemSplashScreen variant="full" items={two} />);
+    const {container, rerender} = render(<SystemSplashScreen variant="full" items={two} />);
 
     expect(screen.getByRole('progressbar', {name: '自检进度'})).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getAllByRole('img', {name: '检查中'})).toHaveLength(2);
+    // pending 状态图标保留（语义标签「检查中」仍在），但不再自动旋转。
+    expect(container.querySelectorAll('.animate-spin')).toHaveLength(0);
 
     rerender(<SystemSplashScreen variant="full" items={[
       {...two[0], state: 'ok', detail: 'PostgreSQL 连接正常'},

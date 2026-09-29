@@ -24,7 +24,7 @@ const STATE_LABELS: Record<SelfCheckState, string> = {
   unavailable: '不可用',
 };
 
-// 状态色沿用既有语义：绿(ok)/琥珀(warn)/红(error)/灰(unavailable)，pending 用主色旋转指示。
+// 状态色沿用既有语义：绿(ok)/琥珀(warn)/红(error)/灰(unavailable)，pending 用主色静止指示。
 const STATE_TEXT_CLASS: Record<SelfCheckState, string> = {
   pending: 'text-[#004782] dark:text-blue-400',
   ok: 'text-emerald-600 dark:text-emerald-400',
@@ -45,7 +45,7 @@ function StateIcon({state}: {readonly state: SelfCheckState}): JSX.Element {
   const Icon = STATE_ICONS[state];
   return (
     <span role="img" aria-label={STATE_LABELS[state]} className="inline-flex shrink-0">
-      <Icon aria-hidden="true" className={`h-4 w-4 ${STATE_TEXT_CLASS[state]} ${state === 'pending' ? 'animate-spin' : ''}`} />
+      <Icon aria-hidden="true" className={`h-4 w-4 ${STATE_TEXT_CLASS[state]}`} />
     </span>
   );
 }

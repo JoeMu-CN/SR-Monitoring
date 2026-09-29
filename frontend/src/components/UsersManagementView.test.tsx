@@ -39,9 +39,10 @@ describe('UsersManagementView', () => {
   it('加载后展示空态', async () => {
     vi.mocked(api.auth.listUsers).mockResolvedValue([]);
 
-    renderView();
+    const {container} = renderView();
 
     expect(screen.getByRole('status')).toHaveTextContent('正在加载用户列表');
+    expect(container.querySelector('.animate-spin')).toBeNull();
     expect(await screen.findByText('暂无用户')).toBeInTheDocument();
   });
 

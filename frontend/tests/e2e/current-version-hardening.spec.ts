@@ -555,7 +555,7 @@ test.describe('桌面端真实 API 场景', () => {
     let disabledForProbe = false;
 
     try {
-      // 手工导入依赖启用中的 manual-json 数据源；先停用再探测真实 503，随后恢复。
+      // 手工导入依赖启用中的 manual-json 信息源；先停用再探测真实 503，随后恢复。
       if (manualSource !== undefined && manualSource.enabled) {
         expect((await page.request.put(`/api/v1/sources/${manualSource.id}`, {headers, data: {enabled: false}})).status()).toBe(200);
         disabledForProbe = true;
@@ -572,7 +572,7 @@ test.describe('桌面端真实 API 场景', () => {
               signals: [{
                 external_id: 'E2E-HARDENING-503-PROBE',
                 title: '手工导入能力探测',
-                content: '用于验证手工 JSON 数据源不可用时的真实 503 报告。',
+                content: '用于验证手工 JSON 信息源不可用时的真实 503 报告。',
                 url: null,
                 published_at: null,
               }],
@@ -581,7 +581,7 @@ test.describe('桌面端真实 API 场景', () => {
         },
       });
       expect(importResponse.status()).toBe(503);
-      expect(await readJson<{detail: string}>(importResponse)).toEqual({detail: '手工 JSON 数据源不可用'});
+      expect(await readJson<{detail: string}>(importResponse)).toEqual({detail: '手工 JSON 信息源不可用'});
     } finally {
       if (manualSource !== undefined && disabledForProbe) {
         const restoreResponse = await page.request.put(`/api/v1/sources/${manualSource.id}`, {

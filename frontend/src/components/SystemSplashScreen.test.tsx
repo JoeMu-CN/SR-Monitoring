@@ -7,7 +7,7 @@ afterEach(cleanup);
 const allStates: SelfCheckItem[] = [
   {id: 'database', label: '数据库连接', detail: 'PostgreSQL 连接正常', state: 'ok'},
   {id: 'scheduler', label: '调度器心跳', detail: '心跳正常（30 秒前）', state: 'warn'},
-  {id: 'sources', label: '数据源状态', detail: '1/2 数据源正常', state: 'error'},
+  {id: 'sources', label: '信息源状态', detail: '1/2 信息源正常', state: 'error'},
   {id: 'ai', label: 'AI 引擎', detail: '未配置真实模型', state: 'unavailable'},
 ];
 
@@ -20,8 +20,8 @@ describe('SystemSplashScreen full 变体', () => {
     expect(within(splash).getByText('PostgreSQL 连接正常')).toBeInTheDocument();
     expect(within(splash).getByText('调度器心跳')).toBeInTheDocument();
     expect(within(splash).getByText('心跳正常（30 秒前）')).toBeInTheDocument();
-    expect(within(splash).getByText('数据源状态')).toBeInTheDocument();
-    expect(within(splash).getByText('1/2 数据源正常')).toBeInTheDocument();
+    expect(within(splash).getByText('信息源状态')).toBeInTheDocument();
+    expect(within(splash).getByText('1/2 信息源正常')).toBeInTheDocument();
     expect(within(splash).getByText('AI 引擎')).toBeInTheDocument();
     expect(within(splash).getByText('未配置真实模型')).toBeInTheDocument();
 

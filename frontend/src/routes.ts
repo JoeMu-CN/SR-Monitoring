@@ -78,7 +78,7 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     id: 'sources',
     path: routePaths.sources,
     permission: routePermissions.sourceStatusView,
-    navigation: {surfaces: ['desktop', 'mobile'], section: 'system', desktopLabel: '数据源列表', mobileLabel: '数据', icon: 'sources', end: true},
+    navigation: {surfaces: ['desktop', 'mobile'], section: 'system', desktopLabel: '信息源列表', mobileLabel: '数据', icon: 'sources', end: true},
   },
   {id: 'sourceSignals', path: routePaths.sourceSignals, permission: routePermissions.sourceStatusView},
   {

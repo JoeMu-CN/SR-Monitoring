@@ -114,7 +114,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('引用数据源：未接入信源默认折叠（迁移旧 106-128 / 165-204 用例）', () => {
+describe('引用信息源：未接入信源默认折叠（迁移旧 106-128 / 165-204 用例）', () => {
   it('未接入信源默认不出现，折叠为「另有 1 个声明信源未接入」并链接到 /sources（迁移自旧「未创建渲染」用例）', () => {
     const dim = makeDimension({dataSources: [cencSource]});
     renderSources(dim, inputs({declared_total: 1, declared_linked: 0}));
@@ -126,7 +126,7 @@ describe('引用数据源：未接入信源默认折叠（迁移旧 106-128 / 16
     // 折叠汇总行：数量正确 + 接入入口指向 /sources
     expect(screen.getByText('另有 1 个声明信源未接入')).toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-unlinked-sources-summary')).toBeInTheDocument();
-    const link = screen.getByRole('link', {name: '去数据源接入'});
+    const link = screen.getByRole('link', {name: '去信息源接入'});
     expect(link).toHaveAttribute('href', '/sources');
 
     // 零接入维度仍显著标注
@@ -153,7 +153,7 @@ describe('引用数据源：未接入信源默认折叠（迁移旧 106-128 / 16
 
     // 折叠汇总：数量取自接口声明计数（declared_total 4 - declared_linked 2 = 2），链接指向 /sources
     expect(screen.getByText('另有 2 个声明信源未接入')).toBeInTheDocument();
-    expect(screen.getByRole('link', {name: '去数据源接入'})).toHaveAttribute('href', '/sources');
+    expect(screen.getByRole('link', {name: '去信息源接入'})).toHaveAttribute('href', '/sources');
 
     // 有已接入信源的维度不出现零接入标注
     expect(screen.queryByText('无已接入信源，当前不会产生提醒')).not.toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('引用数据源：未接入信源默认折叠（迁移旧 106-128 / 16
 
     expect(screen.getByText('中央气象台')).toBeInTheDocument();
     expect(screen.queryByText(/另有 \d+ 个声明信源未接入/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', {name: '去数据源接入'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
   });
 
   it('declared_linked=0 的维度显著标注「无已接入信源，当前不会产生提醒」，折叠计数覆盖全部未接入项', () => {
@@ -256,7 +256,7 @@ describe('输入健康度区块保留（两态共用的只读组件）', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    // 两个链接：信源信号列表深链 + 去数据源接入；均为只读导航
+    // 两个链接：信源信号列表深链 + 去信息源接入；均为只读导航
     expect(screen.getAllByRole('link')).toHaveLength(2);
   });
 });
@@ -281,13 +281,13 @@ describe('信息精简（壳层）：「具体监控内容」卡片移除，cont
     const contentLine = screen.getByTitle('地震 · 台风 · 海啸 · 火山');
     expect(contentLine).toHaveTextContent('地震 · 台风 · 海啸 · 火山');
     // 信源区块为两态共用只读信息，照常渲染
-    expect(screen.getByText('引用数据源')).toBeInTheDocument();
+    expect(screen.getByText('引用信息源')).toBeInTheDocument();
 
     // 配置态（原卡片所在位置）：同样不再出现，且 contentItems 仍可访问
     fireEvent.click(screen.getByTestId('rule-engine-mode-toggle'));
     expect(screen.getByTestId('rule-engine-config')).toBeInTheDocument();
     expect(screen.queryByText('具体监控内容')).not.toBeInTheDocument();
     expect(screen.getByTitle('地震 · 台风 · 海啸 · 火山')).toBeInTheDocument();
-    expect(screen.getAllByText('引用数据源').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('引用信息源').length).toBeGreaterThan(0);
   });
 });

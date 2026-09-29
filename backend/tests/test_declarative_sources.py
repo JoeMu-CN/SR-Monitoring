@@ -1,4 +1,4 @@
-"""声明式数据源、实时预览和发布门测试。"""
+"""声明式信息源、实时预览和发布门测试。"""
 
 import asyncio
 import ipaddress
@@ -272,7 +272,7 @@ def test_private_network_and_secret_static_headers_are_rejected() -> None:
 
 
 def test_http_requires_allow_http_hosts_whitelist() -> None:
-    """HTTP 明文数据源必须显式加入 allow_http_hosts 白名单。"""
+    """HTTP 明文信息源必须显式加入 allow_http_hosts 白名单。"""
     # 默认拒绝 HTTP
     with pytest.raises(ValidationError, match="allow_http_hosts"):
         DeclarativeRequest(url="http://aqygzj.mofcom.gov.cn/")
@@ -411,14 +411,14 @@ def test_source_agent_endpoint_requires_permission(client: TestClient, auth_as) 
     auth_as("viewer", "source-agent-viewer")
     denied = client.post(
         "/api/v1/source-agent/chat",
-        json={"question": "接入一个数据源", "session_id": None},
+        json={"question": "接入一个信息源", "session_id": None},
     )
     assert denied.status_code == 403
 
     auth_as("risk_admin", "source-agent-admin")
     allowed = client.post(
         "/api/v1/source-agent/chat",
-        json={"question": "接入一个数据源", "session_id": None},
+        json={"question": "接入一个信息源", "session_id": None},
     )
     assert allowed.status_code == 200
 
@@ -577,7 +577,7 @@ def test_source_draft_preview_publish_and_enable_api(
 def test_run_source_now_rejects_disabled_source(db_session) -> None:
     source = DataSource(
         code="published-disabled",
-        name="已发布未启用数据源",
+        name="已发布未启用信息源",
         source_type="official_api",
         credibility=90,
         endpoint_url="https://official.example/events",
@@ -647,7 +647,7 @@ def test_source_agent_delete_completed_draft_rejected(client, db_session, auth_a
     owner = auth_as("risk_admin", "completed-draft-owner")
     source = DataSource(
         code="linked-source",
-        name="已关联数据源的草稿",
+        name="已关联信息源的草稿",
         source_type="official_api",
         credibility=90,
         endpoint_url="https://official.example/events",
@@ -876,7 +876,7 @@ def test_run_source_now_reports_deferred_retryable(db_session, monkeypatch) -> N
 
     async def _deferred(session: object, src: object, adapter: object) -> object:
         del session, src, adapter
-        raise CollectionDeferred("数据源域名冷却中")
+        raise CollectionDeferred("信息源域名冷却中")
 
     monkeypatch.setattr(source_tools_module, "collect_source_async", _deferred)
 
@@ -913,7 +913,7 @@ def test_preview_endpoint_reports_deferred(client, monkeypatch) -> None:
 
     async def _deferred(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise SourceFetchError("数据源域名冷却中", error_kind="deferred")
+        raise SourceFetchError("信息源域名冷却中", error_kind="deferred")
 
     monkeypatch.setattr(source_router, "preview_adapter", _deferred)
 
@@ -954,7 +954,7 @@ def test_publish_endpoint_reports_deferred_without_invalidating(
 
     async def _deferred(*args: object, **kwargs: object) -> object:
         del args, kwargs
-        raise SourceFetchError("数据源域名冷却中", error_kind="deferred")
+        raise SourceFetchError("信息源域名冷却中", error_kind="deferred")
 
     monkeypatch.setattr(source_router, "preview_adapter", _deferred)
 

@@ -22,7 +22,7 @@ from app.risks.scoring import ForcedRule
 
 @dataclass(frozen=True)
 class DimensionDataSource:
-    """维度引用的数据源；状态用于区分已接入能力与后续规划。"""
+    """维度引用的信息源；状态用于区分已接入能力与后续规划。"""
 
     code: str
     name: str

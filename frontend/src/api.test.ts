@@ -79,7 +79,7 @@ describe('API 数据映射', () => {
     });
   });
 
-  it('使用最新采集运行映射数据源状态', () => {
+  it('使用最新采集运行映射信息源状态', () => {
     const source: DataSourceRead = {id: 2, code: 'NEWS', name: '新闻源', source_type: 'rss', credibility: 0.8, schedule: null, enabled: true};
     const result = mapDataSource(source, [
       {id: 8, source_id: 2, started_at: '2026-08-08T01:00:00Z', finished_at: '2026-08-08T01:01:00Z', status: 'succeeded', fetched_count: 5, created_count: 2, duplicate_count: 3, error: null},
@@ -107,7 +107,7 @@ describe('API 会话请求', () => {
   });
 });
 
-describe('数据源采集记录 API 请求契约', () => {
+describe('信息源采集记录 API 请求契约', () => {
   it('只发送范围与偏移量且不发送可变 limit', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
     vi.stubGlobal('fetch', fetchMock);

@@ -144,7 +144,7 @@ def _api_key_fields(api_key: str | None) -> dict[str, str | None]:
 
 
 def _source_has_secret(source: DataSource, pending: dict[str, object]) -> bool:
-    """数据源是否有可用运行密钥：刚加密的待写入密文或已存且可解密的密文。"""
+    """信息源是否有可用运行密钥：刚加密的待写入密文或已存且可解密的密文。"""
     if pending.get("api_key_encrypted"):
         return True
     if source.api_key_encrypted:
@@ -252,7 +252,7 @@ def _serialize_source(
     elif effective_endpoint != source.endpoint_url:
         payload = payload.model_copy(update={"endpoint_url": effective_endpoint})
     if source.code == "tianyancha":
-        # 运行密钥以数据源控制台加密存库为唯一来源。
+        # 运行密钥以信息源控制台加密存库为唯一来源。
         # 只覆盖密钥展示字段，继续执行下方通用计数逻辑，不因密钥分支漏掉记录数。
         db_configured = (
             source.api_key_encrypted is not None
@@ -297,7 +297,7 @@ def _serialize_source_summary(
 
 
 def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
-    """按数据源编码构建拉取式适配器；不支持时抛 SourceNotCollectable。"""
+    """按信息源编码构建拉取式适配器；不支持时抛 SourceNotCollectable。"""
     source_code = source.code if isinstance(source, DataSource) else source
     if source_code == NmcWeatherAdapter.source_code:
         return NmcWeatherAdapter()
@@ -335,7 +335,7 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         try:
             spec = AdapterSpec.model_validate(source.adapter_config)
         except ValidationError as exc:
-            raise SourceNotCollectable(f"数据源 {source_code} 的适配器配置无效") from exc
+            raise SourceNotCollectable(f"信息源 {source_code} 的适配器配置无效") from exc
         return DeclarativeSourceAdapter(
             source_code,
             spec,
@@ -343,7 +343,7 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
             credential_ref=source.credential_ref,
             login_config=source.login_config,
         )
-    raise SourceNotCollectable(f"数据源 {source_code} 不支持手动拉取采集")
+    raise SourceNotCollectable(f"信息源 {source_code} 不支持手动拉取采集")
 
 
 def _adapter_spec(config: dict[str, object] | None) -> AdapterSpec | None:
@@ -363,7 +363,7 @@ def get_manual_source(session: Session) -> DataSource:
     if source is None or not source.enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="手工 JSON 数据源不可用",
+            detail="手工 JSON 信息源不可用",
         )
     return source
 
@@ -421,7 +421,7 @@ def list_source_signals(
     if source is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="数据源不存在",
+            detail="信息源不存在",
         )
 
     filters: list[ColumnElement[bool]] = [RawSignal.source_id == source.id]
@@ -494,10 +494,10 @@ def create_source(
     if payload.enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="新数据源必须先保存并发布适配器，创建时不得启用",
+            detail="新信息源必须先保存并发布适配器，创建时不得启用",
         )
     if session.scalar(select(DataSource).where(DataSource.code == payload.code)) is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="数据源编码已存在")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="信息源编码已存在")
     source = DataSource(
         code=payload.code,
         name=payload.name,
@@ -552,7 +552,7 @@ def update_source(
     now_utc = datetime.now(UTC)
     source = session.get(DataSource, source_id)
     if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     _validate_schedule(payload.schedule)
     changes: dict[str, object] = {}
     update_values = payload.model_dump(exclude_unset=True, exclude={"api_key"})
@@ -600,7 +600,7 @@ def update_source(
         elif resulting_status not in {"builtin", "published"}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="数据源适配器尚未发布，不能启用",
+                detail="信息源适配器尚未发布，不能启用",
             )
     if "login_config" in update_values:
         update_values["login_config"] = _sanitize_login_config(update_values["login_config"])
@@ -666,10 +666,10 @@ async def publish_source_adapter(
 ) -> DataSourceRead:
     source = session.get(DataSource, source_id)
     if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     spec = _adapter_spec(source.adapter_config)
     if spec is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="数据源没有适配器草稿")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="信息源没有适配器草稿")
     try:
         await preview_adapter(
             source.code,
@@ -733,7 +733,7 @@ def delete_source(
 ) -> dict[str, object]:
     source = session.get(DataSource, source_id)
     if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     has_history = bool(
         session.scalar(
             select(func.count())
@@ -747,7 +747,7 @@ def delete_source(
     if has_history:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="数据源已有采集或风险信号历史，请改为停用以保留证据链",
+            detail="信息源已有采集或风险信号历史，请改为停用以保留证据链",
         )
     code = source.code
     _audit(
@@ -874,13 +874,13 @@ def run_source_collection(
     _user: CollectionTrigger,
     _csrf: CsrfGuard,
 ) -> CollectionRun:
-    """手动触发一次数据源采集（仅支持 HTTP 拉取式数据源）。"""
+    """手动触发一次信息源采集（仅支持 HTTP 拉取式信息源）。"""
     source = session.get(DataSource, source_id)
     if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     if not source.enabled:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="数据源已停用"
+            status_code=status.HTTP_409_CONFLICT, detail="信息源已停用"
         )
     try:
         pull_adapter = build_pull_adapter(source)
@@ -910,7 +910,7 @@ def run_all_sources_collection(
     _user: CollectionTrigger,
     _csrf: CsrfGuard,
 ) -> RunAllSourcesResult:
-    """全量刷新所有可采集数据源（启用的 HTTP 拉取式）。
+    """全量刷新所有可采集信息源（启用的 HTTP 拉取式）。
 
     串行触发；跳过外部工具（按需核查）与 manual-json（非联网），
     以及 5 分钟内已成功采集的信源（避免重复）；每源独立容错，
@@ -1002,14 +1002,14 @@ def run_tyc_batch_collection(
     _user: CollectionTrigger,
     _csrf: CsrfGuard,
 ) -> TycBatchRunRead:
-    """手动批量刷新天眼查数据源：核查全部启用供应商并返回稳定汇总。
+    """手动批量刷新天眼查信息源：核查全部启用供应商并返回稳定汇总。
 
-    source 不存在 404；非天眼查 422；数据源未启用、密钥/起始额度不可用 409；
+    source 不存在 404；非天眼查 422；信息源未启用、密钥/起始额度不可用 409；
     中途额度耗尽或个别供应商失败仍返回 200 汇总。
     """
     source = session.get(DataSource, source_id)
     if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="数据源不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     try:
         result = run_tyc_batch(session, source)
     except TycBatchNotTianyancha as exc:

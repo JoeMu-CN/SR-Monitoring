@@ -53,7 +53,7 @@ class TycUsageSnapshot:
 
 
 def _source_has_key(source: DataSource | None) -> bool:
-    """天眼查是否有可用运行密钥：仅认数据源控制台可解密的密文。"""
+    """天眼查是否有可用运行密钥：仅认信息源控制台可解密的密文。"""
     if source is not None and source.api_key_encrypted:
         from app.signals.secret_store import decrypt_secret
 

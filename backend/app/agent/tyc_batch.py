@@ -38,11 +38,11 @@ class TycBatchError(Exception):
 
 
 class TycBatchNotTianyancha(TycBatchError):
-    """目标数据源不是天眼查（API 映射为 422）。"""
+    """目标信息源不是天眼查（API 映射为 422）。"""
 
 
 class TycBatchSourceInactive(TycBatchError):
-    """目标数据源未启用（API 映射为 409）。"""
+    """目标信息源未启用（API 映射为 409）。"""
 
 
 class TycBatchUnavailable(TycBatchError):
@@ -67,7 +67,7 @@ def run_tyc_batch(session: Session, source: DataSource) -> TycBatchResult:
     """执行一次天眼查批量核查并返回汇总。
 
     - 只处理 ``suppliers.enabled=true``，按 ``supplier_code`` 稳定排序；
-    - 前置校验（数据源类型/启用状态/密钥/起始额度）不满足时抛出类型化异常；
+    - 前置校验（信息源类型/启用状态/密钥/起始额度）不满足时抛出类型化异常；
     - 逐供应商调用前复查额度，中途耗尽即停止并置 ``quota_exhausted``；
     - 每次调用结果独立写 ``TycUsageRecord`` 并先提交（真实调用已发生，计费
       事实不因后续失败回滚），success 才写信号，重复信号计入 ``duplicate``；
@@ -75,9 +75,9 @@ def run_tyc_batch(session: Session, source: DataSource) -> TycBatchResult:
       不阻塞其余供应商。
     """
     if source.code != TYC_SOURCE_CODE:
-        raise TycBatchNotTianyancha("仅支持天眼查数据源")
+        raise TycBatchNotTianyancha("仅支持天眼查信息源")
     if not source.enabled:
-        raise TycBatchSourceInactive("数据源已停用")
+        raise TycBatchSourceInactive("信息源已停用")
     usage = get_tyc_usage(session)
     if not usage.enabled:
         raise TycBatchUnavailable("天眼查运行密钥不可用")

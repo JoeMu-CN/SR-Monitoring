@@ -706,7 +706,7 @@ def test_dashboard_summary_reflects_current_alerts(
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """验收场景支持：风险总览汇总 P1-P4、今日新增、类型分布与数据源状态。"""
+    """验收场景支持：风险总览汇总 P1-P4、今日新增、类型分布与信息源状态。"""
     provider = StaticProvider()
     monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
     create_supplier(client)

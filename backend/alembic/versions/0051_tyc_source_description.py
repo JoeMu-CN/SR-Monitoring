@@ -20,7 +20,7 @@ def upgrade() -> None:
         sa.text(
             """
             UPDATE data_sources
-            SET description = '外部核查工具：运行密钥在数据源控制台配置并加密存库；启用后可手动批量核查全部启用供应商，并于每天北京时间 06:00 自动批量核查；不参与通用 cron 拉取式采集。'
+            SET description = '外部核查工具：运行密钥在信息源控制台配置并加密存库；启用后可手动批量核查全部启用供应商，并于每天北京时间 06:00 自动批量核查；不参与通用 cron 拉取式采集。'
             WHERE code = 'tianyancha'
             """
         )
@@ -32,7 +32,7 @@ def downgrade() -> None:
         sa.text(
             """
             UPDATE data_sources
-            SET description = '按需企业工商核查工具，不参与定时采集；运行密钥在数据源控制台统一配置与启停。'
+            SET description = '按需企业工商核查工具，不参与定时采集；运行密钥在信息源控制台统一配置与启停。'
             WHERE code = 'tianyancha'
             """
         )

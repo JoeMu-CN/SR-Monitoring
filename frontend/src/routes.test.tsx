@@ -18,7 +18,7 @@ const routeViews: RouteViews = {
   riskDetail: <div>风险详情页面</div>,
   assistant: <div>助手页面</div>,
   suppliers: <div>供应商页面</div>,
-  sources: <div>数据源页面</div>,
+  sources: <div>信息源页面</div>,
   sourceSignals: <div>采集记录页面</div>,
   rules: <div>规则页面</div>,
   userSettings: <div>用户设置页面</div>,
@@ -59,7 +59,7 @@ describe('显式路由白名单', () => {
     ['/risks/42', '风险详情页面'],
     ['/assistant', '助手页面'],
     ['/suppliers', '供应商页面'],
-    ['/sources', '数据源页面'],
+    ['/sources', '信息源页面'],
     ['/sources/17/signals?scope=valid&page=1', '采集记录页面'],
     ['/rules', '规则页面'],
     ['/settings/users', '用户设置页面'],
@@ -115,7 +115,7 @@ describe('显式路由白名单', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('页面不存在');
     expect(screen.queryByText('研究页面')).not.toBeInTheDocument();
-    expect(screen.queryByText('数据源接入助手页面')).not.toBeInTheDocument();
+    expect(screen.queryByText('信息源接入助手页面')).not.toBeInTheDocument();
   });
 
   it('在历史记录中后退时恢复前一个路由页面', async () => {

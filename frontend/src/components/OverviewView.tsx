@@ -34,8 +34,8 @@ const isCanonicalDaysParam = (raw: string | null): boolean => raw === null || ra
 
 const formatAsOf = (value: string): string => Number.isNaN(new Date(value).getTime()) ? '未知' : new Date(value).toLocaleString('zh-CN', {hour12: false});
 
-// 顶部"全网风险严重程度分布"条+最近风险提醒是核心，"风险类型分布/数据源节点"与"数据源运行提示"
-// 已迁出或并入"数据源清单"页面，避免在风险总览上堆叠太多维护性信息。
+// 顶部"全网风险严重程度分布"条+最近风险提醒是核心，"风险类型分布/信息源节点"与"信息源运行提示"
+// 已迁出或并入"信息源清单"页面，避免在风险总览上堆叠太多维护性信息。
 export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, monitoringHealth}: OverviewViewProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawDays = searchParams.get('days');

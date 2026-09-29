@@ -167,7 +167,7 @@ export function App() {
     if (canViewSourceStatus) {
       initialItems.push(
         {id: 'scheduler', label: '调度器心跳', detail: '正在检查…', state: 'pending'},
-        {id: 'sources', label: '数据源状态', detail: '正在检查…', state: 'pending'},
+        {id: 'sources', label: '信息源状态', detail: '正在检查…', state: 'pending'},
       );
     }
     if (canUseRiskQuery) {
@@ -253,14 +253,14 @@ export function App() {
           if (health.scheduler.status === 'stale') return {state: 'warn', detail: '心跳延迟'};
           return {state: 'warn', detail: '心跳状态未知'};
         }),
-        runItem('sources', '数据源检查失败', async () => {
+        runItem('sources', '信息源检查失败', async () => {
           const health = await loadMonitoringHealth();
           const total = health.sources.length;
-          if (total === 0) return {state: 'warn', detail: '暂无启用的数据源'};
+          if (total === 0) return {state: 'warn', detail: '暂无启用的信息源'};
           const okCount = health.sources.filter((source) => source.state === 'ok').length;
           return okCount === total
-            ? {state: 'ok', detail: `${okCount}/${total} 数据源正常`}
-            : {state: 'warn', detail: `${okCount}/${total} 数据源正常`};
+            ? {state: 'ok', detail: `${okCount}/${total} 信息源正常`}
+            : {state: 'warn', detail: `${okCount}/${total} 信息源正常`};
         }),
       );
     }
@@ -537,7 +537,7 @@ export function App() {
     }
     if (caught.status === 403) setError(caught.message);
   }, []);
-  // 任务8 只读诊断：按 source_status_view 权限请求，仅在展示它的页面（总览/数据源）轮询。
+  // 任务8 只读诊断：按 source_status_view 权限请求，仅在展示它的页面（总览/信息源）轮询。
   // 403 由 hook 内部隐藏，403 不进入全局错误门；401 经 handleDetailRequestError 统一登出。
   const canViewSourceStatus = permissions.includes(routePermissions.sourceStatusView);
   const monitoringHealth = useMonitoringHealth({

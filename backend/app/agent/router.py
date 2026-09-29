@@ -27,7 +27,7 @@ from app.database import get_session
 from app.signals.models import DataSource
 
 router = APIRouter(prefix="/api/v1", tags=["风险查询助手"])
-source_agent_router = APIRouter(prefix="/api/v1", tags=["数据源接入助手"])
+source_agent_router = APIRouter(prefix="/api/v1", tags=["信息源接入助手"])
 SessionDependency = Annotated[Session, Depends(get_session)]
 RiskQueryUser = Annotated[User, Depends(require_permission(PERM_RISK_QUERY_USE))]
 SourceAgentUser = Annotated[User, Depends(require_permission(PERM_SOURCE_AGENT_USE))]
@@ -93,7 +93,7 @@ async def source_agent_chat_endpoint(
     except AgentError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"数据源接入助手暂时不可用：{exc}",
+            detail=f"信息源接入助手暂时不可用：{exc}",
         ) from exc
 
 
@@ -104,7 +104,7 @@ def list_source_onboarding_drafts(
     session: SessionDependency,
     user: SourceAgentUser,
 ) -> SourceOnboardingDraftBoxResponse:
-    """统一列出接入中草稿、待发布适配器和待启用数据源。"""
+    """统一列出接入中草稿、待发布适配器和待启用信息源。"""
     in_progress = list(
         session.scalars(
             select(SourceOnboardingDraft)
@@ -122,7 +122,7 @@ def list_source_onboarding_drafts(
     items = [
         SourceOnboardingDraftBoxItem(
             kind="in_progress",
-            title=draft.answers.get("source_identity_schedule") or "未命名数据源接入",
+            title=draft.answers.get("source_identity_schedule") or "未命名信息源接入",
             detail=f"接入进度：{_step_label(draft.current_step)}",
             draft_id=draft.id,
             session_id=draft.agent_session_id,
@@ -177,7 +177,7 @@ def delete_source_onboarding_draft(
     user: SourceAgentUser,
     _csrf: CsrfGuard,
 ) -> None:
-    """删除接入中草稿；已生成正式数据源的草稿不允许删除。"""
+    """删除接入中草稿；已生成正式信息源的草稿不允许删除。"""
     draft = session.scalar(
         select(SourceOnboardingDraft)
         .join(
@@ -196,7 +196,7 @@ def delete_source_onboarding_draft(
     if draft.source_id is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="该草稿已生成正式数据源，请在数据源管理页操作",
+            detail="该草稿已生成正式信息源，请在信息源管理页操作",
         )
     session.delete(draft)
     session.commit()

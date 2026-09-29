@@ -554,7 +554,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       <label className="text-[13px] font-bold text-[#424751] dark:text-slate-300">提醒失效</label>
                       <p className="text-[12px] text-slate-500 leading-relaxed dark:text-slate-400">
                         提醒失效由信号有效期策略决定，不再在此单独配置。请在
-                        <a href={routePaths.sources} className="text-[#004782] underline underline-offset-2 hover:text-[#2563EB] dark:text-blue-300">数据源</a>
+                        <a href={routePaths.sources} className="text-[#004782] underline underline-offset-2 hover:text-[#2563EB] dark:text-blue-300">信息源</a>
                         的有效期配置中管理。
                       </p>
                     </div>

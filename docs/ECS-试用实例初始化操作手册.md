@@ -125,7 +125,7 @@ sudo -u deploy editor /opt/supplier-risk-monitoring/deploy/.env.production
 
 技术验证阶段即可创建配置文件，但 `PUBLIC_ORIGIN` 必须填写实际 ECS 公网 IP；正式上线前再替换为域名。至少需要配置：
 
-安全注意：不要把完整的 `docker compose config` 输出发送到聊天或工单，它会展开并显示环境变量。若输出已经包含数据库密码、Session 密钥、数据源加密密钥或管理员初始密码，必须先轮换这些值，再启动容器。生产 Compose 已限制 PostgreSQL 只接收数据库变量，其他密钥不应进入数据库容器。
+安全注意：不要把完整的 `docker compose config` 输出发送到聊天或工单，它会展开并显示环境变量。若输出已经包含数据库密码、Session 密钥、信息源加密密钥或管理员初始密码，必须先轮换这些值，再启动容器。生产 Compose 已限制 PostgreSQL 只接收数据库变量，其他密钥不应进入数据库容器。
 
 ### 配置项来源速查
 
@@ -134,15 +134,15 @@ sudo -u deploy editor /opt/supplier-risk-monitoring/deploy/.env.production
 | `POSTGRES_DB` / `POSTGRES_USER` | 项目固定值：`supplier_risk` |
 | `POSTGRES_PASSWORD` | 在 ECS 本地用 `openssl rand -hex 24` 生成；与 `DATABASE_URL` 中密码保持一致 |
 | `DATABASE_URL` | 使用同一个随机数据库密码拼入连接串；随机 hex 不含需 URL 编码的特殊字符 |
-| `SESSION_SECRET` | ECS 本地用 `openssl rand -hex 32` 生成；必须与数据源密钥不同 |
-| `DATA_SOURCE_SECRET_KEY` | ECS 本地生成 Fernet 密钥；用于加密数据库中的天眼查等数据源凭据，必须备份保存 |
+| `SESSION_SECRET` | ECS 本地用 `openssl rand -hex 32` 生成；必须与信息源密钥不同 |
+| `DATA_SOURCE_SECRET_KEY` | ECS 本地生成 Fernet 密钥；用于加密数据库中的天眼查等信息源凭据，必须备份保存 |
 | `APP_IMAGE` | 使用已核验的 ACR digest，不使用 `latest` |
 | `PUBLIC_ORIGIN` | 技术验证填写 `https://120.26.0.76`；正式上线再改成域名 |
 | `BOOTSTRAP_ADMIN_USERNAME` | 自己指定，例如 `platform-admin` |
 | `BOOTSTRAP_ADMIN_PASSWORD` | ECS 本地随机生成的一次性管理员密码；首次登录后立即移除 |
 | `AI_PROVIDER` / `AI_API_KEY` | 当前技术验证使用 `fake`，`AI_API_KEY` 留空；接入千问时才改为真实 Provider 和 Key |
 | `SEARCH_PROVIDER` / `SEARCH_API_KEY` | 当前研究轨关闭，使用 `none`，Key 留空 |
-| 天眼查 API Key | 不写入 `.env`；后续在平台数据源控制台加密录入 |
+| 天眼查 API Key | 不写入 `.env`；后续在平台信息源控制台加密录入 |
 
 因此当前不需要向任何平台申请或填写的密钥包括：`SEARCH_API_KEY`、天眼查环境变量 Key，以及技术验证阶段的 `AI_API_KEY`。
 
@@ -199,7 +199,7 @@ docker compose --env-file deploy/.env.production -f compose.yaml -f compose.prod
 1. HTTPS 访问、登录、退出和 CSRF 写请求。
 2. 四角色权限：`viewer`、`risk_analyst`、`risk_admin`、`platform_admin`。
 3. 导入 10~20 家试点供应商，再做可重复导入验证。
-4. 接入两条真实数据源和有限千问样例；先观察额度和错误率，再开启常规 Scheduler。
+4. 接入两条真实信息源和有限千问样例；先观察额度和错误率，再开启常规 Scheduler。
 5. 执行一次数据库备份，并恢复到临时 volume/临时实例验证可读。
 6. 记录镜像 digest、迁移版本、容器状态和关键验收日志。
 

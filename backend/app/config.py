@@ -124,7 +124,7 @@ RESEARCH_BOCHA_SAFETY_RESERVE = _int_env(
 
 # Agent 编排
 AGENT_MAX_STEPS = _int_env("AGENT_MAX_STEPS", 6, minimum=1, maximum=20)
-# 数据源控制台运行密钥的加密密钥（Fernet base64 32 字节）；
+# 信息源控制台运行密钥的加密密钥（Fernet base64 32 字节）；
 # 未配置时由 DATABASE_URL 派生，仅建议开发/内部环境使用。
 DATA_SOURCE_SECRET_KEY = os.getenv("DATA_SOURCE_SECRET_KEY", "").strip()
 

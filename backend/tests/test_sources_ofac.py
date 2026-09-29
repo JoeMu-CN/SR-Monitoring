@@ -1,4 +1,4 @@
-"""OFAC SDN 数据源适配器协议测试。"""
+"""OFAC SDN 信息源适配器协议测试。"""
 
 import asyncio
 import csv

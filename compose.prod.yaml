@@ -1,6 +1,6 @@
 services:
   postgres:
-    # PostgreSQL 只需要数据库变量；不要把 Session、数据源密钥或 AI Key 注入数据库容器。
+    # PostgreSQL 只需要数据库变量；不要把 Session、信息源密钥或 AI Key 注入数据库容器。
     env_file: !reset []
     networks:
       - internal

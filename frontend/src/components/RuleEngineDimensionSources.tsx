@@ -18,11 +18,11 @@ const formatDateTime = (value: string | null): string => {
 };
 
 /**
- * 维度引用数据源（观察态/配置态共用，只读）。
+ * 维度引用信息源（观察态/配置态共用，只读）。
  *
  * 信息架构精简（todo 9）：
  * - 默认只渲染已接入（linked=true）的声明信源，保留原有来源深链与启用状态；
- * - 未接入声明项折叠为一行「另有 N 个声明信源未接入」+「去数据源接入」链接（routePaths.sources）；
+ * - 未接入声明项折叠为一行「另有 N 个声明信源未接入」+「去信息源接入」链接（routePaths.sources）；
  * - 零接入维度（`declared_linked === 0`）显著标注「无已接入信源，当前不会产生提醒」；
  * - 输入健康度区块保留；折叠计数与零接入判定以 `api.dimensionInputs` 的声明计数为权威口径，
  *   `dimension.dataSources` 快照仅在接口未返回（加载中/失败）时兜底，不覆盖接口计数。
@@ -44,7 +44,7 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
       data-testid="rule-engine-dimension-sources"
       className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3"
     >
-      <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">引用数据源</h3>
+      <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">引用信息源</h3>
 
       {noLinkedSources && (
         <p
@@ -96,7 +96,7 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
             to={routePaths.sources}
             className="shrink-0 rounded-sm font-bold text-[#004782] underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
-            去数据源接入
+            去信息源接入
           </Link>
         </div>
       )}

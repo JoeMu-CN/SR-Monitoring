@@ -103,7 +103,7 @@ const SOURCE_TONE_CLASSES: Record<(typeof SOURCE_STATE_META)[keyof typeof SOURCE
 };
 
 /**
- * 数据源页每来源新鲜度：最后成功、下一预期与失败/超期原因。
+ * 信息源页每来源新鲜度：最后成功、下一预期与失败/超期原因。
  * 外部核查来源（onDemand 或服务端 state=on_demand）显示「核查 + 最近核查真实时间」，不显示下次预期；
  * 外部核查工具停用时后端归为 disabled，但业务语义仍是外部核查来源，不允许展示为「已停用」。
  * 停用与外部核查来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。

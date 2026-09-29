@@ -1,4 +1,4 @@
-"""数据源控制台运行密钥加密列，并迁移天眼查为控制台配置。
+"""信息源控制台运行密钥加密列，并迁移天眼查为控制台配置。
 
 Revision ID: 0019
 Revises: 0018
@@ -27,7 +27,7 @@ def upgrade() -> None:
             UPDATE data_sources
             SET login_config = '{"mode":"on_demand","secret_source":"console"}'::jsonb,
                 credential_ref = NULL,
-                description = '按需企业工商核查工具，不参与定时采集；运行密钥在数据源控制台统一配置与启停。'
+                description = '按需企业工商核查工具，不参与定时采集；运行密钥在信息源控制台统一配置与启停。'
             WHERE code = 'tianyancha'
             """
         )

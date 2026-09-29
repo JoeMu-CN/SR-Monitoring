@@ -75,7 +75,7 @@ class AgentMessage(Base):
 
 
 class SourceOnboardingDraft(Base):
-    """数据源接入过程中的可恢复草稿，不保存明文凭据。"""
+    """信息源接入过程中的可恢复草稿，不保存明文凭据。"""
 
     __tablename__ = "source_onboarding_drafts"
     __table_args__ = (

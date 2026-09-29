@@ -1,4 +1,4 @@
-"""第三方数据源的域名级节流、熔断和冷却。"""
+"""第三方信息源的域名级节流、熔断和冷却。"""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ class SourceAccessDeferred(RuntimeError):
         self.hostname = hostname
         self.until = until
         self.reason = reason
-        super().__init__(f"数据源域名 {hostname} {reason}，请在 {until.isoformat()} 后重试")
+        super().__init__(f"信息源域名 {hostname} {reason}，请在 {until.isoformat()} 后重试")
 
 
 @dataclass(frozen=True)
@@ -141,7 +141,7 @@ async def controlled_get(
                     if lease:
                         release_host_lease(lease)
                     raise SourceRequestFailed(
-                        "数据源返回重定向；请配置最终官方地址",
+                        "信息源返回重定向；请配置最终官方地址",
                         error_kind="redirect",
                         status_code=response.status_code,
                     )
@@ -169,9 +169,9 @@ async def controlled_get(
         raise
     except httpx.HTTPError as exc:
         if lease:
-            complete_host_lease(lease, network_error="数据源网络请求失败")
+            complete_host_lease(lease, network_error="信息源网络请求失败")
         raise SourceRequestFailed(
-            "数据源网络请求失败", error_kind="network_error"
+            "信息源网络请求失败", error_kind="network_error"
         ) from exc
     except Exception:
         if lease:
@@ -364,7 +364,7 @@ def release_host_lease(lease: HostLease) -> None:
 def _hostname(url: str) -> str:
     hostname = (urlparse(url).hostname or "").rstrip(".").lower()
     if not hostname:
-        raise ValueError("数据源 URL 缺少有效域名")
+        raise ValueError("信息源 URL 缺少有效域名")
     return hostname
 
 
@@ -393,7 +393,7 @@ async def _read_limited(response: httpx.Response, maximum: int) -> bytes:
     length = response.headers.get("content-length")
     if length and length.isdigit() and int(length) > maximum:
         raise SourceRequestFailed(
-            f"数据源响应超过 {maximum} 字节限制", error_kind="response_too_large"
+            f"信息源响应超过 {maximum} 字节限制", error_kind="response_too_large"
         )
     chunks: list[bytes] = []
     total = 0
@@ -401,7 +401,7 @@ async def _read_limited(response: httpx.Response, maximum: int) -> bytes:
         total += len(chunk)
         if total > maximum:
             raise SourceRequestFailed(
-                f"数据源响应超过 {maximum} 字节限制", error_kind="response_too_large"
+                f"信息源响应超过 {maximum} 字节限制", error_kind="response_too_large"
             )
         chunks.append(chunk)
     return b"".join(chunks)

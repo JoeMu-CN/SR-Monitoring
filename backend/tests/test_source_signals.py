@@ -1,4 +1,4 @@
-"""数据源采集记录只读清单和有效期策略契约测试。"""
+"""信息源采集记录只读清单和有效期策略契约测试。"""
 
 import json
 from datetime import UTC, datetime
@@ -13,7 +13,7 @@ from app.signals.models import DataSource, DataSourceAuditLog, RawSignal
 def _source(session: Session, code: str, validity_days: int | None) -> DataSource:
     source = DataSource(
         code=code,
-        name=f"测试数据源 {code}",
+        name=f"测试信息源 {code}",
         source_type="official_api",
         credibility=90,
         auth_type="none",

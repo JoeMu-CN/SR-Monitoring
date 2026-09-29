@@ -380,7 +380,7 @@ const optionsOk: RuleEngineOptions = {
 
 const noCollectionRuns: {items: CollectionRunRead[]; total: number} = {items: [], total: 0};
 
-// 规则引擎页新增数据源：轨迹与全局配置必须有默认 mock，否则 hook 会走真实网络
+// 规则引擎页新增信息源：轨迹与全局配置必须有默认 mock，否则 hook 会走真实网络
 const dimensionTraceEmpty: DimensionTraceRead = {
   available: false, event: null, routing: null, match: null, score: null, samples: [],
 };
@@ -497,7 +497,7 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     expect(screen.queryByText('权限不足')).not.toBeInTheDocument();
   });
 
-  it('agentStatus 返回 403 时数据源列表仍正常渲染（/sources）', async () => {
+  it('agentStatus 返回 403 时信息源列表仍正常渲染（/sources）', async () => {
     defaultMocks({agentStatus: async () => { throw denied403; }});
     renderApp('/sources');
 
@@ -760,8 +760,8 @@ describe('App /overview 与 loadData 解耦', () => {
 
   it('来源配置接口失败但 summary 成功时 /overview 仍显示总览数据', async () => {
     defaultMocks();
-    vi.mocked(api.sources).mockRejectedValue(new ApiError(503, '数据源服务不可用'));
-    vi.mocked(api.sourcesAdmin).mockRejectedValue(new ApiError(503, '数据源服务不可用'));
+    vi.mocked(api.sources).mockRejectedValue(new ApiError(503, '信息源服务不可用'));
+    vi.mocked(api.sourcesAdmin).mockRejectedValue(new ApiError(503, '信息源服务不可用'));
     renderApp('/overview');
 
     expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
@@ -1013,7 +1013,7 @@ describe('App 开屏自检', () => {
     expect(parsed).toBeGreaterThan(0);
   });
 
-  it('仅 risk_view 权限时自检不含 AI/调度器/数据源项，也不请求 monitoring-health', async () => {
+  it('仅 risk_view 权限时自检不含 AI/调度器/信息源项，也不请求 monitoring-health', async () => {
     defaultMocks({permissions: ['risk_view']});
     localStorage.removeItem('sr-selfcheck-at');
     renderApp('/overview');
@@ -1023,7 +1023,7 @@ describe('App 开屏自检', () => {
     expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
     expect(within(splash).queryByText('AI 引擎')).not.toBeInTheDocument();
     expect(within(splash).queryByText('调度器心跳')).not.toBeInTheDocument();
-    expect(within(splash).queryByText('数据源状态')).not.toBeInTheDocument();
+    expect(within(splash).queryByText('信息源状态')).not.toBeInTheDocument();
     // simple 变体的旋转加载行已移除：完整自检层同样不得出现加载指示及"正在加载…"文案。
     expect(within(splash).queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
     expect(within(splash).queryByText('正在加载…')).not.toBeInTheDocument();

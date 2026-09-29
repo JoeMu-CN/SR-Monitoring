@@ -21,7 +21,7 @@
 
 ### 后端监控轨与生产认证
 
-- `backend/app/` 中现有监控轨、认证/RBAC、CSRF、数据源、AI 分析、规则评分、提醒、待复核和保留清理代码
+- `backend/app/` 中现有监控轨、认证/RBAC、CSRF、信息源、AI 分析、规则评分、提醒、待复核和保留清理代码
 - `backend/alembic/env.py`
 - `backend/alembic/versions/0001~0021` 已提交的监控轨历史迁移
 - `backend/alembic/versions/0027_mvp_signal_review_state.py`

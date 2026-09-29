@@ -258,7 +258,7 @@ def build_tyc_gateway(
 ) -> TycGateway:
     """按配置构建网关：无可用密钥时返回占位实现（不调用、不计费）。
 
-    密钥优先级：显式 ``api_key`` 参数 > 数据源控制台加密存库（传入 session 时）。
+    密钥优先级：显式 ``api_key`` 参数 > 信息源控制台加密存库（传入 session 时）。
     启用/停用状态由控制台 enabled 字段控制，本函数只负责取到可用密钥。
     """
     from sqlalchemy import select
@@ -288,5 +288,5 @@ class UnconfiguredTycGateway:
     async def verify(self, company_name: str) -> dict[str, object]:
         return {
             "status": "not_configured",
-            "message": "天眼查网关未配置：请在数据源控制台配置运行密钥",
+            "message": "天眼查网关未配置：请在信息源控制台配置运行密钥",
         }

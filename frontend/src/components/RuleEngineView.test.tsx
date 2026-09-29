@@ -129,7 +129,7 @@ const renderAdminConfig = (
 };
 
 beforeEach(() => {
-  // 壳组件 hook 的四个数据源 + 信号过滤配置全部固定：任何用例都不走真实网络
+  // 壳组件 hook 的四个信息源 + 信号过滤配置全部固定：任何用例都不走真实网络
   vi.spyOn(api, 'dimensionInputs').mockResolvedValue(inputsOk());
   vi.spyOn(api, 'ruleEngineOptions').mockResolvedValue(ruleEngineOptionsMock());
   vi.spyOn(api, 'dimensionTrace').mockResolvedValue(emptyTrace());
@@ -143,7 +143,7 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('规则引擎引用数据源真实状态', () => {
+describe('规则引擎引用信息源真实状态', () => {
   it('enabled 信源渲染真实状态且链接 href 正确', async () => {
     vi.spyOn(api, 'dimensionInputs').mockResolvedValue({
       declared_total: 2, declared_linked: 1, declared_enabled: 1,
@@ -275,7 +275,7 @@ describe('规则引擎引用数据源真实状态', () => {
     expect(screen.getByTestId('rule-engine-observation')).toBeInTheDocument();
     // 已接入信源在观察态保持可见（未接入项的折叠汇总由 todo 9 的信源组件测试覆盖）
     expect((await screen.findAllByText('中央气象台')).length).toBeGreaterThan(0);
-    expect(screen.getByText('引用数据源')).toBeInTheDocument();
+    expect(screen.getByText('引用信息源')).toBeInTheDocument();
   });
 });
 
@@ -320,7 +320,7 @@ describe('规则引擎观察/配置双态：模式感知壳层挂载', () => {
     expect(screen.getByText('地缘政治与安全 规则配置')).toBeInTheDocument();
     expect(screen.getByText('ID: geopolitical-v1')).toBeInTheDocument();
     expect(screen.getByText('提醒失效')).toBeInTheDocument();
-    const link = screen.getByRole('link', {name: '数据源'});
+    const link = screen.getByRole('link', {name: '信息源'});
     expect(link).toHaveAttribute('href', '/sources');
 
     // 配置态沙箱入口与信号过滤区块出现（写控件细节由各子组件测试与 shell.test 覆盖）
@@ -449,7 +449,7 @@ describe('规则引擎事件有效期控件移除', () => {
 
     expect(screen.getByText('提醒失效')).toBeInTheDocument();
     expect(screen.getByText(/提醒失效由信号有效期策略决定/)).toBeInTheDocument();
-    const link = screen.getByRole('link', {name: '数据源'});
+    const link = screen.getByRole('link', {name: '信息源'});
     expect(link).toHaveAttribute('href', '/sources');
   });
 });

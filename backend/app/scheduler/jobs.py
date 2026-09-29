@@ -1,7 +1,7 @@
 """独立 Scheduler 进程（技术方案 5.1：Web 与调度分离）。
 
 定时任务：
-- collect_job：定时采集所有启用的拉取式数据源（nmc-weather），并处理新信号
+- collect_job：定时采集所有启用的拉取式信息源（nmc-weather），并处理新信号
   （AI 解析 → 事件归并 → 匹配 → 评分 → 提醒）。
 - expire_job：定期将超过 expires_at 的提醒标记为 expired。
 - cleanup_job：每日数据保留清理（90 天 / 30 天轮转）。
@@ -98,7 +98,7 @@ _pending_signal_processing_lock = Lock()
 def _collect_enabled_sources(
     *, source_ids: list[int] | None = None, only_without_schedule: bool = False
 ) -> dict[str, int]:
-    """采集启用的拉取式数据源，返回 ``{source_code: created_count}``。"""
+    """采集启用的拉取式信息源，返回 ``{source_code: created_count}``。"""
     summary: dict[str, int] = {}
     with SessionLocal() as session:
         filters = [DataSource.enabled.is_(True)]
@@ -111,7 +111,7 @@ def _collect_enabled_sources(
             try:
                 pull_adapter = build_pull_adapter(source)
             except Exception as exc:  # 非拉取式（manual-json）或未实现
-                logger.info("跳过数据源 %s（非拉取式）: %s", source.code, exc)
+                logger.info("跳过信息源 %s（非拉取式）: %s", source.code, exc)
                 continue
             # 任务开始写观测（独立短事务；写失败不影响采集业务）。
             runtime.record_job_started(runtime.source_collection_job_key(source.id))
@@ -119,11 +119,11 @@ def _collect_enabled_sources(
                 run = collect_source(session, source, pull_adapter)
             except CollectionDeferred as exc:
                 # 请求受控延后：中性完成，不写失败观测、不计入失败摘要。
-                logger.info("数据源 %s 采集受控延后: %s", source.code, exc)
+                logger.info("信息源 %s 采集受控延后: %s", source.code, exc)
                 runtime.record_source_collection_deferred(source.id)
                 continue
             except CollectionFailed as exc:
-                logger.error("数据源 %s 采集失败: %s", source.code, exc)
+                logger.error("信息源 %s 采集失败: %s", source.code, exc)
                 summary[source.code] = -1
                 runtime.record_source_collection(source.id, succeeded=False)
                 continue
@@ -134,7 +134,7 @@ def _collect_enabled_sources(
             summary[source.code] = run.created_count
             runtime.record_source_collection(source.id, succeeded=True)
             logger.info(
-                "数据源 %s 采集完成: fetched=%d created=%d dup=%d",
+                "信息源 %s 采集完成: fetched=%d created=%d dup=%d",
                 source.code,
                 run.fetched_count,
                 run.created_count,
@@ -144,14 +144,14 @@ def _collect_enabled_sources(
 
 
 def collect_source_job(source_id: int) -> None:
-    """按数据源自己的 cron 触发一次采集，并处理本次新增信号。"""
+    """按信息源自己的 cron 触发一次采集，并处理本次新增信号。"""
     try:
         summary = _collect_enabled_sources(source_ids=[source_id])
         if summary:
             _process_pending_signals()
-            logger.info("数据源独立调度完成: %s", summary)
+            logger.info("信息源独立调度完成: %s", summary)
     except Exception as exc:
-        logger.exception("数据源 %s 独立调度异常: %s", source_id, exc)
+        logger.exception("信息源 %s 独立调度异常: %s", source_id, exc)
 
 
 def collect_tyc_for_suppliers_job() -> None:
@@ -171,7 +171,7 @@ def collect_tyc_for_suppliers_job() -> None:
                 select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
             )
             if source is None:
-                logger.warning("天眼查数据源未配置，跳过供应商批量核查")
+                logger.warning("天眼查信息源未配置，跳过供应商批量核查")
                 return
             try:
                 result = run_tyc_batch(session, source)

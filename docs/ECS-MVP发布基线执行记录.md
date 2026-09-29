@@ -69,7 +69,7 @@
 - [x] 生成 ECS MVP 候选镜像：`supplierriskmonitoring-app:ecs-mvp-candidate`，digest 见本轮验证结果。
 - [x] 完成空库迁移、后端串行测试、前端生产构建、Ruff、mypy，并生成候选镜像 SBOM；Docker Scout Critical/High 扫描通过。
 - [ ] 配置 ECS、ACR、HTTPS 证书、安全组、备份和监控。
-- [ ] 进行首次部署、认证联调、两条真实数据源联调和备份恢复演练。
+- [ ] 进行首次部署、认证联调、两条真实信息源联调和备份恢复演练。
 
 ## 验收与止损命令
 
@@ -238,7 +238,7 @@ docker compose --env-file deploy/.env.production --env-file deploy/.env.stage0 \
 - 已在两个调度路径共享的 `_process_pending_signals()` 入口加入进程内非阻塞锁；一个批次运行时，重叠调用立即跳过，不再查询或处理同一批信号。
 - 该实现覆盖当前单 Scheduler 容器，避免重复 AI 调用和 `risk_events.dedup_key` 并发写入；不改变采集频率、信号筛选和既有事务逻辑。
 - 多 Scheduler 进程或多副本部署前，必须升级为 PostgreSQL advisory lock 或数据库级原子领取；当前不得扩容 Scheduler 副本。
-- 定向并发测试 3 项通过；Scheduler、风险处理和数据源采集相关回归 20 项通过；Ruff 通过，`git diff --check` 通过。
+- 定向并发测试 3 项通过；Scheduler、风险处理和信息源采集相关回归 20 项通过；Ruff 通过，`git diff --check` 通过。
 - 生产代码 `app/scheduler/jobs.py` 的 mypy 检查通过；包含测试文件的定向检查仍被该文件原有的 4 处类型问题阻断（既有未标注 fixture 参数与过期 ignore），本次未扩大范围修复这些历史问题。
 - 已以同一新 digest 同时重建 App 与 Scheduler，`RESEARCH_TRACK_ENABLED=false`；PostgreSQL 和数据卷未重建，Nginx 仅因 App 容器地址变化重启一次。
 - 本地候选镜像 `supplier-risk-monitoring:ecs-mvp-20260813-scheduler-race` 构建成功，镜像内相关回归 21 项通过；已推送 ACR，不可变 digest 为 `sha256:ba7c44416f37f2927cf3022d9c6740968fd090b7bb35236763edebfdd214c1f4`。

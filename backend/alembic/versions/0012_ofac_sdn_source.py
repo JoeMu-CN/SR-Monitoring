@@ -1,4 +1,4 @@
-"""注册 OFAC SDN 官方公开制裁名单数据源。
+"""注册 OFAC SDN 官方公开制裁名单信息源。
 
 Revision ID: 0012
 Revises: 0011

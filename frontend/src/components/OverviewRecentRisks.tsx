@@ -26,7 +26,7 @@ export const OverviewRecentRisks = ({recentRisks, onSelectRisk, onViewAllRisks}:
       <div className="my-auto flex flex-col items-center justify-center p-10 text-center">
         <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-[#185fa5] dark:border-slate-700 dark:bg-slate-800"><ShieldCheck className="h-7 w-7"/></div>
         <h3 className="text-[15px] font-bold text-slate-900 dark:text-white">暂无当前风险提醒</h3>
-        <p className="mt-1 max-w-sm text-[12px] text-slate-500">完成数据源采集后，新的风险信号会显示在这里。</p>
+        <p className="mt-1 max-w-sm text-[12px] text-slate-500">完成信息源采集后，新的风险信号会显示在这里。</p>
       </div>
     ) : (
       <>

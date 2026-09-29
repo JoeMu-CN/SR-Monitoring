@@ -11,7 +11,7 @@ from app.signals.sources import NmcWeatherAdapter, OfacSdnAdapter
 def test_source_console_requires_admin_and_audits_changes(client, db_session, auth_as):
     payload = {
         "code": "custom-official-test",
-        "name": "测试官方数据源",
+        "name": "测试官方信息源",
         "source_type": "official_api",
         "credibility": 92,
         "schedule": "0 */6 * * *",
@@ -78,7 +78,7 @@ def test_source_console_rejects_invalid_schedule(client):
 def test_tianyancha_console_key_roundtrip_without_exposing_it(
     client, db_session
 ) -> None:
-    """天眼查运行密钥在数据源控制台配置：加密存库、接口只暴露末四位。"""
+    """天眼查运行密钥在信息源控制台配置：加密存库、接口只暴露末四位。"""
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     source_id = source.id

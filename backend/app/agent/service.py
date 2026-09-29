@@ -23,8 +23,8 @@ from app.agent.tools import Tool, build_tools
 HISTORY_WINDOW = 8
 RISK_QUERY = "risk_query"
 SOURCE_ONBOARDING = "source_onboarding"
-START_ONBOARDING = "开始新的数据源接入"
-RESUME_ONBOARDING = "继续当前数据源接入"
+START_ONBOARDING = "开始新的信息源接入"
+RESUME_ONBOARDING = "继续当前信息源接入"
 _HTTPS_URL = re.compile(r"https://[^\s<>\"']+", re.IGNORECASE)
 _SENSITIVE_TEXT = re.compile(
     r"(?i)(bearer\s+|token\s*[=:]\s*|api[_-]?key\s*[=:]\s*|password\s*[=:]\s*|"
@@ -44,7 +44,7 @@ async def chat(
     llm: AgentLLM | None = None,
     owner_user_id: int,
 ) -> ChatResponse:
-    """风险查询 Agent：永久只读，不加载数据源写入工具。"""
+    """风险查询 Agent：永久只读，不加载信息源写入工具。"""
     return await _chat(
         session,
         question,
@@ -66,7 +66,7 @@ async def chat_source_onboarding(
     llm: AgentLLM | None = None,
     owner_user_id: int,
 ) -> ChatResponse:
-    """数据源接入 Agent：仅加载接入工具，发布和采集需要当前消息确认。"""
+    """信息源接入 Agent：仅加载接入工具，发布和采集需要当前消息确认。"""
     active_session, draft = _load_or_create_onboarding_draft(
         session,
         session_id=session_id,
@@ -241,9 +241,9 @@ def _load_or_create_onboarding_draft(
             )
         )
         if draft is None:
-            raise AgentSessionAccessError("数据源接入草稿不存在或无权访问")
+            raise AgentSessionAccessError("信息源接入草稿不存在或无权访问")
         if draft.source_id is not None:
-            raise AgentError("该草稿已生成正式数据源，请在数据源管理页继续操作")
+            raise AgentError("该草稿已生成正式信息源，请在信息源管理页继续操作")
         if session_id is not None and session_id != draft.agent_session_id:
             raise AgentError("草稿与会话不匹配")
         return (

@@ -1,4 +1,4 @@
-"""中央气象台数据源适配器协议级测试（MockTransport，不访问真实网络）。"""
+"""中央气象台信息源适配器协议级测试（MockTransport，不访问真实网络）。"""
 
 import asyncio
 import json

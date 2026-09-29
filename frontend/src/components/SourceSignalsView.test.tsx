@@ -60,7 +60,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('数据源采集记录清单', () => {
+describe('信息源采集记录清单', () => {
   it('将缺失查询参数规范化为当前有效第一页', async () => {
     const request = vi.spyOn(api, 'sourceSignals').mockResolvedValue(emptyResponse);
 

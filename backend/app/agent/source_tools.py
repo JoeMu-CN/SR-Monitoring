@@ -1,4 +1,4 @@
-"""仅管理员会话可用的数据源接入工具。"""
+"""仅管理员会话可用的信息源接入工具。"""
 
 import re
 from datetime import UTC, datetime
@@ -20,7 +20,7 @@ _ENV_REF = re.compile(r"env:[A-Z][A-Z0-9_]{0,127}\Z")
 class InspectSourceUrlTool:
     name = "inspect_source_url"
     description = (
-        "受控探测官方 HTTPS 数据源地址，识别 JSON、CSV 或静态 HTML 并返回结构摘要，不落库。"
+        "受控探测官方 HTTPS 信息源地址，识别 JSON、CSV 或静态 HTML 并返回结构摘要，不落库。"
     )
     parameters: dict[str, object] = {
         "type": "object",
@@ -40,7 +40,7 @@ class InspectSourceUrlTool:
 
 class PreviewSourceAdapterTool:
     name = "preview_source_adapter"
-    description = "按声明式配置实时访问官方 HTTPS 数据源并预览最多 10 条标准化信号，不落库。"
+    description = "按声明式配置实时访问官方 HTTPS 信息源并预览最多 10 条标准化信号，不落库。"
     parameters: dict[str, object] = {
         "type": "object",
         "properties": {
@@ -77,7 +77,7 @@ class PreviewSourceAdapterTool:
 
 class CreateSourceAdapterDraftTool:
     name = "create_source_adapter_draft"
-    description = "校验并保存一个默认停用的声明式数据源草稿。不会发布或启用。"
+    description = "校验并保存一个默认停用的声明式信息源草稿。不会发布或启用。"
     parameters: dict[str, object] = {
         "type": "object",
         "properties": {
@@ -108,7 +108,7 @@ class CreateSourceAdapterDraftTool:
         if not code or not name or not source_type:
             return {"status": "error", "message": "code、name、source_type 不能为空"}
         if session.scalar(select(DataSource).where(DataSource.code == code)) is not None:
-            return {"status": "error", "message": "数据源编码已存在"}
+            return {"status": "error", "message": "信息源编码已存在"}
         try:
             credibility = _int_value(arguments.get("credibility"))
             if not 0 <= credibility <= 100:
@@ -166,7 +166,7 @@ class CreateSourceAdapterDraftTool:
 class PublishSourceAdapterTool:
     name = "publish_source_adapter"
     description = (
-        "实时验证并发布数据源适配器；发布后仍保持停用。"
+        "实时验证并发布信息源适配器；发布后仍保持停用。"
         "仅在用户当前消息明确说‘确认发布’时可用。"
     )
     parameters: dict[str, object] = {
@@ -188,7 +188,7 @@ class PublishSourceAdapterTool:
             return {"status": "confirmation_required", "message": "请管理员明确输入“确认发布”"}
         source = session.get(DataSource, _int_value(arguments.get("source_id")))
         if source is None or not source.adapter_config:
-            return {"status": "error", "message": "数据源或适配器草稿不存在"}
+            return {"status": "error", "message": "信息源或适配器草稿不存在"}
         try:
             spec = AdapterSpec.model_validate(source.adapter_config)
             preview = await preview_adapter(
@@ -254,7 +254,7 @@ class PublishSourceAdapterTool:
 
 class RunSourceNowTool:
     name = "run_source_now"
-    description = "立即正式采集一个已发布且已启用的数据源。仅在用户当前消息明确说“立即采集”时可用。"
+    description = "立即正式采集一个已发布且已启用的信息源。仅在用户当前消息明确说“立即采集”时可用。"
     parameters: dict[str, object] = {
         "type": "object",
         "properties": {
@@ -271,11 +271,11 @@ class RunSourceNowTool:
             return {"status": "confirmation_required", "message": "请管理员明确输入“立即采集”"}
         source = session.get(DataSource, _int_value(arguments.get("source_id")))
         if source is None:
-            return {"status": "error", "message": "数据源不存在"}
+            return {"status": "error", "message": "信息源不存在"}
         if not source.enabled:
             return {
                 "status": "error",
-                "message": "数据源尚未启用",
+                "message": "信息源尚未启用",
                 "source_id": source.id,
                 "code": source.code,
             }

@@ -1048,7 +1048,7 @@ def test_collect_source_deferred_records_neutral_observation(
 
     def _deferred(session: object, src: object, adapter: object) -> object:
         del session, src, adapter
-        raise CollectionDeferred("数据源域名冷却中")
+        raise CollectionDeferred("信息源域名冷却中")
 
     monkeypatch.setattr(scheduler_jobs, "collect_source", _deferred)
 

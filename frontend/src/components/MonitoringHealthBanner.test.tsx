@@ -114,7 +114,7 @@ describe('MonitoringHealthBanner 诊断不可用', () => {
   });
 });
 
-describe('MonitoringSourceFreshness 数据源页每来源新鲜度', () => {
+describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
   it('ok 来源显示最近成功与下次预期时间', () => {
     render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
     const cell = screen.getByTestId('source-health-17');

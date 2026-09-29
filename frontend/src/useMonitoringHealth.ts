@@ -34,7 +34,7 @@ export type MonitoringHealthSnapshot =
 interface UseMonitoringHealthOptions {
   /** 当前账号是否具备 source_status_view 权限；false 时不发任何请求。 */
   readonly enabled: boolean;
-  /** 当前路由是否展示诊断（总览/数据源）；false 时暂停轮询。 */
+  /** 当前路由是否展示诊断（总览/信息源）；false 时暂停轮询。 */
   readonly active: boolean;
   /**
    * 外部刷新版本号（默认 0）：递增时若 enabled+active 且页面可见，

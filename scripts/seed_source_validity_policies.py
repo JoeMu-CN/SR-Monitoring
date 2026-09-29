@@ -1,4 +1,4 @@
-"""数据源有效期策略基线种子（幂等、可重复执行、可版本化）。
+"""信息源有效期策略基线种子（幂等、可重复执行、可版本化）。
 
 在 app 容器内执行；`app` 包已随镜像安装，不是独立 PEP 723 脚本。
 
@@ -78,7 +78,7 @@ WEATHER_EXPECTED: Final[PolicyJSON] = {
     "review_required": True,
 }
 AUDIT_ACTOR_ROLE: Final = "system"
-AUDIT_REASON: Final = "数据源有效期策略基线配置"
+AUDIT_REASON: Final = "信息源有效期策略基线配置"
 AUDIT_EXECUTION: Final = "seed_script"
 APPLIES_TO: Final = "new_signals_only"
 

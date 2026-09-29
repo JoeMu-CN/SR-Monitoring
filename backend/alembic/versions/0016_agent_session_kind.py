@@ -1,4 +1,4 @@
-"""隔离风险查询与数据源接入 Agent 会话。
+"""隔离风险查询与信息源接入 Agent 会话。
 
 Revision ID: 0016
 Revises: 0015

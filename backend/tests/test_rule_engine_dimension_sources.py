@@ -1,4 +1,4 @@
-"""维度引用信源实时 join 真实数据源测试（任务 13 + 任务 14）。
+"""维度引用信源实时 join 真实信息源测试（任务 13 + 任务 14）。
 
 覆盖任务 13：表中存在且 enabled 的信源返回真实状态；表中存在但 disabled 的信源
 enabled=false（不因 declared_status='connected' 而被渲染成已接入）；

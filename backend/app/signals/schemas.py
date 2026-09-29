@@ -446,7 +446,7 @@ class SignalFilterConfigUpdate(BaseModel):
 
 
 class RunAllSourcesItem(BaseModel):
-    """全量刷新单个数据源的结果。"""
+    """全量刷新单个信息源的结果。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -458,7 +458,7 @@ class RunAllSourcesItem(BaseModel):
 
 
 class RunAllSourcesResult(BaseModel):
-    """全量刷新所有可采集数据源的汇总。"""
+    """全量刷新所有可采集信息源的汇总。"""
 
     model_config = ConfigDict(extra="forbid")
 

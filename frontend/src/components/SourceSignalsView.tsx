@@ -49,7 +49,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
     setExpandedIds(new Set());
 
     if (!Number.isSafeInteger(numericSourceId) || numericSourceId < 1) {
-      setError(new ApiError(404, '数据源不存在'));
+      setError(new ApiError(404, '信息源不存在'));
       setLoading(false);
       return;
     }
@@ -103,7 +103,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
 
   if (error) {
     const status = error instanceof ApiError ? error.status : null;
-    const title = status === 404 ? '数据源不存在' : status === 403 ? '无权访问采集记录' : '采集记录加载失败';
+    const title = status === 404 ? '信息源不存在' : status === 403 ? '无权访问采集记录' : '采集记录加载失败';
     return (
       <section role="alert" className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-start justify-center gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <h1 className="text-xl font-black text-slate-900 dark:text-white">{title}</h1>
@@ -112,7 +112,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
           {status !== 404 && status !== 403 && (
             <button type="button" onClick={() => setRetryKey((value) => value + 1)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">重试</button>
           )}
-          <Link to={routePaths.sources} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50 dark:border-slate-600 dark:text-blue-300 dark:hover:bg-slate-700">返回数据源清单</Link>
+          <Link to={routePaths.sources} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-blue-700 hover:bg-blue-50 dark:border-slate-600 dark:text-blue-300 dark:hover:bg-slate-700">返回信息源清单</Link>
         </div>
       </section>
     );
@@ -127,7 +127,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
     <div className="space-y-5 pb-20 lg:pb-8">
       <header className="space-y-3">
         <Link to={routePaths.sources} className="inline-flex min-h-11 items-center gap-2 rounded-lg text-sm font-bold text-blue-700 hover:underline dark:text-blue-300">
-          <ArrowLeft aria-hidden="true" className="h-4 w-4" />返回数据源清单
+          <ArrowLeft aria-hidden="true" className="h-4 w-4" />返回信息源清单
         </Link>
         <div>
           <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">{data.source.name} · 已采集记录</h1>
@@ -161,7 +161,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
         {data.items.length === 0 ? (
           <div className="p-10 text-center">
             <h2 className="text-base font-bold text-slate-900 dark:text-white">{scope === 'valid' ? '暂无当前有效记录' : '暂无历史采集记录'}</h2>
-            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{scope === 'valid' ? '可切换到全部历史，查看已过期的留存记录。' : '该数据源尚未采集到记录。'}</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{scope === 'valid' ? '可切换到全部历史，查看已过期的留存记录。' : '该信息源尚未采集到记录。'}</p>
           </div>
         ) : (
           <div role="list" className="divide-y divide-slate-200 dark:divide-slate-700">

@@ -1,4 +1,4 @@
-"""数据源信源级信号有效期（signal_validity_days）。
+"""信息源信源级信号有效期（signal_validity_days）。
 
 Revision ID: 0046
 Revises: 0045

@@ -1,4 +1,4 @@
-"""数据源控制台运行密钥的加密存储。
+"""信息源控制台运行密钥的加密存储。
 
 控制台保存的 API Key（如天眼查 MCP Key）以 Fernet 对称加密的密文落入
 ``data_sources.api_key_encrypted``，运行时（天眼查网关等）按需解密使用，

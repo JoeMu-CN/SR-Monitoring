@@ -215,7 +215,7 @@ class VerifyCompanyTool:
         if not usage.enabled:
             return {
                 "status": "not_configured",
-                "message": "天眼查未启用：请在数据源控制台配置运行密钥并启用",
+                "message": "天眼查未启用：请在信息源控制台配置运行密钥并启用",
                 "usage": usage.to_dict(),
             }
         if not usage.allowed:

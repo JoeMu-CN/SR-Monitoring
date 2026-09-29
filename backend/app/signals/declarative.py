@@ -81,9 +81,9 @@ class DeclarativeRequest(BaseModel):
     def require_https(cls, value: str) -> str:
         parsed = urlparse(value)
         if parsed.username or parsed.password:
-            raise ValueError("数据源 URL 不得内嵌凭据")
+            raise ValueError("信息源 URL 不得内嵌凭据")
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("数据源 URL 必须是无内嵌凭据的 HTTP(S) 地址")
+            raise ValueError("信息源 URL 必须是无内嵌凭据的 HTTP(S) 地址")
         return value
 
     @model_validator(mode="after")
@@ -92,7 +92,7 @@ class DeclarativeRequest(BaseModel):
         host = (parsed.hostname or "").rstrip(".").lower()
         if parsed.scheme == "http" and host not in self.allow_http_hosts:
             raise ValueError(
-                f"数据源 URL 使用 HTTP 明文，须将 {host} 加入 allow_http_hosts 白名单"
+                f"信息源 URL 使用 HTTP 明文，须将 {host} 加入 allow_http_hosts 白名单"
             )
         return self
 
@@ -144,9 +144,9 @@ class AdapterSpec(BaseModel):
     @model_validator(mode="after")
     def validate_format_options(self) -> AdapterSpec:
         if self.format == "json" and not self.items_path:
-            raise ValueError("JSON 数据源必须配置 items_path")
+            raise ValueError("JSON 信息源必须配置 items_path")
         if self.format == "html" and not self.items_selector:
-            raise ValueError("HTML 数据源必须配置 items_selector")
+            raise ValueError("HTML 信息源必须配置 items_selector")
         if len(set(self.fingerprint_fields)) != len(self.fingerprint_fields):
             raise ValueError("fingerprint_fields 不得重复")
         return self
@@ -227,7 +227,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 raise
         except SourceRequestFailed as exc:
             primary_error = SourceFetchError(
-                f"声明式数据源请求失败: {exc}",
+                f"声明式信息源请求失败: {exc}",
                 error_kind=exc.error_kind,
                 http_status=exc.status_code,
             )
@@ -266,7 +266,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             )
         except SourceRequestFailed as exc:
             raise SourceFetchError(
-                f"声明式数据源回退抓取失败: {exc}",
+                f"声明式信息源回退抓取失败: {exc}",
                 error_kind="crawler_unavailable",
                 http_status=exc.status_code,
             ) from exc
@@ -382,7 +382,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
                 }
             )
         except ValueError as exc:
-            raise SourceFetchError(f"声明式数据源字段校验失败: {exc}") from exc
+            raise SourceFetchError(f"声明式信息源字段校验失败: {exc}") from exc
 
     def fingerprint(self, signal: ManualSignalInput) -> str:
         values = signal.model_dump(mode="json")
@@ -585,7 +585,7 @@ async def inspect_source_url(
         raise
     except SourceRequestFailed as exc:
         raise SourceFetchError(
-            f"数据源探测请求失败: {exc}",
+            f"信息源探测请求失败: {exc}",
             error_kind=exc.error_kind,
             http_status=exc.status_code,
         ) from exc
@@ -716,7 +716,7 @@ async def validate_public_https_url(
     if parsed.scheme == "http" and host in (allow_http_hosts or set()):
         pass  # 显式白名单放行 HTTP 明文
     elif parsed.scheme != "https" or not host:
-        raise SourceFetchError("仅允许访问 HTTPS 数据源")
+        raise SourceFetchError("仅允许访问 HTTPS 信息源")
     if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
         raise SourceFetchError("禁止访问本机或内部网络地址")
     try:
@@ -731,10 +731,10 @@ async def validate_public_https_url(
     try:
         infos = await asyncio.to_thread(socket.getaddrinfo, host, parsed.port or 443)
     except OSError as exc:
-        raise SourceFetchError(f"数据源域名解析失败: {host}") from exc
+        raise SourceFetchError(f"信息源域名解析失败: {host}") from exc
     addresses = sorted({cast(str, item[4][0]).split("%")[0] for item in infos})
     if not addresses:
-        raise SourceFetchError("数据源域名解析到空地址集")
+        raise SourceFetchError("信息源域名解析到空地址集")
     public_ips: list[str] = []
     private_ips: list[str] = []
     for address in addresses:
@@ -744,15 +744,15 @@ async def validate_public_https_url(
             private_ips.append(address)
     if not public_ips:
         logger.warning(
-            "数据源域名 %s 解析到 %d 个地址，全部非公网：%s",
+            "信息源域名 %s 解析到 %d 个地址，全部非公网：%s",
             host,
             len(addresses),
             addresses,
         )
-        raise SourceFetchError("数据源域名解析到非公网地址")
+        raise SourceFetchError("信息源域名解析到非公网地址")
     if private_ips:
         logger.warning(
-            "数据源 %s 混合公私网 IP：公网 %d 个、私网 %d 个，仍放行（CDN/负载均衡）",
+            "信息源 %s 混合公私网 IP：公网 %d 个、私网 %d 个，仍放行（CDN/负载均衡）",
             host,
             len(public_ips),
             len(private_ips),
@@ -765,7 +765,7 @@ def _parse_rows(spec: AdapterSpec, body: bytes) -> list[dict[str, object]]:
     try:
         text = body.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise SourceFetchError("数据源响应不是 UTF-8 编码") from exc
+        raise SourceFetchError("信息源响应不是 UTF-8 编码") from exc
     if spec.format == "html":
         parser = _HtmlTreeParser()
         parser.feed(text)
@@ -777,11 +777,11 @@ def _parse_rows(spec: AdapterSpec, body: bytes) -> list[dict[str, object]]:
         try:
             return [dict(row) for row in csv.DictReader(io.StringIO(text))]
         except csv.Error as exc:
-            raise SourceFetchError("数据源响应不是有效 CSV") from exc
+            raise SourceFetchError("信息源响应不是有效 CSV") from exc
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise SourceFetchError("数据源响应不是有效 JSON") from exc
+        raise SourceFetchError("信息源响应不是有效 JSON") from exc
     json_items = _read_path(payload, spec.items_path)
     if not isinstance(json_items, list):
         raise SourceFetchError("items_path 未指向 JSON 数组")
@@ -813,7 +813,7 @@ def _credential_headers(
         raise SourceFetchError("声明式适配器当前仅支持无认证、API Key Header 和 Bearer Token")
     match = _ENV_REF.fullmatch(credential_ref or "")
     if not match:
-        raise SourceFetchError("认证数据源必须使用 env:VARIABLE_NAME 形式的凭据引用")
+        raise SourceFetchError("认证信息源必须使用 env:VARIABLE_NAME 形式的凭据引用")
     secret = os.getenv(match.group(1))
     if not secret:
         raise SourceFetchError("凭据引用未配置")

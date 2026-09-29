@@ -111,7 +111,7 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
             输入健康度加载失败：{inputsError}
           </p>
         ) : inputs === null ? (
-          <p className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"><span className="material-symbols-outlined animate-spin text-[12px] leading-none" aria-hidden="true">progress_activity</span><span className="sr-only">输入健康度加载中…</span></p>
+          <p className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500"><span className="sr-only">输入健康度加载中…</span></p>
         ) : inputs.has_input ? (
           <div className="space-y-1">
             <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">

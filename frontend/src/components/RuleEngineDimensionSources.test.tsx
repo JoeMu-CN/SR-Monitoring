@@ -178,11 +178,12 @@ describe('引用信息源：未接入信源默认折叠（迁移旧 106-128 / 16
   });
 
   it('inputs 加载中（null）：有已接入项时不误标零接入，信源列表照常渲染', () => {
-    renderSources(makeDimension({dataSources: [nmcSource]}), null);
+    const {container} = renderSources(makeDimension({dataSources: [nmcSource]}), null);
 
     expect(screen.getByText('中央气象台')).toBeInTheDocument();
     expect(screen.queryByText('无已接入信源，当前不会产生提醒')).not.toBeInTheDocument();
     expect(screen.getByText('输入健康度加载中…')).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).toBeNull();
   });
 });
 

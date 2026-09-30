@@ -395,6 +395,41 @@ export interface SourceSignalRead {
   readonly lifecycle_action: LifecycleAction;
   readonly validity_policy_version: string | null;
   readonly validity_reason: ValidityReasonRead;
+  /** 后端受控摘要：报告信号取重点摘要，其余回落 content 截断；空值由后端给稳定占位。 */
+  readonly summary: string;
+}
+
+/* ── 天眼查多维度核查报告（后端 TycRiskReport，Todo 6/10 契约） ───────── */
+
+export type TycDimensionStatus = 'success' | 'empty' | 'error' | 'quota_exhausted' | 'busy';
+
+export type TycRiskLevel = '高风险' | '警示' | '中风险' | '低风险';
+
+export interface TycDimensionFinding {
+  readonly key: string;
+  readonly name: string;
+  readonly status: TycDimensionStatus;
+  readonly risk_level: TycRiskLevel | null;
+  readonly hit: boolean;
+  readonly summary: string;
+  readonly evidence_refs: readonly string[];
+  readonly raw_ref: string | null;
+}
+
+export interface TycRiskReport {
+  readonly report_kind: 'supplier_profile';
+  readonly company_name: string;
+  readonly supplier_code: string;
+  readonly credit_code: string | null;
+  readonly reg_status: string | null;
+  readonly generated_at: string;
+  readonly period_key: string;
+  readonly dimensions: readonly TycDimensionFinding[];
+}
+
+export interface SourceSignalDetailRead extends SourceSignalRead {
+  readonly report: TycRiskReport | null;
+  readonly report_truncated: boolean;
 }
 
 export interface SourceSignalListResponse {
@@ -478,12 +513,25 @@ export interface RunAllSourcesResult {
   items: RunAllSourcesItem[];
 }
 
-/** 天眼查专用同步批量核查（POST /api/v1/sources/{id}/run-tyc-batch）结果契约。 */
+/** 天眼查逐工具五态计数（后端 ToolOutcomeCounts）。 */
+export interface ToolOutcomeCounts {
+  readonly success_with_records: number;
+  readonly empty: number;
+  readonly error: number;
+  readonly quota_exhausted: number;
+  readonly busy: number;
+}
+
+/** 天眼查单供应商同步核查（POST /api/v1/sources/{id}/run-tyc-batch?supplier_id=）结果契约。 */
 export interface TycBatchRunResult {
   readonly source_id: number;
-  /** 本轮纳入核查的启用供应商总数。 */
+  /** 该供应商的真实 SHA-256 分片桶位（0 起始），用于与周度分片核对。 */
+  readonly shard_index: number;
+  readonly shard_count: number;
+  readonly supplier_id: number | null;
+  /** 本轮纳入核查的供应商数；单供应商手动核查固定为 1。 */
   readonly targeted_count: number;
-  /** 实际发起过天眼查调用的供应商数；额度耗尽时小于 targeted_count。 */
+  /** 实际发起过天眼查调用的次数；额度耗尽时小于 targeted_count。 */
   readonly attempted_count: number;
   readonly created_count: number;
   readonly duplicate_count: number;
@@ -492,6 +540,8 @@ export interface TycBatchRunResult {
   readonly failed_count: number;
   /** 调用额度耗尽导致本轮提前停止。 */
   readonly quota_exhausted: boolean;
+  /** 逐工具五态计数：至少按 tool_name 聚合 success_with_records/empty/error/quota_exhausted/busy。 */
+  readonly per_tool_counts: Readonly<Record<string, ToolOutcomeCounts>>;
 }
 
 export interface DimensionSourceRead {
@@ -889,6 +939,11 @@ export class ApiError extends Error {
   }
 }
 
+// FastAPI/Pydantic 校验错误的精确中文化映射：只替换已知英文消息，其余消息与结构化 detail 原样保留。
+const pydanticMessageLabels: Record<string, string> = {
+  'Field required': '缺少必填参数',
+};
+
 function formatDetail(raw: unknown, status: number): string {
   if (typeof raw === 'string') return raw;
   if (
@@ -901,7 +956,7 @@ function formatDetail(raw: unknown, status: number): string {
     const msgs = raw
       .map((item) => {
         if (typeof item === 'object' && item !== null && 'msg' in item) {
-          return typeof item.msg === 'string' ? item.msg : null;
+          return typeof item.msg === 'string' ? (pydanticMessageLabels[item.msg] ?? item.msg) : null;
         }
         return null;
       })
@@ -1001,6 +1056,10 @@ export const api = {
   sourceSignals: (sourceId: number, scope: 'valid' | 'all', offset: number) => request<SourceSignalListResponse>(
     `/api/v1/sources/${sourceId}/signals?scope=${scope}&offset=${offset}`,
   ),
+  // 单条采集记录详情：按需返回完整 content 与结构化报告（report 为 null 表示非报告记录）。
+  sourceSignalDetail: (sourceId: number, signalId: number, signal?: AbortSignal) => request<SourceSignalDetailRead>(
+    `/api/v1/sources/${sourceId}/signals/${signalId}`, signal ? {signal} : {},
+  ),
   createSource: (payload: DataSourceWritePayload) => request<DataSourceRead>('/api/v1/sources', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
   }),
@@ -1097,8 +1156,10 @@ export const api = {
   }),
   deleteSupplier: (id: number) => request<void>(`/api/v1/suppliers/${id}`, {method: 'DELETE'}),
   runSource: (id: number) => request<CollectionRunRead>(`/api/v1/sources/${id}/run`, {method: 'POST'}),
-  // 天眼查专用：同步执行一次批量主体核查并返回本轮汇总（非通用拉取，不走 /run）。
-  runTycBatch: (id: number) => request<TycBatchRunResult>(`/api/v1/sources/${id}/run-tyc-batch`, {method: 'POST'}),
+  // 天眼查专用：同步核查单个启用供应商并返回逐工具计数（supplier_id 为后端必填查询参数）。
+  runTycBatch: (id: number, supplierId: number) => request<TycBatchRunResult>(
+    `/api/v1/sources/${id}/run-tyc-batch?supplier_id=${supplierId}`, {method: 'POST'},
+  ),
   runAllSources: () => request<RunAllSourcesResult>('/api/v1/sources/run-all', {method: 'POST'}),
   toggleDimension: (key: string, enabled: boolean) => request<DimensionRead>(`/api/v1/rule-engine/dimensions/${key}/toggle`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled}),

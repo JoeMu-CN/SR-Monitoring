@@ -1,6 +1,7 @@
 import {describe, expect, it, vi} from 'vitest';
 import {
   api,
+  ApiError,
   mapDataSource,
   mapDimension,
   mapRiskAlert,
@@ -107,6 +108,60 @@ describe('API 会话请求', () => {
   });
 });
 
+describe('统一 API 错误格式化', () => {
+  const stubRejectedRequest = (status: number, detail: unknown) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ok: false, status, json: async () => ({detail})}));
+  };
+
+  it('Pydantic 422「Field required」精确映射为中文「缺少必填参数」，其余消息原样保留', async () => {
+    const detail = [
+      {type: 'missing', loc: ['query', 'supplier_id'], msg: 'Field required', input: null},
+      {type: 'string_type', loc: ['body', 'name'], msg: 'Input should be a valid string', input: 1},
+    ];
+    stubRejectedRequest(422, detail);
+
+    try {
+      await api.sourceSignalDetail(17, 91);
+      expect.unreachable('应抛出 ApiError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).status).toBe(422);
+      expect((error as ApiError).message).toBe('缺少必填参数；Input should be a valid string');
+      expect((error as ApiError).detail).toEqual(detail);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('仅缺少必填参数时不展示英文原文', async () => {
+    stubRejectedRequest(422, [{type: 'missing', loc: ['query', 'supplier_id'], msg: 'Field required', input: null}]);
+
+    try {
+      await api.runTycBatch(23, 501);
+      expect.unreachable('应抛出 ApiError');
+    } catch (error) {
+      expect((error as ApiError).message).toBe('缺少必填参数');
+      expect((error as ApiError).message).not.toContain('Field required');
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('409 结构化 detail 的 message 与原始 detail 完整保留', async () => {
+    const conflictDetail = {code: 'supplier_changed', message: '供应商资料已被他人更新', expected_updated_at: '2026-09-01T00:00:00Z'};
+    stubRejectedRequest(409, conflictDetail);
+
+    try {
+      await api.sourceSignalDetail(17, 91);
+      expect.unreachable('应抛出 ApiError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).status).toBe(409);
+      expect((error as ApiError).message).toBe('供应商资料已被他人更新');
+      expect((error as ApiError).detail).toEqual(conflictDetail);
+    }
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('信息源采集记录 API 请求契约', () => {
   it('只发送范围与偏移量且不发送可变 limit', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
@@ -119,6 +174,38 @@ describe('信息源采集记录 API 请求契约', () => {
       expect.objectContaining({credentials: 'include'}),
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('limit=');
+    vi.unstubAllGlobals();
+  });
+
+  it('单条详情按需请求并透传 AbortSignal（不发送可变 limit）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({id: 91, report: null})});
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+
+    await api.sourceSignalDetail(17, 91, controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/sources/17/signals/91',
+      expect.objectContaining({credentials: 'include', signal: controller.signal}),
+    );
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('limit=');
+    vi.unstubAllGlobals();
+  });
+
+  it('天眼查单供应商核查把 supplier_id 作为后端必填查询参数、POST 无请求体并携带 CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({})});
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-tyc'});
+
+    await api.runTycBatch(23, 501);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/sources/23/run-tyc-batch?supplier_id=501',
+      expect.objectContaining({method: 'POST', credentials: 'include'}),
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-tyc');
+    expect(options.body).toBeUndefined();
     vi.unstubAllGlobals();
   });
 });

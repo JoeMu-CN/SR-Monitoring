@@ -23,6 +23,30 @@ class ForcedRule:
     event_subtypes: tuple[str, ...] = ()
 
 
+# 显式等级序：数值越小等级越严。合并 LLM 建议与 base 时只允许取更严者，
+# 严禁用字符串比较或隐式排序。
+LEVEL_RANK: dict[str, int] = {"P1": 1, "P2": 2, "P3": 3, "P4": 4}
+
+
+@dataclass(frozen=True)
+class LlmSuggestion:
+    """LLM 建议等级输入（可空等级 + 置信度 + 证据理由）。"""
+
+    suggested_level: str | None = None
+    confidence: float = 0.0
+    rationale: str | None = None
+
+
+def coerce_llm_adopt_threshold(value: object) -> float | None:
+    """解析 LLM 采纳阈值：仅接受 [0, 1] 的数值（拒绝 bool），非法返回 None。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    threshold = float(value)
+    if not 0.0 <= threshold <= 1.0:
+        return None
+    return threshold
+
+
 @dataclass(frozen=True)
 class ScoringSettings:
     """评分配置。所有维度分值、分级阈值和强制规则均可通过配置调整。"""
@@ -48,6 +72,9 @@ class ScoringSettings:
     p1_min: int = 85
     p2_min: int = 65
     p3_min: int = 40
+    # LLM 建议等级的独立采纳阈值：confidence >= θ 才考虑建议（与 AI review 的
+    # 0.65 复核阈值解耦）。建议只能确认或提升 base 等级，不参与降级。
+    llm_adopt_threshold: float = 0.75
     strong_match_types: frozenset[str] = field(
         default_factory=lambda: frozenset({"registry_no", "legal_name", "alias"})
     )
@@ -101,6 +128,11 @@ def load_scoring_settings() -> ScoringSettings:
     for key in valid_keys:
         if key in overrides:
             kwargs[key] = overrides[key]
+
+    # llm_adopt_threshold 单独解析：仅接受 [0, 1] 数值，非法值忽略并回退默认。
+    threshold = coerce_llm_adopt_threshold(overrides.get("llm_adopt_threshold"))
+    if threshold is not None:
+        kwargs["llm_adopt_threshold"] = threshold
 
     # 合并 dict 类型字段（未提供的键保留默认值）
     for dict_key in ("severity_scores", "association_scores"):
@@ -224,3 +256,75 @@ def apply_forced_rules(
         }
         return rule.forced_level, 100
     return level, score
+
+
+def _stricter_level(base: str, suggested: str | None) -> str:
+    """取更严（rank 更小）的等级；建议为空或未知时保持 base。"""
+    if suggested is None or suggested not in LEVEL_RANK:
+        return base
+    return base if LEVEL_RANK[base] <= LEVEL_RANK[suggested] else suggested
+
+
+def _level_score_floor(settings: ScoringSettings, level: str) -> int:
+    """等级对应的运行时分数下限；P4 与未知等级为 0。"""
+    match level:
+        case "P1":
+            return settings.p1_min
+        case "P2":
+            return settings.p2_min
+        case "P3":
+            return settings.p3_min
+        case _:
+            return 0
+
+
+def resolve_level(
+    settings: ScoringSettings,
+    suggestion: LlmSuggestion,
+    event_type: str,
+    match_type: str,
+    score: int,
+    detail: dict[str, object],
+    event_subtype: str | None = None,
+) -> tuple[str, int]:
+    """确定性评分链唯一实现：base → LLM 采纳 → 上限 → 强制规则。
+
+    - base = compute_level(score)；
+    - 仅当建议等级合法且 confidence >= settings.llm_adopt_threshold 时采纳：
+      取 base 与建议中更严（rank 更小）者——LLM 只能确认或提升，绝不降级 base；
+    - 弱关联上限在采纳之后、强制规则在最后，二者均不可被 LLM 绕过；
+    - 采纳且最终等级比 base 更严时，score 提升到该等级的运行时阈值
+      （p1_min/p2_min/p3_min，不写死常量），保证等级与分数一致。
+
+    detail 恒写入审计键：deterministic_level/llm_level/llm_confidence/llm_adopted/
+    llm_theta/llm_rationale/capped_level/final_level。
+    """
+    base = compute_level(settings, score)
+    suggested = suggestion.suggested_level
+    adopted = (
+        suggested is not None
+        and suggested in LEVEL_RANK
+        and suggestion.confidence >= settings.llm_adopt_threshold
+    )
+    merged = _stricter_level(base, suggested) if adopted else base
+    detail["deterministic_level"] = base
+    detail["llm_level"] = suggested
+    detail["llm_confidence"] = suggestion.confidence
+    detail["llm_adopted"] = adopted
+    detail["llm_theta"] = settings.llm_adopt_threshold
+    detail["llm_rationale"] = suggestion.rationale
+    capped = apply_level_cap(settings, merged, match_type, detail)
+    detail["capped_level"] = capped
+    final, final_score = apply_forced_rules(
+        settings,
+        event_type,
+        match_type,
+        capped,
+        score,
+        detail,
+        event_subtype=event_subtype,
+    )
+    if adopted and LEVEL_RANK[final] < LEVEL_RANK[base]:
+        final_score = max(final_score, _level_score_floor(settings, final))
+    detail["final_level"] = final
+    return final, final_score

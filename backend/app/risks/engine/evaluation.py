@@ -6,7 +6,7 @@ from app.ai.schemas import SignalAnalysisResult
 from app.risks.engine.matching import MatchCandidate
 from app.risks.engine.processing import MATCHERS, load_suppliers, match_type, resolve_dimension
 from app.risks.engine.registry import RuntimeDimension, load_dimensions
-from app.risks.scoring import apply_forced_rules, apply_level_cap, compute_level, compute_score
+from app.risks.scoring import LlmSuggestion, compute_score, resolve_level
 
 
 def evaluate_event(
@@ -38,8 +38,8 @@ def evaluate_event_with_dimension(
     """按预构造的运行时维度执行匹配与评分，但不落库。
 
     草稿预览（/test 携带 draft_config/global_config）与实时评估共用本入口，
-    评分链路完全复用 compute_score/compute_level/apply_level_cap/
-    apply_forced_rules，不存在第二份公式。
+    评分链路完全复用 compute_score/resolve_level（base → LLM 采纳 → 上限 →
+    强制规则），不存在第二份公式；沙箱事件没有 LLM 建议时行为与旧链一致。
     """
     if dimension is None:
         return {
@@ -70,14 +70,15 @@ def evaluate_event_with_dimension(
             product_relevant,
         )
         score_detail["dimension"] = dimension.key
-        level = apply_level_cap(
-            scoring, compute_level(scoring, score), candidate_match_type, score_detail
-        )
-        level, score = apply_forced_rules(
+        level, score = resolve_level(
             scoring,
+            LlmSuggestion(
+                suggested_level=result.suggested_level,
+                confidence=result.confidence,
+                rationale=result.level_rationale,
+            ),
             result.event_type,
             candidate_match_type,
-            level,
             score,
             score_detail,
             event_subtype=result.event_subtype,

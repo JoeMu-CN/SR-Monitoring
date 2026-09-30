@@ -4,12 +4,14 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, selectinload
 
+from app.agent.tyc_report import TycRiskReport
 from app.ai.models import AIAnalysisRecord
-from app.ai.schemas import SignalAnalysisResult
+from app.ai.schemas import OrganizationReference, SignalAnalysisResult
 from app.risks.engine.alert_persistence import AlertValues, upsert_alert
 from app.risks.engine.config import (
     COLUMN_COUNTRY,
@@ -32,12 +34,11 @@ from app.risks.engine.registry import RuntimeDimension, load_dimensions
 from app.risks.models import RiskEventSignal, SupplierEventMatch
 from app.risks.schemas import RiskProcessResult
 from app.risks.scoring import (
+    LlmSuggestion,
     ScoringSettings,
-    apply_forced_rules,
-    apply_level_cap,
-    compute_level,
     compute_score,
     load_scoring_settings,
+    resolve_level,
 )
 from app.risks.validity import (
     InactiveRiskSignalError,
@@ -146,6 +147,36 @@ def _upsert_match(
     return match
 
 
+def _resolve_profile_identity(
+    signal: RawSignal, result: SignalAnalysisResult
+) -> tuple[SignalAnalysisResult, str | None]:
+    """supplier_profile 周度报告：从 raw_data 确定性注入主体与稳定身份。
+
+    仅当 ``signal.raw_data.report_kind == "supplier_profile"`` 时生效：解析
+    完整 TycRiskReport 合同（缺字段/空白 supplier_code 明确失败，绝不回退
+    普通逻辑造成错误合并），用报告 company_name/credit_code 覆盖
+    organizations（registry_no 仅非空时填充），并返回恒为非空且不含周次的
+    身份覆盖 ``supplier_profile:<supplier_code>``。其余信号原样返回。
+    """
+    raw_data = signal.raw_data
+    if not isinstance(raw_data, dict) or raw_data.get("report_kind") != "supplier_profile":
+        return result, None
+    try:
+        report = TycRiskReport.model_validate(raw_data)
+    except ValidationError as exc:
+        raise ValueError("supplier_profile 报告信号缺少必要字段，拒绝处理") from exc
+    organizations = [
+        OrganizationReference(
+            name=report.company_name,
+            registry_no=report.credit_code or None,
+        )
+    ]
+    return (
+        result.model_copy(update={"organizations": organizations}),
+        f"supplier_profile:{report.supplier_code}",
+    )
+
+
 def process_event(
     session: Session,
     signal: RawSignal,
@@ -160,8 +191,15 @@ def process_event(
     if not is_raw_signal_effective(signal, now_utc=now):
         raise InactiveRiskSignalError(signal.id, signal.validity_state)
     result = SignalAnalysisResult.model_validate(analysis.result)
-    event, event_created = find_or_create_event(session, result)
-    persist_event_facts(session, event, result)
+    # 画像报告：服务端确定性注入主体与稳定身份（其余信号原样通过）。
+    result, identity_override = _resolve_profile_identity(signal, result)
+    event, event_created = find_or_create_event(
+        session, result, identity_override=identity_override
+    )
+    # 画像路径侧表随当前周快照精确替换；普通事件保持既有增量补齐语义。
+    persist_event_facts(
+        session, event, result, replace=identity_override is not None
+    )
     linked_id = session.scalar(
         insert(RiskEventSignal)
         .values(event_id=event.id, signal_id=signal.id)
@@ -204,14 +242,16 @@ def process_event(
                 product_relevant,
             )
             score_detail["dimension"] = dimension.key
-            level = apply_level_cap(
-                scoring, compute_level(scoring, score), match.match_type, score_detail
-            )
-            level, score = apply_forced_rules(
+            # 唯一评分链：base → LLM 采纳（仅确认或提升）→ 上限 → 强制规则。
+            level, score = resolve_level(
                 scoring,
+                LlmSuggestion(
+                    suggested_level=result.suggested_level,
+                    confidence=result.confidence,
+                    rationale=result.level_rationale,
+                ),
                 event.event_type,
                 match.match_type,
-                level,
                 score,
                 score_detail,
                 event_subtype=result.event_subtype,

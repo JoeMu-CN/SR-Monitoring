@@ -27,6 +27,7 @@ from app.suppliers.models import Supplier, SupplierAlias, SupplierProduct, Suppl
 ADMIN_USERNAME: Final = "e2e-platform-admin"
 VIEWER_USERNAME: Final = "e2e-viewer"
 TEST_PASSWORD: Final = "E2E-Test-Only-2026!"
+
 # 锚点必须相对当前 UTC 时间：legacy 信号由 query_validity 按真实 now 与
 # source.signal_validity_days 过滤，硬编码日期会随时间过期，导致“源信号有效
 # 记录”归零（E2E 时间炸弹）。取整点使夹具相对偏移下的 25/20/5 样本契约稳定。

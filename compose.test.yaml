@@ -8,6 +8,9 @@ x-test-environment: &test-environment
   SESSION_SECRET: todo3-test-session-secret-not-for-production
   BOOTSTRAP_ADMIN_USERNAME: ""
   BOOTSTRAP_ADMIN_PASSWORD: ""
+  # test_tyc_stub_e2e.py 专属 fixture 用该地址配置提交态 tianyancha 并指向
+  # 本地确定性 MCP stub（零真实外网）；全局 seed_e2e 不再触碰天眼查控制台字段。
+  TYC_TEST_STUB_URL: http://tyc-stub:8081/v1
 
 x-test-volumes: &test-volumes
   - ./backend/app:/app/app:ro
@@ -31,6 +34,20 @@ services:
       - /var/lib/postgresql/data
     restart: "no"
 
+  # 确定性天眼查 MCP stub：仅测试栈使用，无真实密钥、无外网。
+  # 镜像复用 app 运行镜像（硬化套件通过 HARDENING_TEST_IMAGE 提供同一镜像）。
+  tyc-stub:
+    image: ${HARDENING_TEST_IMAGE:-supplierriskmonitoring-app}
+    command: ["python", "tests/tyc_mcp_stub_server.py", "--port", "8081"]
+    volumes:
+      - ./backend/tests:/app/tests:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: "no"
+
   app-test:
     image: supplierriskmonitoring-app
     environment: *test-environment
@@ -48,6 +65,8 @@ services:
     depends_on:
       postgres-test:
         condition: service_healthy
+      tyc-stub:
+        condition: service_healthy
     restart: "no"
 
   test-runner:
@@ -56,6 +75,8 @@ services:
     volumes: *test-volumes
     depends_on:
       postgres-test:
+        condition: service_healthy
+      tyc-stub:
         condition: service_healthy
     profiles: ["tools"]
     restart: "no"

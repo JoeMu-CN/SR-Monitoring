@@ -67,6 +67,27 @@ def _reset_scheduler_runtime_state() -> Generator[None]:
 
 
 @pytest.fixture
+def committed_tyc_env() -> Generator[None]:
+    """天眼查提交态隔离：快照配置、清空计费表、用例后恢复（D9 执行器跨连接可见）。
+
+    Wave 1 起额度执行器使用独立 Session，用例对天眼查的额度/密钥/维度配置
+    必须真提交才可见；计费行也会跨连接残留，因此在用例前后一律清空，
+    消除跨用例状态泄漏（不弱化任何断言）。
+    """
+    from tyc_batch_support import (
+        restore_tyc_source,
+        snapshot_tyc_source,
+        truncate_committed_tyc_usage,
+    )
+
+    original = snapshot_tyc_source()
+    truncate_committed_tyc_usage()
+    yield
+    restore_tyc_source(original)
+    truncate_committed_tyc_usage()
+
+
+@pytest.fixture
 def db_session() -> Generator[Session]:
     connection = engine.connect()
     outer_transaction = connection.begin()

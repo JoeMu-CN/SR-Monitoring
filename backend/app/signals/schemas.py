@@ -11,6 +11,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.agent.tyc_batch_models import ToolOutcomeCounts
+from app.agent.tyc_report import TycRiskReport
 from app.signals.validity import (
     LifecycleAction,
     SourceValidityPolicyConfig,
@@ -276,6 +278,16 @@ class SourceSignalRead(BaseModel):
     lifecycle_action: LifecycleAction
     validity_policy_version: str | None
     validity_reason: ValidityReasonRead
+    # 列表受控摘要：报告信号确定性派生重点摘要，其余回落 content 截断；
+    # 由路由显式注入，空值由派生层给稳定占位。
+    summary: str = ""
+
+
+class SourceSignalDetailRead(SourceSignalRead):
+    """单条采集记录详情：附加结构化报告与超限截断标记。"""
+
+    report: TycRiskReport | None = None
+    report_truncated: bool = False
 
 
 class SourceSignalListResponse(BaseModel):
@@ -471,11 +483,18 @@ class RunAllSourcesResult(BaseModel):
 
 
 class TycBatchRunRead(BaseModel):
-    """天眼查手动批量刷新（run-tyc-batch）的稳定汇总。"""
+    """天眼查手动单供应商核查（run-tyc-batch）的稳定汇总。
+
+    `shard_index` 为该供应商的真实 SHA-256 桶位（便于与周度分片核对），
+    `per_tool_counts` 至少按 tool_name 聚合五态计数。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
     source_id: int
+    shard_index: int
+    shard_count: int
+    supplier_id: int | None
     targeted_count: int
     attempted_count: int
     created_count: int
@@ -483,3 +502,4 @@ class TycBatchRunRead(BaseModel):
     empty_count: int
     failed_count: int
     quota_exhausted: bool
+    per_tool_counts: dict[str, ToolOutcomeCounts]

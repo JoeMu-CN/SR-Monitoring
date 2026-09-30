@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.agent.tyc_batch import (
+    TycBatchError,
     TycBatchNotTianyancha,
-    TycBatchSourceInactive,
-    TycBatchUnavailable,
-    run_tyc_batch,
+    TycBatchSupplierNotFound,
+    run_tyc_supplier,
 )
 from app.auth.models import User
 from app.auth.security import (
@@ -74,6 +74,7 @@ from app.signals.schemas import (
     SignalFilterConfigRead,
     SignalFilterConfigUpdate,
     SignalImportSummary,
+    SourceSignalDetailRead,
     SourceSignalListResponse,
     SourceSignalRead,
     SourceSignalSourceRead,
@@ -107,6 +108,13 @@ from app.signals.sources import (
     StatsPmiAdapter,
     UflpaEntityAdapter,
     WtoNewsAdapter,
+)
+from app.signals.tyc_report_views import (
+    MAX_RAW_DATA_BYTES,
+    build_detail_content,
+    derive_summary,
+    extract_report,
+    raw_data_json_bytes,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["风险信号"])
@@ -408,6 +416,27 @@ def list_sources_admin(
     ]
 
 
+def _signal_list_read(signal: RawSignal) -> SourceSignalRead:
+    """列表视图：受控 `summary` 由 raw_data/content 确定性派生，不暴露 raw_data。"""
+    return SourceSignalRead.model_validate(signal).model_copy(
+        update={"summary": derive_summary(signal.raw_data, signal.content)}
+    )
+
+
+def _signal_detail_read(signal: RawSignal) -> SourceSignalDetailRead:
+    """详情视图：仅当 raw_data 未超 256KB 且可解析为报告时返回 report。"""
+    truncated = raw_data_json_bytes(signal.raw_data) > MAX_RAW_DATA_BYTES
+    report = None if truncated else extract_report(signal.raw_data)
+    return SourceSignalDetailRead.model_validate(signal).model_copy(
+        update={
+            "summary": derive_summary(signal.raw_data, signal.content),
+            "content": build_detail_content(signal.content, truncated=truncated),
+            "report": report,
+            "report_truncated": truncated,
+        }
+    )
+
+
 @router.get("/sources/{source_id}/signals", response_model=SourceSignalListResponse)
 def list_source_signals(
     source_id: int,
@@ -446,11 +475,36 @@ def list_source_signals(
     )
     return SourceSignalListResponse(
         source=SourceSignalSourceRead.model_validate(source),
-        items=[SourceSignalRead.model_validate(signal) for signal in signals],
+        items=[_signal_list_read(signal) for signal in signals],
         total=int(total),
         limit=SOURCE_SIGNAL_PAGE_SIZE,
         offset=offset,
     )
+
+
+@router.get(
+    "/sources/{source_id}/signals/{signal_id}",
+    response_model=SourceSignalDetailRead,
+)
+def get_source_signal_detail(
+    source_id: int,
+    signal_id: int,
+    session: SessionDependency,
+    _user: SourceStatusView,
+) -> SourceSignalDetailRead:
+    """单条采集记录详情：严格限定 signal 属于 source，否则 404。"""
+    signal = session.scalar(
+        select(RawSignal).where(
+            RawSignal.id == signal_id,
+            RawSignal.source_id == source_id,
+        )
+    )
+    if signal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="采集记录不存在",
+        )
+    return _signal_detail_read(signal)
 
 
 @router.get("/sources/audit-logs", response_model=DataSourceAuditLogListResponse)
@@ -998,31 +1052,35 @@ def run_all_sources_collection(
 @router.post("/sources/{source_id}/run-tyc-batch", response_model=TycBatchRunRead)
 def run_tyc_batch_collection(
     source_id: int,
+    supplier_id: Annotated[int, Query()],
     session: SessionDependency,
     _user: CollectionTrigger,
     _csrf: CsrfGuard,
 ) -> TycBatchRunRead:
-    """手动批量刷新天眼查信息源：核查全部启用供应商并返回稳定汇总。
+    """手动核查单个启用供应商：同步跑 ≤C 次工具并返回逐工具计数。
 
-    source 不存在 404；非天眼查 422；信息源未启用、密钥/起始额度不可用 409；
-    中途额度耗尽或个别供应商失败仍返回 200 汇总。
+    稳定契约：缺/非法 supplier_id 422；source 不存在 404；非天眼查 422；
+    供应商不存在或未启用 404；信息源未启用、密钥/起始额度不可用、批次运行中
+    409（结构化 detail：code/message/上下文，含剩余额度）；中途额度耗尽仍
+    返回 200 汇总并标记 quota_exhausted。
     """
     source = session.get(DataSource, source_id)
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="信息源不存在")
     try:
-        result = run_tyc_batch(session, source)
+        result = run_tyc_supplier(session, source, supplier_id=supplier_id)
     except TycBatchNotTianyancha as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
-    except TycBatchSourceInactive as exc:
+    except TycBatchSupplierNotFound as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except TycBatchUnavailable as exc:
+    except TycBatchError as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": exc.code, "message": str(exc), **exc.context},
         ) from exc
     return TycBatchRunRead.model_validate(result)
 

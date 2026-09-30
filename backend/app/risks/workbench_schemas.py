@@ -83,6 +83,7 @@ class DimensionConfigPatch(_ForcedRuleNamesValidated):
     p1_min: Score | None = None
     p2_min: Score | None = None
     p3_min: Score | None = None
+    llm_adopt_threshold: float | None = Field(default=None, ge=0, le=1)
     strong_match_types: list[MatchType] | None = None
     alert_expiry_days: int | None = Field(default=None, ge=1, le=3650)
 
@@ -112,6 +113,7 @@ class GlobalScoringPatch(_ForcedRuleNamesValidated):
     p1_min: Score | None = None
     p2_min: Score | None = None
     p3_min: Score | None = None
+    llm_adopt_threshold: float | None = Field(default=None, ge=0, le=1)
     strong_match_types: list[MatchType] | None = None
     alert_expiry_days: int | None = Field(default=None, ge=1, le=3650)
 

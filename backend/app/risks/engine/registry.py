@@ -35,6 +35,7 @@ from app.risks.models import RuleDimensionConfig
 from app.risks.scoring import (
     ForcedRule,
     ScoringSettings,
+    coerce_llm_adopt_threshold,
     load_scoring_settings,
 )
 
@@ -48,6 +49,7 @@ _OVERRIDABLE_SCORING_KEYS = {
     "p1_min",
     "p2_min",
     "p3_min",
+    "llm_adopt_threshold",
     "alert_expiry_days",
 }
 
@@ -107,8 +109,15 @@ def _apply_scoring_overrides(
         return base
     kwargs: dict[str, object] = {}
     for key in _OVERRIDABLE_SCORING_KEYS:
-        if key in overrides:
-            kwargs[key] = overrides[key]
+        if key not in overrides:
+            continue
+        if key == "llm_adopt_threshold":
+            # 类型安全合并：仅接受 [0, 1] 数值，非法值忽略并保持 base。
+            threshold = coerce_llm_adopt_threshold(overrides[key])
+            if threshold is not None:
+                kwargs[key] = threshold
+            continue
+        kwargs[key] = overrides[key]
     for dict_key in ("severity_scores", "association_scores"):
         if dict_key in kwargs and isinstance(kwargs[dict_key], dict):
             merged: dict[str, int] = dict(getattr(base, dict_key))
@@ -250,6 +259,7 @@ def build_scoring(
         "p1_min": scoring.p1_min,
         "p2_min": scoring.p2_min,
         "p3_min": scoring.p3_min,
+        "llm_adopt_threshold": scoring.llm_adopt_threshold,
         "strong_match_types": sorted(scoring.strong_match_types),
         "alert_expiry_days": scoring.alert_expiry_days,
         "forced_rules": [dataclasses.asdict(rule) for rule in scoring.forced_rules],

@@ -120,6 +120,7 @@ def _scoring_summary(dim: RuntimeDimension) -> dict[str, object]:
         "p1_min": s.p1_min,
         "p2_min": s.p2_min,
         "p3_min": s.p3_min,
+        "llm_adopt_threshold": s.llm_adopt_threshold,
         "strong_match_types": sorted(s.strong_match_types),
         "alert_expiry_days": s.alert_expiry_days,
         "forced_rules": [
@@ -297,6 +298,7 @@ def _global_config_read(session: Session) -> GlobalScoringConfigRead:
         "p1_min": settings.p1_min,
         "p2_min": settings.p2_min,
         "p3_min": settings.p3_min,
+        "llm_adopt_threshold": settings.llm_adopt_threshold,
         "strong_match_types": sorted(settings.strong_match_types),
         "alert_expiry_days": settings.alert_expiry_days,
         "forced_rules": [asdict(rule) for rule in forced_defaults.rules],

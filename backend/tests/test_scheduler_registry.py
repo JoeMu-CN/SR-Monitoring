@@ -496,3 +496,208 @@ def test_pending_signal_processing_skips_disabled_source(
 
     assert scheduler_jobs._process_pending_signals(limit=20) == 0
     assert db_session.scalar(select(AIAnalysisRecord)) is None
+
+
+# ---------------------------------------------------------------------------
+# 天眼查周度分片 job（Todo 8）：注册两个连续日 + 分片参数 + 门禁/锁跳过
+# ---------------------------------------------------------------------------
+
+
+def test_tyc_shard_jobs_registered_for_sunday_and_monday() -> None:
+    """周日 shard0、周一 shard1；job id/args/触发日/timezone 可测试（不启动长驻进程）。"""
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
+    scheduler_main._register_tyc_shard_jobs(scheduler)
+
+    jobs = {job.id: job for job in scheduler.get_jobs()}
+    assert set(jobs) == {"tyc-shard-0", "tyc-shard-1"}
+    anchor = datetime(2026, 9, 29, 12, tzinfo=ZoneInfo("Asia/Shanghai"))  # 周二
+    expected = {"tyc-shard-0": ("2026-10-04", 6), "tyc-shard-1": ("2026-10-05", 0)}
+    for job_id, (date_text, weekday) in expected.items():
+        job = jobs[job_id]
+        assert list(job.args) == [int(job_id.rsplit("-", 1)[1])]
+        fire = job.trigger.get_next_fire_time(None, anchor)
+        assert fire is not None
+        assert fire.strftime("%Y-%m-%d") == date_text
+        assert fire.weekday() == weekday  # 6=周日、0=周一
+        assert (fire.hour, fire.minute) == (6, 0)
+
+
+def test_tyc_shard_registration_is_idempotent() -> None:
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
+    scheduler_main._register_tyc_shard_jobs(scheduler)
+    original = str(scheduler.get_job("tyc-shard-0").trigger)  # type: ignore[union-attr]
+    scheduler_main._register_tyc_shard_jobs(scheduler)
+
+    shard_jobs = [job for job in scheduler.get_jobs() if job.id.startswith("tyc-shard-")]
+    assert len(shard_jobs) == 2
+    assert str(scheduler.get_job("tyc-shard-0").trigger) == original  # type: ignore[union-attr]
+
+
+def test_collect_tyc_shard_job_passes_shard_index_and_processes(
+    db_session, monkeypatch
+) -> None:
+    from app.agent.tyc_batch import SHARD_COUNT
+    from app.agent.tyc_batch_models import TycBatchResult
+
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    captured: dict[str, object] = {}
+    processed: list[int] = []
+
+    def _fake_run(session, target_source, *, shard_index, shard_count):
+        del session
+        captured.update(
+            source_id=target_source.id, shard_index=shard_index, shard_count=shard_count
+        )
+        return TycBatchResult(
+            source_id=target_source.id,
+            shard_index=shard_index,
+            shard_count=shard_count,
+            supplier_id=None,
+            targeted_count=3,
+            attempted_count=2,
+            created_count=1,
+            duplicate_count=0,
+            empty_count=1,
+            failed_count=0,
+            quota_exhausted=False,
+            per_tool_counts={},
+        )
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(scheduler_jobs, "run_tyc_batch", _fake_run)
+    monkeypatch.setattr(
+        scheduler_jobs,
+        "_process_pending_signals",
+        lambda *args, **kwargs: processed.append(1),
+    )
+
+    scheduler_jobs.collect_tyc_shard_job(1)
+
+    assert captured == {
+        "source_id": source.id,
+        "shard_index": 1,
+        "shard_count": SHARD_COUNT,
+    }
+    assert processed == [1]
+
+
+def test_collect_tyc_shard_job_skips_on_bucket_gate_rejection(
+    db_session, monkeypatch, caplog
+) -> None:
+    import logging
+
+    from app.agent.tyc_batch_models import TycBatchBucketGateRejected
+
+    caplog.set_level(logging.WARNING, logger="scheduler")
+    processed: list[int] = []
+
+    def _rejected(session, target_source, *, shard_index, shard_count):
+        del session, target_source, shard_index, shard_count
+        raise TycBatchBucketGateRejected(
+            "单桶 39 家 × 13 次 > 日额度 500",
+            actual_max_bucket=39,
+            calls_per_supplier=13,
+            daily_limit=500,
+        )
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(scheduler_jobs, "run_tyc_batch", _rejected)
+    monkeypatch.setattr(
+        scheduler_jobs, "_process_pending_signals", lambda *a, **k: processed.append(1)
+    )
+
+    scheduler_jobs.collect_tyc_shard_job(0)
+
+    assert processed == []
+    assert any("门禁" in record.getMessage() for record in caplog.records)
+
+
+def test_collect_tyc_shard_job_skips_when_batch_lock_busy(
+    db_session, monkeypatch, caplog
+) -> None:
+    import logging
+
+    from app.agent.tyc_batch_models import TycBatchLocked
+
+    caplog.set_level(logging.WARNING, logger="scheduler")
+    processed: list[int] = []
+
+    def _locked(session, target_source, *, shard_index, shard_count):
+        del session, target_source, shard_index, shard_count
+        raise TycBatchLocked("天眼查批量核查已在运行")
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(scheduler_jobs, "run_tyc_batch", _locked)
+    monkeypatch.setattr(
+        scheduler_jobs, "_process_pending_signals", lambda *a, **k: processed.append(1)
+    )
+
+    scheduler_jobs.collect_tyc_shard_job(1)
+
+    assert processed == []
+    assert any("跳过" in record.getMessage() for record in caplog.records)
+
+
+def test_collect_tyc_shard_job_persists_usage_and_report_signal(
+    db_session, committed_tyc_env, monkeypatch
+) -> None:
+    """分片 job 复用 run_tyc_batch：逐工具真提交记账 + 报告信号 + 处理链。"""
+    from tyc_batch_support import (
+        MultidimMcpStub,
+        committed_tyc_daily_used,
+        committed_tyc_rows,
+        configure_committed_tyc,
+    )
+
+    import app.agent.tyc_gateway as tyc_gateway_module
+    from app.agent.tyc_batch import bucket_index
+
+    configure_committed_tyc(
+        daily_limit=100,
+        monthly_limit=1000,
+        dimensions=["get_risk_overview", "get_judicial_case"],
+    )
+    code = next(
+        candidate
+        for candidate in (f"SUP-TYC-JOB-{index:03d}" for index in range(100))
+        if bucket_index(candidate) == 1
+    )
+    supplier = Supplier(
+        supplier_code=code,
+        legal_name="分片 job 报告有限公司",
+        country_code="CN",
+        enabled=True,
+    )
+    db_session.add(supplier)
+    db_session.flush()
+    stub = MultidimMcpStub()
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(
+        tyc_gateway_module,
+        "build_tyc_gateway",
+        lambda **kwargs: stub.gateway(["get_risk_overview", "get_judicial_case"]),
+    )
+    processed: list[int] = []
+    monkeypatch.setattr(
+        scheduler_jobs, "_process_pending_signals", lambda *a, **k: processed.append(1)
+    )
+
+    scheduler_jobs.collect_tyc_shard_job(1)
+
+    assert committed_tyc_rows() == [
+        ("search_companies", "分片 job 报告有限公司", "success"),
+        ("get_risk_overview", "分片 job 报告有限公司", "success"),
+        ("get_judicial_case", "分片 job 报告有限公司", "success"),
+    ]
+    assert committed_tyc_daily_used() == 3
+    signals = list(
+        db_session.scalars(
+            select(RawSignal).where(RawSignal.external_id.like(f"tyc-{code}-%"))
+        )
+    )
+    assert len(signals) == 1
+    assert signals[0].raw_data["report_kind"] == "supplier_profile"
+    assert processed == [1]

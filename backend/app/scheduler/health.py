@@ -5,7 +5,9 @@
   从未写入=unknown，``now - HEARTBEAT_STALE_SECONDS`` 之前=stale，否则=ok。
 - 信源：与采集链同款能力判定（``build_pull_adapter``）区分拉取源与按需源；
   ``schedule=NULL`` 的可调度拉取源使用 ``SCHEDULER_COLLECT_CRON`` 推导下一预期；
-  仅 manual-json / external_tool / 无法构建拉取适配器的来源为 on_demand。
+  仅 manual-json / 无法构建拉取适配器的来源为 on_demand。天眼查是 external_tool，
+  虽无信源 cron，但由固定的周度分片 job 触发，因此启用时按权威周度 cadence
+  （``TYC_WEEKLY_SCHEDULE``）推导新鲜度，而不是降级为 on_demand。
 - 锚点：最近成功（runtime 优先于可被 30 天清理的 collection_runs）；
   tianyancha 外部核查工具无 CollectionRun/runtime 观测，最近成功取
   ``tyc_usage_records`` 最新一条 ``success`` 的 ``called_at``；
@@ -39,7 +41,7 @@ from app.scheduler.health_schemas import (
     SourceHealthRead,
     SourceHealthStatus,
 )
-from app.scheduler.jobs import pending_signal_candidate_id_select
+from app.scheduler.jobs import TYC_WEEKLY_SCHEDULE, pending_signal_candidate_id_select
 from app.scheduler.runtime import (
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_JOB_KEY,
@@ -250,6 +252,8 @@ def _source_health(
         else:
             # 只对可调度拉取源算到期：先按采集链同款能力判定拉取资格，
             # schedule=NULL 的拉取源使用 SCHEDULER_COLLECT_CRON；其余一律 on_demand。
+            # 天眼查是 external_tool，不经信源 cron 调度，但由固定的周度分片 job
+            # 触发；启用时按权威周度 cadence 分类，而不是降级为 on_demand。
             schedule: str | None = None
             if _is_pull_source(source):
                 schedule = (
@@ -257,6 +261,8 @@ def _source_health(
                     if source.schedule is not None
                     else SCHEDULER_COLLECT_CRON
                 )
+            elif source.code == TYC_SOURCE_CODE:
+                schedule = TYC_WEEKLY_SCHEDULE
             if schedule is None:
                 state, reason_code, next_expected = "on_demand", "on_demand", None
             else:

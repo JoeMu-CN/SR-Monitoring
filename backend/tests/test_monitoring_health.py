@@ -39,7 +39,11 @@ from app.scheduler.runtime import PENDING_SIGNALS_JOB_KEY, source_collection_job
 from app.scheduler.runtime_models import RUNTIME_STATUS_VALUES, SchedulerRuntimeState
 from app.signals.models import CollectionRun, DataSource, RawSignal
 
-NOW = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
+NOW = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)  # 周四
+
+# 天眼查周度分片 cadence "0 6 * * sun"（Asia/Shanghai = UTC+8）在 NOW 之后的
+# 下一次触发：2026-09-13（周日）06:00 CST = 2026-09-12 22:00 UTC。
+TYC_NEXT_WEEKLY_FIRE = datetime(2026, 9, 12, 22, 0, tzinfo=UTC)
 
 REQUIRED_SOURCE_FIELDS = {
     "source_id",
@@ -120,7 +124,13 @@ def _pull_source(
     return source
 
 
-def _tyc_source(session: Session, *, enabled: bool = True) -> DataSource:
+def _tyc_source(
+    session: Session,
+    *,
+    enabled: bool = True,
+    updated_at: datetime | None = None,
+    created_at: datetime | None = None,
+) -> DataSource:
     """真实的天眼查 external_tool 信源：测试库已有迁移种子行则就地启停。"""
     source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     if source is None:
@@ -142,6 +152,10 @@ def _tyc_source(session: Session, *, enabled: bool = True) -> DataSource:
         source.enabled = enabled
         source.source_type = "external_tool"
         source.adapter_status = "builtin"
+    if created_at is not None:
+        source.created_at = created_at
+    if updated_at is not None:
+        source.updated_at = updated_at
     session.flush()
     return source
 
@@ -700,10 +714,30 @@ def test_newer_success_recovers_from_earlier_failure(db_session: Session) -> Non
     assert item.last_attempt_at == NOW - timedelta(minutes=10)
 
 
-def test_tianyancha_last_success_at_uses_latest_successful_usage(
+def test_tyc_weekly_cadence_matches_registered_shard_jobs() -> None:
+    """健康口径的周度 cadence 必须来自实际注册的天眼查分片 job，防止两处常量漂移。"""
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
+    import app.scheduler.main as scheduler_main
+
+    assert health_module.TYC_WEEKLY_SCHEDULE == scheduler_jobs.TYC_SHARD_CRONS[0]
+    # main.py 注册 job 用的常量与 jobs.py 的健康 cadence 必须同源。
+    assert scheduler_main.TYC_SHARD_CRONS == scheduler_jobs.TYC_SHARD_CRONS
+
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+    scheduler_main._register_tyc_shard_jobs(scheduler)
+    shard0 = scheduler.get_job("tyc-shard-0")
+    assert shard0 is not None
+    # 健康聚合使用的 cadence 与实际注册的 shard 0 触发点完全一致。
+    assert str(shard0.trigger) == str(
+        scheduler_main._trigger(health_module.TYC_WEEKLY_SCHEDULE)
+    )
+
+
+def test_tianyancha_enabled_uses_weekly_shard_schedule(
     db_session: Session,
 ) -> None:
-    """外部核查工具无 CollectionRun/runtime 观测：成功锚点取记账表最新 success。"""
+    """启用的天眼查按权威周度分片 cadence 分类，而非按需/通用 cron 口径。"""
     db_session.execute(delete(TycUsageRecord))
     _disable_all_sources(db_session)
     _tyc_source(db_session, enabled=True)
@@ -713,7 +747,7 @@ def test_tianyancha_last_success_at_uses_latest_successful_usage(
                 tool_name="verify_company",
                 company_name="甲公司",
                 status="success",
-                called_at=NOW - timedelta(hours=3),
+                called_at=NOW - timedelta(days=2),
             ),
             TycUsageRecord(
                 tool_name="verify_company",
@@ -733,21 +767,75 @@ def test_tianyancha_last_success_at_uses_latest_successful_usage(
     _healthy_heartbeat(db_session)
 
     item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
-    # 按需外部工具：状态与下一预期保持不变，只用记账表补最近成功时间。
-    assert item.state == "on_demand"
-    assert item.reason_code == "on_demand"
-    assert item.next_expected_at is None
+    # 启用后按周度分片口径分类：成功锚点取记账表最近 success，下一预期为下一个周日 06:00 CST。
+    assert item.state == "ok"
+    assert item.reason_code == "success_observed"
+    assert item.next_expected_at == TYC_NEXT_WEEKLY_FIRE
     # 最新一条是 error，不得冒充成功；取最近 success。
     assert item.last_success_at == NOW - timedelta(minutes=30)
+
+
+def test_tianyancha_within_weekly_shard_period_is_not_overdue(
+    db_session: Session,
+) -> None:
+    """分片期内（最近成功在周度窗口内）不得误报 stale/overdue。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=True)
+    # 最近一次成功在 2 天前（周二），下一预期仍在下个周日 → 尚在分片周期内。
+    db_session.add(
+        TycUsageRecord(
+            tool_name="verify_company",
+            company_name="戊公司",
+            status="success",
+            called_at=NOW - timedelta(days=2),
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "ok"
+    assert item.next_expected_at == TYC_NEXT_WEEKLY_FIRE
+
+
+def test_tianyancha_beyond_weekly_window_becomes_overdue(
+    db_session: Session,
+) -> None:
+    """越过整个周度窗口仍无成功 → overdue（真超期）。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=True)
+    # 最近成功在 8 天前，跨过了上一个周日分片日 → 已超期。
+    db_session.add(
+        TycUsageRecord(
+            tool_name="verify_company",
+            company_name="己公司",
+            status="success",
+            called_at=NOW - timedelta(days=8),
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "overdue"
+    assert item.reason_code == "missed_expected_trigger"
 
 
 def test_tianyancha_without_successful_usage_has_no_last_success(
     db_session: Session,
 ) -> None:
-    """无 success 记账时不得凭空推导成功时间。"""
+    """无 success 记账时不得凭空推导成功时间；启用且未越过首个预期 → never_run。"""
     db_session.execute(delete(TycUsageRecord))
     _disable_all_sources(db_session)
-    _tyc_source(db_session, enabled=True)
+    # 配置锚点取 1 天前：下一个周日尚未到 → never_run，而非 overdue。
+    _tyc_source(
+        db_session,
+        enabled=True,
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(days=1),
+    )
     db_session.add(
         TycUsageRecord(
             tool_name="verify_company",
@@ -760,7 +848,44 @@ def test_tianyancha_without_successful_usage_has_no_last_success(
     _healthy_heartbeat(db_session)
 
     item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
-    assert item.state == "on_demand"
+    # 仅有一次失败记账、从无成功：不得标 failed，也不得编造成功时间。
+    assert item.state == "never_run"
+    assert item.reason_code == "never_run"
+    assert item.last_success_at is None
+    assert item.next_expected_at == TYC_NEXT_WEEKLY_FIRE
+
+
+def test_tianyancha_never_run_beyond_first_window_is_overdue(
+    db_session: Session,
+) -> None:
+    """启用后越过首个周度预期仍无成功 → overdue。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(
+        db_session,
+        enabled=True,
+        created_at=NOW - timedelta(days=10),
+        updated_at=NOW - timedelta(days=10),
+    )
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "overdue"
+    assert item.reason_code == "missed_expected_trigger"
+    assert item.last_success_at is None
+
+
+def test_tianyancha_disabled_stays_disabled(db_session: Session) -> None:
+    """停用的外部核查来源仍归 disabled，不因周度 cadence 被算成待调度。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=False)
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "disabled"
+    assert item.reason_code == "disabled"
+    assert item.next_expected_at is None
     assert item.last_success_at is None
 
 

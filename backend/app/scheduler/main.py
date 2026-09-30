@@ -33,10 +33,11 @@ from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
 from app.scheduler.health_rules import cron_to_apscheduler
 from app.scheduler.jobs import (
+    TYC_SHARD_CRONS,
     cleanup_job,
     collect_job,
     collect_source_job,
-    collect_tyc_for_suppliers_job,
+    collect_tyc_shard_job,
     create_monthly_research_batch_job,
     create_research_task_job,
     create_weekly_research_batch_job,
@@ -63,6 +64,29 @@ logger = logging.getLogger("scheduler.main")
 
 def _trigger(expr: str) -> CronTrigger:
     return CronTrigger(**cron_to_apscheduler(expr), timezone="Asia/Shanghai")
+
+
+# 天眼查周度分片（D8）：固定 2 片，周日跑 shard 0、周一跑 shard 1。
+# 权威 cadence 常量与 ``collect_tyc_shard_job`` 同源（见 jobs.py），健康聚合共用。
+TYC_SHARD_JOB_IDS: tuple[str, str] = ("tyc-shard-0", "tyc-shard-1")
+
+
+def _register_tyc_shard_jobs(scheduler: BlockingScheduler) -> None:
+    """幂等注册两个连续日的天眼查分片 job（触发日/时区/分片参数可测试）。"""
+    pairs = zip(TYC_SHARD_JOB_IDS, TYC_SHARD_CRONS, strict=True)
+    for shard_index, (job_id, cron) in enumerate(pairs):
+        trigger = _trigger(cron)
+        existing = scheduler.get_job(job_id)
+        if existing is None:
+            scheduler.add_job(
+                collect_tyc_shard_job,
+                trigger,
+                args=[shard_index],
+                id=job_id,
+                name=f"天眼查供应商分片核查（shard {shard_index}）",
+            )
+        elif str(existing.trigger) != str(trigger):
+            scheduler.reschedule_job(job_id, trigger=trigger)
 
 
 def _finalize_stale_collection_runs_on_startup() -> int:
@@ -191,13 +215,9 @@ def main() -> None:
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
-    # 供应商主体维度：每日批量天眼查核查（额度由信息源控制台配置，缺省 80/天、900/月），结果落信号池
-    scheduler.add_job(
-        collect_tyc_for_suppliers_job,
-        _trigger("0 6 * * *"),
-        id="tyc-suppliers-daily",
-        name="天眼查供应商批量核查",
-    )
+    # 供应商主体维度：周度两天分片多维度天眼查核查（周日 shard0、周一 shard1）；
+    # 额度由信息源控制台配置，结果落信号池。
+    _register_tyc_shard_jobs(scheduler)
     record_heartbeat()
     scheduler.add_job(
         record_heartbeat,

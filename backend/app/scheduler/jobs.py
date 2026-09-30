@@ -23,10 +23,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.agent.tyc_batch import (
+    TycBatchBucketGateRejected,
+    TycBatchLocked,
     TycBatchSourceInactive,
     TycBatchUnavailable,
     run_tyc_batch,
 )
+from app.agent.tyc_batch_models import SHARD_COUNT
 from app.agent.tyc_gateway import TYC_SOURCE_CODE
 from app.ai.models import AIAnalysisRecord
 from app.ai.service import analyze_raw_signal
@@ -154,16 +157,28 @@ def collect_source_job(source_id: int) -> None:
         logger.exception("信息源 %s 独立调度异常: %s", source_id, exc)
 
 
-def collect_tyc_for_suppliers_job() -> None:
-    """每日批量核查启用的供应商：调用天眼查 MCP 并把结果写入信号池。
+# 天眼查周度分片核查的权威触发 cadence（D8：固定 2 片）：
+# 周日跑 shard 0、周一跑 shard 1，同一时刻 06:00 Asia/Shanghai。
+# 使用具名星期（sun/mon）避免标准 cron 数字星期与 APScheduler 的歧义。
+TYC_SHARD_CRONS: tuple[str, str] = ("0 6 * * sun", "0 6 * * mon")
+# 信源层健康新鲜度只按周度窗口推导：取首个分片日（周日）作为 7 天窗口锚点，
+# 避免周日/周一两个分片日之间或多分片覆盖期间误报 overdue —— 单供应商在
+# 分片周期内未刷新属正常，只有越过整个周度窗口才算真超期。
+TYC_WEEKLY_SCHEDULE: str = TYC_SHARD_CRONS[0]
 
-    只对 suppliers.enabled=true 的供应商执行；受天眼查每日/每月额度控制，
-    额度耗尽即停止。批量逻辑复用 app.agent.tyc_batch.run_tyc_batch（与手动
-    批量刷新 API 同一实现）：每次调用结果统一写入 tyc_usage_records
-    （success/empty/error/not_configured）；仅 success 结果写入 raw_signals，
-    随后交由既有 _process_pending_signals 分析链生成 P1-P4 提醒。
 
-    本函数保持调度顶层边界：未启用/额度不可用时降级为跳过日志，异常不外抛。
+def collect_tyc_shard_job(shard_index: int) -> None:
+    """周度分片核查启用的供应商：调用天眼查 MCP 并把多维度报告写入信号池。
+
+    只处理所属 SHA-256 分片（固定 2 片）的 ``suppliers.enabled=true``；启用前
+    按**真实桶门禁**校验 ``max_bucket × (1+len(dimensions)) ≤ daily_limit``，
+    拒绝时记跳过日志、**不部分执行**；批次锁被占用（另一分片或手动核查运行中）
+    同样跳过。批量逻辑复用 ``app.agent.tyc_batch.run_tyc_batch``（与手动单供应商
+    核查同一额度执行器）：逐工具写 ``tyc_usage_records``，多维度报告落信号池，
+    随后交由既有 ``_process_pending_signals`` 分析链生成 P1-P4 提醒。
+
+    本函数保持调度顶层边界：未启用/额度不可用/门禁拒绝/锁繁忙一律降级为跳过
+    日志，异常不外抛。
     """
     try:
         with SessionLocal() as session:
@@ -171,21 +186,36 @@ def collect_tyc_for_suppliers_job() -> None:
                 select(DataSource).where(DataSource.code == TYC_SOURCE_CODE)
             )
             if source is None:
-                logger.warning("天眼查信息源未配置，跳过供应商批量核查")
+                logger.warning("天眼查信息源未配置，跳过供应商分片核查")
                 return
             try:
-                result = run_tyc_batch(session, source)
+                result = run_tyc_batch(
+                    session,
+                    source,
+                    shard_index=shard_index,
+                    shard_count=SHARD_COUNT,
+                )
             except TycBatchSourceInactive:
-                logger.warning("天眼查未启用，跳过供应商批量核查")
+                logger.warning("天眼查未启用，跳过供应商分片核查")
                 return
             except TycBatchUnavailable as exc:
-                logger.warning("天眼查不可用，跳过供应商批量核查：%s", exc)
+                logger.warning("天眼查不可用，跳过供应商分片核查：%s", exc)
+                return
+            except TycBatchLocked as exc:
+                logger.warning("天眼查分片 %d 跳过：%s", shard_index, exc)
+                return
+            except TycBatchBucketGateRejected as exc:
+                logger.warning(
+                    "天眼查分片 %d 门禁拒绝，跳过（不部分执行）：%s", shard_index, exc
+                )
                 return
         if result.targeted_count == 0:
-            logger.info("无启用供应商，跳过天眼查批量核查")
+            logger.info("天眼查分片 %d 无启用供应商，跳过", shard_index)
             return
         logger.info(
-            "天眼查批量核查完成: 供应商=%d 调用=%d 新增信号=%d 重复=%d 空=%d 失败=%d 额度耗尽=%s",
+            "天眼查分片 %d 核查完成: 供应商=%d 调用=%d 新增信号=%d 重复=%d 空=%d "
+            "失败=%d 额度耗尽=%s",
+            shard_index,
             result.targeted_count,
             result.attempted_count,
             result.created_count,
@@ -197,7 +227,7 @@ def collect_tyc_for_suppliers_job() -> None:
         if result.created_count:
             _process_pending_signals()
     except Exception as exc:
-        logger.exception("天眼查批量核查异常: %s", exc)
+        logger.exception("天眼查分片核查异常: %s", exc)
 
 
 def _process_pending_signals(

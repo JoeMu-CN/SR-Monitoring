@@ -17,7 +17,7 @@
     | code | 策略 | 理由 |
     |---|---|---|
     | nmc-weather | fixed_days 7，review_required=true | 本次不改动：气象预警属短时效事件，保持既有 7 天（只读核对 signal_validity_days=7） |
-    | tianyancha | fixed_days 30 | 主体核查结果（工商/司法/经营状态）30 天内视为有效，超期需重新核查 |
+    | tianyancha | until_superseded 30 | 周度多维度核查：新周报告原子替代旧周；30 天为兜底上限，周任务长期未跑时旧报告也不会永久有效 |
     | ofac-sdn | until_revoked，review_required=false | 制裁名单不能靠天数自动解除，只能由撤销信息解除；不设复核期限，仍依赖接收到撤销信息 |
     | mofcom-entity-control | until_revoked，review_required=false | 不可靠实体清单同属制裁/管制名单，撤销前持续有效，不靠天数自动解除 |
     | bis-entity-list | until_revoked，review_required=false | 美国 BIS 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
@@ -100,7 +100,7 @@ class PolicySpec:
 
 
 TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
-    "tianyancha": PolicySpec(ValidityMode.FIXED_DAYS, 30),
+    "tianyancha": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 30),
     "ofac-sdn": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
     "mofcom-entity-control": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
     "bis-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),

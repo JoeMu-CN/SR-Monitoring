@@ -251,6 +251,28 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
     expect(cell.textContent).not.toContain('下次预期');
   });
 
+  it('外部核查来源即使后端返回周度 ok 状态，仍以中性「核查」展示且不显示下次预期', () => {
+    render(
+      <MonitoringSourceFreshness
+        onDemand
+        health={{
+          ...baseHealth.sources[0],
+          state: 'ok',
+          reason_code: 'success_observed',
+          last_success_at: '2026-09-06T22:30:00Z',
+          last_attempt_at: '2026-09-06T22:30:00Z',
+          next_expected_at: '2026-09-12T22:00:00Z',
+        }}
+      />,
+    );
+    const cell = screen.getByTestId('source-health-17');
+    expect(within(cell).getByText('核查')).toBeInTheDocument();
+    // 外部核查来源不得因后端周度 ok 就展示「采集正常」或泄露下次预期。
+    expect(cell.textContent).not.toContain('采集正常');
+    expect(cell.textContent).not.toContain('下次预期');
+    expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-06T22:30:00Z')}`);
+  });
+
   it('on_demand 且无核查记录时展示「最近核查 —」，不编造时间', () => {
     render(
       <MonitoringSourceFreshness

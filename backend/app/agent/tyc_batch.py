@@ -1,199 +1,209 @@
-"""天眼查批量核查服务。
+"""天眼查批量核查服务（计划 Todo 7/8：多维度 + 分片 + 桶门禁 + 批次互斥）。
 
-每日定时任务与手动批量刷新 API 共用的结果返回型实现：查询全部
-``enabled=true`` 供应商，逐供应商在调用前复查额度；每次调用结果独立写
-``TycUsageRecord`` 并先提交，再写成功信号；仅 success 入信号池，重复信号计入
-``duplicate_count``；单个供应商失败被隔离。前置条件不满足时抛出类型化异常，
-由调用方决定 HTTP 状态映射；本模块不吞异常、不做事务回滚伪装。
+定时路径 ``run_tyc_batch``：按启用供应商全集的稳定 SHA-256 分片（固定 2 片）
+取子集，经**真实桶门禁**（``max_bucket × (1+len(dimensions)) ≤ daily_limit``）
+后在专用连接 session 级 advisory lock 内逐供应商执行；手动路径
+``run_tyc_supplier`` 只核查指定启用供应商、不套全量桶门禁。两者共用
+``tyc_batch_supplier.run_suppliers``（逐工具计数 + 报告信号映射）。
+
+每个供应商：``gateway.fetch_dimensions``（内部每工具经 D9 单工具额度执行器）→
+``build_risk_report`` → ``tyc_report_storage.store_tyc_report_signal`` 写「重点摘要 +
+报告 JSON」（until_superseded 周内幂等、跨周替代；本模块不写原始 Markdown）。
 """
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import logging
-from dataclasses import dataclass
+from collections.abc import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.agent.budget import get_tyc_usage, record_tyc_usage
-from app.agent.supplier_tyc import upsert_supplier_tyc_signal
-from app.agent.tyc_gateway import TYC_SOURCE_CODE
-from app.signals.ingestion import SignalIngestionError
+from app.agent.budget import TycUsageSnapshot, get_tyc_usage
+from app.agent.tyc_batch_lock import batch_advisory_lock
+from app.agent.tyc_batch_models import (
+    SHARD_COUNT,
+    BatchAccumulator,
+    TycBatchBucketGateRejected,
+    TycBatchError,
+    TycBatchLocked,
+    TycBatchNotTianyancha,
+    TycBatchResult,
+    TycBatchShardError,
+    TycBatchSourceInactive,
+    TycBatchSupplierNotFound,
+    TycBatchUnavailable,
+)
+from app.agent.tyc_batch_supplier import run_suppliers
+from app.agent.tyc_dimensions import resolve_tyc_dimensions
+from app.agent.tyc_gateway import TYC_SOURCE_CODE, TycGateway
+from app.database import engine
 from app.signals.models import DataSource
 from app.suppliers.models import Supplier
 
 logger = logging.getLogger("scheduler")
 
-# 与 VerifyCompanyTool.name 一致：批量与实时核查共用同一计费口径和工具标识。
-TYC_VERIFY_TOOL_NAME = "verify_company"
-_TYC_USAGE_STATUSES: frozenset[str] = frozenset(
-    {"success", "empty", "error", "not_configured"}
-)
+__all__ = [
+    "SHARD_COUNT",
+    "TycBatchBucketGateRejected",
+    "TycBatchError",
+    "TycBatchLocked",
+    "TycBatchNotTianyancha",
+    "TycBatchResult",
+    "TycBatchShardError",
+    "TycBatchSourceInactive",
+    "TycBatchSupplierNotFound",
+    "TycBatchUnavailable",
+    "bucket_index",
+    "run_tyc_batch",
+    "run_tyc_supplier",
+]
 
 
-class TycBatchError(Exception):
-    """天眼查批量核查的前置条件错误基类。"""
+def bucket_index(supplier_code: str, shard_count: int = SHARD_COUNT) -> int:
+    """计划 D8 分片公式：``int(sha256(code).hexdigest(), 16) % shard_count``。
 
-
-class TycBatchNotTianyancha(TycBatchError):
-    """目标信息源不是天眼查（API 映射为 422）。"""
-
-
-class TycBatchSourceInactive(TycBatchError):
-    """目标信息源未启用（API 映射为 409）。"""
-
-
-class TycBatchUnavailable(TycBatchError):
-    """运行密钥或起始额度不可用（API 映射为 409）。"""
-
-
-@dataclass(frozen=True)
-class TycBatchResult:
-    """一次批量核查的稳定汇总。"""
-
-    source_id: int
-    targeted_count: int
-    attempted_count: int
-    created_count: int
-    duplicate_count: int
-    empty_count: int
-    failed_count: int
-    quota_exhausted: bool
-
-
-def run_tyc_batch(session: Session, source: DataSource) -> TycBatchResult:
-    """执行一次天眼查批量核查并返回汇总。
-
-    - 只处理 ``suppliers.enabled=true``，按 ``supplier_code`` 稳定排序；
-    - 前置校验（信息源类型/启用状态/密钥/起始额度）不满足时抛出类型化异常；
-    - 逐供应商调用前复查额度，中途耗尽即停止并置 ``quota_exhausted``；
-    - 每次调用结果独立写 ``TycUsageRecord`` 并先提交（真实调用已发生，计费
-      事实不因后续失败回滚），success 才写信号，重复信号计入 ``duplicate``；
-    - 单个供应商调用异常、非 success 或信号持久化失败（回滚当前失败事务后）
-      不阻塞其余供应商。
+    稳定性优先：禁用 Python 内建 ``hash()``（带随机盐、跨进程不稳定）。
     """
+    digest = hashlib.sha256(supplier_code.encode()).hexdigest()
+    return int(digest, 16) % shard_count
+
+
+def run_tyc_batch(
+    session: Session,
+    source: DataSource,
+    *,
+    shard_index: int,
+    shard_count: int = SHARD_COUNT,
+) -> TycBatchResult:
+    """定时路径：分片 + 真实桶门禁 + 批次互斥 + 逐供应商多维度核查。
+
+    ``shard_index`` 为必填关键字参数（不设兼容性默认，避免调用者遗漏分片）。
+    """
+    _validate_shard(shard_index, shard_count)
+    usage, dimensions = _preflight(session, source)
+    with batch_advisory_lock(engine) as acquired:
+        if not acquired:
+            raise TycBatchLocked("天眼查批量核查已在运行，请稍后重试")
+        suppliers = _enabled_suppliers(session)
+        _enforce_bucket_gate(
+            suppliers, shard_count, 1 + len(dimensions), usage.daily_limit
+        )
+        subset = [
+            supplier
+            for supplier in suppliers
+            if bucket_index(supplier.supplier_code, shard_count) == shard_index
+        ]
+        accumulator = BatchAccumulator(
+            source_id=source.id,
+            shard_index=shard_index,
+            shard_count=shard_count,
+            targeted_count=len(subset),
+        )
+        run_suppliers(accumulator, session, _build_gateway(session), subset)
+        return accumulator.freeze()
+
+
+def run_tyc_supplier(
+    session: Session, source: DataSource, *, supplier_id: int
+) -> TycBatchResult:
+    """手动路径：只核查指定启用供应商，不套全量桶门禁。
+
+    额度按当前维度数 C=1+len(dimensions) 受约束：剩余额度不足 C 时仍允许启动
+    （避免丢弃用户显式请求），由执行器逐工具在锁内拦截并返回 ``quota_exhausted``；
+    完全无可用额度时由 ``_preflight`` 结构化拒绝（API 409）。
+    """
+    _, dimensions = _preflight(session, source)
+    supplier = session.get(Supplier, supplier_id)
+    if supplier is None or not supplier.enabled:
+        raise TycBatchSupplierNotFound("供应商不存在或未启用")
+    logger.info(
+        "天眼查单供应商核查：%s（C=%d）", supplier.supplier_code, 1 + len(dimensions)
+    )
+    with batch_advisory_lock(engine) as acquired:
+        if not acquired:
+            raise TycBatchLocked("天眼查批量核查已在运行，请稍后重试")
+        accumulator = BatchAccumulator(
+            source_id=source.id,
+            shard_index=bucket_index(supplier.supplier_code, SHARD_COUNT),
+            shard_count=SHARD_COUNT,
+            targeted_count=1,
+            supplier_id=supplier.id,
+        )
+        run_suppliers(accumulator, session, _build_gateway(session), [supplier])
+        return accumulator.freeze()
+
+
+def _validate_shard(shard_index: int, shard_count: int) -> None:
+    if shard_count != SHARD_COUNT:
+        raise TycBatchShardError(
+            f"分片数固定为 {SHARD_COUNT}（收到 {shard_count}）", shard_count=shard_count
+        )
+    if not 0 <= shard_index < shard_count:
+        raise TycBatchShardError(
+            f"非法分片序号 {shard_index}（合法范围 0..{shard_count - 1}）",
+            shard_index=shard_index,
+        )
+
+
+def _preflight(
+    session: Session, source: DataSource
+) -> tuple[TycUsageSnapshot, tuple[str, ...]]:
+    """信息源/额度前置校验；返回（额度快照，当前生效维度清单）。"""
     if source.code != TYC_SOURCE_CODE:
         raise TycBatchNotTianyancha("仅支持天眼查信息源")
     if not source.enabled:
         raise TycBatchSourceInactive("信息源已停用")
     usage = get_tyc_usage(session)
     if not usage.enabled:
-        raise TycBatchUnavailable("天眼查运行密钥不可用")
+        raise TycBatchUnavailable("天眼查运行密钥不可用", reason="key_unavailable")
     if not usage.allowed:
         raise TycBatchUnavailable(
             f"天眼查额度不足（今日 {usage.daily_used}/{usage.daily_limit}，"
-            f"本月 {usage.monthly_used}/{usage.monthly_limit}）"
+            f"本月 {usage.monthly_used}/{usage.monthly_limit}）",
+            reason="quota_exhausted",
+            **usage.to_dict(),
         )
+    login_config = source.login_config if isinstance(source.login_config, dict) else {}
+    return usage, resolve_tyc_dimensions(login_config.get("tyc_dimensions"))
 
-    # 延迟导入以便测试替换网关工厂（与既有调度任务同一策略）。
-    from app.agent.tyc_gateway import build_tyc_gateway
 
-    suppliers = list(
+def _enabled_suppliers(session: Session) -> list[Supplier]:
+    return list(
         session.scalars(
             select(Supplier)
             .where(Supplier.enabled.is_(True))
             .order_by(Supplier.supplier_code)
         )
     )
-    gateway = build_tyc_gateway(session=session)
-    created = 0
-    duplicate = 0
-    empty = 0
-    failed = 0
-    attempted = 0
-    quota_exhausted = False
+
+
+def _enforce_bucket_gate(
+    suppliers: Sequence[Supplier],
+    shard_count: int,
+    calls_per_supplier: int,
+    daily_limit: int,
+) -> None:
+    """真实桶门禁：启用全集按 SHA-256 分桶，最大桶 × 每供应商调用数 ≤ 日额度。"""
+    buckets = [0] * shard_count
     for supplier in suppliers:
-        if not get_tyc_usage(session).allowed:
-            quota_exhausted = True
-            logger.warning("天眼查额度耗尽，提前停止供应商批量核查")
-            break
-        attempted += 1
-        try:
-            result = asyncio.run(gateway.verify(supplier.legal_name))
-        except Exception as exc:  # noqa: BLE001 —— 单供应商失败隔离，不阻塞其余
-            failed += 1
-            # 调用已发生（网络/鉴权/服务异常）：按 error 记账并立即提交，
-            # 不因后续流程中断而丢失真实调用事实。
-            record_tyc_usage(
-                session,
-                tool_name=TYC_VERIFY_TOOL_NAME,
-                company_name=supplier.legal_name,
-                status="error",
-            )
-            session.commit()
-            logger.warning("天眼查核查 %s 失败: %s", supplier.legal_name, exc)
-            continue
-        call_status = _tyc_usage_status(result)
-        record_tyc_usage(
-            session,
-            tool_name=TYC_VERIFY_TOOL_NAME,
-            company_name=supplier.legal_name,
-            status=call_status,
+        buckets[bucket_index(supplier.supplier_code, shard_count)] += 1
+    actual_max_bucket = max(buckets, default=0)
+    if actual_max_bucket * calls_per_supplier > daily_limit:
+        raise TycBatchBucketGateRejected(
+            f"天眼查分片门禁拒绝：单桶最多 {actual_max_bucket} 家 × 每供应商 "
+            f"{calls_per_supplier} 次 = {actual_max_bucket * calls_per_supplier} 次 "
+            f"> 日额度 {daily_limit}；请上调每日额度或减少维度",
+            actual_max_bucket=actual_max_bucket,
+            calls_per_supplier=calls_per_supplier,
+            daily_limit=daily_limit,
+            bucket_counts=tuple(buckets),
         )
-        # 记账独立提交：真实调用已计入额度，信号入库失败也不回滚计费事实。
-        session.commit()
-        if call_status != "success":
-            if call_status == "empty":
-                empty += 1
-            else:
-                # error / not_configured：调用未能正常完成，计入失败。
-                failed += 1
-            continue
-        title = f"天眼查核查：{supplier.legal_name}"
-        content = _format_tyc_content(result)
-        try:
-            _, is_created = upsert_supplier_tyc_signal(
-                session,
-                supplier=supplier,
-                title=title,
-                content=content,
-                url=None,
-                raw_payload=result,
-            )
-            session.commit()
-        except (SQLAlchemyError, SignalIngestionError) as exc:
-            # 单供应商信号持久化失败隔离：回滚当前失败事务（usage 已先提交，
-            # 不受影响），计入失败并继续其余供应商；不捕获任意 Exception。
-            session.rollback()
-            failed += 1
-            logger.warning("天眼查信号入库 %s 失败: %s", supplier.legal_name, exc)
-            continue
-        if is_created:
-            created += 1
-        else:
-            duplicate += 1
-    return TycBatchResult(
-        source_id=source.id,
-        targeted_count=len(suppliers),
-        attempted_count=attempted,
-        created_count=created,
-        duplicate_count=duplicate,
-        empty_count=empty,
-        failed_count=failed,
-        quota_exhausted=quota_exhausted,
-    )
 
 
-def _tyc_usage_status(result: dict[str, object]) -> str:
-    """按天眼查计费口径归类 verify 结果：仅四态合法，其余一律按 error 记账。"""
-    status = result.get("status")
-    if isinstance(status, str) and status in _TYC_USAGE_STATUSES:
-        return status
-    return "error"
+def _build_gateway(session: Session) -> TycGateway:
+    # 延迟导入以便测试替换网关工厂（与既有调度任务同一策略）。
+    from app.agent.tyc_gateway import build_tyc_gateway
 
-
-def _format_tyc_content(result: dict[str, object]) -> str:
-    """把天眼查 verify 结果转成信号正文（含可回溯字段）。"""
-    parts = [f"企业：{result.get('company_name', '')}"]
-    if result.get("credit_code"):
-        parts.append(f"统一社会信用代码：{result['credit_code']}")
-    if result.get("reg_status"):
-        parts.append(f"登记状态：{result['reg_status']}")
-    candidates = result.get("candidates") or []
-    if isinstance(candidates, list):
-        for idx, cand in enumerate(candidates[:3], start=1):
-            if isinstance(cand, dict) and cand.get("name"):
-                parts.append(f"候选{idx}：{cand.get('name')}")
-    return "；".join(parts)
+    return build_tyc_gateway(session=session)

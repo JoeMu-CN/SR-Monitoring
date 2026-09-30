@@ -24,7 +24,7 @@ const waitForSettledRoute = async (page: Page) => {
 
 test.beforeAll(async () => { await mkdir(evidenceDirectory, {recursive: true}); });
 
-test('从有效数入口查看、展开并分页浏览全部历史记录', async ({browser}) => {
+test('从有效数入口查看摘要、打开完整报告弹窗并分页浏览全部历史记录', async ({browser}) => {
   const context = await browser.newContext({viewport: {width: 1280, height: 720}, reducedMotion: 'reduce'});
   const page = await context.newPage();
   const consoleErrors: string[] = [];
@@ -42,8 +42,26 @@ test('从有效数入口查看、展开并分页浏览全部历史记录', async
   await expect(page.getByRole('listitem')).toHaveCount(20);
   await waitForSettledRoute(page);
 
-  await page.getByRole('button', {name: '展开正文'}).click();
-  await expect(page.getByRole('button', {name: '收起正文'})).toHaveAttribute('aria-expanded', 'true');
+  // Todo15：主列表只渲染后端受控摘要（≤240 字符），不再提供「展开正文」入口。
+  const longItem = page.getByRole('listitem').filter({hasText: 'E2E Source Signal 01'});
+  await expect(longItem).toBeVisible();
+  const summaryCell = longItem.locator('[data-testid^="source-signal-summary-"]');
+  await expect(summaryCell).toBeVisible();
+  expect((await summaryCell.textContent())?.length ?? 0).toBeLessThanOrEqual(240);
+  await expect(summaryCell).toContainText('E2E long source signal content.');
+  await expect(page.getByRole('button', {name: '展开正文'})).toHaveCount(0);
+
+  // 完整正文与报告改由弹窗按需查看，ESC 关闭后焦点还原到触发按钮。
+  const reportEntry = longItem.getByRole('button', {name: /^查看完整报告：/});
+  await reportEntry.click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  await expect(page.getByTestId('source-signal-report-no-report')).toContainText('没有结构化多维度报告');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(reportEntry).toBeFocused();
+
   await page.getByRole('tab', {name: '全部历史'}).click();
   await expect(page).toHaveURL(/scope=all&page=1$/);
   await expect(page.getByText('显示 1-20，共 25 条')).toBeVisible();

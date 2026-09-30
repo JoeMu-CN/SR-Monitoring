@@ -10,8 +10,14 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent.budget import get_tyc_usage, record_tyc_usage
+from app.agent.budget import get_tyc_usage
 from app.agent.tyc_gateway import TycGateway, build_tyc_gateway
+from app.agent.tyc_quota import (
+    NOT_CONFIGURED_MESSAGE,
+    TycQuotaExecutionResult,
+    TycQuotaOutcome,
+    execute_tyc_tool_with_quota,
+)
 from app.risks.models import RiskAlert, RiskEvent, SupplierEventMatch
 from app.risks.query_validity import current_alert_condition
 from app.suppliers.models import Supplier, SupplierProduct, SupplierSite
@@ -162,7 +168,9 @@ class VerifyCompanyTool:
 
     路由规则：
     - 清单内（enabled 供应商）：只读已入库的最新天眼查信号，不调 MCP、不消耗额度；
-    - 清单外企业：实时调用天眼查 MCP（走每日/每月额度，计入账本）。
+    - 清单外企业：实时调用天眼查 MCP，经共享单工具额度执行器
+      （``execute_tyc_tool_with_quota``）在额度锁内重读余额、执行调用、记账并独立提交，
+      与批量路径共享同一日/月额度，调用事实不随 Agent 会话事务回滚。
     """
 
     name = "verify_company"
@@ -215,43 +223,46 @@ class VerifyCompanyTool:
         if not usage.enabled:
             return {
                 "status": "not_configured",
-                "message": "天眼查未启用：请在信息源控制台配置运行密钥并启用",
-                "usage": usage.to_dict(),
-            }
-        if not usage.allowed:
-            return {
-                "status": "quota_exhausted",
-                "message": (
-                    f"天眼查额度已达上限：今日 {usage.daily_used}/{usage.daily_limit}，"
-                    f"本月 {usage.monthly_used}/{usage.monthly_limit}"
-                ),
+                "message": NOT_CONFIGURED_MESSAGE,
                 "usage": usage.to_dict(),
             }
 
         gateway = self.gateway or build_tyc_gateway(session=session)
-        try:
-            result = await gateway.verify(name)
-        except Exception as exc:  # noqa: BLE001
-            result = {"status": "error", "message": f"天眼查调用失败：{exc}"[:500]}
-        call_status = _classify_call(result)
-        record_tyc_usage(
-            session,
-            tool_name=self.name,
-            company_name=name,
-            status=call_status,
-        )
-        result["usage"] = get_tyc_usage(session).to_dict()
-        return result
+
+        async def remote_call() -> dict[str, object]:
+            return await gateway.verify(name)
+
+        execution = await execute_tyc_tool_with_quota(self.name, name, remote_call)
+        return _quota_execution_response(execution)
 
 
-def _classify_call(result: dict[str, object]) -> str:
-    """按天眼查计费口径归类调用结果：只有 success 计 1 次。"""
-    status = str(result.get("status") or "error")
-    if status == "success":
-        return "success"
-    if status in {"empty", "error", "not_configured"}:
-        return status
-    return "error"
+_RESPONSE_STATUS_BY_OUTCOME: dict[TycQuotaOutcome, str] = {
+    TycQuotaOutcome.SUCCESS_WITH_RECORDS: "success",
+    TycQuotaOutcome.EMPTY: "empty",
+    TycQuotaOutcome.ERROR: "error",
+    TycQuotaOutcome.QUOTA_EXHAUSTED: "quota_exhausted",
+    TycQuotaOutcome.BUSY: "busy",
+    TycQuotaOutcome.NOT_CONFIGURED: "not_configured",
+}
+
+
+def _quota_execution_response(execution: TycQuotaExecutionResult) -> dict[str, object]:
+    """执行器结果 → VerifyCompanyTool 对外响应（保留 status/message/usage 合同）。
+
+    远程正常返回时原样透出网关 payload（``status``/``company_name`` 等键不变）
+    并补充执行器提交后的 ``usage`` 快照；远程异常、未启用（锁内撤销）、额度耗尽
+    与额度繁忙返回结构化 ``status + message``。
+    """
+    usage = execution.usage.to_dict() if execution.usage is not None else None
+    if execution.payload is not None:
+        response = dict(execution.payload)
+        response["usage"] = usage
+        return response
+    return {
+        "status": _RESPONSE_STATUS_BY_OUTCOME[execution.outcome],
+        "message": execution.message,
+        "usage": usage,
+    }
 
 
 class GetBudgetTool:

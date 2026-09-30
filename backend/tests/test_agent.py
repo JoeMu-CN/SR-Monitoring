@@ -3,14 +3,19 @@
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable, Generator
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import ClassVar
+from uuid import uuid4
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
+import app.agent.budget as budget_module
 from app.agent.budget import get_tyc_usage, record_tyc_usage
 from app.agent.engine import AgentError, FakeAgentLLM, LLMResponse, ToolCallSpec, run_agent
 from app.agent.models import (
@@ -41,7 +46,8 @@ from app.agent.tyc_gateway import (
     build_tyc_gateway,
 )
 from app.auth.models import User
-from app.signals.models import DataSource
+from app.database import engine
+from app.signals.models import DataSource, RawSignal
 from app.suppliers.models import Supplier
 
 
@@ -128,6 +134,32 @@ def enable_tyc(db_session: Session, monkeypatch: MonkeyPatch) -> None:
         "daily_limit": 5,
         "monthly_limit": 50,
     }
+
+
+def _seed_tyc_signal(
+    session: Session,
+    supplier: Supplier,
+    *,
+    title: str,
+    content: str,
+    raw_payload: dict[str, object],
+) -> RawSignal:
+    """直接落一条天眼查信号：读取侧用例的前置数据（不经过周度报告写入）。"""
+    source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+    assert source is not None
+    signal = RawSignal(
+        source_id=source.id,
+        external_id=f"tyc-{supplier.supplier_code}-{uuid4().hex[:12]}",
+        title=title,
+        content=content,
+        fingerprint=hashlib.sha256(
+            f"{supplier.supplier_code}|{title}|{uuid4().hex}".encode()
+        ).hexdigest(),
+        raw_data=raw_payload,
+    )
+    session.add(signal)
+    session.flush()
+    return signal
 
 
 def test_chat_creates_session_and_persists_messages(
@@ -498,61 +530,84 @@ def test_verify_company_defaults_to_not_configured(
 
 
 def test_verify_company_charges_on_success(
-    clean_agent_tables: Session, enable_tyc: None
+    db_session: Session, committed_tyc_source: None
 ) -> None:
+    """实时核查经共享执行器记账：提交态配置，独立连接可见扣费事实。"""
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
     gateway = FakeTycGateway(status="success")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
-        tool.execute({"company_name": "某科技有限公司"}, clean_agent_tables)
+        tool.execute({"company_name": "某科技有限公司"}, db_session)
     )
     assert result["status"] == "success"
-    assert result["usage"]["daily_used"] == 1  # type: ignore[index]
+    assert result["company_name"] == "某科技有限公司"
+    usage = result["usage"]
+    assert isinstance(usage, dict)
+    assert usage["daily_used"] == 1
+    assert usage["daily_limit"] == 5
     assert gateway.calls == ["某科技有限公司"]
-    usage = get_tyc_usage(clean_agent_tables)
-    assert usage.daily_used == 1
+    assert _committed_tyc_rows() == [("verify_company", "某科技有限公司", "success")]
+    assert _committed_tyc_daily_used() == 1
 
 
 def test_verify_company_quota_exhausted_blocks_call(
-    clean_agent_tables: Session, enable_tyc: None
+    db_session: Session, committed_tyc_source: None
 ) -> None:
-    # 先塞满当日额度
-    for i in range(5):
-        record_tyc_usage(
-            clean_agent_tables, tool_name="verify_company", company_name=f"C{i}", status="success"
-        )
-    clean_agent_tables.flush()
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    # 先塞满当日额度（真提交，执行器锁内重读可见）
+    with Session(engine) as seeded:
+        for i in range(5):
+            seeded.add(
+                TycUsageRecord(
+                    tool_name="verify_company",
+                    company_name=f"C{i}",
+                    status="success",
+                )
+            )
+        seeded.commit()
     gateway = FakeTycGateway(status="success")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
-        tool.execute({"company_name": "新公司"}, clean_agent_tables)
+        tool.execute({"company_name": "新公司"}, db_session)
     )
     assert result["status"] == "quota_exhausted"
-    assert gateway.calls == []  # 网关未被调用
+    assert "天眼查额度已达上限" in str(result["message"])
+    usage = result["usage"]
+    assert isinstance(usage, dict)
+    assert usage["daily_used"] == 5
+    assert usage["daily_remaining"] == 0
+    assert gateway.calls == []  # 超额不调远程
+    assert _committed_tyc_daily_used() == 5
 
 
 def test_verify_company_error_does_not_charge(
-    clean_agent_tables: Session, enable_tyc: None
+    db_session: Session, committed_tyc_source: None
 ) -> None:
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
     gateway = FakeTycGateway(status="error")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
-        tool.execute({"company_name": "某公司"}, clean_agent_tables)
+        tool.execute({"company_name": "某公司"}, db_session)
     )
-    # 网关异常被引擎兜底为 error，不计费
+    # 网关异常按不计费 error 记账并独立提交
     assert result["status"] == "error"
-    assert get_tyc_usage(clean_agent_tables).daily_used == 0
+    assert "天眼查服务暂时不可用" in str(result["message"])
+    assert _committed_tyc_rows() == [("verify_company", "某公司", "error")]
+    assert _committed_tyc_daily_used() == 0
 
 
 def test_verify_company_empty_does_not_charge(
-    clean_agent_tables: Session, enable_tyc: None
+    db_session: Session, committed_tyc_source: None
 ) -> None:
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
     gateway = FakeTycGateway(status="empty")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
-        tool.execute({"company_name": "某公司"}, clean_agent_tables)
+        tool.execute({"company_name": "某公司"}, db_session)
     )
     assert result["status"] == "empty"
-    assert get_tyc_usage(clean_agent_tables).daily_used == 0
+    assert _committed_tyc_rows() == [("verify_company", "某公司", "empty")]
+    assert _committed_tyc_daily_used() == 0
 
 
 def test_get_budget_returns_real_counts(
@@ -603,7 +658,7 @@ def test_tyc_usage_reads_console_limits(
 def test_tyc_usage_uses_constant_default_limits(
     clean_agent_tables: Session,
 ) -> None:
-    """控制台未配置额度时使用常量默认值 80/900，不再读取环境变量。"""
+    """控制台未配置额度时使用常量默认值 1000/10000（与账户口径一致），不再读取环境变量。"""
     source = clean_agent_tables.scalar(
         select(DataSource).where(DataSource.code == "tianyancha")
     )
@@ -612,8 +667,98 @@ def test_tyc_usage_uses_constant_default_limits(
     clean_agent_tables.flush()
 
     usage = get_tyc_usage(clean_agent_tables)
-    assert usage.daily_limit == 80
-    assert usage.monthly_limit == 900
+    assert usage.daily_limit == 1000
+    assert usage.monthly_limit == 10000
+
+
+class _FrozenDateTime(datetime):
+    """冻结 ``budget`` 模块内 ``datetime.now()`` 的测试时钟（边界确定性）。"""
+
+    frozen_at: ClassVar[datetime] = datetime(2026, 1, 1, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        if tz is None:
+            return cls.frozen_at.replace(tzinfo=None)
+        return cls.frozen_at.astimezone(tz)
+
+
+@pytest.fixture
+def frozen_budget_now(monkeypatch: MonkeyPatch) -> Callable[[datetime], None]:
+    """把 ``budget.get_tyc_usage`` 的当前时刻固定为指定 UTC 时间。"""
+    monkeypatch.setattr(budget_module, "datetime", _FrozenDateTime)
+
+    def freeze(moment: datetime) -> None:
+        _FrozenDateTime.frozen_at = moment
+
+    return freeze
+
+
+def _add_tyc_usage(
+    session: Session, *, called_at: datetime, status: str = "success"
+) -> None:
+    session.add(
+        TycUsageRecord(
+            tool_name="verify_company",
+            company_name="固定时钟记录",
+            status=status,
+            called_at=called_at,
+        )
+    )
+
+
+def test_baseline_tyc_usage_charges_only_success_records(
+    clean_agent_tables: Session,
+) -> None:
+    """基线特征：计费口径 = 仅有记录的成功结果计 1 次（Todo 1 charged_statuses）。"""
+    for status in ("success", "empty", "error", "not_configured"):
+        record_tyc_usage(
+            clean_agent_tables,
+            tool_name="verify_company",
+            company_name=f"状态-{status}",
+            status=status,
+        )
+    clean_agent_tables.flush()
+
+    usage = get_tyc_usage(clean_agent_tables)
+    assert usage.daily_used == 1
+    assert usage.monthly_used == 1
+
+
+def test_baseline_tyc_usage_daily_window_follows_beijing(
+    clean_agent_tables: Session,
+    frozen_budget_now: Callable[[datetime], None],
+) -> None:
+    """基线特征：日窗口按北京时间 00:00 边界；北京今日 00:00 前不计入。"""
+    frozen_budget_now(datetime(2026, 8, 31, 16, 30, tzinfo=UTC))  # 北京 9/1 00:30
+    beijing_day_start_utc = datetime(2026, 8, 31, 16, 0, tzinfo=UTC)
+    _add_tyc_usage(
+        clean_agent_tables, called_at=beijing_day_start_utc - timedelta(seconds=1)
+    )
+    _add_tyc_usage(clean_agent_tables, called_at=beijing_day_start_utc)
+    clean_agent_tables.flush()
+
+    assert get_tyc_usage(clean_agent_tables).daily_used == 1
+
+
+def test_tyc_usage_month_window_uses_beijing_boundary(
+    clean_agent_tables: Session,
+    frozen_budget_now: Callable[[datetime], None],
+) -> None:
+    """月窗口按北京时间月首：北京 9/1 00:00 = UTC 8/31 16:00。
+
+    基线（修改前，见 Todo 4 证据）：按 UTC 月首（8/1 00:00）统计，三条全部计入 → 3。
+    目标行为：北京 8 月的记录（8/31 15:00 UTC）不计入 9 月 → 2。
+    """
+    frozen_budget_now(datetime(2026, 8, 31, 16, 30, tzinfo=UTC))  # 北京 9/1 00:30
+    _add_tyc_usage(clean_agent_tables, called_at=datetime(2026, 8, 31, 15, 0, tzinfo=UTC))
+    _add_tyc_usage(clean_agent_tables, called_at=datetime(2026, 8, 31, 16, 0, tzinfo=UTC))
+    _add_tyc_usage(clean_agent_tables, called_at=datetime(2026, 9, 15, 12, 0, tzinfo=UTC))
+    clean_agent_tables.flush()
+
+    usage = get_tyc_usage(clean_agent_tables)
+    assert usage.monthly_used == 2
+    assert usage.daily_used == 2
 
 
 CANDIDATES_MD = (
@@ -783,9 +928,14 @@ def test_build_tyc_gateway_reads_console_key_from_db(
 
 def test_build_tyc_gateway_ignores_env_key(
     db_session: Session,
+    committed_tyc_env: None,
     monkeypatch: MonkeyPatch,
 ) -> None:
     """环境变量完全不参与密钥解析：即使存在 TYC_API_KEY，无库内密文即未配置。"""
+    _configure_committed_tyc(
+        daily_limit=100, monthly_limit=1000, enabled=False, api_key=None
+    )
+    db_session.expire_all()
     source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None
     assert source.api_key_encrypted is None
@@ -824,11 +974,18 @@ def test_agent_endpoints_have_separate_openapi_groups(client: TestClient) -> Non
 
 
 def test_agent_status_endpoint(
-    client: TestClient, monkeypatch: MonkeyPatch
+    client: TestClient,
+    db_session: Session,
+    committed_tyc_env: None,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     import app.agent.router as agent_router
     from app.config import AISettings
 
+    _configure_committed_tyc(
+        daily_limit=100, monthly_limit=1000, enabled=False, api_key=None
+    )
+    db_session.expire_all()
     monkeypatch.setattr(
         agent_router,
         "get_ai_settings",
@@ -853,9 +1010,6 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     clean_agent_tables: Session, enable_tyc: None
 ) -> None:
     """清单内供应商：只读已入库最新天眼查信号，不调 MCP、不消耗额度。"""
-    from app.agent.supplier_tyc import upsert_supplier_tyc_signal
-    from app.signals.models import RawSignal
-
     supplier = Supplier(
         supplier_code="SUP-001",
         legal_name="上海华美精密机械有限公司",
@@ -865,14 +1019,13 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     clean_agent_tables.add(supplier)
     clean_agent_tables.flush()
 
-    external_id, created = upsert_supplier_tyc_signal(
+    signal = _seed_tyc_signal(
         clean_agent_tables,
-        supplier=supplier,
+        supplier,
         title="天眼查核查：上海华美精密机械有限公司",
         content="企业：上海华美精密机械有限公司；登记状态：存续",
         raw_payload={"status": "success", "company_name": "上海华美精密机械有限公司"},
     )
-    assert created is True
     clean_agent_tables.flush()
 
     gateway = FakeTycGateway(status="success")
@@ -888,7 +1041,7 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     assert get_tyc_usage(clean_agent_tables).daily_used == 0
     # 信号仍在库中
     stored = clean_agent_tables.scalar(
-        select(RawSignal).where(RawSignal.external_id == external_id)
+        select(RawSignal).where(RawSignal.external_id == signal.external_id)
     )
     assert stored is not None
 
@@ -900,11 +1053,7 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
 
     raw_data 结构化字段优先；缺失时回退解析 content 正文；确实缺失返回 None。
     """
-    from app.agent.supplier_tyc import (
-        format_tyc_signal_result,
-        upsert_supplier_tyc_signal,
-    )
-    from app.signals.models import RawSignal
+    from app.agent.supplier_tyc import format_tyc_signal_result
 
     supplier = Supplier(
         supplier_code="SUP-TYC-FORMAT",
@@ -917,9 +1066,9 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
 
     # Given：raw_data 携带 verify() 原始结构化字段，且与正文值刻意不同以证明优先级
     raw_title = "天眼查核查：格式回归测试有限公司"
-    raw_external_id, raw_created = upsert_supplier_tyc_signal(
+    raw_signal = _seed_tyc_signal(
         clean_agent_tables,
-        supplier=supplier,
+        supplier,
         title=raw_title,
         content=(
             "企业：格式回归测试有限公司；统一社会信用代码：91110000MA01OLDX1；"
@@ -944,10 +1093,9 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
             ],
         },
     )
-    assert raw_created is True
     raw_stored = clean_agent_tables.scalar(
         select(RawSignal).where(
-            RawSignal.external_id == raw_external_id,
+            RawSignal.external_id == raw_signal.external_id,
             RawSignal.title == raw_title,
         )
     )
@@ -978,9 +1126,9 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
 
     # Given：历史信号 raw_data 缺少结构化字段，仅正文含可回溯文本
     fallback_title = "天眼查核查：格式回归测试有限公司（历史）"
-    fallback_external_id, _ = upsert_supplier_tyc_signal(
+    fallback_signal = _seed_tyc_signal(
         clean_agent_tables,
-        supplier=supplier,
+        supplier,
         title=fallback_title,
         content=(
             "企业：格式回归测试有限公司；统一社会信用代码：91310000MA1K3XYZ8N；"
@@ -990,7 +1138,7 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
     )
     fallback_stored = clean_agent_tables.scalar(
         select(RawSignal).where(
-            RawSignal.external_id == fallback_external_id,
+            RawSignal.external_id == fallback_signal.external_id,
             RawSignal.title == fallback_title,
         )
     )
@@ -1010,16 +1158,16 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
 
     # Given：raw_data 与正文均无信用代码/登记状态
     sparse_title = "天眼查核查：格式回归测试有限公司（稀疏）"
-    sparse_external_id, _ = upsert_supplier_tyc_signal(
+    sparse_signal = _seed_tyc_signal(
         clean_agent_tables,
-        supplier=supplier,
+        supplier,
         title=sparse_title,
         content="企业：格式回归测试有限公司",
         raw_payload={},
     )
     sparse_stored = clean_agent_tables.scalar(
         select(RawSignal).where(
-            RawSignal.external_id == sparse_external_id,
+            RawSignal.external_id == sparse_signal.external_id,
             RawSignal.title == sparse_title,
         )
     )
@@ -1032,48 +1180,6 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
     assert sparse["credit_code"] is None
     assert sparse["reg_status"] is None
     assert sparse["candidates"] == []
-
-
-def test_tyc_signal_validity_when_published_at_is_missing_records_exact_anchor_fallback(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-) -> None:
-    # Given
-    from app.agent.supplier_tyc import upsert_supplier_tyc_signal
-    from app.signals.models import RawSignal
-
-    supplier = Supplier(
-        supplier_code="SUP-TYC-VALIDITY",
-        legal_name="天眼查锚点测试有限公司",
-        country_code="CN",
-        enabled=True,
-    )
-    clean_agent_tables.add(supplier)
-    clean_agent_tables.flush()
-
-    # When
-    external_id, created = upsert_supplier_tyc_signal(
-        clean_agent_tables,
-        supplier=supplier,
-        title="天眼查核查：天眼查锚点测试有限公司",
-        content="企业登记状态：存续",
-        raw_payload={"status": "success", "company_name": supplier.legal_name},
-    )
-
-    # Then
-    assert created is True
-    stored = clean_agent_tables.scalar(
-        select(RawSignal).where(RawSignal.external_id == external_id)
-    )
-    assert stored is not None
-    assert stored.validity_state == "active"
-    assert stored.valid_from == stored.collected_at
-    assert stored.validity_reason == {
-        "code": "anchor_fallback",
-        "anchor_source": "collected_at",
-        "details": {"source": "tianyancha"},
-    }
-    assert stored.validity_policy_version is not None
 
 
 def test_verify_company_registered_supplier_without_signal_returns_empty(
@@ -1100,540 +1206,534 @@ def test_verify_company_registered_supplier_without_signal_returns_empty(
     assert get_tyc_usage(clean_agent_tables).daily_used == 0
 
 
-def test_collect_tyc_for_suppliers_persists_usage_and_signal_on_success(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
+# ---------------------------------------------------------------------------
+# 天眼查单工具额度执行器（tyc_quota）：独立短事务 + advisory lock + 锁内重读
+# ---------------------------------------------------------------------------
+
+
+def _truncate_committed_tyc_usage() -> None:
+    """真提交清空计费表：执行器使用独立 Session，测试场景必须跨连接可见。"""
+    with engine.begin() as connection:
+        connection.execute(delete(TycUsageRecord))
+
+
+def _configure_committed_tyc(
+    *,
+    daily_limit: int,
+    monthly_limit: int,
+    enabled: bool = True,
+    api_key: str | None = "tyc_quota_test_key",
 ) -> None:
-    """每日批量核查成功：写 success 记账、落信号池、复用既有处理链。"""
-    from contextlib import nullcontext
+    """真提交地启用天眼查测试源并写入额度（执行器自建 Session 可见）。"""
+    from app.signals.secret_store import encrypt_secret
 
-    import app.agent.tyc_gateway as tyc_gateway_module
-    import app.scheduler.jobs as scheduler_jobs
-    from app.signals.models import RawSignal
+    with Session(engine) as setup:
+        source = setup.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+        assert source is not None, "迁移应已注册 tianyancha 信息源"
+        source.enabled = enabled
+        if api_key is None:
+            source.api_key_encrypted = None
+            source.api_key_hash = None
+            source.api_key_last4 = None
+        else:
+            source.api_key_encrypted = encrypt_secret(api_key)
+            source.api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+            source.api_key_last4 = "key"
+        source.login_config = {
+            "mode": "on_demand",
+            "secret_source": "console",
+            "daily_limit": daily_limit,
+            "monthly_limit": monthly_limit,
+        }
+        setup.commit()
 
-    class _SuccessGateway:
-        async def verify(self, company_name: str) -> dict[str, object]:
-            return {
-                "status": "success",
-                "company_name": company_name,
-                "reg_status": "存续",
-            }
 
-    supplier = Supplier(
-        supplier_code="SUP-TYC-JOB-SUCCESS",
-        legal_name="批量核查成功有限公司",
-        country_code="CN",
-        enabled=True,
-    )
-    clean_agent_tables.add(supplier)
-    clean_agent_tables.flush()
+def _committed_tyc_rows() -> list[tuple[str, str, str]]:
+    with Session(engine) as probe:
+        rows = probe.execute(
+            select(
+                TycUsageRecord.tool_name,
+                TycUsageRecord.company_name,
+                TycUsageRecord.status,
+            ).order_by(TycUsageRecord.id)
+        ).all()
+    return [(row.tool_name, row.company_name, row.status) for row in rows]
 
-    monkeypatch.setattr(
-        scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables)
-    )
-    monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _SuccessGateway()
-    )
-    processed: list[int] = []
-    monkeypatch.setattr(
-        scheduler_jobs,
-        "_process_pending_signals",
-        lambda *args, **kwargs: processed.append(1),
-    )
 
-    scheduler_jobs.collect_tyc_for_suppliers_job()
+def _committed_tyc_daily_used() -> int:
+    with Session(engine) as probe:
+        return get_tyc_usage(probe).daily_used
 
-    records = list(clean_agent_tables.scalars(select(TycUsageRecord)))
-    assert [(r.tool_name, r.company_name, r.status) for r in records] == [
-        ("verify_company", "批量核查成功有限公司", "success")
-    ]
-    assert get_tyc_usage(clean_agent_tables).daily_used == 1
-    signals = list(
-        clean_agent_tables.scalars(
-            select(RawSignal).where(
-                RawSignal.external_id.like("tyc-SUP-TYC-JOB-SUCCESS-%")
-            )
+
+@pytest.fixture
+def committed_tyc_source() -> Generator[None]:
+    """为执行器准备跨连接可见的天眼查配置；测试后恢复原值并清空计费表。"""
+    with Session(engine) as snapshot:
+        source = snapshot.scalar(
+            select(DataSource).where(DataSource.code == "tianyancha")
         )
-    )
-    assert len(signals) == 1
-    assert signals[0].raw_data["status"] == "success"
-    assert processed == [1]
+        assert source is not None
+        original = (
+            source.enabled,
+            source.api_key_encrypted,
+            source.api_key_hash,
+            source.api_key_last4,
+            source.login_config,
+        )
+    _truncate_committed_tyc_usage()
+    yield
+    with Session(engine) as restore:
+        source = restore.scalar(
+            select(DataSource).where(DataSource.code == "tianyancha")
+        )
+        assert source is not None
+        (
+            source.enabled,
+            source.api_key_encrypted,
+            source.api_key_hash,
+            source.api_key_last4,
+            source.login_config,
+        ) = original
+        restore.commit()
+    _truncate_committed_tyc_usage()
 
 
-@pytest.mark.parametrize(
-    ("gateway_status", "expected_status"),
-    [
-        ("success", "success"),
-        ("empty", "empty"),
-        ("error", "error"),
-        ("not_configured", "not_configured"),
-    ],
-)
-def test_collect_tyc_for_suppliers_records_every_result_status(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
-    gateway_status: str,
-    expected_status: str,
-) -> None:
-    """每次调用结果都写 TycUsageRecord 四态；只有 success 计 1 次额度。"""
-    from contextlib import nullcontext
-
-    import app.agent.tyc_gateway as tyc_gateway_module
-    import app.scheduler.jobs as scheduler_jobs
-
-    class _FixedStatusGateway:
-        async def verify(self, company_name: str) -> dict[str, object]:
-            if gateway_status == "error":
-                raise RuntimeError("天眼查服务暂时不可用")
-            return {"status": gateway_status, "company_name": company_name}
-
-    supplier = Supplier(
-        supplier_code="SUP-TYC-JOB-STATUS",
-        legal_name="批量核查状态有限公司",
-        country_code="CN",
-        enabled=True,
-    )
-    clean_agent_tables.add(supplier)
-    clean_agent_tables.flush()
-
-    monkeypatch.setattr(
-        scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables)
-    )
-    monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _FixedStatusGateway()
-    )
-    monkeypatch.setattr(
-        scheduler_jobs, "_process_pending_signals", lambda *args, **kwargs: 0
-    )
-
-    scheduler_jobs.collect_tyc_for_suppliers_job()
-
-    records = list(clean_agent_tables.scalars(select(TycUsageRecord)))
-    assert [(r.company_name, r.status) for r in records] == [
-        ("批量核查状态有限公司", expected_status)
-    ]
-    usage = get_tyc_usage(clean_agent_tables)
-    assert usage.daily_used == (1 if expected_status == "success" else 0)
-
-
-# ---------------------------------------------------------------------------
-# 天眼查批量核查服务（tyc_batch）：定时任务与手动 API 共用的结果返回型实现
-# ---------------------------------------------------------------------------
-
-
-def _tyc_source(session: Session) -> DataSource:
-    source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
-    assert source is not None, "迁移应已注册 tianyancha 信息源"
-    return source
-
-
-def _add_tyc_supplier(
-    session: Session, *, code: str, name: str, enabled: bool = True
-) -> Supplier:
-    supplier = Supplier(
-        supplier_code=code,
-        legal_name=name,
-        country_code="CN",
-        enabled=enabled,
-    )
-    session.add(supplier)
-    session.flush()
-    return supplier
-
-
-class _BatchGateway:
-    """批量核查测试网关：按公司名给出 success/empty/异常，并记录调用顺序。"""
+class _RecordingRemoteCall:
+    """可断言的异步 fake remote_call：记录调用次数，可返回结果或抛异常。"""
 
     def __init__(
         self,
         *,
-        failing: frozenset[str] = frozenset(),
-        empty: frozenset[str] = frozenset(),
+        result: dict[str, object] | None = None,
+        error: Exception | None = None,
     ) -> None:
-        self.failing = failing
-        self.empty = empty
-        self.calls: list[str] = []
+        self.result = result if result is not None else {"status": "success"}
+        self.error = error
+        self.calls: list[int] = []
 
-    async def verify(self, company_name: str) -> dict[str, object]:
-        self.calls.append(company_name)
-        if company_name in self.failing:
-            raise RuntimeError("天眼查服务暂时不可用")
-        if company_name in self.empty:
-            return {"status": "empty", "company_name": company_name}
-        return {"status": "success", "company_name": company_name, "reg_status": "存续"}
+    async def __call__(self) -> dict[str, object]:
+        self.calls.append(len(self.calls) + 1)
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
-def test_run_tyc_batch_returns_stable_summary(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
+def test_quota_executor_stops_sixth_call_when_daily_limit_five(
+    committed_tyc_source: None,
 ) -> None:
-    """Given 两个启用与一个停用供应商，When 批量核查，Then 汇总只含启用项且分列状态。"""
-    # Given
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.agent.tyc_batch import run_tyc_batch
+    """Manual QA 数据面：daily_limit=5 时连续 6 次，DB 恰 5 条且第 6 次不调远程。"""
+    from app.agent.tyc_quota import TycQuotaOutcome, execute_tyc_tool_with_quota
 
-    source = _tyc_source(clean_agent_tables)
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-CREATED", name="成功创建有限公司")
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-EMPTY", name="空结果有限公司")
-    _add_tyc_supplier(
-        clean_agent_tables, code="SUP-BATCH-DISABLED", name="停用供应商", enabled=False
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    remote_call = _RecordingRemoteCall(
+        result={"status": "success", "company_name": "额度测试公司"}
     )
-    gateway = _BatchGateway(empty=frozenset({"空结果有限公司"}))
-    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
 
-    # When
-    result = run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert result.source_id == source.id
-    assert result.targeted_count == 2
-    assert result.attempted_count == 2
-    assert result.created_count == 1
-    assert result.duplicate_count == 0
-    assert result.empty_count == 1
-    assert result.failed_count == 0
-    assert result.quota_exhausted is False
-    assert gateway.calls == ["成功创建有限公司", "空结果有限公司"]
-    records = list(
-        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
-    )
-    assert [(r.company_name, r.status) for r in records] == [
-        ("成功创建有限公司", "success"),
-        ("空结果有限公司", "empty"),
+    outcomes = [
+        asyncio.run(
+            execute_tyc_tool_with_quota(
+                "verify_company", f"额度测试公司{index}", remote_call
+            )
+        ).outcome
+        for index in range(6)
     ]
 
-
-def test_run_tyc_batch_counts_duplicate_signal_on_rerun(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """Given 同一供应商连续核查两次，When 结果指纹相同，Then 第二次计入 duplicate。"""
-    # Given
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.agent.tyc_batch import run_tyc_batch
-
-    source = _tyc_source(clean_agent_tables)
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-DUP", name="重复核查有限公司")
-    monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
-    )
-
-    # When
-    first = run_tyc_batch(clean_agent_tables, source)
-    second = run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert (first.created_count, first.duplicate_count) == (1, 0)
-    assert (second.created_count, second.duplicate_count) == (0, 1)
-    assert second.attempted_count == 1
-    assert second.failed_count == 0
-
-
-def test_run_tyc_batch_isolates_supplier_failure(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """Given 首个供应商调用抛异常，When 批量核查，Then 失败隔离且其余供应商仍被执行。"""
-    # Given
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.agent.tyc_batch import run_tyc_batch
-
-    source = _tyc_source(clean_agent_tables)
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-FAIL", name="调用失败有限公司")
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-OK", name="失败隔离成功有限公司")
-    gateway = _BatchGateway(failing=frozenset({"调用失败有限公司"}))
-    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
-
-    # When
-    result = run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert gateway.calls == ["调用失败有限公司", "失败隔离成功有限公司"]
-    assert result.targeted_count == 2
-    assert result.attempted_count == 2
-    assert result.created_count == 1
-    assert result.failed_count == 1
-    records = list(
-        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
-    )
-    assert [(r.company_name, r.status) for r in records] == [
-        ("调用失败有限公司", "error"),
-        ("失败隔离成功有限公司", "success"),
+    assert outcomes == [TycQuotaOutcome.SUCCESS_WITH_RECORDS] * 5 + [
+        TycQuotaOutcome.QUOTA_EXHAUSTED
     ]
+    assert len(remote_call.calls) == 5
+    rows = _committed_tyc_rows()
+    assert len(rows) == 5
+    assert {status for _, _, status in rows} == {"success"}
+    assert _committed_tyc_daily_used() == 5
 
 
-def test_run_tyc_batch_isolates_signal_persistence_failure(
-    clean_agent_tables: Session,
-    enable_tyc: None,
+def test_quota_executor_commits_independently_of_caller_session(
+    committed_tyc_source: None,
+) -> None:
+    """执行器自建独立短事务：调用方事务回滚，记账事实仍已真实提交。"""
+    from app.agent.tyc_quota import TycQuotaOutcome, execute_tyc_tool_with_quota
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    remote_call = _RecordingRemoteCall(
+        result={"status": "success", "company_name": "独立事务公司"}
+    )
+
+    caller = Session(engine)
+    try:
+        result = asyncio.run(
+            execute_tyc_tool_with_quota("verify_company", "独立事务公司", remote_call)
+        )
+        assert result.outcome is TycQuotaOutcome.SUCCESS_WITH_RECORDS
+        assert result.payload == {"status": "success", "company_name": "独立事务公司"}
+        assert result.usage is not None
+        assert result.usage.daily_used == 1
+
+        # 另一条连接立刻可见：说明执行器在返回前已显式提交。
+        assert _committed_tyc_rows() == [("verify_company", "独立事务公司", "success")]
+
+        # 调用方（模拟 Agent 请求会话）回滚自己的事务，不丢失记账事实。
+        caller.rollback()
+        assert _committed_tyc_daily_used() == 1
+    finally:
+        caller.close()
+
+
+def test_quota_executor_rereads_quota_inside_lock_after_external_consumption(
+    committed_tyc_source: None,
+) -> None:
+    """外部消费真提交后，执行器锁内重读余额，下一次调用不再放行（不超发）。"""
+    from app.agent.tyc_quota import TycQuotaOutcome, execute_tyc_tool_with_quota
+
+    _configure_committed_tyc(daily_limit=2, monthly_limit=50)
+    remote_call = _RecordingRemoteCall()
+
+    first = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "序列公司A", remote_call)
+    )
+    assert first.outcome is TycQuotaOutcome.SUCCESS_WITH_RECORDS
+
+    # 模拟实时路径：外部连接真提交一条消费（剩余额度变为 0）。
+    with Session(engine) as external:
+        external.add(
+            TycUsageRecord(
+                tool_name="verify_company", company_name="外部消费", status="success"
+            )
+        )
+        external.commit()
+
+    second = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "序列公司B", remote_call)
+    )
+    assert second.outcome is TycQuotaOutcome.QUOTA_EXHAUSTED
+    assert len(remote_call.calls) == 1
+    assert _committed_tyc_daily_used() == 2
+
+
+def test_quota_executor_rejects_deactivated_source_inside_lock(
+    committed_tyc_source: None,
+) -> None:
+    """来源停用真提交后，执行器锁内重读 enabled=False：不调远程、不记账、不计费。"""
+    from app.agent.tyc_quota import (
+        NOT_CONFIGURED_MESSAGE,
+        TycQuotaOutcome,
+        execute_tyc_tool_with_quota,
+    )
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50, enabled=False)
+    remote_call = _RecordingRemoteCall()
+
+    result = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "停用公司", remote_call)
+    )
+
+    assert result.outcome is TycQuotaOutcome.NOT_CONFIGURED
+    assert result.message == NOT_CONFIGURED_MESSAGE
+    assert result.payload is None
+    assert result.usage is not None
+    assert result.usage.enabled is False
+    assert remote_call.calls == []
+    assert _committed_tyc_rows() == []
+    assert _committed_tyc_daily_used() == 0
+
+
+def test_quota_executor_rejects_revoked_key_inside_lock(
+    committed_tyc_source: None,
+) -> None:
+    """加密密钥删除真提交后，执行器锁内重读 enabled=False：不调远程、不记账、不计费。"""
+    from app.agent.tyc_quota import (
+        NOT_CONFIGURED_MESSAGE,
+        TycQuotaOutcome,
+        execute_tyc_tool_with_quota,
+    )
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50, api_key=None)
+    remote_call = _RecordingRemoteCall()
+
+    result = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "撤销密钥公司", remote_call)
+    )
+
+    assert result.outcome is TycQuotaOutcome.NOT_CONFIGURED
+    assert result.message == NOT_CONFIGURED_MESSAGE
+    assert result.payload is None
+    assert result.usage is not None
+    assert result.usage.enabled is False
+    assert remote_call.calls == []
+    assert _committed_tyc_rows() == []
+    assert _committed_tyc_daily_used() == 0
+
+
+def test_quota_executor_records_error_without_charging(
+    committed_tyc_source: None,
+) -> None:
+    """远程异常：按不计费 error 记账并显式提交，不写 success 记录。"""
+    from app.agent.tyc_quota import TycQuotaOutcome, execute_tyc_tool_with_quota
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    remote_call = _RecordingRemoteCall(error=RuntimeError("天眼查服务暂时不可用"))
+
+    result = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "异常公司", remote_call)
+    )
+
+    assert result.outcome is TycQuotaOutcome.ERROR
+    assert result.payload is None
+    assert result.message is not None
+    assert "天眼查服务暂时不可用" in result.message
+    assert _committed_tyc_rows() == [("verify_company", "异常公司", "error")]
+    assert _committed_tyc_daily_used() == 0
+
+
+@pytest.mark.parametrize(
+    ("remote_result", "expected_outcome", "expected_record_status"),
+    [
+        ({"status": "empty"}, "empty", "empty"),
+        ({"status": "param_missing"}, "error", "error"),
+        ({}, "error", "error"),
+        ({"status": 123}, "error", "error"),
+    ],
+)
+def test_quota_executor_classifies_remote_status_without_charging(
+    committed_tyc_source: None,
+    remote_result: dict[str, object],
+    expected_outcome: str,
+    expected_record_status: str,
+) -> None:
+    """空结果与非法/缺失状态按 Todo 1 口径分类：empty 或 error 均不计费。"""
+    from app.agent.tyc_quota import TycQuotaOutcome, execute_tyc_tool_with_quota
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    remote_call = _RecordingRemoteCall(result=remote_result)
+
+    result = asyncio.run(
+        execute_tyc_tool_with_quota("verify_company", "状态公司", remote_call)
+    )
+
+    assert result.outcome is TycQuotaOutcome(expected_outcome)
+    assert len(remote_call.calls) == 1
+    assert _committed_tyc_rows() == [
+        ("verify_company", "状态公司", expected_record_status)
+    ]
+    assert _committed_tyc_daily_used() == 0
+
+
+def test_quota_executor_returns_busy_on_lock_timeout(
+    committed_tyc_source: None,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Given 首个供应商信号入库触发数据库异常，When 批量核查，
-    Then 回滚该事务、计失败并继续后续落库。
+    """额度锁被占用超过 lock_timeout：结构化 busy，不调用远程、不记账。"""
+    import app.agent.tyc_quota as tyc_quota_module
+
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    monkeypatch.setattr(tyc_quota_module, "QUOTA_LOCK_TIMEOUT_MS", 100)
+    remote_call = _RecordingRemoteCall()
+
+    holder = engine.connect()
+    holder_transaction = holder.begin()
+    try:
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": tyc_quota_module.QUOTA_ADVISORY_LOCK_KEY},
+        )
+        result = asyncio.run(
+            tyc_quota_module.execute_tyc_tool_with_quota(
+                "verify_company", "锁竞争公司", remote_call
+            )
+        )
+    finally:
+        holder_transaction.rollback()
+        holder.close()
+
+    assert result.outcome is tyc_quota_module.TycQuotaOutcome.BUSY
+    assert remote_call.calls == []
+    assert _committed_tyc_rows() == []
+
+
+# ---------------------------------------------------------------------------
+# Todo 13：实时核查 VerifyCompanyTool 与批量路径共享 D9 额度执行器
+# ---------------------------------------------------------------------------
+
+
+def test_verify_company_realtime_shares_quota_with_batch_without_overrun(
+    committed_tyc_source: None,
+) -> None:
+    """实时与批量并发共享额度锁：合计不超日限，恰好一方消耗、另一方被拒。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.agent.tyc_quota import (
+        TycQuotaExecutionResult,
+        TycQuotaOutcome,
+        execute_tyc_tool_with_quota,
+    )
+
+    _configure_committed_tyc(daily_limit=1, monthly_limit=50)
+    gateway = FakeTycGateway(status="success")
+    batch_call = _RecordingRemoteCall(
+        result={"status": "success", "company_name": "批量公司"}
+    )
+
+    def run_realtime() -> dict[str, object]:
+        with Session(engine) as caller:
+            return asyncio.run(
+                VerifyCompanyTool(gateway=gateway).execute(
+                    {"company_name": "实时公司"}, caller
+                )
+            )
+
+    def run_batch() -> TycQuotaExecutionResult:
+        return asyncio.run(
+            execute_tyc_tool_with_quota("verify_company", "批量公司", batch_call)
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        realtime_future = pool.submit(run_realtime)
+        batch_future = pool.submit(run_batch)
+        realtime_result = realtime_future.result()
+        batch_result = batch_future.result()
+
+    # 不超发：日限 1，两路合计恰好一次远程调用、一条计费行
+    assert len(gateway.calls) + len(batch_call.calls) == 1
+    assert _committed_tyc_daily_used() == 1
+    assert len(_committed_tyc_rows()) == 1
+
+    if realtime_result["status"] == "success":
+        assert batch_result.outcome in {
+            TycQuotaOutcome.QUOTA_EXHAUSTED,
+            TycQuotaOutcome.BUSY,
+        }
+    else:
+        assert batch_result.outcome is TycQuotaOutcome.SUCCESS_WITH_RECORDS
+        assert realtime_result["status"] in {"quota_exhausted", "busy"}
+
+
+def test_verify_company_realtime_rechecks_quota_inside_lock(
+    committed_tyc_source: None,
+) -> None:
+    """批量已提交消费后，实时工具在锁内重读余额并结构化拒绝，不调远程。"""
+    _configure_committed_tyc(daily_limit=1, monthly_limit=50)
+    with Session(engine) as batch:
+        batch.add(
+            TycUsageRecord(
+                tool_name="verify_company", company_name="批量消费", status="success"
+            )
+        )
+        batch.commit()
+    gateway = FakeTycGateway(status="success")
+
+    with Session(engine) as caller:
+        result = asyncio.run(
+            VerifyCompanyTool(gateway=gateway).execute(
+                {"company_name": "实时公司"}, caller
+            )
+        )
+
+    assert result["status"] == "quota_exhausted"
+    assert "天眼查额度已达上限" in str(result["message"])
+    usage = result["usage"]
+    assert isinstance(usage, dict)
+    assert usage["daily_used"] == 1
+    assert gateway.calls == []
+    assert len(_committed_tyc_rows()) == 1
+
+
+def test_verify_company_revoked_between_precheck_and_lock_returns_not_configured(
+    committed_tyc_source: None,
+) -> None:
+    """竞态：调用方会话仍持有启用视图（未提交），提交态已停用。
+
+    前置检查放行后，执行器在额度锁内重读提交态 ``enabled=False``，返回既有
+    ``not_configured`` 公共语义：不调用远程、不写 usage record、不计费。
     """
-    # Given
-    from sqlalchemy import text
+    from app.agent.tyc_quota import NOT_CONFIGURED_MESSAGE
 
-    import app.agent.tyc_batch as tyc_batch_module
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.signals.models import RawSignal
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50, enabled=False)
+    gateway = FakeTycGateway(status="success")
 
-    source = _tyc_source(clean_agent_tables)
-    _add_tyc_supplier(
-        clean_agent_tables, code="SUP-BATCH-PERSIST-FAIL", name="入库失败有限公司"
-    )
-    _add_tyc_supplier(
-        clean_agent_tables, code="SUP-BATCH-PERSIST-OK", name="入库成功有限公司"
-    )
-    monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
-    )
-
-    real_upsert = tyc_batch_module.upsert_supplier_tyc_signal
-    calls: list[str] = []
-
-    def _failing_upsert(
-        session: Session,
-        *,
-        supplier: Supplier,
-        title: str,
-        content: str,
-        raw_payload: dict[str, object],
-        url: str | None = None,
-    ) -> tuple[str, bool]:
-        calls.append(supplier.supplier_code)
-        if supplier.supplier_code == "SUP-BATCH-PERSIST-FAIL":
-            # 真实把当前事务打成失败状态：模拟 upsert/flush 的数据库异常。
-            # 若无 rollback，后续供应商的额度复查会因事务中止而失败。
-            session.execute(text("SELECT 1 / 0"))
-            raise AssertionError("除零语句应已抛出 SQLAlchemyError")
-        return real_upsert(
-            session,
-            supplier=supplier,
-            title=title,
-            content=content,
-            raw_payload=raw_payload,
-            url=url,
+    caller = Session(engine)
+    try:
+        source = caller.scalar(
+            select(DataSource).where(DataSource.code == "tianyancha")
         )
+        assert source is not None
+        source.enabled = True  # 调用方未提交视图：仅该会话的前置检查可见
+        caller.flush()
 
-    monkeypatch.setattr(tyc_batch_module, "upsert_supplier_tyc_signal", _failing_upsert)
+        result = asyncio.run(
+            VerifyCompanyTool(gateway=gateway).execute(
+                {"company_name": "撤销竞态公司"}, caller
+            )
+        )
+    finally:
+        caller.rollback()
+        caller.close()
 
-    # When
-    result = tyc_batch_module.run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert calls == ["SUP-BATCH-PERSIST-FAIL", "SUP-BATCH-PERSIST-OK"]
-    assert result.attempted_count == 2
-    assert result.created_count == 1
-    assert result.failed_count == 1
-    assert result.duplicate_count == 0
-    # 每次调用结果独立记账并先提交：失败供应商的 usage 记录必须保留
-    records = list(
-        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
-    )
-    assert [(r.company_name, r.status) for r in records] == [
-        ("入库失败有限公司", "success"),
-        ("入库成功有限公司", "success"),
-    ]
-    external_ids = list(clean_agent_tables.scalars(select(RawSignal.external_id)))
-    assert len(external_ids) == 1
-    assert external_ids[0].startswith("tyc-SUP-BATCH-PERSIST-OK-")
+    assert result["status"] == "not_configured"
+    assert result["message"] == NOT_CONFIGURED_MESSAGE
+    usage = result["usage"]
+    assert isinstance(usage, dict)
+    assert usage["enabled"] is False
+    assert gateway.calls == []
+    assert _committed_tyc_rows() == []
+    assert _committed_tyc_daily_used() == 0
 
 
-def test_run_tyc_batch_isolates_signal_ingestion_error(
-    clean_agent_tables: Session,
-    enable_tyc: None,
+def test_verify_company_realtime_commit_survives_later_agent_failure(
+    committed_tyc_source: None,
+) -> None:
+    """实时成功即独立提交：调用方（Agent）后续失败回滚不丢失记账记录。"""
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    gateway = FakeTycGateway(status="success")
+    caller = Session(engine)
+    try:
+        result = asyncio.run(
+            VerifyCompanyTool(gateway=gateway).execute(
+                {"company_name": "实时提交公司"}, caller
+            )
+        )
+        assert result["status"] == "success"
+        # 执行器在返回前已显式提交：另一条连接立即可见
+        assert _committed_tyc_rows() == [
+            ("verify_company", "实时提交公司", "success")
+        ]
+        # 模拟 Agent 循环后续失败：调用方事务回滚不影响已提交记账
+        caller.rollback()
+        assert _committed_tyc_daily_used() == 1
+    finally:
+        caller.close()
+
+
+def test_verify_company_realtime_returns_busy_on_lock_timeout(
+    committed_tyc_source: None,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Given 首个供应商信号入库抛项目入库异常，When 批量核查，Then 计失败并继续后续落库。"""
-    # Given
-    import app.agent.tyc_batch as tyc_batch_module
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.signals.ingestion import SignalIngestionError
-    from app.signals.models import RawSignal
+    """额度锁被占用超过 lock_timeout：结构化 busy，不调远程、不记账。"""
+    import app.agent.tyc_quota as tyc_quota_module
 
-    source = _tyc_source(clean_agent_tables)
-    _add_tyc_supplier(
-        clean_agent_tables, code="SUP-BATCH-INGEST-FAIL", name="入库校验失败有限公司"
-    )
-    _add_tyc_supplier(
-        clean_agent_tables, code="SUP-BATCH-INGEST-OK", name="入库校验成功有限公司"
-    )
-    monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _BatchGateway()
-    )
+    _configure_committed_tyc(daily_limit=5, monthly_limit=50)
+    monkeypatch.setattr(tyc_quota_module, "QUOTA_LOCK_TIMEOUT_MS", 100)
+    gateway = FakeTycGateway(status="success")
 
-    real_upsert = tyc_batch_module.upsert_supplier_tyc_signal
-    calls: list[str] = []
-
-    def _ingestion_failing_upsert(
-        session: Session,
-        *,
-        supplier: Supplier,
-        title: str,
-        content: str,
-        raw_payload: dict[str, object],
-        url: str | None = None,
-    ) -> tuple[str, bool]:
-        calls.append(supplier.supplier_code)
-        if supplier.supplier_code == "SUP-BATCH-INGEST-FAIL":
-            raise SignalIngestionError("validity_conflict")
-        return real_upsert(
-            session,
-            supplier=supplier,
-            title=title,
-            content=content,
-            raw_payload=raw_payload,
-            url=url,
+    holder = engine.connect()
+    holder_transaction = holder.begin()
+    try:
+        holder.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": tyc_quota_module.QUOTA_ADVISORY_LOCK_KEY},
         )
+        with Session(engine) as caller:
+            result = asyncio.run(
+                VerifyCompanyTool(gateway=gateway).execute(
+                    {"company_name": "锁竞争公司"}, caller
+                )
+            )
+    finally:
+        holder_transaction.rollback()
+        holder.close()
 
-    monkeypatch.setattr(
-        tyc_batch_module, "upsert_supplier_tyc_signal", _ingestion_failing_upsert
-    )
-
-    # When
-    result = tyc_batch_module.run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert calls == ["SUP-BATCH-INGEST-FAIL", "SUP-BATCH-INGEST-OK"]
-    assert result.attempted_count == 2
-    assert result.created_count == 1
-    assert result.failed_count == 1
-    records = list(
-        clean_agent_tables.scalars(select(TycUsageRecord).order_by(TycUsageRecord.id))
-    )
-    assert [(r.company_name, r.status) for r in records] == [
-        ("入库校验失败有限公司", "success"),
-        ("入库校验成功有限公司", "success"),
-    ]
-    external_ids = list(clean_agent_tables.scalars(select(RawSignal.external_id)))
-    assert len(external_ids) == 1
-    assert external_ids[0].startswith("tyc-SUP-BATCH-INGEST-OK-")
-
-
-def test_run_tyc_batch_marks_quota_exhausted_midway(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """Given 日额度为 1，When 首个供应商成功计费后，Then 提前停止并标记额度耗尽。"""
-    # Given
-    import app.agent.tyc_gateway as tyc_gateway_module
-    from app.agent.tyc_batch import run_tyc_batch
-
-    source = _tyc_source(clean_agent_tables)
-    source.login_config = {"mode": "on_demand", "daily_limit": 1, "monthly_limit": 50}
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-Q1", name="额度首单有限公司")
-    _add_tyc_supplier(clean_agent_tables, code="SUP-BATCH-Q2", name="额度次单有限公司")
-    clean_agent_tables.flush()
-    gateway = _BatchGateway()
-    monkeypatch.setattr(tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: gateway)
-
-    # When
-    result = run_tyc_batch(clean_agent_tables, source)
-
-    # Then
-    assert result.targeted_count == 2
-    assert result.attempted_count == 1
-    assert result.created_count == 1
-    assert result.quota_exhausted is True
-    assert gateway.calls == ["额度首单有限公司"]
-    assert get_tyc_usage(clean_agent_tables).daily_used == 1
-
-
-def test_run_tyc_batch_rejects_inactive_source(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-) -> None:
-    """Given 天眼查信息源已停用，When 批量核查，Then 抛出类型化停用错误。"""
-    from app.agent.tyc_batch import TycBatchSourceInactive, run_tyc_batch
-
-    source = _tyc_source(clean_agent_tables)
-    source.enabled = False
-    clean_agent_tables.flush()
-
-    with pytest.raises(TycBatchSourceInactive):
-        run_tyc_batch(clean_agent_tables, source)
-
-
-def test_run_tyc_batch_rejects_non_tianyancha_source(
-    clean_agent_tables: Session,
-) -> None:
-    """Given 非天眼查信息源，When 批量核查，Then 抛出类型化 422 前错误。"""
-    from app.agent.tyc_batch import TycBatchNotTianyancha, run_tyc_batch
-
-    manual = clean_agent_tables.scalar(
-        select(DataSource).where(DataSource.code == "manual-json")
-    )
-    assert manual is not None
-
-    with pytest.raises(TycBatchNotTianyancha):
-        run_tyc_batch(clean_agent_tables, manual)
-
-
-def test_run_tyc_batch_rejects_unavailable_start_quota(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-) -> None:
-    """Given 起始额度已耗尽，When 批量核查，Then 抛出类型化额度不可用错误且不调用网关。"""
-    from app.agent.tyc_batch import TycBatchUnavailable, run_tyc_batch
-
-    source = _tyc_source(clean_agent_tables)
-    for index in range(5):
-        record_tyc_usage(
-            clean_agent_tables,
-            tool_name="verify_company",
-            company_name=f"预占额度{index}",
-            status="success",
-        )
-    clean_agent_tables.flush()
-
-    with pytest.raises(TycBatchUnavailable):
-        run_tyc_batch(clean_agent_tables, source)
-
-
-def test_collect_tyc_for_suppliers_reuses_batch_service(
-    clean_agent_tables: Session,
-    enable_tyc: None,
-    monkeypatch: MonkeyPatch,
-) -> None:
-    """定时任务复用结果返回型服务，并由汇总的 created_count 驱动后续处理链。"""
-    from contextlib import nullcontext
-
-    import app.scheduler.jobs as scheduler_jobs
-    from app.agent.tyc_batch import TycBatchResult
-
-    source = _tyc_source(clean_agent_tables)
-    calls: list[int] = []
-    processed: list[int] = []
-
-    def _fake_run(session: Session, target_source: DataSource) -> TycBatchResult:
-        del session
-        calls.append(target_source.id)
-        return TycBatchResult(
-            source_id=target_source.id,
-            targeted_count=3,
-            attempted_count=2,
-            created_count=1,
-            duplicate_count=0,
-            empty_count=1,
-            failed_count=0,
-            quota_exhausted=False,
-        )
-
-    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(clean_agent_tables))
-    monkeypatch.setattr(scheduler_jobs, "run_tyc_batch", _fake_run)
-    monkeypatch.setattr(
-        scheduler_jobs,
-        "_process_pending_signals",
-        lambda *args, **kwargs: processed.append(1),
-    )
-
-    scheduler_jobs.collect_tyc_for_suppliers_job()
-
-    assert calls == [source.id]
-    assert processed == [1]
+    assert result["status"] == "busy"
+    assert result["message"] == "天眼查额度繁忙，请重试"
+    assert gateway.calls == []
+    assert _committed_tyc_rows() == []

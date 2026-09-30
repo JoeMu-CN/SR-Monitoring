@@ -1035,3 +1035,36 @@ describe('App 开屏自检', () => {
     expect(api.monitoringHealth).not.toHaveBeenCalled();
   });
 });
+
+// ---- 回归：供应商页「询问风险助手」跳转后，退出壳不得消费 pendingQuery ----
+// Oracle 根因：AnimatePresence 的退出壳中 AppRoutes 未固定 location，会在旧壳临时挂载助手并消费 pendingQuery，
+// 待退出壳被替换后最终路由实例只能拿到 null，预填查询丢失。此用例锁定「最终实例仍保留完整预填值」。
+describe('App 询问风险助手：路由切换后最终输入框保留完整预填值', () => {
+  const ASK_QUERY = '请查询供应商【示例精密电子有限公司】（编码 SUP-0001）的完整工商风险、司法记录与供应链合规评级。';
+
+  it('从 /suppliers 点击询问风险助手并等旧 route-content 退出后，新路由输入框仍保留完整生成查询', async () => {
+    adminSetup();
+    const user = userEvent.setup();
+    renderApp('/suppliers');
+
+    // 点击前先锁定当前（/suppliers）的 route-content 节点，作为退出壳的判据
+    const oldRouteContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
+    const askButton = await within(oldRouteContent).findByRole(
+      'button',
+      {name: '询问风险助手：示例精密电子有限公司'},
+      {timeout: 5000},
+    );
+
+    await user.click(askButton);
+
+    // 等待整个旧退出壳离开 DOM（退出动画期间该壳内会临时挂载助手并消费 pendingQuery）
+    await waitFor(() => {
+      expect(oldRouteContent).not.toBeInTheDocument();
+    }, {timeout: 5000});
+
+    // 旧壳消失后，DOM 中剩余的 route-content 即最终新路由实例；其输入框必须仍带完整预填值
+    const newRouteContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
+    const textbox = within(newRouteContent).getByRole('textbox');
+    expect(textbox).toHaveValue(ASK_QUERY);
+  });
+});

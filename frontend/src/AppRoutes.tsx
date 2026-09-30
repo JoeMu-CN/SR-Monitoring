@@ -1,5 +1,5 @@
 import type {ReactNode} from 'react';
-import {Navigate, Route, Routes} from 'react-router-dom';
+import {Navigate, Route, Routes, type RoutesProps} from 'react-router-dom';
 import {hasRoutePermission, routeDefinitions, routePaths, type RouteId} from './routes';
 
 export type RouteViews = {readonly [Route in RouteId]: ReactNode};
@@ -7,6 +7,8 @@ export type RouteViews = {readonly [Route in RouteId]: ReactNode};
 interface AppRoutesProps {
   readonly permissions: readonly string[];
   readonly views: RouteViews;
+  // 显式匹配位置：动画退出壳必须固定创建时的 location，避免用最新的路由位置重新匹配。
+  readonly location?: RoutesProps['location'];
 }
 
 const RouteState = ({title, detail}: {readonly title: string; readonly detail: string}) => (
@@ -22,8 +24,8 @@ const PermissionGuard = ({allowed, children}: {readonly allowed: boolean; readon
     : <RouteState title="无权访问" detail="当前账号没有访问此页面所需的权限。" />
 );
 
-export const AppRoutes = ({permissions, views}: AppRoutesProps) => (
-  <Routes>
+export const AppRoutes = ({permissions, views, location}: AppRoutesProps) => (
+  <Routes location={location}>
     <Route path="/" element={<Navigate replace to={routePaths.overview} />} />
     {routeDefinitions.map((route) => (
       <Route

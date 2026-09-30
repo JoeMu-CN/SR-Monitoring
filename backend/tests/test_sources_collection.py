@@ -1,5 +1,6 @@
 """采集服务、手动触发端点与保留清理测试。"""
 
+import hashlib
 import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -9,9 +10,16 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+from tyc_batch_support import (
+    MultidimMcpStub,
+    committed_tyc_daily_used,
+    committed_tyc_rows,
+    configure_committed_tyc,
+)
 
 from app.agent.models import TycUsageRecord
 from app.config import RetentionSettings
+from app.database import engine
 from app.risks.models import (
     RiskAlert,
     RiskEvent,
@@ -22,7 +30,6 @@ from app.scheduler.retention import cleanup_retention
 from app.signals.declarative import AdapterSpec, DeclarativeSourceAdapter
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.schemas import ManualSignalInput
-from app.signals.secret_store import encrypt_secret
 from app.signals.service import (
     COLLECTION_RUN_STALE_SECONDS,
     STALE_COLLECTION_RUN_ERROR,
@@ -1201,72 +1208,108 @@ def test_run_all_reports_deferred_separately(
 
 
 # ---------------------------------------------------------------------------
-# 天眼查手动批量刷新端点（POST /api/v1/sources/{id}/run-tyc-batch）
+# 天眼查手动单供应商核查端点（POST /api/v1/sources/{id}/run-tyc-batch?supplier_id=）
 # ---------------------------------------------------------------------------
 
 
-def _enable_route_tianyancha(session: Session) -> DataSource:
-    """启用天眼查并写入控制台密钥，使路由测试与共享库状态解耦。"""
-    source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
+def _committed_tianyancha(db_session: Session) -> DataSource:
+    """返回提交态配置后的天眼查 ORM 对象（D9 执行器跨连接可见）。"""
+    db_session.expire_all()
+    source = db_session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
     assert source is not None, "迁移应已注册 tianyancha 信息源"
-    source.enabled = True
-    source.api_key_encrypted = encrypt_secret("tyc_route_test_key")
-    source.login_config = {"mode": "on_demand", "daily_limit": 5, "monthly_limit": 50}
-    session.flush()
     return source
 
 
-class _RouteTycGateway:
-    """路由批量测试网关：始终返回 success，不发起真实网络调用。"""
+def _route_supplier(
+    db_session: Session, code: str, name: str, *, enabled: bool = True
+) -> Supplier:
+    supplier = Supplier(
+        supplier_code=code, legal_name=name, country_code="CN", enabled=enabled
+    )
+    db_session.add(supplier)
+    db_session.flush()
+    return supplier
 
-    async def verify(self, company_name: str) -> dict[str, object]:
-        return {"status": "success", "company_name": company_name, "reg_status": "存续"}
+
+def _literal_bucket(code: str) -> int:
+    return int(hashlib.sha256(code.encode()).hexdigest(), 16) % 2
 
 
-def test_run_tyc_batch_endpoint_returns_summary(
-    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+def test_run_tyc_batch_endpoint_returns_per_tool_counts(
+    client: TestClient,
+    db_session: Session,
+    committed_tyc_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Given 已启用天眼查与一个启用供应商，When 手动批量刷新，Then 200 返回稳定汇总。"""
-    # Given
+    """Given 已启用天眼查与一个启用供应商，When 手动单供应商核查，
+    Then 200 返回逐工具计数与报告信号。
+    """
     import app.agent.tyc_gateway as tyc_gateway_module
 
-    source = _enable_route_tianyancha(db_session)
-    db_session.add(
-        Supplier(
-            supplier_code="SUP-ROUTE-TYC-OK",
-            legal_name="路由批量核查有限公司",
-            country_code="CN",
-            enabled=True,
-        )
+    configure_committed_tyc(
+        daily_limit=100,
+        monthly_limit=1000,
+        dimensions=["get_risk_overview", "get_judicial_case"],
     )
-    db_session.flush()
+    source = _committed_tianyancha(db_session)
+    supplier = _route_supplier(db_session, "SUP-ROUTE-TYC-OK", "路由单供应商核查有限公司")
+    stub = MultidimMcpStub()
     monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _RouteTycGateway()
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: stub.gateway()
     )
 
-    # When
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+    response = client.post(
+        f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id={supplier.id}"
+    )
 
-    # Then
     assert response.status_code == 200
-    assert response.json() == {
-        "source_id": source.id,
-        "targeted_count": 1,
-        "attempted_count": 1,
-        "created_count": 1,
-        "duplicate_count": 0,
-        "empty_count": 0,
-        "failed_count": 0,
-        "quota_exhausted": False,
-    }
+    body = response.json()
+    assert body["source_id"] == source.id
+    assert body["supplier_id"] == supplier.id
+    assert body["shard_index"] == _literal_bucket("SUP-ROUTE-TYC-OK")
+    assert body["shard_count"] == 2
+    assert body["targeted_count"] == 1
+    assert body["attempted_count"] == 1
+    assert body["created_count"] == 1
+    assert body["duplicate_count"] == 0
+    assert body["empty_count"] == 0
+    assert body["failed_count"] == 0
+    assert body["quota_exhausted"] is False
+    assert body["per_tool_counts"]["search_companies"]["success_with_records"] == 1
+    assert body["per_tool_counts"]["get_risk_overview"]["success_with_records"] == 1
+    assert body["per_tool_counts"]["get_judicial_case"]["success_with_records"] == 1
     signal = db_session.scalar(
         select(RawSignal).where(RawSignal.external_id.like("tyc-SUP-ROUTE-TYC-OK-%"))
     )
     assert signal is not None
+    assert signal.raw_data["report_kind"] == "supplier_profile"
+
+
+def test_run_tyc_batch_endpoint_requires_supplier_id(
+    client: TestClient, db_session: Session, committed_tyc_env: None
+) -> None:
+    """缺 supplier_id → 422（不再提供同步全量）。"""
+    configure_committed_tyc(daily_limit=100, monthly_limit=1000)
+    source = _committed_tianyancha(db_session)
+
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+
+    assert response.status_code == 422
+
+
+def test_run_tyc_batch_endpoint_422_when_supplier_id_malformed(
+    client: TestClient, db_session: Session, committed_tyc_env: None
+) -> None:
+    configure_committed_tyc(daily_limit=100, monthly_limit=1000)
+    source = _committed_tianyancha(db_session)
+
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=abc")
+
+    assert response.status_code == 422
 
 
 def test_run_tyc_batch_endpoint_404_when_source_missing(client: TestClient) -> None:
-    response = client.post("/api/v1/sources/999999/run-tyc-batch")
+    response = client.post("/api/v1/sources/999999/run-tyc-batch?supplier_id=1")
     assert response.status_code == 404
     assert response.json()["detail"] == "信息源不存在"
 
@@ -1277,82 +1320,120 @@ def test_run_tyc_batch_endpoint_422_when_not_tianyancha(
     source = _get_nmc_source(db_session)
     source.enabled = True
     db_session.flush()
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=1")
     assert response.status_code == 422
 
 
 def test_run_tyc_batch_endpoint_409_when_source_disabled(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, committed_tyc_env: None
 ) -> None:
-    source = _enable_route_tianyancha(db_session)
-    source.enabled = False
-    db_session.flush()
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+    configure_committed_tyc(daily_limit=100, monthly_limit=1000, enabled=False)
+    source = _committed_tianyancha(db_session)
+
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=1")
+
     assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "source_inactive"
 
 
 def test_run_tyc_batch_endpoint_409_when_key_unavailable(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, committed_tyc_env: None
 ) -> None:
-    source = _enable_route_tianyancha(db_session)
-    source.api_key_encrypted = None
-    db_session.flush()
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+    configure_committed_tyc(daily_limit=100, monthly_limit=1000, api_key=None)
+    source = _committed_tianyancha(db_session)
+
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=1")
+
     assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "unavailable"
+    assert detail["reason"] == "key_unavailable"
 
 
 def test_run_tyc_batch_endpoint_409_when_start_quota_unavailable(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, committed_tyc_env: None
 ) -> None:
-    source = _enable_route_tianyancha(db_session)
-    source.login_config = {"mode": "on_demand", "daily_limit": 1, "monthly_limit": 50}
-    db_session.add(
-        TycUsageRecord(
-            tool_name="verify_company", company_name="预占额度", status="success"
+    configure_committed_tyc(daily_limit=1, monthly_limit=50)
+    with Session(engine) as external:
+        external.add(
+            TycUsageRecord(
+                tool_name="verify_company", company_name="预占额度", status="success"
+            )
         )
-    )
-    db_session.flush()
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+        external.commit()
+    source = _committed_tianyancha(db_session)
+
+    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=1")
+
     assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "unavailable"
+    assert detail["reason"] == "quota_exhausted"
+    assert detail["daily_remaining"] == 0
+
+
+def test_run_tyc_batch_endpoint_404_when_supplier_unknown_or_disabled(
+    client: TestClient, db_session: Session, committed_tyc_env: None
+) -> None:
+    """稳定契约：不存在或未启用供应商一律 404「供应商不存在或未启用」。"""
+    configure_committed_tyc(daily_limit=100, monthly_limit=1000)
+    source = _committed_tianyancha(db_session)
+
+    unknown = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id=999999")
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "供应商不存在或未启用"
+
+    disabled = _route_supplier(
+        db_session, "SUP-ROUTE-TYC-DISABLED", "路由停用供应商", enabled=False
+    )
+    response = client.post(
+        f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id={disabled.id}"
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "供应商不存在或未启用"
 
 
 def test_run_tyc_batch_endpoint_reports_midway_quota_exhaustion(
-    client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    db_session: Session,
+    committed_tyc_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When 中途额度耗尽，Then 仍返回 200 汇总并标记 quota_exhausted。"""
-    # Given
+    """When 中途额度耗尽（锚定成功后维度被锁内拒绝），
+    Then 仍返回 200 汇总并标记 quota_exhausted。
+
+    修复登记红灯的方式：额度配置改为提交态（独立执行器 Session 可见），
+    并由 committed_tyc_env 在用例前后清理跨连接计费行消除跨用例泄漏；
+    断言保持「200 + quota_exhausted=True + attempted 正确 + 中途停止」。
+    """
     import app.agent.tyc_gateway as tyc_gateway_module
 
-    source = _enable_route_tianyancha(db_session)
-    source.login_config = {"mode": "on_demand", "daily_limit": 1, "monthly_limit": 50}
-    db_session.add_all(
-        [
-            Supplier(
-                supplier_code="SUP-ROUTE-TYC-Q1",
-                legal_name="路由额度首单有限公司",
-                country_code="CN",
-                enabled=True,
-            ),
-            Supplier(
-                supplier_code="SUP-ROUTE-TYC-Q2",
-                legal_name="路由额度次单有限公司",
-                country_code="CN",
-                enabled=True,
-            ),
-        ]
-    )
-    db_session.flush()
+    configure_committed_tyc(daily_limit=1, monthly_limit=50)
+    source = _committed_tianyancha(db_session)
+    supplier = _route_supplier(db_session, "SUP-ROUTE-TYC-Q1", "路由额度首单有限公司")
+    stub = MultidimMcpStub()
     monkeypatch.setattr(
-        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: _RouteTycGateway()
+        tyc_gateway_module, "build_tyc_gateway", lambda **kwargs: stub.gateway()
     )
 
-    # When
-    response = client.post(f"/api/v1/sources/{source.id}/run-tyc-batch")
+    response = client.post(
+        f"/api/v1/sources/{source.id}/run-tyc-batch?supplier_id={supplier.id}"
+    )
 
-    # Then
     assert response.status_code == 200
     body = response.json()
-    assert body["targeted_count"] == 2
+    assert body["targeted_count"] == 1
     assert body["attempted_count"] == 1
     assert body["created_count"] == 1
     assert body["quota_exhausted"] is True
+    assert body["per_tool_counts"]["search_companies"]["success_with_records"] == 1
+    assert (
+        sum(counts["quota_exhausted"] for counts in body["per_tool_counts"].values())
+        == 12
+    )
+    # 状态隔离 + 提交态可见：本用例只产生 1 条跨连接消费（锚定成功计费）。
+    assert committed_tyc_rows() == [
+        ("search_companies", "路由额度首单有限公司", "success")
+    ]
+    assert committed_tyc_daily_used() == 1

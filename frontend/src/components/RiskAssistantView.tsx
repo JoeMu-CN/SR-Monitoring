@@ -39,6 +39,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   const [quota, setQuota] = useState<TianYanChaQuota | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const consumedPendingQueryRef = useRef<string | null>(null);
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -222,11 +223,17 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   }, [input, isTyping, riskItems, sessionId, suppliers]);
 
   useEffect(() => {
-    if (pendingQuery?.trim()) {
-      void handleSend(pendingQuery);
-      onClearPendingQuery?.();
+    const query = pendingQuery?.trim();
+    if (!query) {
+      consumedPendingQueryRef.current = null;
+      return;
     }
-  }, [handleSend, onClearPendingQuery, pendingQuery]);
+    // 同一 pendingQuery 只消费一次，避免回调身份变化导致重复预填/重复清理。
+    if (consumedPendingQueryRef.current === query) return;
+    consumedPendingQueryRef.current = query;
+    setInput(pendingQuery ?? '');
+    onClearPendingQuery?.();
+  }, [onClearPendingQuery, pendingQuery]);
 
   const getRiskBadgeColor = (level: string) => {
     switch (level) {

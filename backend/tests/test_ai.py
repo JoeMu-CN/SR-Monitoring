@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
-from app.ai.providers import AIProviderError, FakeAIProvider, OpenAICompatibleProvider
+from app.ai.providers import (
+    AIProviderError,
+    FakeAIProvider,
+    OpenAICompatibleProvider,
+    system_prompt,
+)
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.config import AISettings
 from app.research.reporting import ResearchEvidenceInput, ResearchReportGenerationInput
@@ -57,6 +62,47 @@ def test_event_subtype_must_belong_to_event_type() -> None:
         raise AssertionError("logistics 不得使用 sanctions 细类")
 
 
+def test_suggested_level_and_rationale_are_parsed() -> None:
+    """新 JSON 含建议等级与理由：解析后原样保留。"""
+    payload = valid_result()
+    payload["suggested_level"] = "P2"
+    payload["level_rationale"] = "文本明确提及港口作业中断，建议 P2。"
+
+    result = SignalAnalysisResult.model_validate(payload)
+
+    assert result.suggested_level == "P2"
+    assert result.level_rationale == "文本明确提及港口作业中断，建议 P2。"
+
+
+def test_v2_result_without_suggested_level_still_validates() -> None:
+    """旧 v2 result JSON 缺新字段：默认 None，仍可 model_validate（向后兼容）。"""
+    result = SignalAnalysisResult.model_validate(valid_result())
+
+    assert result.suggested_level is None
+    assert result.level_rationale is None
+
+
+def test_unknown_suggested_level_is_rejected() -> None:
+    payload = valid_result()
+    payload["suggested_level"] = "P5"
+
+    try:
+        SignalAnalysisResult.model_validate(payload)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("非法建议等级不得通过校验")
+
+
+def test_system_prompt_embeds_level_enum_in_json_schema() -> None:
+    """提示词内嵌的 JSON Schema 是模型消费的等级契约：枚举限定 P1-P4。"""
+    prompt = system_prompt()
+    schema = json.loads(prompt[prompt.index("{") :])
+
+    level_schema = schema["properties"]["suggested_level"]
+    assert set(level_schema["anyOf"][0]["enum"]) == {"P1", "P2", "P3", "P4"}
+
+
 def import_signal(client: TestClient) -> None:
     content = json.dumps(
         {
@@ -85,6 +131,8 @@ def test_fake_provider_returns_valid_structure() -> None:
     assert result.event_type == "other"
     assert result.summary_zh == "港口临时管制"
     assert result.confidence == 0.5
+    assert result.suggested_level == "P4"
+    assert result.level_rationale
 
 
 def test_openai_compatible_provider_generates_research_report_with_usage() -> None:
@@ -254,6 +302,67 @@ def test_openai_compatible_provider_drops_incompatible_event_subtype() -> None:
     assert result.event_subtype is None
 
 
+def test_openai_compatible_provider_parses_suggested_level() -> None:
+    payload = valid_result()
+    payload["suggested_level"] = "P3"
+    payload["level_rationale"] = "证据仅支持中等风险。"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(payload)}}]},
+        )
+
+    provider = OpenAICompatibleProvider(
+        AISettings(
+            provider="openai-compatible",
+            base_url="https://model.example.test/v1",
+            model="test-model",
+            api_key="test-secret",
+            timeout_seconds=5,
+            max_retries=0,
+        ),
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+    result = asyncio.run(provider.analyze_signal(analysis_input()))
+
+    assert result.suggested_level == "P3"
+    assert result.level_rationale == "证据仅支持中等风险。"
+
+
+def test_openai_compatible_provider_rejects_invalid_suggested_level_without_retry() -> None:
+    attempts = 0
+    invalid = valid_result()
+    invalid["suggested_level"] = "critical"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(invalid)}}]},
+        )
+
+    provider = OpenAICompatibleProvider(
+        AISettings(
+            provider="openai-compatible",
+            base_url="https://model.example.test/v1",
+            model="test-model",
+            api_key="test-secret",
+            timeout_seconds=5,
+            max_retries=2,
+        ),
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+    with pytest.raises(AIProviderError, match="结构化结果无效"):
+        asyncio.run(provider.analyze_signal(analysis_input()))
+    assert attempts == 1
+
+
 def test_signal_analysis_api_uses_fake_without_network(
     client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
 ) -> None:
@@ -342,6 +451,49 @@ def test_provider_failure_is_recorded(
     assert record is not None
     assert record.status == "failed"
     assert record.error == "模拟模型超时"
+
+
+def test_invalid_suggested_level_is_marked_needs_review(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """模型返回非法等级串 → provider 校验失败 → 既有失败路径标 needs_review。"""
+    invalid = valid_result()
+    invalid["suggested_level"] = "P5"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(invalid)}}]},
+        )
+
+    provider = OpenAICompatibleProvider(
+        AISettings(
+            provider="openai-compatible",
+            base_url="https://model.example.test/v1",
+            model="test-model",
+            api_key="test-secret",
+            timeout_seconds=5,
+            max_retries=0,
+        ),
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+    import_signal(client)
+    signal = db_session.scalar(select(RawSignal))
+    assert signal is not None
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+
+    response = client.post(f"/api/v1/signals/{signal.id}/analyze")
+
+    assert response.status_code == 502
+    record = db_session.scalar(select(AIAnalysisRecord))
+    assert record is not None
+    assert record.status == "failed"
+    assert record.needs_review is True
+    assert record.review_reason == "AI 分类最终失败，需人工复核"
 
 
 def test_signal_analysis_result_accepts_naive_datetime() -> None:

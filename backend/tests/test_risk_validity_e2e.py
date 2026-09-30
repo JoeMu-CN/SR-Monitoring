@@ -11,9 +11,10 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 import app.scheduler.jobs as scheduler_jobs
+import app.scheduler.runtime as scheduler_runtime
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
-from app.ai.providers import AIProviderError
+from app.ai.providers import AIProviderError, FakeAIProvider
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.database import SessionLocal
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
@@ -234,6 +235,129 @@ def test_succeeded_ai_is_reclaimed_after_event_processing_interrupt(
     assert db_session.scalar(select(func.count()).select_from(AIAnalysisRecord)) == 1
     assert db_session.scalar(select(func.count()).select_from(RiskEventSignal)) == 1
     assert db_session.scalar(select(func.count()).select_from(RiskAlert)) == 1
+
+
+def test_succeeded_v2_analysis_is_reused_without_v3_reanalysis(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """历史 succeeded（v2，缺新字段）继续复用：不触发 provider，也不追加 v3 记录。"""
+    source = _source(db_session, "reuse-v2-level")
+    _supplier(db_session, "VALIDITY-REUSE-V2")
+    signal = _signal(db_session, source, "reuse-v2", NOW_UTC - timedelta(hours=1))
+    legacy_result = _weather_result().model_dump(mode="json")
+    del legacy_result["suggested_level"]
+    del legacy_result["level_rationale"]
+    db_session.add(
+        AIAnalysisRecord(
+            signal_id=signal.id,
+            provider="legacy-provider",
+            model="legacy-v1",
+            prompt_version="signal-analysis-v2",
+            status="succeeded",
+            finished_at=NOW_UTC,
+            duration_ms=10,
+            result=legacy_result,
+        )
+    )
+    db_session.commit()
+    provider_calls = 0
+
+    async def unexpected_analysis(
+        _session: Session, _signal: RawSignal
+    ) -> AIAnalysisRecord:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("历史 succeeded 分析必须复用，不得重算")
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(scheduler_jobs, "analyze_raw_signal", unexpected_analysis)
+    monkeypatch.setattr(scheduler_jobs, "SIGNAL_RELEVANCE_FILTER_ENABLED", False)
+
+    assert scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW_UTC) == 1
+    assert provider_calls == 0
+    records = list(db_session.scalars(select(AIAnalysisRecord)))
+    assert [record.prompt_version for record in records] == ["signal-analysis-v2"]
+
+
+def test_new_pending_candidate_is_analyzed_with_v3_and_level_suggestion(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """从未成功分析的候选：走 v3 分析并落 prompt_version=signal-analysis-v3。"""
+    source = _source(db_session, "fresh-v3-level")
+    _supplier(db_session, "VALIDITY-FRESH-V3")
+    _signal(db_session, source, "fresh-v3", NOW_UTC - timedelta(hours=1))
+    db_session.commit()
+    suggested = _weather_result().model_copy(
+        update={
+            "suggested_level": "P2",
+            "level_rationale": "文本明确提及台风导致停产，建议 P2。",
+        }
+    )
+    monkeypatch.setattr(
+        ai_service, "get_ai_provider", lambda _settings: FakeAIProvider(result=suggested)
+    )
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(scheduler_jobs, "SIGNAL_RELEVANCE_FILTER_ENABLED", False)
+
+    assert scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW_UTC) == 1
+
+    record = db_session.scalar(select(AIAnalysisRecord))
+    assert record is not None
+    assert record.status == "succeeded"
+    assert record.prompt_version == "signal-analysis-v3"
+    assert record.result is not None
+    assert record.result["suggested_level"] == "P2"
+    assert record.result["level_rationale"] == "文本明确提及台风导致停产，建议 P2。"
+
+
+def test_signal_linked_to_event_is_excluded_from_analysis_queue(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """已关联风险事件的信号不再进入分析队列（不重算、不调用 provider）。"""
+    source = _source(db_session, "linked-skip")
+    signal = _signal(db_session, source, "linked-skip", NOW_UTC - timedelta(hours=1))
+    event = RiskEvent(
+        dedup_key="linked-skip-event",
+        event_type="weather",
+        severity="high",
+        summary="已归并事件",
+        confidence=0.9,
+        facts={},
+        validity_state="active",
+        validity_reason={
+            "code": "effective_signal_support",
+            "anchor_source": "published_at",
+            "details": {},
+        },
+    )
+    db_session.add(event)
+    db_session.flush()
+    db_session.add(RiskEventSignal(event_id=event.id, signal_id=signal.id))
+    db_session.commit()
+    provider_calls = 0
+
+    async def unexpected_analysis(
+        _session: Session, _signal: RawSignal
+    ) -> AIAnalysisRecord:
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("已关联事件的信号不得重新分析")
+
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(scheduler_jobs, "analyze_raw_signal", unexpected_analysis)
+
+    assert scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW_UTC) == 0
+    assert provider_calls == 0
+    assert db_session.scalar(select(AIAnalysisRecord)) is None
 
 
 def test_alert_expires_at_support_deadline_and_only_valid_evidence_extends_it(

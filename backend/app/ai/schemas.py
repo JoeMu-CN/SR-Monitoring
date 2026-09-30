@@ -33,6 +33,7 @@ EventSubtype = Literal[
     "other",
 ]
 Severity = Literal["critical", "high", "medium", "low"]
+SuggestedLevel = Literal["P1", "P2", "P3", "P4"]
 AffectedActivity = Literal[
     "production", "logistics", "trade", "operations", "judicial", "compliance"
 ]
@@ -93,6 +94,8 @@ class SignalAnalysisResult(BaseModel):
     summary_zh: NonEmptyText
     evidence_sentences: list[NonEmptyText] = Field(min_length=1, max_length=10)
     confidence: float = Field(ge=0, le=1)
+    suggested_level: SuggestedLevel | None = None
+    level_rationale: str | None = None
 
     @model_validator(mode="after")
     def validate_times(self) -> Self:

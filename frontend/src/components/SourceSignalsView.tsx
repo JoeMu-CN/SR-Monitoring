@@ -1,8 +1,10 @@
 import {useEffect, useRef, useState} from 'react';
-import {ArrowLeft, ChevronDown, ChevronUp, ExternalLink} from 'lucide-react';
+import {ArrowLeft, ExternalLink, FileText} from 'lucide-react';
 import {Link, useParams, useSearchParams} from 'react-router-dom';
 import {api, ApiError, VALIDITY_MODE_LABELS, VALIDITY_STATE_LABELS, type SourceSignalListResponse} from '../api';
 import {routePaths, type SourceSignalScope} from '../routes';
+import {SignalSummaryText} from './SignalSummaryText';
+import {SourceSignalReportModal, type ActiveSourceSignal} from './SourceSignalReportModal';
 
 const PAGE_SIZE = 20;
 
@@ -26,7 +28,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
-  const [expandedIds, setExpandedIds] = useState<ReadonlySet<number>>(new Set());
+  const [activeSignal, setActiveSignal] = useState<ActiveSourceSignal | null>(null);
 
   const rawScope = searchParams.get('scope');
   const rawPage = searchParams.get('page');
@@ -46,7 +48,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
     setLoading(true);
     setError(null);
     setData(null);
-    setExpandedIds(new Set());
+    setActiveSignal(null);
 
     if (!Number.isSafeInteger(numericSourceId) || numericSourceId < 1) {
       setError(new ApiError(404, '信息源不存在'));
@@ -81,15 +83,6 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
 
   const changePage = (nextPage: number) => {
     setSearchParams({scope, page: String(nextPage)});
-  };
-
-  const toggleExpanded = (id: number) => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   if (loading || !isCanonical) {
@@ -165,9 +158,8 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
         ) : (
           <div role="list" className="divide-y divide-slate-200 dark:divide-slate-700">
             {data.items.map((signal) => {
-              const expanded = expandedIds.has(signal.id);
               const sourceUrl = safeSourceUrl(signal.url);
-              const content = expanded || signal.content.length <= 240 ? signal.content : `${signal.content.slice(0, 240)}…`;
+              const summary = signal.summary.trim() ? signal.summary : '暂无摘要';
               return (
                 <article key={signal.id} role="listitem" className="space-y-3 p-4 sm:p-5">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -192,13 +184,19 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
                     <div className="min-w-0"><dt className="font-bold">策略版本</dt><dd className="break-all font-mono">{signal.validity_policy_version ?? '未生成'}</dd></div>
                     <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd className="break-words">{signal.validity_reason.code}{signal.validity_reason.anchor_source !== 'legacy' ? `（锚定 ${signal.validity_reason.anchor_source}）` : ''}</dd></div>
                   </dl>
-                  <p className="max-w-[75ch] whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300">{content}</p>
-                  {signal.content.length > 240 && (
-                    <button type="button" aria-expanded={expanded} onClick={() => toggleExpanded(signal.id)} className="inline-flex min-h-11 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300">
-                      {expanded ? <ChevronUp aria-hidden="true" className="h-4 w-4" /> : <ChevronDown aria-hidden="true" className="h-4 w-4" />}
-                      {expanded ? '收起正文' : '展开正文'}
-                    </button>
-                  )}
+                  {/* 主列表只呈现后端受控摘要；完整正文与结构化报告一律经弹窗按需查看。 */}
+                  {/* 摘要按业务分隔符做语义换行：短标签整体不断行，长正文仍走 break-words。 */}
+                  <p data-testid={`source-signal-summary-${signal.id}`} className="max-w-[75ch] whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+                    <SignalSummaryText text={summary} />
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSignal({id: signal.id, title: signal.title})}
+                    aria-label={`查看完整报告：${signal.title}`}
+                    className="inline-flex min-h-11 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300"
+                  >
+                    <FileText aria-hidden="true" className="h-4 w-4" />查看完整报告
+                  </button>
                 </article>
               );
             })}
@@ -211,6 +209,13 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
           <button type="button" onClick={() => changePage(page + 1)} disabled={!hasNextPage} className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:text-slate-200">下一页</button>
         </nav>
       </section>
+
+      <SourceSignalReportModal
+        sourceId={numericSourceId}
+        activeSignal={activeSignal}
+        onClose={() => setActiveSignal(null)}
+        onRequestError={onRequestError}
+      />
     </div>
   );
 };

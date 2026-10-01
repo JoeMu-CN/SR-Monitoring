@@ -39,7 +39,7 @@ export const RuleEngineExplainers: React.FC<RuleEngineExplainersProps> = ({mode}
           <article
             key={entry.id}
             data-testid={`rule-engine-explainer-${entry.id}`}
-            className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f7f9ff] dark:bg-slate-950/40 p-3"
+            className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f8fafc] dark:bg-slate-950/40 p-3"
           >
             <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">{entry.title}</h3>
             <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">{entry.definition}</p>
@@ -57,7 +57,7 @@ export const RuleEngineExplainers: React.FC<RuleEngineExplainersProps> = ({mode}
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
         <article
           data-testid="rule-engine-explainer-total-score"
-          className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f7f9ff] dark:bg-slate-950/40 p-3"
+          className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f8fafc] dark:bg-slate-950/40 p-3"
         >
           <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">{TOTAL_SCORE_FORMULA.title}</h3>
           <p className="mt-1 text-[11px] leading-relaxed font-bold text-slate-600 dark:text-slate-300">
@@ -73,7 +73,7 @@ export const RuleEngineExplainers: React.FC<RuleEngineExplainersProps> = ({mode}
 
         <article
           data-testid="rule-engine-explainer-level-caps"
-          className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f7f9ff] dark:bg-slate-950/40 p-3"
+          className="min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-[#f8fafc] dark:bg-slate-950/40 p-3"
         >
           <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">等级封顶规则</h3>
           <div className="mt-1 space-y-1.5">

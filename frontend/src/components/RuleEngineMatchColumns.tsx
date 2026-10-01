@@ -21,7 +21,7 @@ export const RuleEngineMatchColumns: React.FC<RuleEngineMatchColumnsProps> = ({o
   };
 
   return (
-    <section className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3">
+    <section className="rounded-xl bg-[#f8fafc] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3">
       <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">匹配柱</h3>
       <div className="flex flex-wrap gap-1.5">
         {options.map((column) => {

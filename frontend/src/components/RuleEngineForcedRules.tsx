@@ -59,7 +59,7 @@ function isReservedForcedRuleName(name: string): boolean {
 }
 
 const ICON_BUTTON_CLASSES =
-  'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#c2c6d2] text-[#424751] ' +
+  'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e2e8f0] text-[#424751] ' +
   'transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 ' +
   'dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
@@ -76,13 +76,13 @@ const PRIMARY_BUTTON_CLASSES =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2';
 
 const SECONDARY_BUTTON_CLASSES =
-  'px-3 py-1.5 border border-[#c2c6d2] text-[#424751] rounded-lg text-[13px] font-medium transition-colors ' +
+  'px-3 py-1.5 border border-[#e2e8f0] text-[#424751] rounded-lg text-[13px] font-medium transition-colors ' +
   'hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 ' +
   'dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
 
 const INPUT_CLASSES =
-  'w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2 text-[13px] font-medium mt-1 ' +
+  'w-full bg-[#f8fafc] border border-[#e2e8f0] rounded-lg p-2 text-[13px] font-medium mt-1 ' +
   'text-[#101d28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] ' +
   'dark:bg-slate-900 dark:border-slate-700 dark:text-white';
 
@@ -532,7 +532,7 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     await submit(pendingSubmit.rules, requiresConfirmation(pendingSubmit.rules));
   };
 
-  const sectionClasses = 'rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3';
+  const sectionClasses = 'rounded-xl bg-[#f8fafc] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3';
 
   // 加载/错误门控对两种模式共用：globalConfig 未就绪时观察态同样要给出可访问反馈。
   if (globalConfigError && globalConfig === null) {

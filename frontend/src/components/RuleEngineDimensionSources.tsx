@@ -42,7 +42,7 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
   return (
     <section
       data-testid="rule-engine-dimension-sources"
-      className="rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3"
+      className="rounded-xl bg-[#f8fafc] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3"
     >
       <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">引用信息源</h3>
 

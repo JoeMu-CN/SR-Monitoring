@@ -48,7 +48,7 @@ const LEVEL_CHIP_CLASS: Record<string, string> = {
 const CHIP_BASE =
   'max-w-[220px] truncate rounded-md border px-2 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:focus-visible:ring-blue-300';
 const CHIP_ACTIVE =
-  'border-[#004782] bg-[#ecf4ff] font-bold text-[#004782] dark:border-blue-300 dark:bg-slate-800 dark:text-blue-300';
+  'border-[#004782] bg-[#eef6ff] font-bold text-[#004782] dark:border-blue-300 dark:bg-slate-800 dark:text-blue-300';
 const CHIP_IDLE =
   'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300';
 
@@ -297,7 +297,7 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
       </div>
 
       {options.event_types.length === 0 ? (
-        <p className="rounded-xl border border-slate-200 bg-[#f7f9ff] px-3 py-2 text-[12px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
+        <p className="rounded-xl border border-slate-200 bg-[#f8fafc] px-3 py-2 text-[12px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
           当前没有可展示的事件类型。
         </p>
       ) : (
@@ -317,7 +317,7 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
               事件类型规则矩阵：每行一个事件类型，列为接管维度、分值摘要（严重程度四项与关联类型最高分）、信源可用性与展开
             </caption>
             <thead>
-              <tr className="border-b border-slate-200 bg-[#f7f9ff] text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
+              <tr className="border-b border-slate-200 bg-[#f8fafc] text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
                 <th scope="col" className="px-3 py-2 font-bold">事件类型</th>
                 <th scope="col" className="px-3 py-2 font-bold">接管维度</th>
                 <th scope="col" className="px-3 py-2 font-bold">分值摘要</th>
@@ -386,7 +386,7 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                       isHighlighted
                         ? highlightSource === 'builtin'
                           ? 'bg-amber-50 dark:bg-amber-950/20'
-                          : 'bg-[#ecf4ff] dark:bg-slate-800/80'
+                          : 'bg-[#eef6ff] dark:bg-slate-800/80'
                         : ''
                     }`}
                   >

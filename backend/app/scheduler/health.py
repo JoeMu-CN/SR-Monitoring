@@ -247,7 +247,12 @@ def _source_health(
             _as_utc(run_latest),  # type: ignore[arg-type]
         )
 
-        if not source.enabled or source.adapter_status not in ACTIVE_ADAPTER_STATES:
+        # 外部核查工具（external_tool）不参与声明式适配器生命周期：控制台启用门禁只要求
+        # “已存运行密钥”（见 app/signals/router.py 启用校验）。因此对 external_tool 而言，
+        # adapter_status 的任何取值（unconfigured / draft / invalid …）都不作为“停用”依据。
+        adapter_ready = source.adapter_status in ACTIVE_ADAPTER_STATES
+        is_external_tool = source.source_type == "external_tool"
+        if not source.enabled or (not adapter_ready and not is_external_tool):
             state, reason_code, next_expected = "disabled", "disabled", None
         else:
             # 只对可调度拉取源算到期：先按采集链同款能力判定拉取资格，

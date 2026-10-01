@@ -130,6 +130,7 @@ def _tyc_source(
     enabled: bool = True,
     updated_at: datetime | None = None,
     created_at: datetime | None = None,
+    adapter_status: str = "builtin",
 ) -> DataSource:
     """真实的天眼查 external_tool 信源：测试库已有迁移种子行则就地启停。"""
     source = session.scalar(select(DataSource).where(DataSource.code == "tianyancha"))
@@ -141,7 +142,7 @@ def _tyc_source(
             credibility=90,
             enabled=enabled,
             schedule=None,
-            adapter_status="builtin",
+            adapter_status=adapter_status,
             adapter_version=0,
             auth_type="api_key",
             login_config={},
@@ -151,7 +152,7 @@ def _tyc_source(
     else:
         source.enabled = enabled
         source.source_type = "external_tool"
-        source.adapter_status = "builtin"
+        source.adapter_status = adapter_status
     if created_at is not None:
         source.created_at = created_at
     if updated_at is not None:
@@ -887,6 +888,51 @@ def test_tianyancha_disabled_stays_disabled(db_session: Session) -> None:
     assert item.reason_code == "disabled"
     assert item.next_expected_at is None
     assert item.last_success_at is None
+
+
+def test_tianyancha_enabled_unconfigured_adapter_is_not_disabled(
+    db_session: Session,
+) -> None:
+    """已启用的外部核查源不因 adapter_status 停留在 unconfigured 被误报停用。"""
+    db_session.execute(delete(TycUsageRecord))
+    _disable_all_sources(db_session)
+    _tyc_source(db_session, enabled=True, adapter_status="unconfigured")
+    db_session.add(
+        TycUsageRecord(
+            tool_name="verify_company",
+            company_name="庚公司",
+            status="success",
+            called_at=NOW - timedelta(minutes=30),
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "tianyancha")
+    assert item.state == "ok"
+    assert item.reason_code == "success_observed"
+    assert item.next_expected_at == TYC_NEXT_WEEKLY_FIRE
+
+    health = build_monitoring_health(db_session, now=NOW)
+    # 前置条件：唯一可调度来源成功且无积压，overall 才可能为 ok。
+    assert health.processing.total == 0
+    assert health.overall == "ok"
+
+
+def test_enabled_external_tool_unconfigured_is_on_demand(db_session: Session) -> None:
+    """启用的非天眼查外部核查工具（无调度）归 on_demand，而非 disabled。"""
+    _disable_all_sources(db_session)
+    _make_source(
+        db_session,
+        code="ext-tool-a",
+        source_type="external_tool",
+        schedule=None,
+        adapter_status="unconfigured",
+    )
+    _healthy_heartbeat(db_session)
+
+    item = _item_of(build_monitoring_health(db_session, now=NOW), "ext-tool-a")
+    assert item.state == "on_demand"
 
 
 # --------------------------------------------------------------------------- #

@@ -30,6 +30,7 @@ import {SettingsModal} from './components/SettingsModal';
 import {Sidebar} from './components/Sidebar';
 import {SystemSplashScreen, type SelfCheckItem, type SelfCheckState} from './components/SystemSplashScreen';
 import {readLastSelfCheckAt, SELF_CHECK_TTL_MS, shouldRunFullSelfCheck, writeLastSelfCheckAt} from './selfCheck';
+import {summarizeSourceHealth} from './sourceHealthSummary';
 import {LoginView} from './components/LoginView';
 import {DataSourcesView, type RefreshSourcesIntent} from './components/DataSourcesView';
 import {SourceSignalsView} from './components/SourceSignalsView';
@@ -255,12 +256,7 @@ export function App() {
         }),
         runItem('sources', '信息源检查失败', async () => {
           const health = await loadMonitoringHealth();
-          const total = health.sources.length;
-          if (total === 0) return {state: 'warn', detail: '暂无启用的信息源'};
-          const okCount = health.sources.filter((source) => source.state === 'ok').length;
-          return okCount === total
-            ? {state: 'ok', detail: `${okCount}/${total} 信息源正常`}
-            : {state: 'warn', detail: `${okCount}/${total} 信息源正常`};
+          return summarizeSourceHealth(health.sources);
         }),
       );
     }

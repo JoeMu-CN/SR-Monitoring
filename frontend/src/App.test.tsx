@@ -15,6 +15,8 @@ import type {
   DimensionTraceRead,
   GlobalScoringConfigRead,
   MonitoringHealthRead,
+  MonitoringSourceHealth,
+  MonitoringSourceState,
   RuleEngineOptions,
   RiskAlertRead,
   SupplierListItem,
@@ -1034,6 +1036,67 @@ describe('App 开屏自检', () => {
     // loadData 会无条件调用 api.agentStatus（与自检无关），但自检本身不得请求 monitoring-health。
     expect(api.monitoringHealth).not.toHaveBeenCalled();
   });
+
+  // ---- 「信息源状态」集成回归：分母口径必须与后端可调度定义（排除 disabled/on_demand）一致 ----
+  // 夹具工厂：仅 state 参与判定，其余字段对齐 api.ts 的 MonitoringSourceHealth 契约。
+  const sourceHealthFixture = (sourceId: number, state: MonitoringSourceState): MonitoringSourceHealth => ({
+    source_id: sourceId,
+    code: `src-${sourceId}`,
+    name: `来源 ${sourceId}`,
+    state,
+    reason_code: 'test',
+    last_success_at: null,
+    last_attempt_at: null,
+    next_expected_at: null,
+  });
+
+  it('混合夹具时「信息源状态」只按可调度来源显示 2/2 正常（disabled/on_demand 不进分母）', async () => {
+    // Given 2 个可调度 ok + 1 个 disabled + 1 个 on_demand（旧口径会算成 2/4 并报告警）
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockResolvedValue({
+      ...monitoringHealthOk,
+      sources: [
+        sourceHealthFixture(1, 'ok'),
+        sourceHealthFixture(2, 'ok'),
+        sourceHealthFixture(3, 'disabled'),
+        sourceHealthFixture(4, 'on_demand'),
+      ],
+    });
+    localStorage.removeItem('sr-selfcheck-at');
+
+    // When 开屏完整自检在 /overview 运行
+    renderApp('/overview');
+
+    // Then 该行 detail 显示可调度口径的 2/2；database/scheduler/ai 行同样渲染「正常」图标，
+    // 必须由 detail 文本定位到行、再在行内断言状态图标，避免全局按名查询多命中。
+    const detail = await screen.findByText('2/2 定时信息源正常', {}, {timeout: 5000});
+    const row = detail.closest('li');
+    if (row === null) throw new Error('「信息源状态」自检行未渲染为列表项');
+    expect(within(row).getByRole('img', {name: '正常'})).toBeInTheDocument();
+  }, 10000);
+
+  it('含 overdue 可调度来源时「信息源状态」显示 1/2 告警（覆盖非全绿分支）', async () => {
+    // Given 1 个可调度 ok + 1 个可调度 overdue + 1 个 disabled
+    defaultMocks();
+    vi.mocked(api.monitoringHealth).mockResolvedValue({
+      ...monitoringHealthOk,
+      sources: [
+        sourceHealthFixture(1, 'ok'),
+        sourceHealthFixture(2, 'overdue'),
+        sourceHealthFixture(3, 'disabled'),
+      ],
+    });
+    localStorage.removeItem('sr-selfcheck-at');
+
+    // When 开屏完整自检在 /overview 运行
+    renderApp('/overview');
+
+    // Then detail 为 1/2 且该行状态图标为「告警」
+    const detail = await screen.findByText('1/2 定时信息源正常', {}, {timeout: 5000});
+    const row = detail.closest('li');
+    if (row === null) throw new Error('「信息源状态」自检行未渲染为列表项');
+    expect(within(row).getByRole('img', {name: '告警'})).toBeInTheDocument();
+  }, 10000);
 });
 
 // ---- 回归：供应商页「询问风险助手」跳转后，退出壳不得消费 pendingQuery ----

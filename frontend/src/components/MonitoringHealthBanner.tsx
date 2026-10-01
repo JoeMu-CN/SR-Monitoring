@@ -107,21 +107,25 @@ const SOURCE_TONE_CLASSES: Record<(typeof SOURCE_STATE_META)[keyof typeof SOURCE
  * 外部核查来源（onDemand 或服务端 state=on_demand）显示「核查 + 最近核查真实时间」，不显示下次预期；
  * 外部核查工具停用时后端归为 disabled，但业务语义仍是外部核查来源，不允许展示为「已停用」。
  * 停用与外部核查来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。
+ * labelOverride 是只读且仅作用于 on_demand 语义的标签覆盖（天眼查在信息源页显示「按需核查」），
+ * 其他状态与其他外部核查工具始终沿用默认「核查」。
  */
-export const MonitoringSourceFreshness = ({health, onDemand = false}: {
+export const MonitoringSourceFreshness = ({health, onDemand = false, labelOverride}: {
   readonly health: MonitoringSourceHealth | undefined;
   readonly onDemand?: boolean;
+  readonly labelOverride?: string;
 }) => {
   if (health === undefined) return null;
   const effectiveState: MonitoringSourceState = onDemand ? 'on_demand' : health.state;
   const meta = SOURCE_STATE_META[effectiveState];
+  const label = effectiveState === 'on_demand' && labelOverride !== undefined ? labelOverride : meta.label;
   const lastCheckAt = health.last_attempt_at ?? health.last_success_at;
   return (
     <p
       data-testid={`source-health-${health.source_id}`}
       className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-relaxed"
     >
-      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{meta.label}</span>
+      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{label}</span>
       <span className="flex min-w-0 flex-wrap items-center gap-x-2 font-mono text-slate-500 dark:text-slate-400">
         {/* 标签与时间拆成独立 nowrap token：窄列只在标签-时间边界换行，时间戳自身不可拆。 */}
         {effectiveState === 'on_demand' ? (

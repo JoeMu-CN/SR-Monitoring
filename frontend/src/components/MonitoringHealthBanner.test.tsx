@@ -251,6 +251,37 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
     expect(cell.textContent).not.toContain('下次预期');
   });
 
+  it('labelOverride 仅在 on_demand 语义下覆盖标签，默认仍为「核查」且不影响其他状态', () => {
+    const overridden = render(
+      <MonitoringSourceFreshness
+        onDemand
+        labelOverride="按需核查"
+        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
+      />,
+    );
+    expect(within(screen.getByTestId('source-health-17')).getByText('按需核查')).toBeInTheDocument();
+    overridden.unmount();
+
+    // 未传覆盖时保持默认「核查」；非 on_demand 状态即便传入覆盖也不改变。
+    const defaultLabel = render(
+      <MonitoringSourceFreshness
+        onDemand
+        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
+      />,
+    );
+    expect(within(screen.getByTestId('source-health-17')).getByText('核查')).toBeInTheDocument();
+    defaultLabel.unmount();
+
+    render(
+      <MonitoringSourceFreshness
+        labelOverride="按需核查"
+        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
+      />,
+    );
+    expect(within(screen.getByTestId('source-health-17')).getByText('已停用')).toBeInTheDocument();
+    expect(screen.queryByText('按需核查')).not.toBeInTheDocument();
+  });
+
   it('外部核查来源即使后端返回周度 ok 状态，仍以中性「核查」展示且不显示下次预期', () => {
     render(
       <MonitoringSourceFreshness

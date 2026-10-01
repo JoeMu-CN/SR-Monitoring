@@ -6,15 +6,18 @@ import {resolve} from 'node:path';
  * Todo 15/16/20：天眼查多维度核查前端端到端。
  *
  * 全程真实登录 + 真实后端 API（隔离测试栈注入 compose.test.yaml + seed_e2e），
- * 天眼查在用例内通过管理员 API 指向容器内确定性 MCP stub（零真实外网），
- * 再走 UI：信息源页选供应商 → 核查 → 逐工具计数；采集记录页摘要 → 报告弹窗
- * （ESC 关闭 / 焦点还原 / Tab 焦点陷阱）→ 移动端 no-report 安全回落。
+ * 天眼查在用例内通过管理员 API 指向容器内确定性 MCP stub（零真实外网）。
+ * 信息源页已不再提供天眼查单供应商选择与手动核查入口，只保留两个「按需核查」胶囊；
+ * 采集记录/报告 UI 验证所需的真实信号由已登录会话直接调用
+ * POST /api/v1/sources/{id}/run-tyc-batch?supplier_id=... 生成，再走采集记录页摘要 →
+ * 报告弹窗（ESC 关闭 / 焦点还原 / Tab 焦点陷阱）→ 移动端 no-report 安全回落。
  * 视觉修复回归：报告弹窗遮罩 z-[60] 高于 MobileNav z-50（点击不穿透），
  * 列表摘要按业务分隔符保护短标签（司法解析/失信被执行在 1280/768/375 均不跨行）。
  *
- * Todo 19：单供应商天眼查核查「中途额度耗尽」——锚定调用成功后维度在锁内被拒，
- * 真实后端仍返回 200 汇总并标记 quota_exhausted；UI 必须追加「本次调用额度已耗尽」
- * 且逐工具计数展示每个维度「额度耗尽 1」，不得只显示普通成功文案。
+ * Todo 19：单供应商天眼查核查「中途额度耗尽」后端契约——锚定调用成功后维度在锁内被拒，
+ * 真实后端仍返回 200 汇总并标记 quota_exhausted，逐工具计数含 quota_exhausted。
+ * 该额度契约已由后端测试 tests/test_tyc_batch_multidim.py 充分覆盖，E2E 只验证
+ * 真实 API 契约，并断言信息源页已移除的手动入口不存在。
  *
  * 运行：pwsh -File scripts/test-current-version-hardening.ps1 -Suite e2e
  *       -Tests tests/e2e/todo-15-16-20-tyc-report.spec.ts
@@ -26,6 +29,37 @@ const testPassword = 'E2E-Test-Only-2026!';
 // 隔离栈专用：compose.test.yaml 的 tyc-stub 服务 + 测试密钥（仅测试环境，无真实密钥）。
 const tycStubUrl = 'http://tyc-stub:8081/v1';
 const tycStubKey = 'tyc-e2e-stub-key';
+
+interface TycBatchToolOutcomeCounts {
+  readonly success_with_records: number;
+  readonly empty: number;
+  readonly error: number;
+  readonly quota_exhausted: number;
+  readonly busy: number;
+}
+
+/** 后端 POST /sources/{id}/run-tyc-batch 的 200 稳定汇总（TycBatchRunRead）。 */
+interface TycBatchRunSummary {
+  readonly source_id: number;
+  readonly shard_index: number;
+  readonly shard_count: number;
+  readonly supplier_id: number | null;
+  readonly targeted_count: number;
+  readonly attempted_count: number;
+  readonly created_count: number;
+  readonly duplicate_count: number;
+  readonly empty_count: number;
+  readonly failed_count: number;
+  readonly quota_exhausted: boolean;
+  readonly per_tool_counts: Record<string, TycBatchToolOutcomeCounts>;
+}
+
+/** 409 结构化 detail（含剩余额度上下文）。 */
+interface TycBatchUnavailableDetail {
+  readonly code: string;
+  readonly reason: string;
+  readonly daily_used: number;
+}
 
 const login = async (page: Page) => {
   await page.goto('/sources');
@@ -138,7 +172,10 @@ const assertNoSingleCharacterLastLine = async (page: Page, selector: string, req
     return paragraphs.map((paragraph) => {
       const text = paragraph.textContent ?? '';
       const node = paragraph.firstChild;
-      if (node === null) return {text, lastLineChars: 0};
+      const style = getComputedStyle(paragraph);
+      if (node === null) {
+        return {text, lastLineChars: 0, textWrapStyle: style.textWrapStyle, whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap};
+      }
       const range = document.createRange();
       const tops: number[] = [];
       for (let index = 0; index < text.length; index += 1) {
@@ -152,7 +189,6 @@ const assertNoSingleCharacterLastLine = async (page: Page, selector: string, req
         if (Math.abs(tops[index]! - lastTop) < 1) start = index;
         else break;
       }
-      const style = getComputedStyle(paragraph);
       return {
         text,
         lastLineChars: text.length - start,
@@ -238,33 +274,61 @@ const waitForSettledRoute = async (page: Page) => {
   await expect(page.getByTestId('route-content')).toHaveCSS('opacity', '1');
 };
 
-/** 在信息源页对指定供应商执行一次核查，返回源 ID 并断言逐工具计数可见。 */
-const runTycCheck = async (page: Page, tycSourceId: number, supplierLabel: string) => {
-  await page.goto('/sources');
-  await expect(page.getByTestId(`source-name-${tycSourceId}`)).toBeVisible({timeout: 15_000});
-  await waitForSettledRoute(page);
-  const select = page.getByLabel('选择核查供应商');
-  await expect(select).toBeEnabled({timeout: 15_000});
-  await select.selectOption({label: supplierLabel});
-  const checkButton = page.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-  await expect(checkButton).toBeEnabled();
-  await checkButton.click();
-  await expect(page.getByTestId(`source-run-msg-${tycSourceId}`)).toContainText(
-    '核查完成：目标 1 家，已尝试 1 家', {timeout: 30_000},
+/**
+ * 新契约：信息源页对天眼查只展示两个「按需核查」胶囊（连通胶囊 + 新鲜度胶囊），
+ * 不再提供单供应商选择器、手动核查按钮或通用刷新按钮；单供应商核查由供应商查询助手承担。
+ */
+const assertTycOnDemandConsoles = async (page: Page, tycSourceId: number) => {
+  await expect(page.getByTestId(`source-connectivity-${tycSourceId}`)).toContainText('按需核查');
+  await expect(page.getByTestId(`source-health-${tycSourceId}`)).toContainText('按需核查');
+  await expect(page.getByLabel('选择核查供应商')).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '核查本供应商：天眼查企业核查'})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '刷新天眼查企业核查'})).toHaveCount(0);
+};
+
+/** 断言 200 汇总的必要返回契约（源/供应商对齐、单供应商计数与逐工具五态聚合存在）。 */
+const assertTycBatchSummaryContract = (
+  summary: TycBatchRunSummary,
+  tycSourceId: number,
+  supplierId: number,
+) => {
+  expect(summary.source_id, '汇总必须回指同一信息源').toBe(tycSourceId);
+  expect(summary.supplier_id, '汇总必须回指同一供应商').toBe(supplierId);
+  expect(summary.shard_count, '天眼查固定 2 片').toBe(2);
+  expect(summary.targeted_count, '单供应商核查目标数恒为 1').toBe(1);
+  expect(summary.attempted_count, '至少尝试 1 家').toBeGreaterThanOrEqual(1);
+  expect(
+    summary.created_count + summary.duplicate_count,
+    '成功汇总必须产生或复用 ≥1 条采集记录',
+  ).toBeGreaterThanOrEqual(1);
+  expect(Object.keys(summary.per_tool_counts).length, '必须返回逐工具五态聚合').toBeGreaterThan(0);
+};
+
+/**
+ * 信息源页已移除单供应商核查入口：登录会话内直接调用真实隔离后端的 run-tyc-batch，
+ * 断言 200 与必要汇总契约并返回汇总；采集记录与逐工具计数一律以该 API 返回为准。
+ */
+const runTycBatchViaApi = async (
+  page: Page,
+  tycSourceId: number,
+  supplierId: number,
+): Promise<TycBatchRunSummary> => {
+  const headers = await writeHeaders(page.context());
+  const response = await page.request.post(
+    `/api/v1/sources/${tycSourceId}/run-tyc-batch?supplier_id=${supplierId}`,
+    {headers},
   );
-  const detail = page.getByTestId(`source-tyc-detail-${tycSourceId}`);
-  await expect(detail).toContainText('分片');
-  await expect(detail).toContainText(supplierLabel);
-  await expect(detail).toContainText('search_companies');
-  await expect(detail).toContainText('get_risk_overview');
-  return detail;
+  expect(response.status(), '天眼查单供应商核查必须返回 200 汇总').toBe(200);
+  const summary = await response.json() as TycBatchRunSummary;
+  assertTycBatchSummaryContract(summary, tycSourceId, supplierId);
+  return summary;
 };
 
 test.beforeAll(async () => {
   await mkdir(evidenceDirectory, {recursive: true});
 });
 
-test('桌面1280：按供应商核查展示逐工具计数，采集记录摘要经弹窗查看完整报告', async ({browser}) => {
+test('桌面1280：信息源页按需核查胶囊与手动入口缺席，采集记录摘要经弹窗查看完整报告', async ({browser}) => {
   const context = await browser.newContext({viewport: {width: 1280, height: 720}, reducedMotion: 'reduce'});
   const page = await context.newPage();
 
@@ -276,10 +340,17 @@ test('桌面1280：按供应商核查展示逐工具计数，采集记录摘要�
   });
   const tycSourceId = await configureTycSource(page);
 
-  // Todo20：选择供应商 → 核查本供应商 → shard/supplier/per_tool_counts 汇总。
-  await runTycCheck(page, tycSourceId, 'E2E Supplier 001（E2E-SUP-001）');
-  await page.screenshot({path: resolve(evidenceDirectory, 'todo20-desktop-1280-tyc-check.png'), fullPage: true});
+  // 新契约：信息源页不再提供天眼查单供应商选择/手动核查入口，只保留两个「按需核查」胶囊。
+  await page.goto('/sources');
+  await expect(page.getByTestId(`source-name-${tycSourceId}`)).toBeVisible({timeout: 15_000});
+  await waitForSettledRoute(page);
+  await assertTycOnDemandConsoles(page, tycSourceId);
+  await page.screenshot({path: resolve(evidenceDirectory, 'todo20-desktop-1280-tyc-on-demand.png'), fullPage: true});
   await assertNoHorizontalOverflow(page);
+
+  // 采集记录/报告 UI 验证所需的真实信号由已登录会话直接调用后端 API 生成（零真实外网）。
+  const supplierId001 = await supplierIdByCode(page, 'E2E-SUP-001');
+  await runTycBatchViaApi(page, tycSourceId, supplierId001);
 
   // Todo15：采集记录主列表只渲染受控摘要（≤240 字符）。
   await page.goto(`/sources/${tycSourceId}/signals?scope=valid&page=1`);
@@ -329,16 +400,24 @@ test('桌面1280：按供应商核查展示逐工具计数，采集记录摘要�
   await context.close();
 });
 
-test('平板768：核查控件与逐工具计数无横向溢出，报告弹窗遮罩覆盖移动端导航', async ({browser}) => {
+test('平板768：信息源页按需核查胶囊无横向溢出，报告弹窗遮罩覆盖移动端导航', async ({browser}) => {
   const context = await browser.newContext({viewport: {width: 768, height: 1024}, reducedMotion: 'reduce'});
   const page = await context.newPage();
 
   await login(page);
   const tycSourceId = await configureTycSource(page);
-  await runTycCheck(page, tycSourceId, 'E2E Supplier 002（E2E-SUP-002）');
 
-  await page.screenshot({path: resolve(evidenceDirectory, 'todo20-tablet-768-tyc-check.png'), fullPage: true});
+  // 信息源页新契约：天眼查仅保留「按需核查」胶囊，无手动核查控件；768 宽度不得横向溢出。
+  await page.goto('/sources');
+  await expect(page.getByTestId(`source-name-${tycSourceId}`)).toBeVisible({timeout: 15_000});
+  await waitForSettledRoute(page);
+  await assertTycOnDemandConsoles(page, tycSourceId);
+  await page.screenshot({path: resolve(evidenceDirectory, 'todo20-tablet-768-tyc-on-demand.png'), fullPage: true});
   await assertNoHorizontalOverflow(page);
+
+  // 采集记录/报告 UI 验证所需的真实信号由已登录会话直接调用后端 API 生成。
+  const supplierId002 = await supplierIdByCode(page, 'E2E-SUP-002');
+  await runTycBatchViaApi(page, tycSourceId, supplierId002);
 
   // Todo16 修复回归：768 仍处于移动端导航可见区间，弹窗遮罩必须完整覆盖导航且点击不穿透。
   await page.goto(`/sources/${tycSourceId}/signals?scope=valid&page=1`);
@@ -371,7 +450,9 @@ test('移动375：报告摘要短语不跨行、弹窗遮罩覆盖导航，非�
 
   await login(page);
   const tycSourceId = await configureTycSource(page);
-  await runTycCheck(page, tycSourceId, 'E2E Supplier 003（E2E-SUP-003）');
+  // 采集记录/报告 UI 验证所需的真实信号由已登录会话直接调用后端 API 生成。
+  const supplierId003 = await supplierIdByCode(page, 'E2E-SUP-003');
+  await runTycBatchViaApi(page, tycSourceId, supplierId003);
   await assertNoHorizontalOverflow(page);
 
   // 天眼查报告记录：列表摘要短标签短语不得跨行（375 曾被拆「失信/被执行」），弹窗摘要不得单字末行。
@@ -416,7 +497,7 @@ test('移动375：报告摘要短语不跨行、弹窗遮罩覆盖导航，非�
   await context.close();
 });
 
-test('桌面1280：单供应商核查中途额度耗尽返回成功汇总并提示「本次调用额度已耗尽」', async ({browser}) => {
+test('桌面1280：信息源页不再提供天眼查手动核查入口，单供应商额度耗尽由真实 API 契约保证', async ({browser}) => {
   const context = await browser.newContext({viewport: {width: 1280, height: 720}, reducedMotion: 'reduce'});
   const page = await context.newPage();
   let tycSourceId: number | null = null;
@@ -424,61 +505,58 @@ test('桌面1280：单供应商核查中途额度耗尽返回成功汇总并提�
   try {
     await login(page);
     tycSourceId = await configureTycSource(page);
-    const supplierLabel = 'E2E Supplier 004（E2E-SUP-004）';
+    const resolvedSourceId: number = tycSourceId;
     const supplierId = await supplierIdByCode(page, 'E2E-SUP-004');
 
-    // Todo 19：把日额度压到 1，锚定调用一旦成功，后续每个维度都会在锁内被真实拒绝。
-    // 前置用例共享同一账户当日消耗，起始额度可能已被用尽：此时按结构化 409 detail 的
-    // daily_used 精确回设为 daily_used + 1，保证「锚定成功 → 中途耗尽」确定性成立。
-    await setTycDailyLimit(page, tycSourceId, 1);
-
+    // 页面新契约：天眼查不再提供单供应商选择/手动核查/通用刷新入口，只保留「按需核查」胶囊。
     await page.goto('/sources');
-    await expect(page.getByTestId(`source-name-${tycSourceId}`)).toBeVisible({timeout: 15_000});
+    await expect(page.getByTestId(`source-name-${resolvedSourceId}`)).toBeVisible({timeout: 15_000});
     await waitForSettledRoute(page);
-    const select = page.getByLabel('选择核查供应商');
-    await expect(select).toBeEnabled({timeout: 15_000});
-    await select.selectOption({label: supplierLabel});
-    const checkButton = page.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    await expect(checkButton).toBeEnabled();
-    await checkButton.click();
-
-    const runMsg = page.getByTestId(`source-run-msg-${tycSourceId}`);
-    await expect(runMsg).toContainText(/额度不足|本次调用额度已耗尽/, {timeout: 30_000});
-    const firstRunText = (await runMsg.textContent()) ?? '';
-    if (!firstRunText.includes('本次调用额度已耗尽')) {
-      expect(firstRunText, '首次核查若未中途耗尽，只能是起始额度不足（409）').toContain('额度不足');
-      const headers = await writeHeaders(page.context());
-      const probe = await page.request.post(
-        `/api/v1/sources/${tycSourceId}/run-tyc-batch?supplier_id=${supplierId}`,
-        {headers},
-      );
-      expect(probe.status(), '起始额度耗尽时探测返回 409，不产生额度消耗').toBe(409);
-      const probeBody = await probe.json() as {detail: {code: string; reason: string; daily_used: number}};
-      expect(probeBody.detail).toMatchObject({code: 'unavailable', reason: 'quota_exhausted'});
-      await setTycDailyLimit(page, tycSourceId, probeBody.detail.daily_used + 1);
-      await expect(checkButton).toBeEnabled();
-      await checkButton.click();
-    }
-
-    // 真实后端 200 汇总：额度耗尽语义必须显式出现，不得只显示普通成功文案。
-    await expect(runMsg).toContainText(
-      '核查完成：目标 1 家，已尝试 1 家，新增 1 条，重复 0 条，空结果 0 条，失败 0 条；本次调用额度已耗尽',
-      {timeout: 30_000},
-    );
-    await expect(runMsg).toHaveAttribute('role', 'status');
-
-    // 逐工具证据：锚定 search_companies 有记录 1；默认 12 个维度全部锁内被拒（额度耗尽 1）。
-    const detail = page.getByTestId(`source-tyc-detail-${tycSourceId}`);
-    await expect(detail).toContainText(supplierLabel);
-    const toolList = detail.getByRole('list', {name: '逐工具核查计数'});
-    await expect(toolList.getByRole('listitem').filter({hasText: 'search_companies'})).toContainText(
-      '有记录 1 · 空 0 · 失败 0 · 额度耗尽 0',
-    );
-    await expect(toolList.locator('li').filter({hasText: '额度耗尽 1 ·'})).toHaveCount(12);
+    await assertTycOnDemandConsoles(page, resolvedSourceId);
     await page.screenshot({
-      path: resolve(evidenceDirectory, 'todo19-desktop-1280-tyc-quota-exhausted.png'),
+      path: resolve(evidenceDirectory, 'todo19-desktop-1280-tyc-no-manual-entry.png'),
       fullPage: true,
     });
+    await assertNoHorizontalOverflow(page);
+
+    // Todo 19 后端额度契约（已由 tests/test_tyc_batch_multidim.py 充分覆盖）：
+    // 把日额度压到 1，锚定调用一旦成功，后续每个维度都会在锁内被真实拒绝，
+    // 真实后端仍返回 200 汇总并标记 quota_exhausted，逐工具计数含 quota_exhausted。
+    // 前置用例共享同一账户当日消耗，起始额度可能已被用尽：此时按结构化 409 detail 的
+    // daily_used 精确回设为 daily_used + 1，保证「锚定成功 → 中途耗尽」确定性成立。
+    await setTycDailyLimit(page, resolvedSourceId, 1);
+    const headers = await writeHeaders(page.context());
+    const firstRun = await page.request.post(
+      `/api/v1/sources/${resolvedSourceId}/run-tyc-batch?supplier_id=${supplierId}`,
+      {headers},
+    );
+
+    const assertQuotaExhaustedContract = (summary: TycBatchRunSummary) => {
+      assertTycBatchSummaryContract(summary, resolvedSourceId, supplierId);
+      expect(summary.quota_exhausted, '锚定成功后中途额度耗尽必须标记 quota_exhausted').toBe(true);
+      expect(
+        summary.per_tool_counts['search_companies']?.success_with_records,
+        '锚定工具 search_companies 必须有记录 1',
+      ).toBe(1);
+      const dimensionExhausted = Object.values(summary.per_tool_counts)
+        .reduce((total, counts) => total + counts.quota_exhausted, 0);
+      expect(dimensionExhausted, '维度应在锁内被拒并累计 quota_exhausted').toBeGreaterThanOrEqual(1);
+    };
+
+    if (firstRun.status() === 409) {
+      const detail = (await firstRun.json() as {detail: TycBatchUnavailableDetail}).detail;
+      expect(detail, '起始额度不足时返回结构化 quota_exhausted').toMatchObject({
+        code: 'unavailable',
+        reason: 'quota_exhausted',
+      });
+      await setTycDailyLimit(page, resolvedSourceId, detail.daily_used + 1);
+      const summary = await runTycBatchViaApi(page, resolvedSourceId, supplierId);
+      assertQuotaExhaustedContract(summary);
+    } else {
+      expect(firstRun.status(), '首跑必须返回 200 汇总或结构化 409').toBe(200);
+      const summary = await firstRun.json() as TycBatchRunSummary;
+      assertQuotaExhaustedContract(summary);
+    }
   } finally {
     // 恢复隔离栈默认提交态（daily_limit=1000），避免同栈后续用例继承低额度。
     if (tycSourceId !== null) await configureTycSource(page);

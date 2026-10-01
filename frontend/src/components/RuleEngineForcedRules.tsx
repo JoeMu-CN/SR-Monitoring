@@ -97,7 +97,7 @@ interface RuleOption {
 }
 
 export interface RuleEngineForcedRulesProps {
-  /** 由壳组件控制：仅配置态渲染 */
+  /** 由壳组件控制：config = 可编辑编辑器；observation = 只读列表（复用 PlainRuleCard） */
   mode: RuleEngineMode;
 }
 
@@ -346,8 +346,10 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   const [actionError, setActionError] = React.useState('');
   const syncedFromRef = React.useRef<GlobalScoringConfigRead | null>(null);
 
-  // 初始值与保存后的回填：只在服务端快照变化且本地无未保存修改时重读，保证列表始终反映服务端
+  // 初始值与保存后的回填：只在服务端快照变化且本地无未保存修改时重读，保证列表始终反映服务端。
+  // 观察态只读：可编辑行状态（rows/rowsSeeded/dirty）仅服务配置态编辑器，观察态不播种、不维护。
   React.useEffect(() => {
+    if (mode !== 'config') return;
     if (!globalConfig || syncedFromRef.current === globalConfig) return;
     if (dirty) return;
     syncedFromRef.current = globalConfig;
@@ -355,7 +357,7 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     setRowsSeeded(true);
     setDirty(false);
     setShowValidation(false);
-  }, [dirty, globalConfig, seedRows, serverRules]);
+  }, [mode, dirty, globalConfig, seedRows, serverRules]);
 
   const eventTypeLabel = React.useCallback(
     (value: string) => options.event_types.find((option) => option.value === value)?.label ?? value,
@@ -399,6 +401,11 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   // 非法时不上报旧草稿可用——显式标记为非法，让解算预览被禁用并给出可访问错误，
   // 绝不用上一次合法的旧规则冒充当前表格（缺陷 C）。
   React.useEffect(() => {
+    // 观察态只读：绝不触碰 globalDraft 与 setGlobalDraftValidity。
+    // 该副作用属于配置态编辑器的写路径（把当前可编辑表格并入解算预览草稿）；观察态
+    // 渲染的是只读列表、没有表格状态可上报，若继续执行会以与本 Tab 无关的数据扰动
+    // 全局草稿门控，因此只在配置态运行。
+    if (mode !== 'config') return;
     // F2 窗口 1：globalConfig 尚未加载（加载中或加载失败）时 rows 为空只是「尚未同步」，
     // 不是「服务端就是空表」。此时必须保持非法且跳过 globalDraft 写入，
     // 否则解算预览会把 forced_rules: [] 当成合法草稿发出，静默禁用真实强制规则。
@@ -412,7 +419,7 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     }
     setGlobalDraftValidity(true);
     setGlobalDraft((current) => ({...current, forced_rules: buildSubmittableRules(rows)}));
-  }, [globalConfig, rowsSeeded, rows, setGlobalDraft, setGlobalDraftValidity, validationErrors]);
+  }, [mode, globalConfig, rowsSeeded, rows, setGlobalDraft, setGlobalDraftValidity, validationErrors]);
 
   const markEdited = () => {
     setDirty(true);
@@ -525,10 +532,9 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
     await submit(pendingSubmit.rules, requiresConfirmation(pendingSubmit.rules));
   };
 
-  if (mode !== 'config') return null;
-
   const sectionClasses = 'rounded-xl bg-[#f7f9ff] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3';
 
+  // 加载/错误门控对两种模式共用：globalConfig 未就绪时观察态同样要给出可访问反馈。
   if (globalConfigError && globalConfig === null) {
     return (
       <section role="alert" data-testid="rule-engine-forced-rules" data-mode={mode} className={`${sectionClasses} text-[12px] text-red-700 dark:text-red-300`}>
@@ -547,6 +553,61 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
         <p className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
           <span className="sr-only">全局强制规则加载中…</span>
         </p>
+      </section>
+    );
+  }
+
+  // 观察态：只读强制规则列表（复用 PlainRuleCard），零可写控件。
+  // 为什么只读：编辑能力以 rule_manage（role === 'admin'）且处于配置态为前提；观察态只展示
+  // 当前生效的全局强制规则，不渲染输入框/复选框/保存/删除/恢复默认/确认等任何控件。
+  // 为什么不写草稿：见上方草稿 effect 的 mode 门控——观察态绝不写 globalDraft，避免以与本
+  // Tab 无关的数据扰动解算预览的草稿门控。数据与编辑器初始值同源（effective 层 + 同一过滤）。
+  if (mode === 'observation') {
+    return (
+      <section data-testid="rule-engine-forced-rules" data-mode={mode} className={sectionClasses}>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">强制规则（全局表）</h3>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+            全局层 {globalConfig.source === 'configured' ? '已自定义' : '默认'}
+          </span>
+        </div>
+
+        <p className="text-[11px] text-slate-600 dark:text-slate-300">
+          强制规则命中将直接定级为所选等级并记满分，绕过常规评分。
+        </p>
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+          {canEdit ? '当前为观察模式：仅展示生效的全局强制规则，编辑请进入配置模式。' : '只读账号仅可查看，不能编辑全局强制规则。'}
+        </p>
+
+        {globalConfigError !== '' && (
+          <p role="alert" className="mt-2 text-[11px] text-red-700 dark:text-red-300">全局配置刷新失败：{globalConfigError}</p>
+        )}
+
+        {serverRules.length === 0 ? (
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">当前全局层无强制规则。</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {serverRules.map((rule, index) => (
+              <div
+                key={`${rule.name}-${index}`}
+                data-testid="forced-rule-row"
+                data-rule-name={rule.name}
+                className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-2.5 space-y-1"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="text-[10px] font-mono font-bold text-slate-400">{index + 1}</span>
+                    <span className="truncate text-[12px] font-bold font-mono text-[#101d28] dark:text-white">{rule.name}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${FORCED_LEVEL_CHIP_CLASSES[rule.forced_level] ?? 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                      {rule.forced_level}
+                    </span>
+                  </div>
+                </div>
+                <PlainRuleCard rule={rule} eventLabel={eventTypeLabel} subtypeLabel={eventSubtypeLabel} />
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     );
   }

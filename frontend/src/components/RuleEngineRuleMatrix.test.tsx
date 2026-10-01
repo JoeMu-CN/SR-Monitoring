@@ -44,7 +44,8 @@ const baseDimension = (overrides: Partial<MonitoringDimension>): MonitoringDimen
   enabled: true,
   ruleId: 'natural-v1',
   severityScores: {critical: 35, high: 28, medium: 20, low: 10},
-  associationScores: {registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12},
+  // 关联分值夹具覆盖 6 组中的 4 组；alias/site_text 刻意低于组内主键，用于证明「组内取最高计入」
+  associationScores: {registry_no: 30, legal_name: 25, alias: 18, site_distance: 20, site_text: 16, product: 12},
   thresholds: {p1: 85, p2: 65, p3: 40},
   matchColumns: ['entity', 'location', 'product'],
   eventTypes: ['weather', 'geological', 'logistics'],
@@ -108,11 +109,34 @@ const renderMatrix = (overrides: Partial<RuleEngineRuleMatrixProps> = {}) => {
 
 const row = (eventType: string) => screen.getByTestId(`rule-matrix-row-${eventType}`);
 
+/**
+ * 数据行 testid 精确匹配：排除同前缀的 `rule-matrix-row-toggle`（展开按钮）与
+ * `rule-matrix-row-detail`（行内详情容器，折叠态仍在 DOM），避免前缀碰撞。
+ */
+const DATA_ROW_TESTID = /^rule-matrix-row-(?!toggle$|detail$).+$/;
+const dataRows = () => screen.getAllByTestId(DATA_ROW_TESTID);
+
+/** 行内详情行以 id（`rule-matrix-row-detail-${value}`）标识而非 testid；按事件类型精确定位。 */
+const rowDetail = (eventType: string): HTMLElement => {
+  const element = document.getElementById(`rule-matrix-row-detail-${eventType}`);
+  if (!(element instanceof HTMLElement)) throw new Error(`未找到行内详情：rule-matrix-row-detail-${eventType}`);
+  return element;
+};
+
 describe('规则矩阵表：行=事件类型，列=接管维度与规则口径', () => {
-  it('给定 9 个事件类型与两个启用维度：渲染 9 行，各自显示接管维度或「当前无启用维度接管」', () => {
+  it('给定 9 个事件类型与两个启用维度：默认只渲染 5 个接管行，4 个无接管折叠进汇总行', () => {
     renderMatrix();
 
-    expect(screen.getAllByTestId(/^rule-matrix-row-/)).toHaveLength(9);
+    // 数据行 testid 精确匹配（排除 toggle/detail 同前缀）；无接管类型默认折叠，不渲染数据行
+    expect(dataRows()).toHaveLength(5);
+    for (const eventType of ['corporate', 'judicial', 'compliance', 'other']) {
+      expect(screen.queryByTestId(`rule-matrix-row-${eventType}`)).not.toBeInTheDocument();
+    }
+    const unownedSummary = screen.getByTestId('rule-matrix-unowned-summary');
+    expect(unownedSummary).toHaveAttribute('aria-expanded', 'false');
+    expect(unownedSummary).toHaveTextContent(
+      '另有 4 个事件类型当前无启用维度接管：企业经营、司法、合规、其他',
+    );
 
     // 有启用维度接管的事件类型显示维度名
     expect(within(row('weather')).getByText('自然环境')).toBeInTheDocument();
@@ -121,27 +145,37 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
     expect(within(row('geopolitical')).getByText('地缘政治与安全')).toBeInTheDocument();
     expect(within(row('trade_policy')).getByText('地缘政治与安全')).toBeInTheDocument();
 
-    // 无维度接管的事件类型明确标注
+    // 展开汇总行后，无接管事件类型渲染数据行并明确标注
+    fireEvent.click(within(unownedSummary).getByRole('button'));
+    expect(screen.getByTestId('rule-matrix-unowned-summary')).toHaveAttribute('aria-expanded', 'true');
     for (const eventType of ['corporate', 'judicial', 'compliance', 'other']) {
       expect(within(row(eventType)).getByText('当前无启用维度接管')).toBeInTheDocument();
     }
+    expect(dataRows()).toHaveLength(9);
 
     expect(screen.getByTestId('rule-matrix-summary')).toHaveTextContent(
       /共 9 个事件类型：5 个由启用维度接管，\s*4 个当前无接管/,
     );
   });
 
-  it('已停用维度不接管事件类型：显示无接管且各规则列以「—」占位', () => {
+  it('已停用维度不接管事件类型：展开汇总行后显示无接管且各规则列以「—」占位', () => {
     renderMatrix({
       dimensions: [naturalDimension(), geopoliticalDimension(), disabledPolicyDimension()],
     });
 
-    // policy 维度虽然声明了 compliance，但 enabled=false，不得接管
+    // policy 维度虽然声明了 compliance，但 enabled=false，不得接管；无接管行默认折叠在汇总行内
+    const unownedSummary = screen.getByTestId('rule-matrix-unowned-summary');
+    expect(screen.queryByTestId('rule-matrix-row-compliance')).not.toBeInTheDocument();
+    fireEvent.click(within(unownedSummary).getByRole('button'));
+
     expect(within(row('compliance')).getByText('当前无启用维度接管')).toBeInTheDocument();
     expect(within(row('compliance')).queryByText('政策法规')).not.toBeInTheDocument();
-    // 匹配柱/严重程度/关联类型/分级阈值/信源可用性 五列均以「—」占位（无接管则来源未知）
-    expect(within(row('compliance')).getAllByText('—')).toHaveLength(5);
-    expect(within(row('compliance')).getByText('无')).toBeInTheDocument();
+    // 数据行内：分值摘要/信源可用性 两列以「—」占位（无接管则来源未知）
+    expect(within(row('compliance')).getAllByText('—')).toHaveLength(2);
+    // 行内详情（默认折叠）内：匹配柱/严重程度分值/关联类型分值/分级阈值 均以「—」占位，强制规则为「无」
+    const complianceDetail = rowDetail('compliance');
+    expect(within(complianceDetail).getAllByText('—')).toHaveLength(4);
+    expect(within(complianceDetail).getByText('无')).toBeInTheDocument();
   });
 
   it('信源可用性列反映接管维度口径：未声明信源 / 声明但均未接入', () => {
@@ -162,33 +196,60 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
     expect(within(row('weather')).getByText('声明 1 个，均未接入')).toBeInTheDocument();
   });
 
-  it('列覆盖匹配柱/严重程度分值/关联类型分值/分级阈值/强制规则/信源可用性', () => {
+  it('列覆盖分值摘要/信源可用性，其余口径在可展开的行内详情中', () => {
     renderMatrix();
 
-    for (const header of ['事件类型', '接管维度', '启用匹配柱', '严重程度分值', '关联类型分值', '分级阈值', '相关强制规则', '信源可用性']) {
+    // 表头为 5 列新结构
+    for (const header of ['事件类型', '接管维度', '分值摘要', '信源可用性', '展开']) {
       expect(screen.getByRole('columnheader', {name: header})).toBeInTheDocument();
+    }
+    // 已移出表头的旧列不得再充当列头
+    for (const removed of ['启用匹配柱', '严重程度分值', '关联类型分值', '分级阈值', '相关强制规则']) {
+      expect(screen.queryByRole('columnheader', {name: removed})).not.toBeInTheDocument();
     }
 
     const weatherRow = row('weather');
-    expect(within(weatherRow).getByText('主体、地点、产品')).toBeInTheDocument();
-    // 严重程度四项与关联类型八项的真实分值来自维度配置
-    const severityCell = within(weatherRow).getByTestId('rule-matrix-severity-scores');
-    for (const pair of ['严重 35', '高 28', '中 20', '低 10']) {
-      expect(severityCell).toHaveTextContent(pair);
-    }
-    const associationCell = within(weatherRow).getByTestId('rule-matrix-association-scores');
-    for (const pair of ['注册号 30', '法人全称 25', '别名 25', '地点距离 20', '地点文本 20', '产品 12']) {
-      expect(associationCell).toHaveTextContent(pair);
-    }
-    expect(within(weatherRow).getByText('≥85')).toBeInTheDocument();
-    expect(within(weatherRow).getByText('≥65')).toBeInTheDocument();
-    expect(within(weatherRow).getByText('≥40')).toBeInTheDocument();
-    expect(within(weatherRow).getByText('无')).toBeInTheDocument();
+    // 分值摘要列：严重程度四项与关联类型最高分的真实分值来自维度配置
+    const scoreSummary = within(weatherRow).getByTestId('rule-matrix-score-summary');
+    expect(scoreSummary).toHaveTextContent('严重 35·28·20·10');
+    expect(scoreSummary).toHaveTextContent('关联最高 30');
+    // 信源可用性列仍在表层单元格
     expect(within(weatherRow).getByText('已接入 1/2 个信源')).toBeInTheDocument();
     expect(within(weatherRow).getByText('有效信号 12')).toBeInTheDocument();
 
+    // 行内详情默认折叠（hidden）不可见；点击该行「展开」后才可见
+    expect(rowDetail('weather')).not.toBeVisible();
+    fireEvent.click(within(weatherRow).getByTestId('rule-matrix-row-toggle'));
+    expect(rowDetail('weather')).toBeVisible();
+
+    // 展开后从详情内断言被移除列的完整口径
+    const weatherDetail = within(rowDetail('weather'));
+    expect(weatherDetail.getByText('主体、地点、产品')).toBeInTheDocument();
+    const severityCell = weatherDetail.getByTestId('rule-matrix-severity-scores');
+    for (const pair of ['严重 35', '高 28', '中 20', '低 10']) {
+      expect(severityCell).toHaveTextContent(pair);
+    }
+    // 关联分值按原型收敛为 6 项分组（组内取最高计入）：法人全称/别名取 25、地点取 20，
+    // 未配置的行业/国家以「—」占位
+    expect(weatherDetail.getByText('关联分值（6 项，取最高计入）')).toBeInTheDocument();
+    const associationCell = weatherDetail.getByTestId('rule-matrix-association-scores');
+    for (const pair of ['注册号 30', '法人全称 / 别名 25', '地点 20', '产品 12', '行业 —', '国家 —']) {
+      expect(associationCell).toHaveTextContent(pair);
+    }
+    // 6 项目录恰好 6 个子项；被合并的旧独立标签不再作为单项出现
+    expect(associationCell.querySelectorAll(':scope > span')).toHaveLength(6);
+    expect(associationCell).not.toHaveTextContent('地点距离');
+    expect(associationCell).not.toHaveTextContent('地点文本');
+    expect(weatherDetail.getByText('≥85')).toBeInTheDocument();
+    expect(weatherDetail.getByText('≥65')).toBeInTheDocument();
+    expect(weatherDetail.getByText('≥40')).toBeInTheDocument();
+    expect(weatherDetail.getByText('无')).toBeInTheDocument();
+
+    // 地缘政治行的行内详情承载相关强制规则
     const geopoliticalRow = row('geopolitical');
-    const forcedRuleItem = within(geopoliticalRow).getByTestId('rule-matrix-forced-sanctions_geopolitical_entity_hit');
+    fireEvent.click(within(geopoliticalRow).getByTestId('rule-matrix-row-toggle'));
+    expect(rowDetail('geopolitical')).toBeVisible();
+    const forcedRuleItem = within(rowDetail('geopolitical')).getByTestId('rule-matrix-forced-sanctions_geopolitical_entity_hit');
     expect(forcedRuleItem).toHaveTextContent('sanctions_geopolitical_entity_hit');
     expect(forcedRuleItem).toHaveTextContent('P1');
     expect(within(geopoliticalRow).getByText('已接入 1/1 个信源')).toBeInTheDocument();
@@ -206,10 +267,13 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
       },
     });
 
-    expect(screen.getAllByTestId(/^rule-matrix-row-/)).toHaveLength(2);
+    // 数据行 testid 精确匹配（排除 toggle/detail 同前缀）；两个选项都由启用维度接管
+    expect(dataRows()).toHaveLength(2);
     expect(screen.getByTestId('rule-matrix-row-weather')).toBeInTheDocument();
     expect(screen.getByTestId('rule-matrix-row-trade_policy')).toBeInTheDocument();
     expect(screen.queryByTestId('rule-matrix-row-geopolitical')).not.toBeInTheDocument();
+    // 两个选项均有接管维度，不渲染无接管汇总行
+    expect(screen.queryByTestId('rule-matrix-unowned-summary')).not.toBeInTheDocument();
   });
 });
 
@@ -302,8 +366,10 @@ describe('窄屏滚动与失败降级', () => {
     expect(scroll.querySelectorAll('.overflow-x-auto')).toHaveLength(0);
     // 整个矩阵区块只有这一个横向滚动容器
     expect(screen.getByTestId('rule-engine-rule-matrix').querySelectorAll('.overflow-x-auto')).toHaveLength(1);
-    // 表格有最小宽度以触发横向滚动
-    expect(screen.getByRole('table').className).toContain('min-w-[1080px]');
+    // 表格自适应铺满、不设强制最小宽度（min-w-* 已移除），横向滚动只由唯一容器兜底
+    const table = screen.getByRole('table');
+    expect(table.className).toContain('w-full');
+    expect(table.className).not.toContain('min-w-');
   });
 
   it('选项接口失败时降级为可访问错误提示（role=alert），不渲染表格也不崩溃', () => {

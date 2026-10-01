@@ -194,6 +194,10 @@ const renderShell = async (role: 'admin' | 'viewer' = 'admin', config: GlobalSco
     fireEvent.click(screen.getByTestId('rule-engine-mode-toggle'));
     // 等待全局层加载完成（该提示只在拿到 GET /global-config 结果后渲染）
     await screen.findByTestId('forced-rules-notice');
+    // 全局强制规则编辑器已迁入全局面板（rule-engine-global-layer，位于 rule-engine-tabpanel-global 内）：
+    // 默认 Tab=维度视图，全局面板带 hidden，而 getByRole/toBeVisible 会忽略 hidden 元素。
+    // 必须先切到「全局规则」Tab 让面板可见，后续 role 查询与可见性断言才成立。
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
     // 行由「服务端快照到达」后的被动副作用播种，必须等播完再断言
     const expected = Array.isArray(config.effective.forced_rules) ? config.effective.forced_rules : [];
     await waitFor(() => expect(screen.queryAllByTestId('forced-rule-row')).toHaveLength(expected.length));

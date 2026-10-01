@@ -1,5 +1,5 @@
 import React from 'react';
-import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {MemoryRouter} from 'react-router-dom';
 import {api, DimensionTraceRead, GlobalScoringConfigRead, RuleEngineOptions} from '../api';
@@ -74,7 +74,12 @@ beforeEach(() => {
   vi.spyOn(api.filterConfig, 'get').mockResolvedValue({high_impact: ['cbam'], priority_countries: ['JP'], list_sources: ['ofac-sdn'], source: 'default'});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // Tab 切换会经 history.replaceState 把 '#global' 写进 window.location.hash；jsdom 的
+  // location 跨用例共享，必须清理，避免后续用例首帧落在「全局规则」Tab。
+  window.history.replaceState(null, '', '/');
+});
 
 describe('规则引擎观察/配置双态壳层', () => {
   it('默认进入观察态：不渲染保存/输入类写控件', () => {
@@ -110,12 +115,19 @@ describe('规则引擎观察/配置双态壳层', () => {
     // 冻结的配置态子组件挂载点全部存在
     expect(screen.getByTestId('rule-engine-scoring-editor')).toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-forced-rules')).toBeInTheDocument();
-    expect(screen.getByText('匹配柱')).toBeInTheDocument();
-    expect(screen.getByText('事件类型')).toBeInTheDocument();
-    // 信号过滤区块在配置态出现（其编辑控件因此才可渲染）
-    expect(await screen.findByText('信号过滤规则')).toBeInTheDocument();
-    // 写控件可用（编辑输入框渲染）
-    expect((await screen.findAllByRole('textbox')).length).toBeGreaterThan(0);
+    // 「匹配柱/事件类型」标题限定在配置面板内查找：常驻但隐藏的全局面板里，
+    // Explainers 说明卡有同名标题副本（jsdom 的文本查询不过滤 hidden，全局 getByText 会歧义）
+    const configPanel = screen.getByTestId('rule-engine-config-panel');
+    expect(within(configPanel).getByText('匹配柱')).toBeInTheDocument();
+    expect(within(configPanel).getByText('事件类型')).toBeInTheDocument();
+    // 信号过滤区块已迁入全局面板（常驻、只切 hidden）：切到「全局规则」Tab 后再断言，
+    // 配置态下其编辑输入框因此才在可见 DOM 中（role 查询忽略 hidden 面板）
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
+    const globalPanel = screen.getByTestId('rule-engine-tabpanel-global');
+    const filterSection = (await screen.findByTestId('signal-filter-field-keywords')).closest('section') as HTMLElement;
+    expect(within(filterSection).getByText('信号过滤规则')).toBeInTheDocument();
+    // 写控件可用（编辑输入框在全局面板内渲染）
+    expect((await within(globalPanel).findAllByRole('textbox')).length).toBeGreaterThan(0);
   });
 
   it('viewer 的切换按钮禁用，点击后仍停留在观察态', () => {

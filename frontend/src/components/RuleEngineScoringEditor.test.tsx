@@ -210,11 +210,26 @@ const clickSolvePreviewWhenReady = async () => {
  * 勾选/取消壳层「匹配柱」里的某一柱。
  * 匹配柱标签内嵌 material 图标文本，`getByLabelText` 会把图标连字算进标签文本，
  * 因此定位到 label 元素后直接点击其内部 checkbox（与用户点击标签等价）。
+ *
+ * todo 18 迁移：全局面板（Explainers 说明卡）常驻挂载后也含「匹配柱」标题，
+ * 全局 `getByText('匹配柱')` 出现多元素歧义；改为以配置态可编辑面板
+ * （`rule-engine-config-panel`）为稳定锚点收敛作用域，不再依赖全局文本唯一性。
  */
-const toggleMatchColumn = (label: string) => {
-  const section = screen.getByText('匹配柱').closest('section');
+/**
+ * 配置态「匹配柱」区块（作用域收敛锚点）。
+ * F1 修复轮次：配置态证据区补入运行轨迹（RuleEnginePipeline）后，流水线也会渲染
+ * 「主体 / 地点 / 产品」等匹配柱标签，「主体」不再全页唯一，全局 `getByText('主体')`
+ * 会多元素歧义（与 todo 18 收敛「匹配柱」标题同一手法，测试强度不变）。
+ */
+const matchColumnSection = (): HTMLElement => {
+  const panel = screen.getByTestId('rule-engine-config-panel');
+  const section = within(panel).getByText('匹配柱').closest('section');
   if (section === null) throw new Error('未找到匹配柱区块');
-  const labelNode = within(section).getByText(label).closest('label');
+  return section;
+};
+
+const toggleMatchColumn = (label: string) => {
+  const labelNode = within(matchColumnSection()).getByText(label).closest('label');
   const checkbox = labelNode?.querySelector('input[type="checkbox"]');
   if (!(checkbox instanceof HTMLInputElement)) throw new Error(`未找到匹配柱 ${label} 的勾选框`);
   fireEvent.click(checkbox);
@@ -553,7 +568,7 @@ describe('配置态评分与阈值可视化编辑（todo 7）', () => {
 
     renderAdminConfig([naturalDimension()]);
     // 匹配柱选项由壳层异步加载：等控件就绪后再切换
-    await waitFor(() => expect(screen.getByText('主体')).toBeInTheDocument());
+    await waitFor(() => expect(within(matchColumnSection()).getByText('主体')).toBeInTheDocument());
     // 关闭「地点」柱、打开「国家/区域」柱（壳层匹配柱控件，写入同一草稿）
     toggleMatchColumn('地点');
     toggleMatchColumn('国家/区域');
@@ -681,7 +696,7 @@ describe('解算预览：全局草稿门控（F2 修复轮次 2）', () => {
 
     renderAdminConfig([naturalDimension()]);
     // 等匹配柱选项加载完成：确保按钮禁用只能来自全局草稿门控，而不是选项未就绪
-    await waitFor(() => expect(screen.getByText('主体')).toBeInTheDocument());
+    await waitFor(() => expect(within(matchColumnSection()).getByText('主体')).toBeInTheDocument());
 
     const alert = await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
     expect(alert).toHaveAttribute('role', 'alert');
@@ -698,7 +713,7 @@ describe('解算预览：全局草稿门控（F2 修复轮次 2）', () => {
     const testSpy = vi.spyOn(api, 'testRuleEngine').mockResolvedValue(sandboxResult([]));
 
     renderAdminConfig([naturalDimension()]);
-    await waitFor(() => expect(screen.getByText('主体')).toBeInTheDocument());
+    await waitFor(() => expect(within(matchColumnSection()).getByText('主体')).toBeInTheDocument());
 
     const alert = await screen.findByTestId('rule-engine-solve-preview-global-draft-error');
     expect(alert).toHaveAttribute('role', 'alert');

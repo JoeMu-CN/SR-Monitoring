@@ -1,4 +1,4 @@
-import React, {useMemo} from 'react';
+import React, {useMemo, useState} from 'react';
 import type {DimensionTraceSampleRead, ForcedRuleRead, RuleEngineOptions} from '../api';
 import type {MonitoringDimension} from '../types';
 import {defaultSampleEvent} from './RuleEngineContext';
@@ -24,25 +24,18 @@ const MATCH_COLUMN_LABELS: Record<string, string> = {
 const SEVERITY_LABELS: Record<string, string> = {critical: '严重', high: '高', medium: '中', low: '低'};
 const SEVERITY_ORDER: ReadonlyArray<string> = ['critical', 'high', 'medium', 'low'];
 
-const ASSOCIATION_LABELS: Record<string, string> = {
-  registry_no: '注册号',
-  legal_name: '法人全称',
-  alias: '别名',
-  site_distance: '地点距离',
-  site_text: '地点文本',
-  product: '产品',
-  country: '国家',
-  industry: '行业',
-};
-const ASSOCIATION_ORDER: ReadonlyArray<string> = [
-  'registry_no',
-  'legal_name',
-  'alias',
-  'site_distance',
-  'site_text',
-  'product',
-  'country',
-  'industry',
+/**
+ * 行内详情「关联分值（6 项，取最高计入）」的展示顺序与标签（方案 B 原型
+ * `scheme-b-two-tabs.html` 的 `rd-block`：8 个关联键合并为 6 组，组内取最高分计入）。
+ * legal_name/alias 合为「法人全称 / 别名」，site_distance/site_text 合为「地点」。
+ */
+const ASSOCIATION_GROUPS: ReadonlyArray<{label: string; keys: ReadonlyArray<string>}> = [
+  {label: '注册号', keys: ['registry_no']},
+  {label: '法人全称 / 别名', keys: ['legal_name', 'alias']},
+  {label: '地点', keys: ['site_distance', 'site_text']},
+  {label: '产品', keys: ['product']},
+  {label: '行业', keys: ['industry']},
+  {label: '国家', keys: ['country']},
 ];
 
 const LEVEL_CHIP_CLASS: Record<string, string> = {
@@ -66,6 +59,12 @@ function formatSampleTime(value: string): string {
   return date.toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'});
 }
 
+/** 矩阵表一行的数据单元：事件类型选项 + 接管它的启用维度（无接管为 undefined）。 */
+interface MatrixRow {
+  option: RuleEngineOptions['event_types'][number];
+  owner: MonitoringDimension | undefined;
+}
+
 interface SourceSummary {
   declaredTotal: number;
   linkedCount: number;
@@ -83,6 +82,26 @@ function summarizeSources(dimension: MonitoringDimension): SourceSummary {
   };
 }
 
+/** 分值摘要：严重程度四项按 SEVERITY_ORDER 以「·」连接，关联类型取最高分；无值时以「—」占位。 */
+function summarizeScores(dimension: MonitoringDimension): {severity: string; associationMax: string} {
+  const severity = SEVERITY_ORDER.map((key) => dimension.severityScores[key] ?? '—').join('·');
+  const associationValues = Object.values(dimension.associationScores);
+  const associationMax = associationValues.length > 0 ? String(Math.max(...associationValues)) : '—';
+  return {severity, associationMax};
+}
+
+/** 行内详情关联分值：按 6 组取组内有效键的最大值（「取最高计入」）；组内全部缺失时以「—」占位。 */
+function groupAssociationScores(
+  associationScores: Record<string, number>,
+): ReadonlyArray<{label: string; value: string}> {
+  return ASSOCIATION_GROUPS.map((group) => {
+    const values = group.keys
+      .map((key) => associationScores[key])
+      .filter((value) => typeof value === 'number' && Number.isFinite(value));
+    return {label: group.label, value: values.length > 0 ? String(Math.max(...values)) : '—'};
+  });
+}
+
 /** 与该事件类型相关的强制规则：空 event_types 表示匹配全部事件类型。 */
 function relevantForcedRules(rules: ForcedRuleRead[], eventType: string): ForcedRuleRead[] {
   return rules.filter((rule) => rule.event_types.length === 0 || rule.event_types.includes(eventType));
@@ -92,7 +111,9 @@ function relevantForcedRules(rules: ForcedRuleRead[], eventType: string): Forced
  * 观察态-规则矩阵表与样例事件选择器（组件归属 todo 6）。
  *
  * 矩阵语义：行=事件类型（权威来源 `GET /rule-engine/match-columns` 的 event_types），
- * 列=接管维度/启用匹配柱/严重程度分值/关联类型分值/分级阈值/相关强制规则/信源可用性。
+ * 列=接管维度/分值摘要/信源可用性/展开。分值摘要给出严重程度四项与关联类型最高分；
+ * 「展开」列的行内详情按需承载启用匹配柱、严重程度与关联类型完整分值、分级阈值与相关强制规则
+ * （默认折叠，由 hidden 属性控制；无接管行同样可展开，各项以「—」占位）。
  * 一个事件类型只由「一个启用维度」接管（后端保存时校验占用冲突），没有启用维度接管时
  * 明确标注「当前无启用维度接管」。
  *
@@ -127,8 +148,37 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
   const owningDimension = (eventType: string): MonitoringDimension | undefined =>
     dimensions.find((dim) => dim.enabled && dim.eventTypes.includes(eventType));
 
-  const rows = options.event_types.map((option) => ({option, owner: owningDimension(option.value)}));
-  const ownedCount = rows.filter((row) => row.owner !== undefined).length;
+  const rows: MatrixRow[] = options.event_types.map((option) => ({option, owner: owningDimension(option.value)}));
+  // todo 8 无接管折叠：表格主体只保留有启用维度接管的事件类型（ownedRows）；
+  // 无接管事件类型（unownedRows）收进表尾汇总行，默认折叠、按需展开，避免大量空行淹没矩阵表。
+  // owner 判定口径不变（owningDimension 仅在 dim.enabled 时接管），这里只把展示拆成两组。
+  const ownedRows = rows.filter((row) => row.owner !== undefined);
+  const unownedRows = rows.filter((row) => row.owner === undefined);
+  const ownedCount = ownedRows.length;
+  // 无接管行的展开状态：默认折叠，避免长表噪声。
+  const [unownedExpanded, setUnownedExpanded] = useState(false);
+  // 行内详情的展开状态：按事件类型 value 独立记录（Set 支持多行同时展开），默认全部折叠。
+  const [expandedRowDetails, setExpandedRowDetails] = useState<Set<string>>(() => new Set());
+  const toggleRowDetail = (value: string): void => {
+    setExpandedRowDetails((previous) => {
+      const next = new Set(previous);
+      if (next.has(value)) {
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  };
+  // 汇总行文案为单文本节点：N 与名称列表都从 unownedRows 动态计算，不硬编码任何数字或名称。
+  const unownedSummaryText = `另有 ${unownedRows.length} 个事件类型当前无启用维度接管：${unownedRows
+    .map(({option}) => option.label)
+    .join('、')}`;
+  // aria-controls 指向展开后渲染的明细行 id；折叠时明细行不渲染，属性仍声明展开态的目标。
+  const unownedDetailIds = unownedRows
+    .map(({option}) => `rule-matrix-unowned-detail-${option.value}`)
+    .join(' ');
+  const toggleUnowned = (): void => setUnownedExpanded((expanded) => !expanded);
   const builtinEventLabel =
     options.event_types.find((option) => option.value === builtinSample.eventType)?.label ?? builtinSample.eventType;
 
@@ -251,7 +301,10 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
           当前没有可展示的事件类型。
         </p>
       ) : (
-        // 唯一的横向滚动容器：窄屏只在这里滚动，避免嵌套滚动条。
+        // 全表唯一横向滚动容器（todo 10）：表格所有需要横向滚动的内容都收敛到这一个容器内，
+        // 避免出现嵌套/双重滚动条；窄屏只在这里滚动。
+        // 表格不设强制最小宽度，长内容（分值摘要、信源可用性、维度名）均允许换行，
+        // 因此 ≥1280px 视口下按 w-full 自然铺满、不产生横向滚动；窄屏由本容器兜底。
         <div
           data-testid="rule-engine-rule-matrix-scroll"
           role="region"
@@ -259,30 +312,73 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
           tabIndex={0}
           className="overflow-x-auto rounded-xl border border-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] dark:border-slate-700"
         >
-          <table className="w-full min-w-[1080px] border-collapse text-left text-[12px]">
+          <table className="w-full border-collapse text-left text-[12px]">
             <caption className="sr-only">
-              事件类型规则矩阵：每行一个事件类型，列为接管维度、启用匹配柱、严重程度分值、关联类型分值、分级阈值、相关强制规则与信源可用性
+              事件类型规则矩阵：每行一个事件类型，列为接管维度、分值摘要（严重程度四项与关联类型最高分）、信源可用性与展开
             </caption>
             <thead>
               <tr className="border-b border-slate-200 bg-[#f7f9ff] text-[11px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
                 <th scope="col" className="px-3 py-2 font-bold">事件类型</th>
                 <th scope="col" className="px-3 py-2 font-bold">接管维度</th>
-                <th scope="col" className="px-3 py-2 font-bold">启用匹配柱</th>
-                <th scope="col" className="px-3 py-2 font-bold">严重程度分值</th>
-                <th scope="col" className="px-3 py-2 font-bold">关联类型分值</th>
-                <th scope="col" className="px-3 py-2 font-bold">分级阈值</th>
-                <th scope="col" className="px-3 py-2 font-bold">相关强制规则</th>
+                <th scope="col" className="px-3 py-2 font-bold">分值摘要</th>
                 <th scope="col" className="px-3 py-2 font-bold">信源可用性</th>
+                <th scope="col" className="px-3 py-2 font-bold">展开</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(({option, owner}) => {
+              {/*
+                todo 8：主体只渲染 ownedRows；无接管事件类型默认折叠为汇总行，
+                展开时才紧随汇总行渲染（渲染顺序：接管行 → 汇总行 → 展开的无接管行）。
+              */}
+              {[
+                ...ownedRows.map((row) => ({kind: 'row' as const, row})),
+                ...(unownedRows.length > 0 ? [{kind: 'summary' as const}] : []),
+                ...(unownedExpanded ? unownedRows.map((row) => ({kind: 'row' as const, row})) : []),
+              ].map((item) => {
+                if (item.kind === 'summary') {
+                  // 汇总行整行可点击；键盘用户经内部按钮 Enter/Space 操作（按钮同样声明 aria-expanded）。
+                  return (
+                    <tr
+                      key="rule-matrix-unowned-summary"
+                      data-testid="rule-matrix-unowned-summary"
+                      aria-expanded={unownedExpanded}
+                      aria-controls={unownedDetailIds}
+                      onClick={toggleUnowned}
+                      className="cursor-pointer border-b border-slate-100 dark:border-slate-800"
+                    >
+                      <td colSpan={5} className="px-3 py-2">
+                        {/* 全宽按钮与行点击共用同一个 toggle；按钮内 stopPropagation 防止一次点击切换两次。 */}
+                        <button
+                          type="button"
+                          aria-expanded={unownedExpanded}
+                          aria-controls={unownedDetailIds}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleUnowned();
+                          }}
+                          className="w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-left text-[11px] text-slate-600 transition-colors hover:border-[#004782] hover:text-[#004782] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900/60 dark:text-slate-300 dark:hover:border-blue-300 dark:hover:text-blue-300 dark:focus-visible:ring-blue-300"
+                        >
+                          {unownedSummaryText}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                const {option, owner} = item.row;
                 const isHighlighted = highlightSource !== null && highlightedEventType === option.value;
                 const forcedRules = owner ? relevantForcedRules(owner.forcedRules, option.value) : [];
                 const sources = owner ? summarizeSources(owner) : null;
+                const scores = owner ? summarizeScores(owner) : null;
+                // 行内详情锚点：toggle 的 aria-controls 与详情行 id 一一对应，共用同一 value 派生。
+                const detailId = `rule-matrix-row-detail-${option.value}`;
+                const detailExpanded = expandedRowDetails.has(option.value);
+                // 用 Fragment 把「数据行 + 详情行」成对渲染，保证详情行是 <tbody> 的直接子 <tr>。
                 return (
+                  <React.Fragment key={option.value}>
                   <tr
-                    key={option.value}
+                    // 无接管行带明细锚点 id，供汇总按钮/行的 aria-controls 指向；接管行无此 id。
+                    id={owner === undefined ? `rule-matrix-unowned-detail-${option.value}` : undefined}
                     data-testid={`rule-matrix-row-${option.value}`}
                     data-event-type={option.value}
                     data-active={isHighlighted ? 'true' : 'false'}
@@ -318,96 +414,17 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                       )}
                     </td>
 
-                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
-                      {owner ? (
-                        owner.matchColumns.map((column) => MATCH_COLUMN_LABELS[column] ?? column).join('、')
-                      ) : (
-                        <span className="text-slate-400 dark:text-slate-500">—</span>
-                      )}
-                    </td>
-
                     <td className="px-3 py-2">
-                      {owner ? (
-                        <span data-testid="rule-matrix-severity-scores" className="flex flex-wrap gap-x-2 font-mono">
-                          {SEVERITY_ORDER.map((key) => (
-                            <span key={key} className="whitespace-nowrap">
-                              <span className="text-slate-400 dark:text-slate-500">{SEVERITY_LABELS[key] ?? key}</span>{' '}
-                              <span className="font-bold text-slate-700 dark:text-slate-200">
-                                {owner.severityScores[key] ?? '—'}
-                              </span>
-                            </span>
-                          ))}
+                      {scores ? (
+                        <span
+                          data-testid="rule-matrix-score-summary"
+                          className="flex flex-col gap-y-0.5 font-mono text-[11px] text-slate-600 dark:text-slate-300"
+                        >
+                          <span className="whitespace-nowrap">{`严重 ${scores.severity}`}</span>
+                          <span className="whitespace-nowrap">{`关联最高 ${scores.associationMax}`}</span>
                         </span>
                       ) : (
                         <span className="text-slate-400 dark:text-slate-500">—</span>
-                      )}
-                    </td>
-
-                    <td className="px-3 py-2">
-                      {owner ? (
-                        <span data-testid="rule-matrix-association-scores" className="flex flex-wrap gap-x-2 font-mono">
-                          {ASSOCIATION_ORDER.map((key) => (
-                            <span key={key} className="whitespace-nowrap">
-                              <span className="text-slate-400 dark:text-slate-500">{ASSOCIATION_LABELS[key] ?? key}</span>{' '}
-                              <span className="font-bold text-slate-700 dark:text-slate-200">
-                                {owner.associationScores[key] ?? '—'}
-                              </span>
-                            </span>
-                          ))}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 dark:text-slate-500">—</span>
-                      )}
-                    </td>
-
-                    <td className="px-3 py-2">
-                      {owner ? (
-                        <span className="flex flex-wrap gap-x-2 whitespace-nowrap font-mono">
-                          <span>
-                            <span className="font-bold text-red-600 dark:text-red-400">P1</span>
-                            <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p1}</span>
-                          </span>
-                          <span>
-                            <span className="font-bold text-amber-600 dark:text-amber-400">P2</span>
-                            <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p2}</span>
-                          </span>
-                          <span>
-                            <span className="font-bold text-[#007aff]">P3</span>
-                            <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p3}</span>
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 dark:text-slate-500">—</span>
-                      )}
-                    </td>
-
-                    <td className="px-3 py-2">
-                      {forcedRules.length === 0 ? (
-                        <span className="text-slate-400 dark:text-slate-500">无</span>
-                      ) : (
-                        <ul className="space-y-0.5">
-                          {forcedRules.map((rule) => (
-                            <li
-                              key={rule.name}
-                              data-testid={`rule-matrix-forced-${rule.name}`}
-                              className="flex items-center gap-1.5"
-                            >
-                              <span
-                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                                  LEVEL_CHIP_CLASS[rule.forced_level] ?? LEVEL_CHIP_CLASS.P4
-                                }`}
-                              >
-                                {rule.forced_level}
-                              </span>
-                              <span
-                                className="font-mono text-[10px] text-slate-600 dark:text-slate-300"
-                                title={rule.description || rule.reason}
-                              >
-                                {rule.name}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
                       )}
                     </td>
 
@@ -432,7 +449,149 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                         <span className="text-slate-400 dark:text-slate-500">未声明信源</span>
                       )}
                     </td>
+
+                    {/* 展开列：行内详情切换按钮（原生 button 天然支持 Enter/Space；深浅色样式齐全）。 */}
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        data-testid="rule-matrix-row-toggle"
+                        aria-expanded={detailExpanded}
+                        aria-controls={detailId}
+                        onClick={() => toggleRowDetail(option.value)}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition-colors hover:border-[#004782] hover:text-[#004782] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-300 dark:hover:text-blue-300 dark:focus-visible:ring-blue-300"
+                      >
+                        {detailExpanded ? '收起' : '展开'}
+                      </button>
+                    </td>
                   </tr>
+
+                  {/*
+                    行内详情行（todo 9）：默认带 hidden HTML 属性（折叠态仍在 DOM，仅隐藏；展开时移除）。
+                    详情行与数据行成对渲染、是 <tbody> 的直接子 <tr>；hidden 同时声明在行与内容容器上：
+                    行级隐藏让浏览器只渲染数据行，容器级隐藏让 testid 锚点能自证折叠态。
+                  */}
+                  <tr
+                    id={detailId}
+                    hidden={!detailExpanded}
+                    className="border-b border-slate-100 bg-slate-50/70 last:border-0 dark:border-slate-800 dark:bg-slate-950/30"
+                  >
+                    <td colSpan={5} className="px-3 py-3">
+                      <div
+                        data-testid="rule-matrix-row-detail"
+                        hidden={!detailExpanded}
+                        className="space-y-2"
+                      >
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">启用匹配柱</h4>
+                          <div className="mt-0.5 text-slate-600 dark:text-slate-300">
+                            {owner ? (
+                              owner.matchColumns.map((column) => MATCH_COLUMN_LABELS[column] ?? column).join('、')
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">—</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">严重程度分值</h4>
+                          <div className="mt-0.5">
+                            {owner ? (
+                              <span data-testid="rule-matrix-severity-scores" className="flex flex-wrap gap-x-2 font-mono">
+                                {SEVERITY_ORDER.map((key) => (
+                                  <span key={key} className="whitespace-nowrap">
+                                    <span className="text-slate-400 dark:text-slate-500">{SEVERITY_LABELS[key] ?? key}</span>{' '}
+                                    <span className="font-bold text-slate-700 dark:text-slate-200">
+                                      {owner.severityScores[key] ?? '—'}
+                                    </span>
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">—</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                            关联分值（6 项，取最高计入）
+                          </h4>
+                          <div className="mt-0.5">
+                            {owner ? (
+                              <span data-testid="rule-matrix-association-scores" className="flex flex-wrap gap-x-2 font-mono">
+                                {groupAssociationScores(owner.associationScores).map((group) => (
+                                  <span key={group.label} className="whitespace-nowrap">
+                                    <span className="text-slate-400 dark:text-slate-500">{group.label}</span>{' '}
+                                    <span className="font-bold text-slate-700 dark:text-slate-200">{group.value}</span>
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">—</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">分级阈值</h4>
+                          <div className="mt-0.5">
+                            {owner ? (
+                              <span className="flex flex-wrap gap-x-2 whitespace-nowrap font-mono">
+                                <span>
+                                  <span className="font-bold text-red-600 dark:text-red-400">P1</span>
+                                  <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p1}</span>
+                                </span>
+                                <span>
+                                  <span className="font-bold text-amber-600 dark:text-amber-400">P2</span>
+                                  <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p2}</span>
+                                </span>
+                                <span>
+                                  <span className="font-bold text-[#007aff]">P3</span>
+                                  <span className="text-slate-600 dark:text-slate-300">≥{owner.thresholds.p3}</span>
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">—</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">相关强制规则</h4>
+                          <div className="mt-0.5">
+                            {forcedRules.length === 0 ? (
+                              <span className="text-slate-400 dark:text-slate-500">无</span>
+                            ) : (
+                              <ul className="space-y-0.5">
+                                {forcedRules.map((rule) => (
+                                  <li
+                                    key={rule.name}
+                                    data-testid={`rule-matrix-forced-${rule.name}`}
+                                    className="flex items-center gap-1.5"
+                                  >
+                                    <span
+                                      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                                        LEVEL_CHIP_CLASS[rule.forced_level] ?? LEVEL_CHIP_CLASS.P4
+                                      }`}
+                                    >
+                                      {rule.forced_level}
+                                    </span>
+                                    <span
+                                      className="font-mono text-[10px] text-slate-600 dark:text-slate-300"
+                                      title={rule.description || rule.reason}
+                                    >
+                                      {rule.name}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>

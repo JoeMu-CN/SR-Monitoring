@@ -141,7 +141,12 @@ beforeEach(() => {
   });
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  // Tab 切换会经 history.replaceState 把 '#global' 写进 window.location.hash；jsdom 的
+  // location 跨用例共享，必须清理，避免后续用例首帧落在「全局规则」Tab。
+  window.history.replaceState(null, '', '/');
+});
 
 describe('规则引擎引用信息源真实状态', () => {
   it('enabled 信源渲染真实状态且链接 href 正确', async () => {
@@ -313,19 +318,28 @@ describe('规则引擎观察/配置双态：模式感知壳层挂载', () => {
     // 冻结的配置态子组件挂载点：评分编辑器 / 强制规则 / 匹配柱 / 事件类型
     expect(screen.getByTestId('rule-engine-scoring-editor')).toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-forced-rules')).toBeInTheDocument();
-    expect(screen.getByText('匹配柱')).toBeInTheDocument();
-    expect(screen.getByText('事件类型')).toBeInTheDocument();
+    // 「匹配柱/事件类型」标题限定在配置面板内查找：常驻但隐藏的全局面板里，
+    // Explainers 说明卡有同名标题副本（jsdom 的文本查询不过滤 hidden，全局 getByText 会歧义）
+    const configPanel = screen.getByTestId('rule-engine-config-panel');
+    expect(within(configPanel).getByText('匹配柱')).toBeInTheDocument();
+    expect(within(configPanel).getByText('事件类型')).toBeInTheDocument();
 
-    // 壳层关键文案：配置面板标题、维度规则 ID、提醒失效只读说明
+    // 壳层关键文案：配置面板标题、维度规则 ID、提醒失效只读说明。
+    // 维度规则 ID 限定在配置面板内查找：维度头卡（rule-engine-dimension-header，两种模式常驻）
+    // 也渲染同一枚 `ID: {ruleId}` 文本，全局 getByText 会歧义；断言意图（配置卡头部展示规则 ID）不变。
     expect(screen.getByText('地缘政治与安全 规则配置')).toBeInTheDocument();
-    expect(screen.getByText('ID: geopolitical-v1')).toBeInTheDocument();
+    expect(within(configPanel).getByText('ID: geopolitical-v1')).toBeInTheDocument();
     expect(screen.getByText('提醒失效')).toBeInTheDocument();
     const link = screen.getByRole('link', {name: '信息源'});
     expect(link).toHaveAttribute('href', '/sources');
 
-    // 配置态沙箱入口与信号过滤区块出现（写控件细节由各子组件测试与 shell.test 覆盖）
+    // 配置态沙箱入口出现（写控件细节由各子组件测试与 shell.test 覆盖）
     expect(screen.getByRole('button', {name: /沙箱测试/})).toBeInTheDocument();
-    expect(await screen.findByText('信号过滤规则')).toBeInTheDocument();
+    // 信号过滤区块已迁入全局面板（常驻、只切 hidden）：切到「全局规则」Tab 后断言；
+    // 标题限定在 SignalFilterSection 根节点内，避免与 Explainers 说明卡同名标题歧义
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
+    const filterSection = (await screen.findByTestId('signal-filter-field-keywords')).closest('section') as HTMLElement;
+    expect(within(filterSection).getByText('信号过滤规则')).toBeInTheDocument();
   });
 
   it('viewer 不能切换：按钮禁用、点击无效、始终停留在观察态', () => {

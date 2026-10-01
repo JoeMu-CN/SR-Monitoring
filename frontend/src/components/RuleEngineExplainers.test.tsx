@@ -99,6 +99,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  // todo 18 迁移：切换到全局 Tab 会经 writeTabToHash 写 `#global`（history.replaceState）。
+  // jsdom 的 location 在同一测试文件内共享，必须复位，避免污染后续用例的初始 Tab。
+  window.history.replaceState(null, '', '/');
 });
 
 describe('规则引擎配置项语义说明层（todo 10）', () => {
@@ -201,7 +204,7 @@ describe('规则引擎配置项语义说明层（todo 10）', () => {
     expect(screen.getByText('总分公式')).toBeInTheDocument();
   });
 
-  it('viewer 从 RuleEngineView 观察态真实只读路径可读说明层（无 role 门控）', async () => {
+  it('viewer 从 RuleEngineView 切到全局 Tab 后真实只读路径可读说明层（无 role 门控）', async () => {
     vi.spyOn(api, 'dimensionInputs').mockResolvedValue({
       declared_total: 0, declared_linked: 0, declared_enabled: 0, observed: [], has_input: false,
     });
@@ -228,6 +231,13 @@ describe('规则引擎配置项语义说明层（todo 10）', () => {
         />
       </MemoryRouter>,
     );
+
+    // todo 18 迁移：说明层属全局层，已迁入 `rule-engine-tabpanel-global`（默认 hidden）。
+    // 按真实用户路径先切「全局规则」Tab，再验证 viewer 只读路径；并断言面板确实被激活，
+    // 保证本用例验证的是可见面板而非 jsdom 对 hidden 的容忍。
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
+    expect(screen.getByTestId('rule-engine-tab-global')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('rule-engine-tabpanel-global')).not.toHaveAttribute('hidden');
 
     const section = await screen.findByTestId('rule-engine-explainers');
     expect(section).toHaveAttribute('data-mode', 'observation');

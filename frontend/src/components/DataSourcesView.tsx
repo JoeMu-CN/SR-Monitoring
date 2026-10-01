@@ -1,8 +1,8 @@
-import React, {useEffect, useState} from 'react';
+import React, {useState} from 'react';
 import {motion} from 'motion/react';
 import {AlertTriangle, X} from 'lucide-react';
 import {Link} from 'react-router-dom';
-import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type SupplierListItem, type TycBatchRunResult, type ValidityMode} from '../api';
+import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
@@ -153,10 +153,10 @@ const sourceNodeHint = (source: DataSource): string => {
     return ACCESS_ERROR_HINTS[source.accessLastErrorKind] ?? '最近一次采集未成功，系统稍后会自动重试';
   }
   if (source.type === 'external_tool') {
-    // 天眼查已支持页面内按供应商手动核查；自动核查为周度分片，提示不再声称每日 06:00 或整批刷新。
+    // 天眼查的单供应商手动核查入口已收敛到供应商查询助手；自动核查为周度分片，提示不声称每日 06:00 或整批刷新。
     if (source.code === TYC_SOURCE_CODE) {
       return source.apiKeyConfigured
-        ? '外部核查工具：运行密钥已配置，支持页面按供应商手动核查；每周日、周一按分片自动核查已启用供应商'
+        ? '外部核查工具：运行密钥已配置，单个供应商风险信息请通过供应商查询助手核查；每周日、周一按分片自动核查已启用供应商'
         : '外部核查工具：运行密钥未配置，请先在编辑中配置运行密钥后再发起核查';
     }
     return source.apiKeyConfigured
@@ -176,20 +176,12 @@ const sourceNodeHint = (source: DataSource): string => {
   return '采集请求按域名保护策略执行，当前连通正常';
 };
 
-// 天眼查是唯一支持在信息源页手动按供应商核查的外部工具；其他外部工具仍仅通过页面调用。
+// 天眼查使用「按需核查」标签且不渲染通用刷新按钮；单供应商核查由供应商查询助手承担。
 const TYC_SOURCE_CODE = 'tianyancha';
 
 // 迁移 0050 退役来源：mofcom-entity-control（业务库 ID 4）已停用并取消调度，
 // 唯一入口收敛到 mofcom-entity-detail（业务库 ID 361）；控制台只隐藏不删除其行。
 const RETIRED_SOURCE_CODE = 'mofcom-entity-control';
-
-// 批量核查汇总：全部字段取自后端同步返回，不补充未披露信息。
-const formatTycBatchResult = (result: TycBatchRunResult): string => {
-  const summary = `核查完成：目标 ${result.targeted_count} 家，已尝试 ${result.attempted_count} 家，`
-    + `新增 ${result.created_count} 条，重复 ${result.duplicate_count} 条，`
-    + `空结果 ${result.empty_count} 条，失败 ${result.failed_count} 条`;
-  return result.quota_exhausted ? `${summary}；本次调用额度已耗尽` : summary;
-};
 
 // 单来源刷新的业务化禁用原因；null 表示当前可触发采集。
 const refreshBlockedReason = (
@@ -200,8 +192,8 @@ const refreshBlockedReason = (
   if (role !== 'admin') return '仅管理员可触发采集';
   if (source.type === 'external_tool' && source.code !== TYC_SOURCE_CODE) return '外部核查工具调用，不支持页面刷新';
   if (source.code === 'manual-json') return '人工录入信息源不支持刷新';
-  // adapterStatus 只描述声明式适配器的发布状态；external_tool（如天眼查）不走适配器
-  // 发布流程，真实后端返回 unconfigured，不能据此禁用其行内核查。
+  // adapterStatus 只描述声明式适配器的发布状态；external_tool 不走适配器发布流程，
+  // 真实后端返回 unconfigured，不能据此禁用行内操作。
   if (source.type !== 'external_tool' && source.adapterStatus !== 'builtin' && source.adapterStatus !== 'published') {
     return source.adapterStatus === 'draft' || source.adapterStatus === 'invalid'
       ? '适配器尚未发布，暂不可刷新'
@@ -228,39 +220,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     sourceId: string;
     tone: 'ok' | 'err';
     text: string;
-    batch?: TycBatchRunResult | null;
   } | null>(null);
-  // 天眼查按供应商手动核查（Todo 20）：下拉只列启用供应商，加载/空/失败状态显式呈现。
-  const [tycSuppliers, setTycSuppliers] = useState<readonly SupplierListItem[] | null>(null);
-  const [tycSuppliersError, setTycSuppliersError] = useState<string | null>(null);
-  const [tycSuppliersRetryKey, setTycSuppliersRetryKey] = useState(0);
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
-
-  // 仅当页面存在天眼查行时才加载供应商下拉数据；递增重试键可重新拉取。
-  const hasTycSource = dataSources.some((item) => item.code === TYC_SOURCE_CODE);
-  useEffect(() => {
-    if (!hasTycSource) return;
-    let active = true;
-    setTycSuppliers(null);
-    setTycSuppliersError(null);
-    void api.suppliers()
-      .then((response) => {
-        if (!active) return;
-        setTycSuppliers(response.items);
-      })
-      .catch((caught: unknown) => {
-        if (!active) return;
-        setTycSuppliers([]);
-        setTycSuppliersError(caught instanceof Error ? caught.message : '供应商加载失败');
-      });
-    return () => {
-      active = false;
-    };
-  }, [hasTycSource, tycSuppliersRetryKey]);
-
-  // 下拉只呈现启用供应商：停用供应商无法通过后端核查校验。
-  const enabledSuppliers = (tycSuppliers ?? []).filter((supplier) => supplier.enabled);
-  const tycSuppliersLoading = tycSuppliers === null;
 
   // 编辑表单状态
   const [showForm, setShowForm] = useState(false);
@@ -427,7 +387,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   };
 
   // 单来源刷新：仅管理员、且仅对已启用且可拉取的普通来源可用；失败原因按行反馈。
-  // 天眼查不走该函数（其行内为按供应商核查控件），普通拉取式来源继续走通用 /run。
+  // 天眼查不渲染通用刷新按钮，普通拉取式来源继续走通用 /run。
   const handleRunSource = async (source: DataSource) => {
     if (role !== 'admin' || refreshingId !== null) return;
     setRefreshingId(source.id);
@@ -449,42 +409,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     }
     // 采集/核查已完成后再重载列表：重载失败不得改写已成功的操作结果，只追加次级提示。
     // 成功后必须携带健康刷新意图：单源刷新改变来源新鲜度，诊断需立即重取而非等待 60 秒周期。
-    if (completed) {
-      try {
-        await onRefreshSources({refreshMonitoringHealth: true});
-      } catch (caught) {
-        const reason = caught instanceof Error ? caught.message : '未知原因';
-        setRefreshMsg((current) => current && current.sourceId === source.id
-          ? {...current, text: `${current.text}（列表刷新失败，请重新加载：${reason}）`}
-          : current);
-      }
-    }
-  };
-
-  // 天眼查按供应商核查：与单源刷新共用 refreshingId 并并发锁，保留逐工具计数结果。
-  // 成功后携带健康刷新意图；422/409 等错误沿用行内错误反馈模式。
-  const handleRunTycCheck = async (source: DataSource) => {
-    if (role !== 'admin' || refreshingId !== null) return;
-    const supplierId = Number(selectedSupplierId);
-    const selected = enabledSuppliers.find((supplier) => supplier.id === supplierId);
-    if (selected === undefined) return;
-    setRefreshingId(source.id);
-    setRefreshMsg(null);
-    setError(null);
-    let completed = false;
-    try {
-      const batch = await api.runTycBatch(Number(source.id), supplierId);
-      setRefreshMsg({sourceId: source.id, tone: 'ok', text: formatTycBatchResult(batch), batch});
-      completed = true;
-    } catch (caught) {
-      setRefreshMsg({
-        sourceId: source.id,
-        tone: 'err',
-        text: caught instanceof Error ? caught.message : '核查失败，请稍后重试',
-      });
-    } finally {
-      setRefreshingId(null);
-    }
     if (completed) {
       try {
         await onRefreshSources({refreshMonitoringHealth: true});
@@ -676,36 +600,16 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             // 连通徽标配色只由访问/连通语义决定，与采集状态彻底解耦。
             const connectivity = CONNECTIVITY_META[sourceConnectivityVariant(source)];
             const connectivityStyle = CONNECTIVITY_TONE_CLASSES[connectivity.tone];
+            // 天眼查显示「按需核查」；其他 external_tool 沿用默认「核查」。
+            const isTycSource = source.code === TYC_SOURCE_CODE;
+            const connectivityLabel = isTycSource ? '按需核查' : connectivity.label;
             const canToggle = source.adapterStatus === 'builtin' || source.adapterStatus === 'published' || isExternalTool;
             const isToggling = togglingId === source.id;
             const displayName = displaySourceName(source.name);
             const isRefreshing = refreshingId === source.id;
             const refreshBlocked = refreshBlockedReason(source, role, refreshingId);
-            const isTycSource = source.code === TYC_SOURCE_CODE;
             const runTitle = isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集');
             const runLabel = isRefreshing ? '刷新中…' : '刷新';
-            // 天眼查按供应商核查的禁用原因与提示（同一时间只允许一个刷新/核查操作）。
-            const tycSourceBlocked = role !== 'admin' ? '仅管理员可触发核查' : (!source.enabled ? '信息源已停用，启用后可核查' : null);
-            const tycDataBlocked = tycSourceBlocked
-              ?? (refreshingId !== null && refreshingId !== source.id ? '正在核查其他信息源，请稍候' : null)
-              ?? (tycSuppliersLoading ? '正在加载启用供应商' : tycSuppliersError !== null
-                ? `供应商加载失败：${tycSuppliersError}`
-                : enabledSuppliers.length === 0 ? '该信源没有启用的供应商' : null);
-            const tycCheckBlocked = tycDataBlocked ?? (selectedSupplierId === '' ? '请先选择供应商' : null);
-            const tycSelectPlaceholder = tycSuppliersLoading
-              ? '正在加载供应商…'
-              : tycSuppliersError !== null ? '供应商加载失败' : enabledSuppliers.length === 0 ? '暂无启用供应商' : '请选择供应商';
-            const tycHint = tycSuppliersLoading
-              ? '正在加载启用供应商…'
-              : tycSuppliersError !== null ? `供应商加载失败：${tycSuppliersError}`
-                : enabledSuppliers.length === 0 ? '该信源没有启用的供应商，无法核查' : null;
-            const batchSupplierLabel = refreshMsg?.batch != null
-              ? (() => {
-                  const match = (tycSuppliers ?? []).find((supplier) => supplier.id === refreshMsg.batch?.supplier_id);
-                  if (match !== undefined) return `${match.legal_name}（${match.supplier_code}）`;
-                  return refreshMsg.batch.supplier_id === null ? '未提供' : `ID ${refreshMsg.batch.supplier_id}`;
-                })()
-              : '';
             return (
               <motion.div
                 key={source.id}
@@ -729,7 +633,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                         信息源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
                       </p>
-                      <MonitoringSourceFreshness health={healthBySource?.get(Number(source.id))} onDemand={isExternalTool} />
+                      <MonitoringSourceFreshness
+                        health={healthBySource?.get(Number(source.id))}
+                        onDemand={isExternalTool}
+                        labelOverride={isTycSource ? '按需核查' : undefined}
+                      />
                     </div>
                   </div>
                   <div className="col-span-6 md:col-span-2 flex items-center gap-2">
@@ -747,7 +655,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         />
                         <span data-testid={`source-connectivity-dot-${source.id}`} className={`relative inline-flex rounded-full h-1.5 w-1.5 ${connectivityStyle.dotCore}`} />
                       </span>
-                      {connectivity.label}
+                      {connectivityLabel}
                     </span>
                   </div>
                   <div
@@ -790,51 +698,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     <span className="text-[11px] font-normal text-slate-500">条</span>
                   </div>
                   <div data-testid={`source-actions-${source.id}`} className="col-span-12 md:col-span-3 flex flex-wrap items-center justify-end gap-2 text-right">
-                    {isTycSource ? (
-                      <div data-testid={`source-tyc-check-${source.id}`} className="flex w-full flex-col items-stretch gap-1.5 md:items-end">
-                        <div className="flex w-full flex-wrap items-center justify-end gap-2">
-                          <label className="sr-only" htmlFor={`tyc-supplier-select-${source.id}`}>选择核查供应商</label>
-                          <select
-                            id={`tyc-supplier-select-${source.id}`}
-                            value={selectedSupplierId}
-                            onChange={(event) => setSelectedSupplierId(event.target.value)}
-                            disabled={tycDataBlocked !== null || isRefreshing}
-                            title={tycDataBlocked ?? '选择要核查的启用供应商'}
-                            className="min-h-11 min-w-0 flex-1 basis-44 rounded-lg border border-[#c2c6d2] bg-white px-2 text-[12px] font-bold text-[#101d28] focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:basis-56 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                          >
-                            <option value="">{tycSelectPlaceholder}</option>
-                            {enabledSuppliers.map((supplier) => (
-                              <option key={supplier.id} value={supplier.id}>
-                                {supplier.legal_name}（{supplier.supplier_code}）
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => void handleRunTycCheck(source)}
-                            disabled={tycCheckBlocked !== null || isRefreshing}
-                            aria-label={`核查本供应商：${displayName}`}
-                            title={isRefreshing ? '正在核查，请稍候' : (tycCheckBlocked ?? '核查所选供应商的多维度风险')}
-                            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-[#004782]/40 px-2.5 py-1 text-[11px] font-bold text-[#004782] transition-colors hover:bg-[#ecf4ff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-400/40 dark:text-blue-300 dark:hover:bg-slate-800"
-                          >
-                            <span aria-hidden="true" className={`material-symbols-outlined text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'fact_check'}</span>
-                            {isRefreshing ? '核查中…' : '核查本供应商'}
-                          </button>
-                        </div>
-                        {tycHint !== null && (
-                          <p data-testid={`source-tyc-hint-${source.id}`} className="w-full break-words text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{tycHint}</p>
-                        )}
-                        {tycSuppliersError !== null && (
-                          <button
-                            type="button"
-                            onClick={() => setTycSuppliersRetryKey((value) => value + 1)}
-                            className="min-h-9 rounded-lg border border-[#c2c6d2] px-2.5 text-[11px] font-bold text-[#004782] hover:bg-[#ecf4ff] dark:border-slate-700 dark:text-blue-300 dark:hover:bg-slate-800"
-                          >
-                            重试加载供应商
-                          </button>
-                        )}
-                      </div>
-                    ) : (
+                    {/* 天眼查手动核查入口已收敛到供应商查询助手：动作区不渲染通用刷新。 */}
+                    {!isTycSource && (
                       <span title={runTitle} className="inline-flex">
                         <button
                           type="button"
@@ -884,25 +749,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     )}
                   </div>
                 </div>
-                {refreshMsg?.sourceId === source.id && refreshMsg.batch != null && (
-                  <div data-testid={`source-tyc-detail-${source.id}`} className="mt-3 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left dark:border-slate-700 dark:bg-slate-900/60">
-                    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600 dark:text-slate-300">
-                      <span>分片 <span className="font-mono font-bold">{refreshMsg.batch.shard_index + 1}/{refreshMsg.batch.shard_count}</span></span>
-                      <span>供应商 <span className="break-words font-bold">{batchSupplierLabel}</span></span>
-                      <span>本次工具调用 <span className="font-mono font-bold">{refreshMsg.batch.attempted_count}</span> 次</span>
-                    </p>
-                    <ul aria-label="逐工具核查计数" className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-                      {Object.entries(refreshMsg.batch.per_tool_counts).map(([toolName, counts]) => (
-                        <li key={toolName} className="flex flex-col gap-0.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800">
-                          <span className="break-all font-mono font-bold text-[#004782] dark:text-blue-300">{toolName}</span>
-                          <span className="text-slate-600 dark:text-slate-300">
-                            有记录 {counts.success_with_records} · 空 {counts.empty} · 失败 {counts.error} · 额度耗尽 {counts.quota_exhausted} · 繁忙 {counts.busy}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </motion.div>
             );
           })}

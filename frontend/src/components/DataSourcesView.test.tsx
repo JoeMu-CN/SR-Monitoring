@@ -1,8 +1,8 @@
 import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
-import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {api, ApiError, type MonitoringHealthRead, type SupplierListItem, type TycBatchRunResult} from '../api';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {api, type CollectionRunRead, type MonitoringHealthRead} from '../api';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {DataSourcesView} from './DataSourcesView';
@@ -80,55 +80,6 @@ const readyHealth = monitoringHealthWith(healthySource);
 
 // 与组件同源的 Intl 格式化：断言时间数据流，而不是硬编码某台机器的时区字符串。
 const expectedTime = (value: string) => new Date(value).toLocaleString('zh-CN', {hour12: false});
-
-// —— 天眼查按供应商手动核查（Todo 20）夹具 ——
-const supplierItemBase: SupplierListItem = {
-  id: 501,
-  supplier_code: 'SUP-501',
-  legal_name: '启用供应商甲',
-  country_code: 'CN',
-  registry_no: null,
-  registration_address: null,
-  industry: null,
-  raw_materials: [],
-  enabled: true,
-  updated_at: '2026-09-01T00:00:00Z',
-  aliases: [],
-  sites: [],
-  products: [],
-  current_risk_level: null,
-  current_risk_score: null,
-};
-
-const enabledSupplier: SupplierListItem = {...supplierItemBase, id: 501, supplier_code: 'SUP-501', legal_name: '启用供应商甲', enabled: true};
-const pausedSupplier: SupplierListItem = {...supplierItemBase, id: 502, supplier_code: 'SUP-502', legal_name: '停用供应商乙', enabled: false};
-
-const tycBatchResultFixture: TycBatchRunResult = {
-  source_id: 23,
-  shard_index: 0,
-  shard_count: 2,
-  supplier_id: 501,
-  targeted_count: 1,
-  attempted_count: 1,
-  created_count: 1,
-  duplicate_count: 0,
-  empty_count: 0,
-  failed_count: 0,
-  quota_exhausted: false,
-  per_tool_counts: {
-    search_companies: {success_with_records: 1, empty: 0, error: 0, quota_exhausted: 0, busy: 0},
-    get_risk_overview: {success_with_records: 1, empty: 0, error: 0, quota_exhausted: 0, busy: 0},
-  },
-};
-
-const mockTycSuppliers = (items: SupplierListItem[]) => {
-  vi.mocked(api.suppliers).mockResolvedValue({items, total: items.length, limit: 100, offset: 0});
-};
-
-// 控制台渲染天眼查行时组件会查询供应商下拉数据；默认给确定性成功响应，个别用例用 Once 覆盖。
-beforeEach(() => {
-  vi.spyOn(api, 'suppliers').mockResolvedValue({items: [enabledSupplier], total: 1, limit: 100, offset: 0});
-});
 
 afterEach(() => {
   cleanup();
@@ -565,7 +516,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
     expect(within(screen.getByTestId('source-health-17')).getByText('核查')).toBeInTheDocument();
   });
 
-  it('天眼查 external_tool 行后端返回周度 ok 时，也只显示中性「核查」而非采集正常', () => {
+  it('天眼查 external_tool 行后端返回周度 ok 时，也只显示中性「按需核查」而非采集正常', () => {
     const tycSource: DataSource = {
       ...source,
       id: '23',
@@ -596,7 +547,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
     );
 
     const cell = screen.getByTestId('source-health-23');
-    expect(within(cell).getByText('核查')).toBeInTheDocument();
+    expect(within(cell).getByText('按需核查')).toBeInTheDocument();
     expect(cell.textContent).not.toContain('采集正常');
     expect(cell.textContent).not.toContain('下次预期');
   });
@@ -903,86 +854,28 @@ describe('信息源列表信息架构与操作区', () => {
     expect(onRefreshSources).toHaveBeenCalledWith({refreshMonitoringHealth: true});
   });
 
-  it('天眼查行以下拉列出启用供应商（排除停用）并提供「核查本供应商」', async () => {
-    mockTycSuppliers([enabledSupplier, pausedSupplier]);
+  // 天眼查手动核查入口已收敛到供应商查询助手：卡片不再渲染任何手动核查/通用刷新控件，
+  // 也不再加载供应商数据；编辑与启停按钮保持原布局与权限规则。
+  it('天眼查卡片不渲染供应商选择、手动核查与通用刷新，且不请求供应商数据', async () => {
+    const suppliers = vi.spyOn(api, 'suppliers').mockResolvedValue({items: [], total: 0, limit: 100, offset: 0});
     renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
 
-    const select = await screen.findByLabelText('选择核查供应商');
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    expect(within(select).queryByRole('option', {name: '停用供应商乙（SUP-502）'})).not.toBeInTheDocument();
-    const check = screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    // 未选择供应商时不可提交；选择后立即可用。
-    expect(check).toBeDisabled();
-    expect(check).toHaveAttribute('title', '请先选择供应商');
-    const user = userEvent.setup();
-    await user.selectOptions(select, '501');
-    expect(check).toBeEnabled();
-    expect(check).toHaveAttribute('title', '核查所选供应商的多维度风险');
-    // 旧的整批刷新按钮已下线：天眼查只允许按供应商手动核查。
+    expect(screen.queryByLabelText('选择核查供应商')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '核查本供应商：天眼查企业核查'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '重试加载供应商'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button', {name: '刷新天眼查企业核查'})).not.toBeInTheDocument();
-  });
+    expect(screen.queryByTestId(/^source-tyc-check-/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^source-tyc-detail-/)).not.toBeInTheDocument();
 
-  it('选择供应商后点击核查调用 api.runTycBatch(源, 供应商)，展示分片/供应商/逐工具计数并刷新监控健康', async () => {
-    mockTycSuppliers([enabledSupplier]);
-    const runTycBatch = vi.spyOn(api, 'runTycBatch').mockResolvedValue(tycBatchResultFixture);
-    const runSource = vi.spyOn(api, 'runSource');
-    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
-    render(
-      <MemoryRouter>
-        <DataSourcesView
-          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}]}
-          role="admin"
-          onUpdateSource={vi.fn()}
-          onRefreshSources={onRefreshSources}
-          monitoringHealth={{status: 'hidden'}}
-        />
-      </MemoryRouter>,
-    );
+    const actions = screen.getByTestId('source-actions-23');
+    expect(within(actions).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+      '编辑天眼查企业核查',
+      '停用天眼查企业核查',
+    ]);
 
-    const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    await user.click(screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'}));
-
-    expect(runTycBatch).toHaveBeenCalledWith(23, 501);
-    expect(runSource).not.toHaveBeenCalled();
-    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent(
-      '核查完成：目标 1 家，已尝试 1 家，新增 1 条，重复 0 条，空结果 0 条，失败 0 条',
-    );
-    const detail = screen.getByTestId('source-tyc-detail-23');
-    expect(detail).toHaveTextContent('分片 1/2');
-    expect(detail).toHaveTextContent('启用供应商甲（SUP-501）');
-    expect(detail).toHaveTextContent('search_companies');
-    expect(detail).toHaveTextContent('get_risk_overview');
-    expect(detail).toHaveTextContent('有记录 1');
-    expect(onRefreshSources).toHaveBeenCalledWith({refreshMonitoringHealth: true});
-  });
-
-  it('无启用供应商时控件禁用并给出明确提示', async () => {
-    mockTycSuppliers([pausedSupplier]);
-    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
-
-    expect(await screen.findByText('该信源没有启用的供应商，无法核查')).toBeInTheDocument();
-    expect(screen.getByLabelText('选择核查供应商')).toBeDisabled();
-    const check = screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    expect(check).toBeDisabled();
-    expect(check).toHaveAttribute('title', '该信源没有启用的供应商');
-  });
-
-  it('供应商加载失败时禁用控件、显示原因并在重试成功后恢复可用', async () => {
-    vi.mocked(api.suppliers).mockRejectedValueOnce(new ApiError(500, '供应商服务不可用'));
-    mockTycSuppliers([enabledSupplier]);
-    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
-
-    expect(await screen.findByText(/供应商加载失败：供应商服务不可用/)).toBeInTheDocument();
-    const check = screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    expect(check).toBeDisabled();
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', {name: '重试加载供应商'}));
-
-    expect(await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'})).toBeInTheDocument();
-    expect(screen.queryByText(/供应商加载失败/)).not.toBeInTheDocument();
+    // 留出一个微任务窗口：旧入口的供应商加载 effect 若残留会在此暴露。
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(suppliers).not.toHaveBeenCalled();
   });
 
   it('人工录入与其他外部核查工具的行内操作仍禁用且不触发调用', async () => {
@@ -999,6 +892,8 @@ describe('信息源列表信息架构与操作区', () => {
     const otherToolButton = screen.getByRole('button', {name: '刷新其他外部核查工具'});
     expect(otherToolButton).toBeDisabled();
     expect(otherToolButton).toHaveAttribute('title', '外部核查工具调用，不支持页面刷新');
+    // 其他 external_tool 仍显示默认「核查」，不被天眼查的「按需核查」覆盖。
+    expect(within(screen.getByTestId('source-connectivity-19')).getByText('核查')).toBeInTheDocument();
 
     const user = userEvent.setup();
     await user.click(manualButton);
@@ -1007,130 +902,54 @@ describe('信息源列表信息架构与操作区', () => {
   });
 
   // 缺陷回归：真实 /api/v1/sources/admin 返回天眼查 source_type=external_tool、
-  // adapter_status=unconfigured、enabled=true。旧逻辑在豁免外部工具后，又被通用
-  // adapterStatus 检查二次禁用；新的按供应商核查控件同样不得被适配器状态误禁用。
-  it('已启用、未配置声明式适配器的天眼查核查控件仍可用，普通拉取来源仍要求已发布适配器', async () => {
+  // adapter_status=unconfigured、enabled=true。天眼查动作区只保留编辑/启停，不受适配器状态
+  // 影响；普通拉取来源仍要求已发布适配器才可刷新。
+  it('已启用、未配置声明式适配器的天眼查行保留编辑与停用，普通拉取来源仍要求已发布适配器', () => {
     renderView([
       {...tianyancha, adapterStatus: 'unconfigured', enabled: true, status: 'normal', latency: '核查可用'},
       {...source, id: '24', code: 'official-unconfigured', name: '未配置适配器接口来源', adapterStatus: 'unconfigured'},
     ], 'admin');
 
-    const check = await screen.findByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    expect(screen.getByLabelText('选择核查供应商')).toBeEnabled();
-    // 未选择供应商时按钮禁用（选择后即可提交）；适配器未发布不得成为禁用原因。
-    expect(check).toHaveAttribute('title', '请先选择供应商');
-    const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    expect(check).toBeEnabled();
+    const actions = screen.getByTestId('source-actions-23');
+    expect(within(actions).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+      '编辑天眼查企业核查',
+      '停用天眼查企业核查',
+    ]);
 
     const apiButton = screen.getByRole('button', {name: '刷新未配置适配器接口来源'});
     expect(apiButton).toBeDisabled();
     expect(apiButton).toHaveAttribute('title', '该来源尚未完成适配器配置，暂不可刷新');
   });
 
-  it('天眼查核查失败时按行反馈错误且不触发列表刷新', async () => {
-    mockTycSuppliers([enabledSupplier]);
-    vi.spyOn(api, 'runTycBatch').mockRejectedValue(new Error('运行密钥未配置'));
-    const onRefreshSources = vi.fn().mockResolvedValue(undefined);
-    render(
-      <MemoryRouter>
-        <DataSourcesView
-          dataSources={[{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}]}
-          role="admin"
-          onUpdateSource={vi.fn()}
-          onRefreshSources={onRefreshSources}
-          monitoringHealth={{status: 'hidden'}}
-        />
-      </MemoryRouter>,
-    );
-
-    const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    await user.click(screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'}));
-
-    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent('运行密钥未配置');
-    expect(onRefreshSources).not.toHaveBeenCalled();
-  });
-
-  it('天眼查核查 422 与 409 结构化错误按现有行内错误模式显示', async () => {
-    mockTycSuppliers([enabledSupplier]);
-    vi.spyOn(api, 'runTycBatch')
-      .mockRejectedValueOnce(new ApiError(422, '信息源已停用，无法核查'))
-      .mockRejectedValueOnce(new ApiError(409, '另一个批量核查正在运行'));
-    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
-
-    const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    await user.click(screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'}));
-    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent('信息源已停用，无法核查');
-
-    await user.click(screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'}));
-    await waitFor(() => expect(screen.getByTestId('source-run-msg-23')).toHaveTextContent('另一个批量核查正在运行'));
-    expect(screen.getByTestId('source-run-msg-23')).toHaveAttribute('role', 'alert');
-  });
-
-  it('未启用的天眼查核查控件禁用并说明启用后可用', async () => {
-    renderView([tianyancha], 'admin');
-
-    const check = screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    expect(check).toBeDisabled();
-    expect(check).toHaveAttribute('title', '信息源已停用，启用后可核查');
-    expect(screen.getByLabelText('选择核查供应商')).toBeDisabled();
-  });
-
-  it('天眼查额度耗尽时汇总追加额度耗尽信息', async () => {
-    mockTycSuppliers([enabledSupplier]);
-    vi.spyOn(api, 'runTycBatch').mockResolvedValue({
-      ...tycBatchResultFixture,
-      attempted_count: 2,
-      created_count: 0,
-      duplicate_count: 1,
-      empty_count: 1,
-      quota_exhausted: true,
-    });
-    renderView([{...tianyancha, enabled: true, status: 'normal', latency: '核查可用'}], 'admin');
-
-    const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    await user.click(screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'}));
-
-    expect(await screen.findByTestId('source-run-msg-23')).toHaveTextContent(
-      '核查完成：目标 1 家，已尝试 2 家，新增 0 条，重复 1 条，空结果 1 条，失败 0 条；本次调用额度已耗尽',
-    );
-  });
-
-  it('天眼查核查期间显示「核查中…」并锁定其他来源刷新，完成后恢复可用', async () => {
-    mockTycSuppliers([enabledSupplier]);
-    let resolveBatch: (value: TycBatchRunResult) => void = () => undefined;
-    vi.spyOn(api, 'runTycBatch').mockImplementation(() => new Promise((resolve) => {
-      resolveBatch = resolve;
+  it('单来源刷新期间锁定其他来源的刷新按钮，完成后恢复可用', async () => {
+    let resolveRun: (value: CollectionRunRead) => void = () => undefined;
+    vi.spyOn(api, 'runSource').mockImplementation(() => new Promise((resolve) => {
+      resolveRun = resolve;
     }));
     renderView([
-      {...tianyancha, enabled: true, status: 'normal', latency: '核查可用'},
       {...source, enabled: true},
+      {...source, id: '18', code: 'OFFICIAL-18', name: '第二官方源', enabled: true},
     ], 'admin');
 
     const user = userEvent.setup();
-    await screen.findByRole('option', {name: '启用供应商甲（SUP-501）'});
-    await user.selectOptions(screen.getByLabelText('选择核查供应商'), '501');
-    const tycButton = screen.getByRole('button', {name: '核查本供应商：天眼查企业核查'});
-    await user.click(tycButton);
+    await user.click(screen.getByRole('button', {name: '刷新官方风险源'}));
 
-    expect(tycButton).toBeDisabled();
-    expect(tycButton).toHaveTextContent('核查中…');
-    expect(tycButton).toHaveAttribute('title', '正在核查，请稍候');
-    const otherButton = screen.getByRole('button', {name: '刷新官方风险源'});
+    const otherButton = screen.getByRole('button', {name: '刷新第二官方源'});
     expect(otherButton).toBeDisabled();
     expect(otherButton).toHaveAttribute('title', '正在刷新其他信息源，请稍候');
 
-    resolveBatch(tycBatchResultFixture);
-    expect(await screen.findByTestId('source-run-msg-23')).toBeInTheDocument();
-    await waitFor(() => expect(tycButton).toBeEnabled());
-    expect(otherButton).toBeEnabled();
+    resolveRun({
+      id: 8,
+      source_id: 17,
+      started_at: '2026-09-11T06:10:00Z',
+      finished_at: '2026-09-11T06:10:05Z',
+      status: 'succeeded',
+      fetched_count: 4,
+      created_count: 2,
+      duplicate_count: 2,
+      error: null,
+    });
+    await waitFor(() => expect(otherButton).toBeEnabled());
   });
 
   it('未启用来源的刷新按钮为禁用态并说明启用后可用', () => {
@@ -1141,7 +960,7 @@ describe('信息源列表信息架构与操作区', () => {
     expect(refreshButton).toHaveAttribute('title', '信息源已停用，启用后可刷新');
   });
 
-  it('天眼查停用时展示核查而非已停用，最近核查为真实时间且无下次预期', () => {
+  it('天眼查连通胶囊与新鲜度胶囊均显示「按需核查」，最近核查为真实时间且无下次预期', () => {
     renderView([tianyancha], 'viewer', monitoringHealthWith({
       ...healthySource,
       source_id: 23,
@@ -1155,14 +974,15 @@ describe('信息源列表信息架构与操作区', () => {
     }));
 
     const connectivity = screen.getByTestId('source-connectivity-23');
-    expect(connectivity).toHaveTextContent('核查');
+    expect(connectivity).toHaveTextContent('按需核查');
+    // 悬浮说明明确单供应商核查已由供应商查询助手承担，同时保留周度分片自动核查说明。
     expect(connectivity).toHaveAttribute(
       'title',
-      '外部核查工具：运行密钥已配置，支持页面按供应商手动核查；每周日、周一按分片自动核查已启用供应商',
+      '外部核查工具：运行密钥已配置，单个供应商风险信息请通过供应商查询助手核查；每周日、周一按分片自动核查已启用供应商',
     );
 
     const health = screen.getByTestId('source-health-23');
-    expect(within(health).getByText('核查')).toBeInTheDocument();
+    expect(within(health).getByText('按需核查')).toBeInTheDocument();
     expect(health).toHaveTextContent(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
     expect(health).not.toHaveTextContent('下次预期');
     expect(screen.queryByText('已停用')).not.toBeInTheDocument();
@@ -1194,6 +1014,9 @@ describe('信息源列表信息架构与操作区', () => {
       'title',
       '外部核查工具：运行密钥未配置，请先在编辑中配置，不支持页面刷新',
     );
+    // 标签覆盖只作用于天眼查：其他外部核查工具始终显示默认「核查」。
+    expect(within(screen.getByTestId('source-connectivity-31')).getByText('核查')).toBeInTheDocument();
+    expect(within(screen.getByTestId('source-connectivity-32')).getByText('核查')).toBeInTheDocument();
   });
 
   it('连通标签悬浮说明使用通俗文本，不向用户暴露 HTTP 状态码', () => {
@@ -1296,7 +1119,8 @@ describe('信息源连通徽标配色与采集状态解耦', () => {
     ]);
 
     expect(connectivityBadge('1')).toHaveTextContent('已停用');
-    expect(connectivityBadge('2')).toHaveTextContent('核查');
+    // 天眼查使用「按需核查」，但配色仍保持中性灰，不引入新的故障语义。
+    expect(connectivityBadge('2')).toHaveTextContent('按需核查');
     expect(connectivityBadge('3')).toHaveTextContent('人工录入');
     expect(connectivityBadge('4')).toHaveTextContent('未配置');
 

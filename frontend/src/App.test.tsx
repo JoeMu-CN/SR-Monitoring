@@ -938,29 +938,24 @@ describe('App 单源刷新联动监控健康', () => {
     expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
   });
 
-  it('天眼查单源核查 2xx 后同样立即重取 monitoring-health', async () => {
+  it('天眼查卡片不提供手动核查入口，也不触发额外的 monitoring-health 请求', async () => {
     defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
     vi.mocked(api.sourcesAdmin).mockResolvedValue([tycBackend]);
-    vi.mocked(api.runTycBatch).mockResolvedValue({
-      source_id: 23,
-      targeted_count: 2,
-      attempted_count: 2,
-      created_count: 1,
-      duplicate_count: 0,
-      empty_count: 1,
-      failed_count: 0,
-      quota_exhausted: false,
-    });
 
     renderApp('/sources');
     await screen.findByText('天眼查企业核查');
     expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', {name: '刷新天眼查企业核查'}));
+    // 旧手动入口已下线：单供应商核查收敛到供应商查询助手，卡片不渲染选择器/核查按钮/通用刷新。
+    expect(screen.queryByLabelText('选择核查供应商')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '核查本供应商：天眼查企业核查'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '刷新天眼查企业核查'})).not.toBeInTheDocument();
+    expect(screen.getByTestId('source-connectivity-23')).toHaveTextContent('按需核查');
 
-    expect(api.runTycBatch).toHaveBeenCalledWith(23);
-    await waitFor(() => expect(api.monitoringHealth).toHaveBeenCalledTimes(2));
+    // 留出一个微任务窗口：旧入口若残留并自动加载/触发，会在此暴露额外请求。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    expect(api.runTycBatch).not.toHaveBeenCalled();
   });
 });
 

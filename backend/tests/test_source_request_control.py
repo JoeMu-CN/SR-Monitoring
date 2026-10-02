@@ -20,6 +20,19 @@ from app.signals.request_control import (
 )
 
 
+def test_source_access_deferred_formats_retry_time_in_beijing_timezone() -> None:
+    error = request_control.SourceAccessDeferred(
+        "aqygzj.mofcom.gov.cn",
+        datetime(2026, 9, 30, 12, 14, 23, tzinfo=UTC),
+        "处于访问冷却期",
+    )
+
+    assert str(error) == (
+        "信息源域名 aqygzj.mofcom.gov.cn 处于访问冷却期，"
+        "请在北京时间 2026-09-30 20:14:23 后重试"
+    )
+
+
 def test_classify_response_blocks_forbidden_and_waf_pages() -> None:
     forbidden = classify_response(403)
     waf_page = classify_response(200, body_excerpt="创宇盾提示您：您的IP最近有可疑的攻击行为")

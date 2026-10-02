@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpcore
 import httpx
@@ -43,7 +44,9 @@ class SourceAccessDeferred(RuntimeError):
         self.hostname = hostname
         self.until = until
         self.reason = reason
-        super().__init__(f"信息源域名 {hostname} {reason}，请在 {until.isoformat()} 后重试")
+        utc_until = until if until.tzinfo is not None else until.replace(tzinfo=UTC)
+        retry_at = utc_until.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+        super().__init__(f"信息源域名 {hostname} {reason}，请在北京时间 {retry_at} 后重试")
 
 
 @dataclass(frozen=True)

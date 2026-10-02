@@ -1785,7 +1785,9 @@ class FmprcPressAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条记者会")
 
 
-_MOFCOM_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_MOFCOM_MARKDOWN_LINK_RE = re.compile(
+    r'\[([^\]\n]+)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)'
+)
 
 
 def _parse_announcement_links_html(

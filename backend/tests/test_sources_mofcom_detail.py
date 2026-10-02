@@ -40,6 +40,7 @@ from app.signals.sources import (
     SourceFetchError,
     _extract_entities_from_detail,
     _parse_announcement_links_html,
+    _parse_announcement_links_markdown,
 )
 
 
@@ -165,6 +166,38 @@ def test_parse_announcement_links_html_supports_quotes_nested_tags_and_entities(
     expected_title = "商务部公告2026年第30号公布将14家欧盟实体列入出口管制&管控名单"
     assert links[0] == (expected_title, QUALIFYING_DETAIL_URL)
     assert links[1] == (NON_QUALIFYING_TITLE, NON_QUALIFYING_DETAIL_URL)
+
+
+def test_parse_announcement_links_markdown_supports_optional_title() -> None:
+    """真实首页 Markdown 链接带可选标题：](url "title") 与 ](url) 都要解析。
+
+    现场证据：http://aqygzj.mofcom.gov.cn/ 的 Crawl4AI Markdown 输出中，
+    公告链接尾部带可选引号标题（``](url "title")`` 形态）；旧正则要求 URL
+    后紧跟 ``)``，因而整条链接漏解析、回退时报“未解析到合格公告链接”。
+    """
+    relative_url = (
+        "/flzc/gzjgfxwj/art/2026/art_cddc4316cde145edb878144b2772719d.html"
+    )
+    plain_relative_url = "/flzc/gzjgfxwj/art/2026/art_cddc4316cde145edb878144b2772719e.html"
+    body = (
+        f'[{QUALIFYING_TITLE}]({relative_url} "{QUALIFYING_TITLE}")\n'
+        f"* [{NON_QUALIFYING_TITLE}]({plain_relative_url})\n"
+    )
+
+    links = _parse_announcement_links_markdown(body, base_url=HOMEPAGE_URL)
+
+    assert links == [
+        (
+            QUALIFYING_TITLE,
+            "http://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
+            "art_cddc4316cde145edb878144b2772719d.html",
+        ),
+        (
+            NON_QUALIFYING_TITLE,
+            "http://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
+            "art_cddc4316cde145edb878144b2772719e.html",
+        ),
+    ]
 
 
 @pytest.mark.parametrize("homepage_body", ["", NON_QUALIFYING_HTML])

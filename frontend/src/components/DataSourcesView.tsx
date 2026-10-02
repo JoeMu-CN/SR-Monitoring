@@ -4,6 +4,7 @@ import {AlertTriangle, X} from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
+import {describeSourceSchedule} from '../sourceSchedule';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {MonitoringSourceFreshness} from './MonitoringHealthBanner';
@@ -570,9 +571,10 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         role="list"
         aria-label="信息源列表"
       >
-        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-12 md:gap-4">
+        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-[repeat(14,minmax(0,1fr))] md:gap-4">
           <div className="col-span-3">信息源名称与类别</div>
           <div className="col-span-2">连通状态</div>
+          <div className="col-span-2">调度周期</div>
           <div className="col-span-2">有效期策略</div>
           {/* 768px CJK 回归：表头曾把「累计」从中间断开。拆为两个不可拆语义短语，
               md 下有意分行，lg 起恢复同行；DOM 顺序保持可访问文本为「记录数（有效/累计）」。 */}
@@ -610,13 +612,14 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             const refreshBlocked = refreshBlockedReason(source, role, refreshingId);
             const runTitle = isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集');
             const runLabel = isRefreshing ? '刷新中…' : '刷新';
+            const scheduleDisplay = describeSourceSchedule(source);
             return (
               <motion.div
                 key={source.id}
                 role="listitem"
                 className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${statusStyle.row}`}
               >
-                <div className="grid grid-cols-12 gap-3 md:gap-4 items-center">
+                <div className="grid grid-cols-12 gap-3 md:grid-cols-[repeat(14,minmax(0,1fr))] md:gap-4 items-center">
                   <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
                     <div data-testid={`source-icon-${source.id}`} className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${statusStyle.icon}`}>
                       <span className="material-symbols-outlined text-[20px]">
@@ -656,6 +659,16 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         <span data-testid={`source-connectivity-dot-${source.id}`} className={`relative inline-flex rounded-full h-1.5 w-1.5 ${connectivityStyle.dotCore}`} />
                       </span>
                       {connectivityLabel}
+                    </span>
+                  </div>
+                  <div data-testid={`source-schedule-${source.id}`} className="col-span-6 md:col-span-2 min-w-0 text-[13px]">
+                    <span className="md:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">调度:</span>
+                    <span
+                      className="whitespace-normal text-xs font-semibold text-[#424751] dark:text-slate-400"
+                      title={scheduleDisplay.title}
+                      aria-label={scheduleDisplay.ariaLabel}
+                    >
+                      {scheduleDisplay.label}
                     </span>
                   </div>
                   <div

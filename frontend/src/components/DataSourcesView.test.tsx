@@ -1258,3 +1258,83 @@ describe('信息源列表退役来源可见性（迁移0050）', () => {
     expect(screen.queryByRole('button', {name: '刷新商务部实体控制清单'})).not.toBeInTheDocument();
   });
 });
+
+// 调度周期列回归：可见文本只渲染中文 label，原始 cron 仅进 title/aria-label 属性；
+// 表头与行网格同步从 12 列扩展为 14 列。
+describe('信息源调度周期列', () => {
+  const renderView = (dataSources: DataSource[]) => render(
+    <MemoryRouter>
+      <DataSourcesView
+        dataSources={dataSources}
+        role="viewer"
+        onUpdateSource={vi.fn()}
+        onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+        monitoringHealth={{status: 'hidden'}}
+      />
+    </MemoryRouter>,
+  );
+
+  it('表头新增「调度周期」，表头网格为 14 列且列跨度合计 14', () => {
+    const {container} = renderView([source]);
+
+    expect(screen.getByText('调度周期')).toBeInTheDocument();
+
+    const list = container.querySelector('[role="list"]');
+    const headerRow = list?.firstElementChild;
+    expect(headerRow).not.toBeNull();
+    expect(headerRow?.className).toContain('md:grid-cols-[repeat(14,minmax(0,1fr))]');
+
+    const headerCells = Array.from(headerRow?.children ?? []);
+    expect(headerCells).toHaveLength(6);
+    const spanSum = headerCells.reduce((sum, cell) => {
+      const match = /(?:^|\s)col-span-(\d+)(?:\s|$)/.exec(cell.className);
+      return sum + (match ? Number.parseInt(match[1] ?? '0', 10) : 0);
+    }, 0);
+    expect(spanSum).toBe(14);
+  });
+
+  it('正常来源渲染中文 label，原始 cron 只出现在 title 与 aria-label', () => {
+    renderView([source]);
+
+    const cell = screen.getByTestId('source-schedule-17');
+    // 负向断言：可见文本绝不含原始 cron。
+    expect(cell.textContent).not.toContain('*/30');
+
+    const value = within(cell).getByText('每 30 分钟');
+    expect(value.textContent).toBe('每 30 分钟');
+    expect(value).toHaveAttribute('title', '*/30 * * * *（北京时间）');
+
+    const accessibleName = '调度周期：每 30 分钟，原始 cron */30 * * * *（北京时间）';
+    expect(value).toHaveAccessibleName(accessibleName);
+    expect(screen.getByLabelText(accessibleName)).toBe(value);
+  });
+
+  it('类别分支：天眼查、其它外部工具、人工录入与未单独配置各自渲染固定标签', () => {
+    renderView([
+      {...source, id: '31', code: 'tianyancha', type: 'external_tool', schedule: null},
+      {...source, id: '32', code: 'other-tool', type: 'external_tool', schedule: '*/5 * * * *'},
+      {...source, id: '33', code: 'manual-json', type: 'manual', schedule: null},
+      {...source, id: '34', code: 'official-api-unset', type: 'official_api', schedule: null},
+    ]);
+
+    expect(within(screen.getByTestId('source-schedule-31')).getByText('每周日、周一 06:00（分片）')).toBeInTheDocument();
+
+    const externalCell = screen.getByTestId('source-schedule-32');
+    expect(within(externalCell).getByText('按需调用')).toBeInTheDocument();
+    expect(externalCell.textContent).not.toContain('*/5');
+
+    expect(within(screen.getByTestId('source-schedule-33')).getByText('人工录入')).toBeInTheDocument();
+    expect(within(screen.getByTestId('source-schedule-34')).getByText('未单独配置')).toBeInTheDocument();
+  });
+
+  it('值节点样式 token 齐全，移动端前缀以 md:hidden 在窄屏提示', () => {
+    renderView([source]);
+
+    const cell = screen.getByTestId('source-schedule-17');
+    const value = within(cell).getByText('每 30 分钟');
+    ['whitespace-normal', 'text-xs', 'font-semibold', 'text-[#424751]', 'dark:text-slate-400'].forEach((token) => {
+      expect(value.className.split(/\s+/)).toContain(token);
+    });
+    expect(within(cell).getByText('调度:').className.split(/\s+/)).toContain('md:hidden');
+  });
+});

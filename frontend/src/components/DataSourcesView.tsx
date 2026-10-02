@@ -28,27 +28,19 @@ interface DataSourcesViewProps {
   // 但保留"编辑现有信息源"（API Key / 调度周期 / 适配器等配置项）+ 启停 + 修改日志审计。
 }
 
-const adapterTemplate = {
-  format: 'json',
-  request: {
-    method: 'GET', url: 'https://official.example/api/events', params: {}, headers: {},
-    timeout_seconds: 15, max_response_bytes: 10485760,
-  },
-  items_path: 'data.items',
-  mapping: {
-    external_id: 'id', title: 'title', content: 'description',
-    url: 'official_url', published_at: 'published_at',
-  },
-  fingerprint_fields: ['external_id', 'title', 'published_at'],
-  max_items: 1000,
-};
-
 const emptyForm: DataSourceWritePayload = {
   code: '', name: '', source_type: 'official_api', credibility: 90,
   schedule: '*/30 * * * *', endpoint_url: null, auth_type: 'none',
   login_config: {}, credential_ref: null, description: null,
-  adapter_config: adapterTemplate, enabled: false, signal_validity_days: null,
+  enabled: false, signal_validity_days: null,
 };
+
+// W1-T1：认证方式仅保留两种可编辑值；历史值（bearer/basic/oauth2/custom 等）只读展示，
+// 提交时省略 auth_type 键，由后端保持原值，避免静默改写既有配置。
+const AUTH_TYPE_OPTIONS: ReadonlyArray<{value: 'none' | 'api_key'; label: string}> = [
+  {value: 'none', label: '无需认证'},
+  {value: 'api_key', label: 'API Key Header'},
+];
 
 // —— 展示层工具（只影响页面呈现，不改变后端存储值） ——
 
@@ -226,7 +218,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   // 编辑表单状态
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<DataSourceWritePayload>(emptyForm);
-  const [adapterText, setAdapterText] = useState(JSON.stringify(adapterTemplate, null, 2));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingStatus, setEditingStatus] = useState<DataSource['adapterStatus']>('draft');
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -236,11 +227,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const [validityFixedDays, setValidityFixedDays] = useState<number | null>(null);
   const [validityGraceDays, setValidityGraceDays] = useState<number | null>(null);
   const [validityCriticalGraceDays, setValidityCriticalGraceDays] = useState<number | null>(null);
-  const [validityReviewDays, setValidityReviewDays] = useState<number | null>(null);
-  const [validityReviewRequired, setValidityReviewRequired] = useState(true);
   const [validityError, setValidityError] = useState<string | null>(null);
   // 客户端校验用 UI 状态（不进入策略 payload，后端策略 schema 不接受这些字段）
-  const [validityKeyInput, setValidityKeyInput] = useState('');
   const [autoRevokeOnMissingSnapshot, setAutoRevokeOnMissingSnapshot] = useState(false);
   const [authoritativeFullSnapshot, setAuthoritativeFullSnapshot] = useState(false);
 
@@ -263,7 +251,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       credibility: source.credibility, schedule: source.schedule,
       endpoint_url: source.endpointUrl, auth_type: source.authType,
       login_config: source.loginConfig, credential_ref: source.credentialRef,
-      description: source.description, adapter_config: source.adapterConfig,
+      description: source.description,
       enabled: source.enabled, signal_validity_days: source.signalValidityDays,
     });
     // 有效期策略：优先取结构化策略，否则回退到旧 signal_validity_days 映射为 fixed_days
@@ -272,27 +260,14 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     setValidityFixedDays(policy?.fixed_days ?? source.signalValidityDays ?? null);
     setValidityGraceDays(policy?.grace_days ?? null);
     setValidityCriticalGraceDays(policy?.critical_grace_days ?? null);
-    setValidityReviewDays(policy?.review_days ?? null);
-    setValidityReviewRequired(policy?.review_required ?? true);
     // 冲突旧字段：signal_validity_days 与策略不一致时阻止保存，避免后端 422
     const legacyConflict = source.signalValidityDays != null && policy !== null
       && (policy.mode !== 'fixed_days' || policy.fixed_days !== source.signalValidityDays);
     setValidityError(legacyConflict ? 'signal_validity_days 与 validity_policy 配置冲突，请先修正有效期策略' : null);
-    setAdapterText(Object.keys(source.adapterConfig).length
-      ? JSON.stringify(source.adapterConfig, null, 2) : '');
     setApiKeyInput('');
     setEditingKeyHint(source.apiKeyHint);
     setError(null);
     setShowForm(true);
-  };
-
-  const parseAdapter = (): Record<string, unknown> | null => {
-    if (!adapterText.trim()) return null;
-    const parsed: unknown = JSON.parse(adapterText);
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new Error('适配器配置必须是 JSON 对象');
-    }
-    return parsed as Record<string, unknown>;
   };
 
   const buildValidityPolicy = (): SourceValidityPolicy | null => {
@@ -300,37 +275,37 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     switch (validityMode) {
       case 'fixed_days':
         if (validityFixedDays === null) return null; // 留空=永久有效
-        return {...policy, fixed_days: validityFixedDays, ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}), review_required: validityReviewRequired};
+        return {...policy, fixed_days: validityFixedDays};
+      case 'until_superseded':
+        // 替代时失效必须有固定天数兜底；空值由 validateValidity 阻止保存。
+        return {...policy, fixed_days: validityFixedDays};
       case 'event_end_plus_grace':
         return {
           ...policy,
           ...(validityGraceDays !== null ? {grace_days: validityGraceDays} : {}),
           ...(validityCriticalGraceDays !== null ? {critical_grace_days: validityCriticalGraceDays} : {}),
-          ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}),
-          review_required: validityReviewRequired,
         };
-      case 'until_superseded':
       case 'until_revoked':
       case 'indefinite':
-        return {...policy, ...(validityReviewDays !== null ? {review_days: validityReviewDays} : {}), review_required: validityReviewRequired};
+        return policy;
     }
   };
 
   const validateValidity = (): string | null => {
-    if (validityMode === 'fixed_days' && validityFixedDays !== null && (validityFixedDays < 1 || validityFixedDays > 3650)) {
+    if ((validityMode === 'fixed_days' || validityMode === 'until_superseded')
+      && validityFixedDays !== null && (validityFixedDays < 1 || validityFixedDays > 3650)) {
       return '固定天数必须在 1 到 3650 之间';
+    }
+    if (validityMode === 'until_superseded' && validityFixedDays === null) {
+      return '替代时失效必须提供固定天数';
     }
     if (validityMode === 'event_end_plus_grace') {
       if (validityGraceDays !== null && (validityGraceDays < 1 || validityGraceDays > 3650)) return '宽限天数必须在 1 到 3650 之间';
       if (validityCriticalGraceDays !== null && (validityCriticalGraceDays < 1 || validityCriticalGraceDays > 3650)) return '关键宽限天数必须在 1 到 3650 之间';
     }
-    if (validityMode === 'until_superseded' && !validityKeyInput.trim()) {
-      return '替代策略必须提供替代判定键（validity_key）';
-    }
     if (validityMode === 'until_revoked' && autoRevokeOnMissingSnapshot && !authoritativeFullSnapshot) {
       return '声明按完整快照缺失自动撤销时，必须同时声明权威完整快照（authoritative_full_snapshot）';
     }
-    if (validityReviewDays !== null && (validityReviewDays < 1 || validityReviewDays > 3650)) return '复核天数必须在 1 到 3650 之间';
     return null;
   };
 
@@ -345,21 +320,20 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
     }
     try {
       const isExternalTool = form.source_type === 'external_tool';
-      const adapterConfig = isExternalTool ? null : parseAdapter();
       const validityPolicy = buildValidityPolicy();
       // 旧 signal_validity_days 与 validity_policy 必须一致：fixed_days 模式同步天数，其余模式置空
       const signalValidityDays = validityMode === 'fixed_days' ? validityFixedDays : null;
       const payload = {
         ...form,
         schedule: isExternalTool ? null : form.schedule,
-        adapter_config: adapterConfig,
         api_key: apiKeyInput.trim() || undefined,
         signal_validity_days: signalValidityDays,
         validity_policy: validityPolicy,
       };
       if (editingId) {
-        const {code: _code, adapter_config: _adapterConfig, ...rest} = payload;
-        const changes = adapterConfig ? {...rest, adapter_config: adapterConfig} : rest;
+        const {code: _code, auth_type: authTypeValue, ...rest} = payload;
+        // 历史认证值：省略 auth_type 键，由后端保持原值；其余情况原样提交。
+        const changes = isLegacyAuthType ? rest : {...rest, auth_type: authTypeValue};
         await onUpdateSource(editingId, changes);
         await onRefreshSources();
       }
@@ -460,6 +434,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const totalSignals = visibleSources.reduce((total, source) => total + source.totalSignalCount, 0);
   const isExternalForm = form.source_type === 'external_tool';
   const isTycForm = isExternalForm && form.code === 'tianyancha';
+  const isLegacyAuthType = !AUTH_TYPE_OPTIONS.some((option) => option.value === form.auth_type);
   const mayEnable = isExternalForm || editingStatus === 'builtin' || editingStatus === 'published';
   // 诊断就绪时按 source_id 建立新鲜度索引；hidden/unknown/loading 一律不渲染来源级健康。
   const healthBySource = monitoringHealth.status === 'ready'
@@ -783,7 +758,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                 <input required value={form.name} onChange={(event) => update('name', event.target.value)} className="mt-1 w-full border rounded-lg p-2" />
               </label>
               <label className="text-xs font-bold">类型
-                <input required value={form.source_type} onChange={(event) => update('source_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2" />
+                <input required disabled value={form.source_type} className="mt-1 w-full border rounded-lg p-2 disabled:bg-slate-100 disabled:text-slate-500" />
               </label>
               <label className="text-xs font-bold">可信度
                 <input type="number" min="0" max="100" required value={form.credibility} onChange={(event) => update('credibility', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
@@ -814,10 +789,15 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   ))}
                 </select>
               </label>
-              {validityMode === 'fixed_days' && (
-                <label className="text-xs font-bold" title="信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录">
+              {(validityMode === 'fixed_days' || validityMode === 'until_superseded') && (
+                <label
+                  className="text-xs font-bold"
+                  title={validityMode === 'until_superseded'
+                    ? '替代时失效必须提供固定天数，作为长期未更新时的兜底有效期'
+                    : '信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录'}
+                >
                   固定天数（天）
-                  <input type="number" min="1" max="3650" placeholder="留空=永久有效" value={validityFixedDays ?? ''} onChange={(event) => setValidityFixedDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  <input type="number" min="1" max="3650" placeholder={validityMode === 'until_superseded' ? '必填' : '留空=永久有效'} value={validityFixedDays ?? ''} onChange={(event) => setValidityFixedDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
                 </label>
               )}
               {validityMode === 'event_end_plus_grace' && (
@@ -832,13 +812,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   </label>
                 </>
               )}
-              {validityMode === 'until_superseded' && (
-                <label className="text-xs font-bold sm:col-span-2" title="替代判定依赖信号携带的 validity_key；未提供 key 时替代策略无法生效">
-                  替代判定键（validity_key）
-                  <input value={validityKeyInput} onChange={(event) => setValidityKeyInput(event.target.value)} placeholder="例如实体编号、公告编号" className="mt-1 w-full border rounded-lg p-2 font-mono" />
-                  <span className="mt-1 block text-[11px] font-normal text-slate-500">该信源信号必须携带此键，替代策略才能判定后续信号是否取代当前信号。</span>
-                </label>
-              )}
               {validityMode === 'until_revoked' && (
                 <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2">
                   <input type="checkbox" checked={autoRevokeOnMissingSnapshot} onChange={(event) => setAutoRevokeOnMissingSnapshot(event.target.checked)} />
@@ -851,32 +824,48 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   声明权威完整快照（authoritative_full_snapshot）
                 </label>
               )}
-              <label className="text-xs font-bold" title="复核提醒天数；到期后提醒进入复核窗口">
-                复核天数（天）
-                <input type="number" min="1" max="3650" placeholder="留空=不设复核" value={validityReviewDays ?? ''} onChange={(event) => setValidityReviewDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-              </label>
-              <label className="text-xs font-bold flex items-center gap-2">
-                <input type="checkbox" checked={validityReviewRequired} onChange={(event) => setValidityReviewRequired(event.target.checked)} />
-                需要复核
-              </label>
               {validityError && (
                 <p role="alert" className="sm:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{validityError}</p>
               )}
-              <label className="text-xs font-bold">认证方式
-                <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">
-                  <option value="none">无需认证</option>
-                  <option value="api_key">API Key Header</option>
-                  <option value="bearer">Bearer Token</option>
-                </select>
-              </label>
-              {!isExternalForm && (
+              {isLegacyAuthType ? (
+                <div
+                  data-testid="auth-type-legacy-warning"
+                  role="status"
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 sm:col-span-2"
+                >
+                  当前认证方式为“{form.auth_type}”（历史值，不在可编辑选项中），保存时将保持服务器上的原值不变。
+                </div>
+              ) : (
+                <label className="text-xs font-bold">认证方式
+                  <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">
+                    {AUTH_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {!isExternalForm && form.auth_type === 'api_key' && (
                 <label className="text-xs font-bold">凭据引用
                   <input value={form.credential_ref ?? ''} onChange={(event) => update('credential_ref', event.target.value || null)} placeholder="env:SOURCE_API_KEY" className="mt-1 w-full border rounded-lg p-2 font-mono" />
                 </label>
               )}
-              {!isExternalForm && (
+              {!isExternalForm && form.auth_type === 'api_key' && (
                 <label className="text-xs font-bold">API Key 请求头名
-                  <input value={String(form.login_config.header_name ?? '')} onChange={(event) => update('login_config', event.target.value ? {header_name: event.target.value} : {})} placeholder="X-API-Key" className="mt-1 w-full border rounded-lg p-2" />
+                  <input
+                    value={String(form.login_config.header_name ?? '')}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (value) {
+                        // 合并而非覆盖：保全迁移 marker（0054/0055 provenance）等既有 login_config 键。
+                        update('login_config', {...form.login_config, header_name: value});
+                      } else {
+                        const {header_name: _headerName, ...restConfig} = form.login_config;
+                        update('login_config', restConfig);
+                      }
+                    }}
+                    placeholder="X-API-Key"
+                    className="mt-1 w-full border rounded-lg p-2"
+                  />
                 </label>
               )}
               {isExternalForm && (
@@ -897,11 +886,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
               <label className="text-xs font-bold sm:col-span-2">说明
                 <textarea value={form.description ?? ''} onChange={(event) => update('description', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
               </label>
-              {!isExternalForm && (
-                <label className="text-xs font-bold sm:col-span-2">声明式适配器 JSON
-                  <textarea required={editingStatus !== 'builtin'} rows={12} value={adapterText} onChange={(event) => setAdapterText(event.target.value)} className="mt-1 w-full border rounded-lg p-3 font-mono text-xs" />
-                </label>
-              )}
             </div>
             {isExternalForm && (
               <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">运行密钥加密保存在服务器数据库中，控制台仅显示末四位，保存后不回传明文；启用/停用由下方开关统一控制。</p>

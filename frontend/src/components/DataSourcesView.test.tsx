@@ -2,7 +2,7 @@ import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {api, type CollectionRunRead, type MonitoringHealthRead} from '../api';
+import {api, type CollectionRunRead, type DataSourceWritePayload, type MonitoringHealthRead} from '../api';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {DataSourcesView} from './DataSourcesView';
@@ -288,7 +288,8 @@ describe('信息源有效期策略表单', () => {
     expect(screen.queryByLabelText('固定天数（天）')).not.toBeInTheDocument();
 
     await user.selectOptions(modeSelect, 'until_superseded');
-    expect(screen.getByLabelText(/替代判定键/)).toBeInTheDocument();
+    expect(screen.getByLabelText('固定天数（天）')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/替代判定键/)).not.toBeInTheDocument();
 
     await user.selectOptions(modeSelect, 'until_revoked');
     expect(screen.getByLabelText('按完整快照缺失自动撤销（名单类信源）')).toBeInTheDocument();
@@ -298,15 +299,19 @@ describe('信息源有效期策略表单', () => {
     expect(screen.queryByLabelText('宽限天数（天）')).not.toBeInTheDocument();
   });
 
-  it('缺 validity_key 的替代策略被客户端阻止', async () => {
+  it('until_superseded 回填固定天数后直接保存，不再要求替代判定键', async () => {
     const onUpdateSource = renderAdmin();
     const user = await openForm();
 
     await user.selectOptions(screen.getByLabelText('有效期策略'), 'until_superseded');
+    expect(screen.queryByLabelText(/替代判定键/)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', {name: '保存配置'}));
 
-    expect(screen.getByRole('alert')).toHaveTextContent('替代策略必须提供替代判定键（validity_key）');
-    expect(onUpdateSource).not.toHaveBeenCalled();
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+    expect(onUpdateSource).toHaveBeenCalledWith(
+      '17',
+      expect.objectContaining({validity_policy: {mode: 'until_superseded', fixed_days: 30}}),
+    );
   });
 
   it('声明按完整快照缺失自动撤销却缺 authoritative_full_snapshot 被客户端阻止', async () => {
@@ -331,7 +336,7 @@ describe('信息源有效期策略表单', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(onUpdateSource).toHaveBeenCalledWith(
       '17',
-      expect.objectContaining({validity_policy: {mode: 'until_revoked', review_required: true}}),
+      expect.objectContaining({validity_policy: {mode: 'until_revoked'}}),
     );
   });
 
@@ -344,6 +349,144 @@ describe('信息源有效期策略表单', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('signal_validity_days 与 validity_policy 配置冲突');
     expect(onUpdateSource).not.toHaveBeenCalled();
+  });
+});
+
+// 计划 W1-T2：移除信源级「复核天数」「需要复核」，策略 payload 与前端类型不再含 review 键。
+describe('信息源编辑表单：移除信源级复核配置（W1-T2）', () => {
+  const renderAdmin = (overrides: Partial<DataSource> = {}) => {
+    const onUpdateSource = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...source, ...overrides}]}
+          role="admin"
+          onUpdateSource={onUpdateSource}
+          onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+    return onUpdateSource;
+  };
+
+  const openForm = async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: /编辑/}));
+    return user;
+  };
+
+  it('编辑弹窗不再渲染复核天数与需要复核', async () => {
+    renderAdmin();
+    await openForm();
+
+    expect(screen.queryByLabelText('复核天数（天）')).not.toBeInTheDocument();
+    expect(screen.queryByText('需要复核')).not.toBeInTheDocument();
+  });
+
+  // 失败场景：fixed_days 保存的策略对象只允许 mode + fixed_days 两个键。
+  it('fixed_days 模式保存的 validity_policy 仅含 mode 与 fixed_days', async () => {
+    const onUpdateSource = renderAdmin();
+    const user = await openForm();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    const policy = payload.validity_policy as unknown as Record<string, unknown>;
+    expect(Object.keys(policy).sort()).toEqual(['fixed_days', 'mode']);
+    expect(policy).toEqual({mode: 'fixed_days', fixed_days: 30});
+  });
+
+  it('event_end_plus_grace 模式保存的 validity_policy 不含复核键', async () => {
+    const onUpdateSource = renderAdmin({
+      signalValidityDays: null,
+      validityPolicy: {mode: 'event_end_plus_grace', grace_days: 5},
+    });
+    const user = await openForm();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect(payload.validity_policy).toEqual({mode: 'event_end_plus_grace', grace_days: 5});
+  });
+});
+
+// 计划 W1-T3：移除声明式适配器 JSON 与 UI-only 替代判定键；until_superseded 以固定天数兜底并可保存。
+describe('信息源编辑表单：移除声明式 JSON 与替代判定键（W1-T3）', () => {
+  const renderAdmin = (overrides: Partial<DataSource> = {}) => {
+    const onUpdateSource = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...source, ...overrides}]}
+          role="admin"
+          onUpdateSource={onUpdateSource}
+          onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+    return onUpdateSource;
+  };
+
+  const openForm = async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: /编辑/}));
+    return user;
+  };
+
+  it('编辑弹窗不再渲染声明式适配器 JSON，保存 changes 不含 adapter_config', async () => {
+    const onUpdateSource = renderAdmin();
+    const user = await openForm();
+
+    expect(screen.queryByText('声明式适配器 JSON')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect('adapter_config' in payload).toBe(false);
+  });
+
+  // 失败场景：清空 until_superseded 的固定天数必须被客户端阻止保存。
+  it('until_superseded 固定天数为空时提示必须提供固定天数并阻止保存', async () => {
+    const onUpdateSource = renderAdmin();
+    const user = await openForm();
+
+    await user.selectOptions(screen.getByLabelText('有效期策略'), 'until_superseded');
+    await user.clear(screen.getByLabelText('固定天数（天）'));
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('替代时失效必须提供固定天数');
+    expect(onUpdateSource).not.toHaveBeenCalled();
+  });
+
+  it('天眼查 until_superseded + fixed_days=30 可直接保存', async () => {
+    const onUpdateSource = renderAdmin({
+      id: '23',
+      code: 'tianyancha',
+      name: '天眼查企业核查',
+      type: 'external_tool',
+      schedule: null,
+      enabled: false,
+      adapterStatus: 'unconfigured',
+      signalValidityDays: null,
+      validityPolicy: {mode: 'until_superseded', fixed_days: 30},
+    });
+    const user = await openForm();
+
+    expect(screen.getByLabelText('有效期策略')).toHaveValue('until_superseded');
+    expect(screen.getByLabelText('固定天数（天）')).toHaveValue(30);
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect(payload.schedule).toBeNull();
+    expect(payload.validity_policy).toEqual({mode: 'until_superseded', fixed_days: 30});
+    expect('adapter_config' in payload).toBe(false);
   });
 });
 
@@ -426,6 +569,139 @@ describe('信息源运行密钥提交契约', () => {
 
     expect(putBodies()).toHaveLength(1);
     expect('api_key' in (putBodies()[0] ?? {})).toBe(false);
+  });
+});
+
+// 计划 W1-T1：类型只读；认证方式仅保留无需认证/API Key Header；
+// 历史认证值只读告警并在提交时省略 auth_type 键；请求头名合并 login_config 保全迁移 marker。
+describe('信息源编辑表单：类型只读与认证方式精简（W1-T1）', () => {
+  const renderAdmin = (overrides: Partial<DataSource> = {}) => {
+    const onUpdateSource = vi.fn().mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...source, ...overrides}]}
+          role="admin"
+          onUpdateSource={onUpdateSource}
+          onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+          monitoringHealth={readyHealth}
+        />
+      </MemoryRouter>,
+    );
+    return onUpdateSource;
+  };
+
+  const openForm = async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', {name: /编辑/}));
+    return user;
+  };
+
+  it('类型为只读展示且提交时原样携带 source_type', async () => {
+    const onUpdateSource = renderAdmin();
+    const user = await openForm();
+
+    const typeInput = screen.getByLabelText('类型');
+    expect(typeInput).toHaveValue('official_api');
+    expect(typeInput).toBeDisabled();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+    expect(onUpdateSource.mock.calls[0]?.[1]?.source_type).toBe('official_api');
+  });
+
+  it('认证方式仅提供无需认证与 API Key Header，不出现 Bearer Token', async () => {
+    renderAdmin();
+    await openForm();
+
+    const select = screen.getByLabelText('认证方式');
+    expect(within(select).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['none', 'api_key']);
+    expect(screen.queryByText('Bearer Token')).not.toBeInTheDocument();
+  });
+
+  it('凭据引用与请求头名仅在非外部工具的 API Key Header 认证下渲染', async () => {
+    renderAdmin();
+    const user = await openForm();
+
+    expect(screen.queryByLabelText('凭据引用')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('API Key 请求头名')).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('认证方式'), 'api_key');
+    expect(screen.getByLabelText('凭据引用')).toBeInTheDocument();
+    expect(screen.getByLabelText('API Key 请求头名')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('认证方式'), 'none');
+    expect(screen.queryByLabelText('凭据引用')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('API Key 请求头名')).not.toBeInTheDocument();
+  });
+
+  it('天眼查（external_tool）编辑弹窗始终不显示凭据引用与请求头名', async () => {
+    renderAdmin({
+      id: '23',
+      code: 'tianyancha',
+      name: '天眼查企业核查',
+      type: 'external_tool',
+      authType: 'api_key',
+      schedule: null,
+      enabled: false,
+      adapterStatus: 'unconfigured',
+    });
+    await openForm();
+
+    expect(screen.getByLabelText('认证方式')).toHaveValue('api_key');
+    expect(screen.queryByLabelText('凭据引用')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('API Key 请求头名')).not.toBeInTheDocument();
+  });
+
+  // 失败场景：历史认证值不得静默改写——只读告警展示当前值，提交对象省略 auth_type 键。
+  it('历史认证方式以只读警告展示，保存时省略 auth_type 键', async () => {
+    const onUpdateSource = renderAdmin({authType: 'bearer'});
+    const user = await openForm();
+
+    const warning = screen.getByTestId('auth-type-legacy-warning');
+    expect(warning).toHaveTextContent(/bearer/);
+    expect(screen.queryByLabelText('认证方式')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('凭据引用')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect('auth_type' in payload).toBe(false);
+  });
+
+  // 失败场景（marker 保全）：请求头名 onChange 必须合并 login_config，而非整体覆盖。
+  it('编辑请求头名合并 login_config 并保留 0054/0055 迁移 marker', async () => {
+    const marker = {revision: '0054', policy_before: {mode: 'fixed_days', review_required: true}};
+    const onUpdateSource = renderAdmin({
+      authType: 'api_key',
+      loginConfig: {source_validity_review_removal: marker},
+    });
+    const user = await openForm();
+
+    await user.type(screen.getByLabelText('API Key 请求头名'), 'X-API-Key');
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect(payload.login_config).toEqual({source_validity_review_removal: marker, header_name: 'X-API-Key'});
+    expect(payload.auth_type).toBe('api_key');
+  });
+
+  it('清空请求头名只删除 header_name，不抹掉其它 login_config 键', async () => {
+    const marker = {revision: '0055', was_inserted: false};
+    const onUpdateSource = renderAdmin({
+      authType: 'api_key',
+      loginConfig: {header_name: 'X-Old-Key', usgs_builtin_migration: marker},
+    });
+    const user = await openForm();
+
+    await user.clear(screen.getByLabelText('API Key 请求头名'));
+    await user.click(screen.getByRole('button', {name: '保存配置'}));
+    await waitFor(() => expect(onUpdateSource).toHaveBeenCalledTimes(1));
+
+    const payload: Partial<DataSourceWritePayload> = onUpdateSource.mock.calls[0]?.[1] ?? {};
+    expect(payload.login_config).toEqual({usgs_builtin_migration: marker});
+    expect('header_name' in (payload.login_config as Record<string, unknown>)).toBe(false);
   });
 });
 

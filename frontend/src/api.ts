@@ -16,8 +16,6 @@ export interface SourceValidityPolicy {
   readonly fixed_days?: number | null;
   readonly grace_days?: number | null;
   readonly critical_grace_days?: number | null;
-  readonly review_days?: number | null;
-  readonly review_required?: boolean;
 }
 
 export type ValidityAnchorSource = 'published_at' | 'collected_at' | 'official_valid_until' | 'event_end' | 'legacy';

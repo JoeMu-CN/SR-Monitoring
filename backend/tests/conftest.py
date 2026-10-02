@@ -126,7 +126,6 @@ def db_session() -> Generator[Session]:
     test_validity_policy = {
         "mode": "fixed_days",
         "fixed_days": 3650,
-        "review_required": False,
     }
     if manual_source is None:
         now = datetime.now(UTC)

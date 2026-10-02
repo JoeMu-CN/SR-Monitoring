@@ -26,7 +26,6 @@ def test_legacy_alert_and_event_are_not_rewritten_by_new_configuration(
     risk.source.validity_policy = {
         "mode": "fixed_days",
         "fixed_days": 90,
-        "review_required": False,
     }
     risk.event.validity_state = "legacy"
     risk.event.valid_until = legacy_deadline
@@ -70,7 +69,6 @@ def test_policy_and_rule_changes_do_not_recompute_stored_deadline(
     risk.source.validity_policy = {
         "mode": "fixed_days",
         "fixed_days": 90,
-        "review_required": False,
     }
     projected = compute_alert_expires_at(
         risk.event, ScoringSettings(alert_expiry_days=365)

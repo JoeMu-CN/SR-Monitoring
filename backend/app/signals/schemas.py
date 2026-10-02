@@ -28,7 +28,12 @@ NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_lengt
 
 
 class SourceValidityPolicy(BaseModel):
-    """信源级结构化有效期策略；profile 可由单条信号或 AI 分类补齐。"""
+    """信源级结构化有效期策略；profile 可由单条信号或 AI 分类补齐。
+
+    信源级不再承载复核配置（复核语义由域层 profile 默认与运行时
+    `review_due_at` 保留）；因此域层调用显式传 `review_days=None,
+    review_required=False`。
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -37,8 +42,6 @@ class SourceValidityPolicy(BaseModel):
     fixed_days: int | None = Field(default=None, ge=1, le=3650)
     grace_days: int | None = Field(default=None, ge=1, le=3650)
     critical_grace_days: int | None = Field(default=None, ge=1, le=3650)
-    review_days: int | None = Field(default=None, ge=1, le=3650)
-    review_required: bool = True
 
     @model_validator(mode="after")
     def validate_mode_parameters(self) -> Self:
@@ -49,8 +52,8 @@ class SourceValidityPolicy(BaseModel):
                 fixed_days=self.fixed_days,
                 grace_days=self.grace_days,
                 critical_grace_days=self.critical_grace_days,
-                review_days=self.review_days,
-                review_required=self.review_required,
+                review_days=None,
+                review_required=False,
             )
         except ValidityConfigurationError as error:
             raise ValueError(str(error)) from error
@@ -64,8 +67,8 @@ class SourceValidityPolicy(BaseModel):
             fixed_days=self.fixed_days,
             grace_days=self.grace_days,
             critical_grace_days=self.critical_grace_days,
-            review_days=self.review_days,
-            review_required=self.review_required,
+            review_days=None,
+            review_required=False,
         )
 
     def fingerprint(self) -> str:
@@ -83,8 +86,8 @@ class SourceValidityPolicy(BaseModel):
             fixed_days=self.fixed_days,
             grace_days=self.grace_days,
             critical_grace_days=self.critical_grace_days,
-            review_days=self.review_days,
-            review_required=self.review_required,
+            review_days=None,
+            review_required=False,
         )
 
 

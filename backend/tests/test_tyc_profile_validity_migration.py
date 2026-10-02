@@ -14,6 +14,14 @@ tests/test_mofcom_source_consolidation_migration.py 的隔离库模式：在隔�
   仍等于 0053 目标值才从 marker 还原，已被运营再次修改的字段保留；最后删除 marker。
   缺失/无关 marker 一律 no-op，0052 的预算 marker 不受影响。
 - fresh-chain 的 SQL NULL 与旧默认状态均可精确往返。
+
+O6 测试分期（head=0055 起）：
+- 0053 定向断言继续使用 0053 模块常量 ``TARGET_POLICY``，在隔离库内升级/降级到 0053
+  验证，避免 head 前进后语义漂移；
+- head 期望为独立常量 ``HEAD_POLICY``（0053 目标去掉 review 键）；0054 的
+  review-removal marker 由 ``test_source_validity_review_removal_migration.py``
+  独立覆盖；0055 仅迁移 usgs-earthquake-day，不触碰天眼查行，故 head 策略不变；
+- head→0052 的精确往返断言保留，并同时核对 0054 marker 的写入与清理。
 """
 
 from __future__ import annotations
@@ -55,6 +63,13 @@ TARGET_DESCRIPTION: str = _MIGRATION.TARGET_DESCRIPTION
 PREVIOUS_DESCRIPTION: str = _MIGRATION.PREVIOUS_DESCRIPTION
 MIGRATION_MARKER: str = _MIGRATION.MIGRATION_MARKER
 MARKER_KEY: str = _MIGRATION.MARKER_KEY
+# head=0055 期望仍为 0054 清理 review 键后的策略（= 0053 目标去掉 review_required）；
+# 0055 只迁移 usgs-earthquake-day，不修改天眼查行。
+HEAD_POLICY: dict[str, object] = {
+    "mode": "until_superseded",
+    "fixed_days": 30,
+}
+REVIEW_REMOVAL_MARKER: str = "source_validity_review_removal"
 
 
 @pytest.fixture
@@ -99,6 +114,20 @@ def _marker(connection: Connection, code: str) -> dict[str, object] | None:
     raw = connection.scalar(
         text("SELECT (login_config->:key)::text FROM data_sources WHERE code = :code"),
         {"key": MARKER_KEY, "code": code},
+    )
+    if raw is None:
+        return None
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _review_removal_marker(
+    connection: Connection, code: str
+) -> dict[str, object] | None:
+    """读取 0054 marker；键缺失、JSON null 或非对象时返回 None。"""
+    raw = connection.scalar(
+        text("SELECT (login_config->:key)::text FROM data_sources WHERE code = :code"),
+        {"key": REVIEW_REMOVAL_MARKER, "code": code},
     )
     if raw is None:
         return None
@@ -173,8 +202,8 @@ def _alembic_heads(database_url: str) -> list[str]:
 def test_fresh_chain_upgrade_sets_target_and_records_null_policy_marker(
     migration_database: str,
 ) -> None:
-    # Given / When：空库 fresh 链一路升级到 head。
-    run_alembic(migration_database, "upgrade", "head")
+    # Given / When：空库 fresh 链升级到 0053（0053 定向；head 态由 HEAD_POLICY 用例覆盖）。
+    run_alembic(migration_database, "upgrade", "0053")
     engine = create_engine(migration_database)
     with engine.connect() as connection:
         row = _source_row(connection, TYC_CODE)
@@ -201,32 +230,49 @@ def test_fresh_chain_upgrade_sets_target_and_records_null_policy_marker(
 def test_fresh_chain_downgrade_restores_sql_null_and_round_trips(
     migration_database: str,
 ) -> None:
-    # Given：fresh 链升级到 head。
+    # Given：fresh 链升级到 head（当前 head=0055）。
     run_alembic(migration_database, "upgrade", "head")
+
+    # Then：head 态仍为 0054 清理 review 键后的策略（0055 不触碰天眼查行）；0053 marker
+    # 记录 fresh-chain 的 SQL NULL 前态，0054 marker 记录 review 清理的 before/after。
+    engine = create_engine(migration_database)
+    with engine.connect() as connection:
+        head_row = _source_row(connection, TYC_CODE)
+        head_marker = _marker(connection, TYC_CODE)
+        head_review_marker = _review_removal_marker(connection, TYC_CODE)
+    assert head_row is not None and head_row["validity_policy"] == HEAD_POLICY
+    assert head_row["description"] == TARGET_DESCRIPTION
+    assert head_marker is not None and head_marker["policy"] is None
+    assert head_review_marker == {
+        "revision": "0054",
+        "policy_before": TARGET_POLICY,
+        "policy_after": HEAD_POLICY,
+    }
 
     # When：降级到 0052。
     run_alembic(migration_database, "downgrade", "0052")
-    engine = create_engine(migration_database)
     with engine.connect() as connection:
         restored = _source_row(connection, TYC_CODE)
         marker_after = _marker(connection, TYC_CODE)
+        review_marker_after = _review_removal_marker(connection, TYC_CODE)
         config = _login_config(connection, TYC_CODE)
 
     # Then：fresh-chain 的 SQL NULL 精确还原（不是固定写回的 fixed_days/30）；说明回到
-    # 0051 文案；marker 删除且 0052 预算 marker 不受影响。
+    # 0051 文案；0053 与 0054 marker 均删除且 0052 预算 marker 不受影响。
     assert restored is not None
     assert restored["policy_is_sql_null"] is True
     assert restored["validity_policy"] is None
     assert restored["description"] == PREVIOUS_DESCRIPTION
     assert marker_after is None
+    assert review_marker_after is None
     assert config.get("tyc_budget_migration") == "0052"
 
-    # When：再次升级到 head；Then：回到 0053 目标态（往返一致）。
+    # When：再次升级到 head；Then：回到 0054 目标态（往返一致）。
     run_alembic(migration_database, "upgrade", "head")
     with engine.connect() as connection:
         again = _source_row(connection, TYC_CODE)
     engine.dispose()
-    assert again is not None and again["validity_policy"] == TARGET_POLICY
+    assert again is not None and again["validity_policy"] == HEAD_POLICY
     assert again["description"] == TARGET_DESCRIPTION
 
 
@@ -425,8 +471,8 @@ def test_downgrade_restores_only_fields_still_at_target(
 
 
 def test_downgrade_missing_marker_is_noop(migration_database: str) -> None:
-    # Given：升级到 head 后删除 marker（模拟 provenance 缺失）。
-    run_alembic(migration_database, "upgrade", "head")
+    # Given：升级到 0053 后删除 marker（模拟 provenance 缺失；0053 定向）。
+    run_alembic(migration_database, "upgrade", "0053")
     engine = create_engine(migration_database)
     with engine.begin() as connection:
         connection.execute(
@@ -458,8 +504,8 @@ def test_downgrade_missing_marker_is_noop(migration_database: str) -> None:
 def test_downgrade_invalid_marker_is_noop(
     migration_database: str, patch: dict[str, str | None]
 ) -> None:
-    # Given：升级到 head 后把 marker 改成无效形态（revision 不符 / 键缺失）。
-    run_alembic(migration_database, "upgrade", "head")
+    # Given：升级到 0053 后把 marker 改成无效形态（revision 不符 / 键缺失；0053 定向）。
+    run_alembic(migration_database, "upgrade", "0053")
     engine = create_engine(migration_database)
     with engine.begin() as connection:
         _patch_marker(connection, TYC_CODE, patch)
@@ -475,8 +521,8 @@ def test_downgrade_invalid_marker_is_noop(
 
 
 def test_downgrade_non_object_marker_is_noop(migration_database: str) -> None:
-    # Given：升级到 head 后把 marker 整体替换为 JSON null。
-    run_alembic(migration_database, "upgrade", "head")
+    # Given：升级到 0053 后把 marker 整体替换为 JSON null（0053 定向）。
+    run_alembic(migration_database, "upgrade", "0053")
     engine = create_engine(migration_database)
     with engine.begin() as connection:
         _replace_marker(connection, TYC_CODE, "null")
@@ -525,7 +571,7 @@ def test_downgrade_missing_target_row_is_noop(migration_database: str) -> None:
     assert count == 0
 
 
-def test_alembic_heads_is_unique_0053(migration_database: str) -> None:
+def test_alembic_heads_is_unique_0055(migration_database: str) -> None:
     heads = _alembic_heads(migration_database)
     assert len(heads) == 1
-    assert heads[0].startswith("0053")
+    assert heads[0].startswith("0055")

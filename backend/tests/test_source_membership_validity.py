@@ -274,7 +274,6 @@ def _get_membership_source(session: Session) -> DataSource:
         validity_policy={
             "profile": "sanctions",
             "mode": "until_revoked",
-            "review_required": False,
         },
     )
     session.add(source)

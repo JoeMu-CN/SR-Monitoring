@@ -2331,6 +2331,138 @@ def _parse_wto_markdown(markdown: str, *, limit: int = 20) -> list[RawSourceItem
     return items
 
 
+MAX_USGS_BYTES = 10 * 1024 * 1024
+_MAX_USGS_ITEMS = 1000
+
+
+def _usgs_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _usgs_as_text(value: object) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return _usgs_optional_text(value) or ""
+
+
+class UsgsEarthquakeAdapter(PullSourceAdapter):
+    """USGS 全天地震速报（自然灾害/地震类）。
+
+    接口：https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson
+    官方 GeoJSON，免认证。由声明式适配器转内置，字段映射与指纹必须与
+    AdapterSpec 逐字节一致：external_id=id、title=properties.title、
+    content=properties.place、url=properties.url；properties.time 为 epoch 毫秒，
+    与平台"ISO 8601 带时区"要求不兼容，故 published_at 不映射；指纹字段仅
+    external_id + title（见 D10验收记录.md:81-86）。
+    """
+
+    source_code = "usgs-earthquake-day"
+    endpoint = (
+        "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+    )
+    fingerprint_fields = ("external_id", "title")
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        try:
+            response = await controlled_get(
+                self.endpoint,
+                timeout=self._timeout_seconds,
+                maximum_bytes=MAX_USGS_BYTES,
+                transport=self._transport,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"USGS 地震速报接口请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        try:
+            payload = json.loads(response.content)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise SourceFetchError("USGS 地震速报接口返回不是有效 JSON") from exc
+        features = payload.get("features") if isinstance(payload, dict) else None
+        if not isinstance(features, list):
+            raise SourceFetchError("USGS 地震速报响应 features 未指向 JSON 数组")
+        items: list[RawSourceItem] = []
+        for row in features[:_MAX_USGS_ITEMS]:
+            if not isinstance(row, dict):
+                continue
+            properties = row.get("properties")
+            if not isinstance(properties, dict):
+                properties = {}
+            title = _usgs_as_text(properties.get("title"))
+            content = _usgs_as_text(properties.get("place"))
+            if not title or not content:
+                raise SourceFetchError("USGS 地震速报字段映射后 title 或 content 为空")
+            raw_url = _usgs_optional_text(properties.get("url"))
+            items.append(
+                RawSourceItem(
+                    external_id=_usgs_optional_text(row.get("id")) or "",
+                    title=title,
+                    content=content,
+                    url=urljoin(self.endpoint, raw_url) if raw_url else None,
+                    extra={"raw": row},
+                )
+            )
+        return items
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput.model_validate(
+                {
+                    "external_id": item.external_id or None,
+                    "title": item.title,
+                    "content": item.content,
+                    "url": item.url,
+                    "published_at": item.published_at,
+                    "valid_until": item.valid_until,
+                    "event_end_at": item.event_end_at,
+                    "validity_profile": item.validity_profile,
+                    "validity_key": item.validity_key,
+                    "lifecycle_action": item.lifecycle_action,
+                    "target_signal_id": item.target_signal_id,
+                    "lifecycle_reason": item.lifecycle_reason,
+                }
+            )
+        except ValueError as exc:
+            raise SourceFetchError(f"USGS 地震速报字段校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        # 复现 declarative.DeclarativeSourceAdapter.fingerprint：仅哈希
+        # spec.fingerprint_fields 子集（USGS 为 external_id + title），不能改用
+        # 整模型 dump，否则与既有落库指纹不一致并造成重复入库。
+        values = signal.model_dump(mode="json")
+        canonical = json.dumps(
+            {field: values.get(field) for field in self.fingerprint_fields},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="USGS 地震速报接口无返回数据")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条地震速报")
+
+
 def _parse_nmc_time(value: object) -> datetime | None:
     """解析中央气象台发布时间，如 '2026/08/07 22:30'（东八区，无时区）。"""
     if not isinstance(value, str):

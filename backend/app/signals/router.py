@@ -107,6 +107,7 @@ from app.signals.sources import (
     SseShippingAdapter,
     StatsPmiAdapter,
     UflpaEntityAdapter,
+    UsgsEarthquakeAdapter,
     WtoNewsAdapter,
 )
 from app.signals.tyc_report_views import (
@@ -339,6 +340,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return SseShippingAdapter()
     if source_code == FmprcPressAdapter.source_code:
         return FmprcPressAdapter()
+    if source_code == UsgsEarthquakeAdapter.source_code:
+        return UsgsEarthquakeAdapter()
     if isinstance(source, DataSource) and source.adapter_status == "published":
         try:
             spec = AdapterSpec.model_validate(source.adapter_config)

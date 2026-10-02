@@ -111,7 +111,6 @@ def test_validity_policy_version_is_order_independent_and_applies_to_new_signals
         json={
             "validity_policy": {
                 "mode": "until_revoked",
-                "review_required": False,
             }
         },
     )

@@ -210,7 +210,6 @@ def test_declarative_collection_validity_when_policy_is_unbounded_persists_snaps
         validity_policy={
             "profile": "sanctions",
             "mode": "until_revoked",
-            "review_required": False,
         },
     )
     db_session.add(source)
@@ -361,7 +360,6 @@ def test_manual_import_validity_when_admin_revokes_target_updates_atomically(
     source.validity_policy = {
         "profile": "regulatory_change",
         "mode": "until_revoked",
-        "review_days": 90,
     }
     target = RawSignal(
         source_id=source.id,

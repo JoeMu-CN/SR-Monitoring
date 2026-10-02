@@ -16,13 +16,13 @@
 三、20 源策略表（19 条目标 + nmc-weather 只读核对，逐条理由）
     | code | 策略 | 理由 |
     |---|---|---|
-    | nmc-weather | fixed_days 7，review_required=true | 本次不改动：气象预警属短时效事件，保持既有 7 天（只读核对 signal_validity_days=7） |
+    | nmc-weather | fixed_days 7 | 本次不改动：气象预警属短时效事件，保持既有 7 天（只读核对 signal_validity_days=7） |
     | tianyancha | until_superseded 30 | 周度多维度核查：新周报告原子替代旧周；30 天为兜底上限，周任务长期未跑时旧报告也不会永久有效 |
-    | ofac-sdn | until_revoked，review_required=false | 制裁名单不能靠天数自动解除，只能由撤销信息解除；不设复核期限，仍依赖接收到撤销信息 |
-    | mofcom-entity-control | until_revoked，review_required=false | 不可靠实体清单同属制裁/管制名单，撤销前持续有效，不靠天数自动解除 |
-    | bis-entity-list | until_revoked，review_required=false | 美国 BIS 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
-    | mofcom-entity-detail | until_revoked，review_required=false | 商务部管控名单明细，撤销前持续有效，不靠天数自动解除 |
-    | uflpa-entity-list | until_revoked，review_required=false | UFLPA 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
+    | ofac-sdn | until_revoked | 制裁名单不能靠天数自动解除，只能由撤销信息解除；信源级不配置复核，仍依赖接收到撤销信息 |
+    | mofcom-entity-control | until_revoked | 不可靠实体清单同属制裁/管制名单，撤销前持续有效，不靠天数自动解除 |
+    | bis-entity-list | until_revoked | 美国 BIS 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
+    | mofcom-entity-detail | until_revoked | 商务部管控名单明细，撤销前持续有效，不靠天数自动解除 |
+    | uflpa-entity-list | until_revoked | UFLPA 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
     | eu-official-journal | fixed_days 365 | 官方公报为混合公告（含修订草案），365 天是风险关注窗口而非法律期限 |
     | eu-compliance | fixed_days 365 | 合规公告同属混合内容，365 天关注窗口非法定期限 |
     | customs-announcement | fixed_days 365 | 海关公告含政策草案与征求意见稿，365 天关注窗口非法定期限 |
@@ -75,7 +75,6 @@ WEATHER_VALIDITY_DAYS: Final = 7
 WEATHER_EXPECTED: Final[PolicyJSON] = {
     "mode": "fixed_days",
     "fixed_days": WEATHER_VALIDITY_DAYS,
-    "review_required": True,
 }
 AUDIT_ACTOR_ROLE: Final = "system"
 AUDIT_REASON: Final = "信息源有效期策略基线配置"
@@ -96,16 +95,15 @@ class SeedAbort(Exception):
 class PolicySpec:
     mode: ValidityMode
     fixed_days: int | None = None
-    review_required: bool = True
 
 
 TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
     "tianyancha": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 30),
-    "ofac-sdn": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
-    "mofcom-entity-control": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
-    "bis-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
-    "mofcom-entity-detail": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
-    "uflpa-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED, review_required=False),
+    "ofac-sdn": PolicySpec(ValidityMode.UNTIL_REVOKED),
+    "mofcom-entity-control": PolicySpec(ValidityMode.UNTIL_REVOKED),
+    "bis-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED),
+    "mofcom-entity-detail": PolicySpec(ValidityMode.UNTIL_REVOKED),
+    "uflpa-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED),
     "eu-official-journal": PolicySpec(ValidityMode.FIXED_DAYS, 365),
     "eu-compliance": PolicySpec(ValidityMode.FIXED_DAYS, 365),
     "customs-announcement": PolicySpec(ValidityMode.FIXED_DAYS, 365),
@@ -139,9 +137,7 @@ def build_plans() -> dict[str, TargetPlan]:
     """用 SourceValidityPolicy + DataSourceUpdate 预校验每条目标策略。"""
     plans: dict[str, TargetPlan] = {}
     for code, spec in TARGET_POLICIES.items():
-        policy = SourceValidityPolicy(
-            mode=spec.mode, fixed_days=spec.fixed_days, review_required=spec.review_required
-        )
+        policy = SourceValidityPolicy(mode=spec.mode, fixed_days=spec.fixed_days)
         validated = DataSourceUpdate(validity_policy=policy).validity_policy
         if validated is None:
             raise SeedAbort("normalization_lost_policy", code)
@@ -283,7 +279,7 @@ def run_verify() -> int:
                 mismatches.append(f"{code}:fingerprint")
     print(f"[seed-validity] mode=verify database={database} 目标={len(plans)}")
     print(
-        f"[seed-validity] nmc-weather 只读核对通过：fixed_days=7, review_required=true, "
+        f"[seed-validity] nmc-weather 只读核对通过：fixed_days=7, "
         f"signal_validity_days={WEATHER_VALIDITY_DAYS}（未改动）"
     )
     if mismatches:

@@ -60,7 +60,6 @@ _NOW_2 = _WEEK_2 + timedelta(hours=1)
 _PROFILE_POLICY = {
     "mode": "until_superseded",
     "fixed_days": 30,
-    "review_required": True,
 }
 
 

@@ -47,7 +47,6 @@ _DIMS = ["get_risk_overview", "get_judicial_case"]
 _STORAGE_POLICY = {
     "mode": "until_superseded",
     "fixed_days": 30,
-    "review_required": True,
 }
 # 2026-05-06 09:30 UTC = 北京 17:30（ISO W19）；+7 天为 W20。
 _WEEK_1 = datetime(2026, 5, 6, 9, 30, tzinfo=UTC)

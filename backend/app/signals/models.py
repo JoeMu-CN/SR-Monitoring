@@ -39,6 +39,61 @@ VALIDITY_REASON_SHAPE: Final = (
     "jsonb_typeof(validity_reason->'details') = 'object'"
 )
 
+# ck_data_sources_validity_policy 的规范文本：0047 文本去掉 review 键白名单与
+# review_required 类型 / review_days 取值子句（信源级复核配置由 0054 迁移清理）。
+# 必须与 alembic/versions/0054_source_validity_review_removal.py 的 SOURCE_POLICY_CHECK
+# 保持一致；测试 test_source_validity_review_removal_migration.py 会做等价性断言。
+DATA_SOURCE_VALIDITY_POLICY_PROFILE_VALUES: Final = """
+'weather_alert', 'geological_hazard', 'public_health_restriction',
+'industrial_accident', 'regional_resource_constraint', 'transport_disruption',
+'public_security', 'armed_conflict', 'political_instability', 'sanctions',
+'export_control', 'trade_tariff', 'policy_draft', 'regulatory_change',
+'compliance_violation', 'judicial_case', 'adverse_registry', 'corporate_distress',
+'bankruptcy_proceeding', 'cyber_incident', 'market_price_point',
+'raw_material_shortage', 'monthly_macro_indicator', 'industry_capacity_shift',
+'reputation_event', 'supplier_performance_incident', 'other'
+"""
+DATA_SOURCE_VALIDITY_POLICY_CHECK: Final = f"""
+validity_policy IS NULL OR (
+    jsonb_typeof(validity_policy) = 'object'
+    AND validity_policy ? 'mode'
+    AND validity_policy - ARRAY[
+        'profile', 'mode', 'fixed_days', 'grace_days', 'critical_grace_days'
+    ] = '{{}}'::jsonb
+    AND (NOT validity_policy ? 'profile' OR validity_policy->>'profile' IN (
+{DATA_SOURCE_VALIDITY_POLICY_PROFILE_VALUES}))
+    AND CASE validity_policy->>'mode'
+        WHEN 'fixed_days' THEN
+            validity_policy ? 'fixed_days'
+            AND validity_policy->>'fixed_days' ~ '^[0-9]+$'
+            AND (validity_policy->>'fixed_days')::integer BETWEEN 1 AND 3650
+            AND NOT validity_policy ?| ARRAY['grace_days', 'critical_grace_days']
+        WHEN 'until_superseded' THEN
+            validity_policy ? 'fixed_days'
+            AND validity_policy->>'fixed_days' ~ '^[0-9]+$'
+            AND (validity_policy->>'fixed_days')::integer BETWEEN 1 AND 3650
+            AND NOT validity_policy ?| ARRAY['grace_days', 'critical_grace_days']
+        WHEN 'until_revoked' THEN
+            NOT validity_policy ?| ARRAY['fixed_days', 'grace_days', 'critical_grace_days']
+        WHEN 'event_end_plus_grace' THEN
+            validity_policy ? 'grace_days'
+            AND validity_policy->>'grace_days' ~ '^[0-9]+$'
+            AND (validity_policy->>'grace_days')::integer BETWEEN 1 AND 3650
+            AND NOT validity_policy ?| ARRAY['fixed_days']
+            AND (
+                NOT validity_policy ? 'critical_grace_days'
+                OR (
+                    validity_policy->>'critical_grace_days' ~ '^[0-9]+$'
+                    AND (validity_policy->>'critical_grace_days')::integer BETWEEN 1 AND 3650
+                )
+            )
+        WHEN 'indefinite' THEN
+            NOT validity_policy ?| ARRAY['fixed_days', 'grace_days', 'critical_grace_days']
+        ELSE false
+    END
+)
+"""
+
 
 class DataSource(Base):
     __tablename__ = "data_sources"
@@ -47,12 +102,7 @@ class DataSource(Base):
             "credibility BETWEEN 0 AND 100", name="ck_data_sources_credibility"
         ),
         CheckConstraint(
-            "validity_policy IS NULL OR (jsonb_typeof(validity_policy) = 'object' AND "
-            "validity_policy ? 'mode' AND validity_policy->>'mode' IN "
-            "('fixed_days','until_superseded','until_revoked','event_end_plus_grace',"
-            "'indefinite') AND (NOT validity_policy ? 'fixed_days' OR "
-            "(validity_policy->>'fixed_days' ~ '^[0-9]+$' AND "
-            "(validity_policy->>'fixed_days')::integer BETWEEN 1 AND 3650)))",
+            DATA_SOURCE_VALIDITY_POLICY_CHECK,
             name="ck_data_sources_validity_policy",
         ),
     )

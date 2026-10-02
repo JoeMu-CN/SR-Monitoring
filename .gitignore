@@ -25,6 +25,7 @@ backups/
 *.log
 
 # 本地工作产物与归档（不进版本库，仅存在于本机）
+.playwright-mcp/
 .omo/
 .workbuddy/
 .openchamber/

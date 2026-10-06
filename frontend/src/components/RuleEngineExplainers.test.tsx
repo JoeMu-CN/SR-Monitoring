@@ -241,7 +241,13 @@ describe('规则引擎配置项语义说明层（todo 10）', () => {
 
     const section = await screen.findByTestId('rule-engine-explainers');
     expect(section).toHaveAttribute('data-mode', 'observation');
-    expect(within(section).getByText('规则语义说明')).toBeInTheDocument();
+    // align-T 迁移：embedded 模式去掉自身顶部标题「规则语义说明」，标题改由全局层分节卡
+    // summary 承担。断言改为「分节卡存在 + summary 标题正确 + 分节 body 内含说明层内容」，
+    // 语义等价于原「说明层区块内可读到标题」，且标题与内容的归属关系仍然成立。
+    const sectionCard = section.closest('details') as HTMLElement;
+    expect(sectionCard).not.toBeNull();
+    expect(sectionCard.querySelector('summary') as HTMLElement).toHaveTextContent('规则语义说明');
+    expect(screen.getByTestId('rule-engine-global-layer')).toContainElement(section);
 
     // 六个必需模块与总分公式/封顶规则在 viewer 真实壳路径全部可读
     for (const {id, title} of REQUIRED_EXPLAINERS) {

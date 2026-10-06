@@ -6,13 +6,14 @@ import {SignalFilterSection} from './SignalFilterSection';
 import {RuleEngineDimensionSources} from './RuleEngineDimensionSources';
 import {RuleEngineMatchColumns} from './RuleEngineMatchColumns';
 import {RuleEngineEventTypes} from './RuleEngineEventTypes';
-import {RuleEngineForcedRules} from './RuleEngineForcedRules';
+import {RuleEngineForcedRules, readForcedRules} from './RuleEngineForcedRules';
 import {RuleEngineScoringEditor, validateDimensionDraft} from './RuleEngineScoringEditor';
 import {RuleEnginePipeline} from './RuleEnginePipeline';
 import {RuleEngineRuleMatrix} from './RuleEngineRuleMatrix';
 import {RuleEngineExplainers} from './RuleEngineExplainers';
 import {useRuleEngineData} from './useRuleEngineData';
 import {
+  ASSOCIATION_MAX,
   defaultSampleEvent,
   draftFromDimension,
   GLOBAL_DRAFT_NOT_LOADED_ERROR,
@@ -23,7 +24,9 @@ import {
   RuleEngineEventTypeConflict,
   RuleEngineMode,
   RuleEngineSampleEvent,
+  SEVERITY_MAX,
 } from './RuleEngineContext';
+import {RULE_ENGINE_EXPLAINERS} from './ruleEngineExplainerCopy';
 import {routePaths} from '../routes';
 
 interface EventTypeConflict {
@@ -62,16 +65,19 @@ const SUMMARY_MATCH_COLUMN_LABELS: Record<string, string> = {
 };
 const SUMMARY_SEVERITY_LABELS: Record<string, string> = {critical: '严重', high: '高', medium: '中', low: '低'};
 const SUMMARY_SEVERITY_ORDER: ReadonlyArray<string> = ['critical', 'high', 'medium', 'low'];
-const SUMMARY_ASSOCIATION_LABELS: Record<string, string> = {
-  registry_no: '注册号',
-  legal_name: '法人全称',
-  alias: '别名',
-  site_distance: '地点距离',
-  site_text: '地点文本',
-  product: '产品',
-  country: '国家',
-  industry: '行业',
-};
+/**
+ * 观察态只读摘要的「关联类型分值」6 组展示映射（口径对齐 `RuleEngineRuleMatrix.tsx` 的
+ * `ASSOCIATION_GROUPS`：8 个关联键合并为 6 组，组内取最高分计入）。与 Matrix 一样在本文件
+ * 本地定义、不做跨组件 import，避免摘要与矩阵表互相耦合；未知键不回退展示、绝不臆造数值。
+ */
+const SUMMARY_ASSOCIATION_GROUPS: ReadonlyArray<{label: string; keys: ReadonlyArray<string>}> = [
+  {label: '注册号', keys: ['registry_no']},
+  {label: '法人全称 / 别名', keys: ['legal_name', 'alias']},
+  {label: '地点', keys: ['site_distance', 'site_text']},
+  {label: '产品', keys: ['product']},
+  {label: '行业', keys: ['industry']},
+  {label: '国家', keys: ['country']},
+];
 const SUMMARY_THRESHOLD_KEYS: ReadonlyArray<'p1' | 'p2' | 'p3'> = ['p1', 'p2', 'p3'];
 /** 阈值等级 chip 配色（P1 红 / P2 琥珀 / P3 蓝，与规则矩阵表的等级 chip 同款）。 */
 const SUMMARY_THRESHOLD_CHIP_CLASS: Record<'p1' | 'p2' | 'p3', string> = {
@@ -79,6 +85,20 @@ const SUMMARY_THRESHOLD_CHIP_CLASS: Record<'p1' | 'p2' | 'p3', string> = {
   p2: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
   p3: 'bg-blue-100 text-[#004782] dark:bg-blue-950/60 dark:text-blue-300',
 };
+
+/** 只读进度条宽度百分比：真实数值 / 上限 × 100，越界与非有限值收敛到 0–100。 */
+function summaryBarPercent(value: unknown, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || max <= 0) return 0;
+  return Math.max(0, Math.min(100, (value / max) * 100));
+}
+
+/** 关联分组取最高分：全组缺失时返回 null（渲染为「—」），不把缺失误显示成 0。 */
+function summaryGroupMax(scores: Record<string, number>, keys: ReadonlyArray<string>): number | null {
+  const values = keys
+    .map((key) => scores[key])
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return values.length > 0 ? Math.max(...values) : null;
+}
 
 /**
  * 一级 Tab：维度视图（默认）/ 全局规则。
@@ -115,6 +135,102 @@ const TAB_ITEMS: ReadonlyArray<{tab: RuleEngineTab; label: string}> = [
   {tab: 'dimension', label: '维度视图'},
   {tab: 'global', label: '全局规则'},
 ];
+
+interface ScopeCardHeaderProps {
+  /** 圆形序号徽标（配置=①，证据=②），装饰性元素，对读屏隐藏 */
+  num: string;
+  /** 标题元素 id：观察态/配置态互斥渲染，同一时刻只有一支存在，可安全复用同一 id */
+  titleId: string;
+  /** 区块标题（「配置」/「证据」） */
+  title: string;
+  /** 当前维度名：同时用于「归属于」与 scope-note */
+  dimensionName: string;
+  /** 归属说明句（逐字对齐原型 scheme-b-two-tabs.html:654、:757） */
+  note: string;
+}
+
+/**
+ * 维度级区块（①配置 / ②证据）的统一卡头（原型 scheme-b-two-tabs.html:650-654、753-757）。
+ *
+ * 为什么维度级从属关系要显式写在卡头上：
+ * ①配置与②证据在视觉上与全局层卡片同构，用户切维度、切 Tab 或深链直达后，可能在滚动中
+ * 失去「这块内容作用于哪个维度」的上下文；只靠左栏选中态暗示归属并不够——左栏可能不在
+ * 视口内，窄屏下也可能被折叠。把「序号 + 标题 + 维度级副标 + 归属于：<维度名>」以及一句
+ * 归属说明直接写进卡头，让每个维度级区块在自身位置自证从属关系：人可读的文案负责「一眼看懂」，
+ * 容器上的 data-dimension 负责「机械可校验」，两层表达同一事实、互相兜底。
+ */
+const ScopeCardHeader: React.FC<ScopeCardHeaderProps> = ({num, titleId, title, dimensionName, note}) => (
+  <header className="space-y-2">
+    <div className="flex flex-wrap items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#004782]/35 bg-[#eef6ff] font-mono text-[13px] font-bold leading-none text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
+      >
+        {num}
+      </span>
+      <h2 id={titleId} className="text-[15px] font-bold text-[#101d28] dark:text-white">{title}</h2>
+      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10.5px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
+        维度级
+      </span>
+      <span className="ml-auto text-[11px] text-slate-500 dark:text-slate-400">
+        归属于：<b className="font-bold text-[#101d28] dark:text-white">{dimensionName}</b>
+      </span>
+    </div>
+    <p className="border-b border-dashed border-slate-200 pb-3 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">
+      {note}
+    </p>
+  </header>
+);
+
+/**
+ * SignalFilterSection 实际渲染的过滤组数（原型 gs-meta「确定性粗筛 · 3 组」的真实口径）：
+ * 高影响关键词 / 重点关注国家 / 清单类信源三块，与组件内部结构一一对应。
+ * 该组件增删过滤分组时需同步更新此常量——数值来源仅此一处，不散落在文案里。
+ */
+const SIGNAL_FILTER_GROUP_COUNT = 3;
+
+interface GlobalSectionCardProps {
+  /** 分节序号（原型 gs-index 的 1/2/3） */
+  index: number;
+  /** 分节标题（原型 gs-title） */
+  title: string;
+  /** 分节副标（原型 gs-meta），数值由调用方按实际数据拼接 */
+  meta: string;
+  children: React.ReactNode;
+}
+
+/**
+ * 全局层可折叠分节卡（原型 scheme-b-two-tabs.html:834-840、:899-905、:1008-1014）。
+ *
+ * 为什么用原生 `<details>/<summary>`：折叠语义、键盘操作（Enter/Space）与展开态暴露
+ * 全部由浏览器内建，无需自研控件；与原型同构。默认 `open` 展开——用户折叠后 React
+ * 不会重置（`open` prop 值恒为 true，diff 无变化则不动 DOM 的展开状态）。
+ * `group-open` 控制 chevron 方向：展开时指向下（rotate-45），收起时指向右（-rotate-45）。
+ */
+const GlobalSectionCard: React.FC<GlobalSectionCardProps> = ({index, title, meta, children}) => (
+  <details
+    open
+    className="group rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
+  >
+    <summary className="group/summary flex cursor-pointer list-none flex-wrap items-center gap-2.5 rounded-2xl p-3.5 [&::-webkit-details-marker]:hidden">
+      <span
+        aria-hidden="true"
+        className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-lg border border-[#004782]/35 bg-[#eef6ff] font-mono text-[11px] font-bold text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
+      >
+        {index}
+      </span>
+      <span className="text-[13.5px] font-bold text-[#101d28] transition-colors group-hover/summary:text-[#004782] dark:text-white dark:group-hover/summary:text-blue-300">
+        {title}
+      </span>
+      <span className="text-[11px] text-slate-500 dark:text-slate-400">{meta}</span>
+      <span
+        aria-hidden="true"
+        className="ml-auto h-2 w-2 shrink-0 -rotate-45 border-b-[1.5px] border-r-[1.5px] border-slate-400 transition-transform group-open:rotate-45 dark:border-slate-500"
+      />
+    </summary>
+    <div className="border-t border-slate-200 p-4 dark:border-slate-700">{children}</div>
+  </details>
+);
 
 interface RuleEngineViewProps {
   dimensions: MonitoringDimension[];
@@ -375,6 +491,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
     return <div className="bg-white dark:bg-slate-900 border border-[#e2e8f0] rounded-xl p-8 text-center text-slate-500">暂无可用监控维度</div>;
   }
 
+  // 维度序号（原型「维度 N / M」，scheme-b-two-tabs.html:620）：N 为当前维度在 dimensions
+  // 中的 1 基序号；activeDimId 失配回落 dimensions[0] 时 N=1。dimensions 为空已在早退拦截。
+  const dimensionIndex = Math.max(1, dimensions.findIndex((d) => d.id === selectedDim.id) + 1);
+
   const contextValue: RuleEngineContextValue = {
     mode: effectiveMode,
     role,
@@ -403,6 +523,33 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
     options: data.options,
     optionsError: data.optionsError,
   };
+
+  // —— 全局层三个折叠分节的清单（原型 :834/:899/:1008）：计数由本数组长度派生（Tab 徽标与
+  //    global-head 计数同源，不写死数字），meta 数值全部取实际数据——语义项数来自
+  //    RULE_ENGINE_EXPLAINERS，强制规则条数来自全局配置快照；矩阵表是独立卡片，不在数组内。
+  const globalSections: ReadonlyArray<{key: string; title: string; meta: string; body: React.ReactNode}> = [
+    {
+      key: 'explainers',
+      title: '规则语义说明',
+      meta: `${RULE_ENGINE_EXPLAINERS.length} 项配置的语义 · 只读`,
+      body: <RuleEngineExplainers mode={effectiveMode} embedded />,
+    },
+    {
+      key: 'signal-filter',
+      title: '信号过滤规则',
+      meta: `调用大模型之前的确定性粗筛 · ${SIGNAL_FILTER_GROUP_COUNT} 组`,
+      body: <SignalFilterSection role={role} mode={effectiveMode} embedded />,
+    },
+    {
+      key: 'forced-rules',
+      title: '全局强制规则',
+      meta: data.globalConfig === null
+        ? '命中即直接定级并记满分 · 加载中'
+        : `命中即直接定级并记满分 · ${readForcedRules(data.globalConfig).length} 条`,
+      body: <RuleEngineForcedRules mode={effectiveMode} embedded />,
+    },
+  ];
+  const globalSectionCount = globalSections.length;
 
   return (
     <RuleEngineContext.Provider value={contextValue}>
@@ -569,13 +716,17 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
           {/* Right Column：外层容器承载栅格跨度与 Tab 栏，动画只包裹内容区，Tab 栏不随模式/维度切换重放动画 */}
           <div className="lg:col-span-8 min-w-0 space-y-6">
-            {/* 一级 Tab 栏：与「观察态/配置态」模式切换正交——Tab 决定看哪一层内容，模式只决定是否可编辑 */}
+            {/* 一级 Tab 栏（下划线式，原型 scheme-b-two-tabs.html:589-594 + CSS :131-145）：
+                与「观察态/配置态」模式切换正交——Tab 决定看哪一层内容，模式只决定是否可编辑。
+                保持既有无障碍契约：role=tablist / role=tab / aria-selected / aria-controls /
+                roving tabIndex / 方向键自动激活（handleTabListKeyDown）全部不变。
+                全局 Tab 的计数徽标取全局层实际折叠分节数（globalSectionCount），与 global-head 同源。 */}
             <div
               role="tablist"
               aria-label="规则引擎视图切换"
               data-testid="rule-engine-tabs"
               onKeyDown={handleTabListKeyDown}
-              className="flex w-full items-center gap-1 rounded-xl border border-slate-200/80 bg-white/80 p-1 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 sm:w-fit"
+              className="flex items-end gap-6 border-b border-slate-200/80 dark:border-slate-700/60"
             >
               {TAB_ITEMS.map((item) => {
                 const isActive = activeTab === item.tab;
@@ -592,13 +743,18 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     // roving tabindex：只有激活 tab 可被 Tab 键停靠，另一个交给方向键
                     tabIndex={isActive ? 0 : -1}
                     onClick={() => handleTabChange(item.tab)}
-                    className={`inline-flex min-h-9 flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400 sm:flex-none ${
+                    className={`inline-flex items-center gap-1 border-b-[3px] px-0 pb-2.5 pt-2 text-[13.5px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400 sm:text-[14px] ${
                       isActive
-                        ? 'bg-[#eef6ff] text-[#004782] shadow-2xs dark:bg-slate-700 dark:text-blue-300'
-                        : 'text-[#424751] hover:bg-[#f7f9ff] hover:text-[#004782] dark:text-slate-300 dark:hover:bg-slate-700/60 dark:hover:text-white'
+                        ? 'border-[#004782] text-[#004782] dark:border-blue-300 dark:text-blue-300'
+                        : 'border-transparent text-[#424751] hover:text-[#004782] dark:text-slate-300 dark:hover:text-white'
                     }`}
                   >
                     {item.label}
+                    {item.tab === 'global' && (
+                      <span className="ml-[3px] inline-block align-[1px] rounded-full border border-[#004782]/35 bg-[#eef6ff] px-1.5 py-0.5 font-mono text-[10.5px] font-bold leading-none text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300">
+                        · {globalSectionCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -614,46 +770,114 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               data-testid="rule-engine-tabpanel-dimension"
               hidden={activeTab !== 'dimension'}
             >
-            {/* 维度头卡（原型 scheme-b-two-tabs.html:617-645）：维度名称 / ID / 启停状态 / 输入摘要。
+            {/* 维度视图说明段（原型 scheme-b-two-tabs.html:601-603）：先交代「公有内容已移至全局规则 Tab」，
+                让用户进入维度视图即知道此处只保留维度私有内容，不会把全局项的缺席误读为功能缺失 */}
+            <p className="mb-4 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              维度视图只保留『当前维度自己的』配置与证据；规则语义说明、信号过滤与全局强制规则等公有内容已全部移至『全局规则』Tab，不再随维度重复。
+            </p>
+            {/* 维度头卡（原型 scheme-b-two-tabs.html:617-645）：序号 / 名称 / ID / 启停 /
+                接管事件类型 chips / 右侧三块 stats（输入状态+备注、引用信源、启用匹配柱）。
                 只读概览，两种模式（观察/配置）均可见；启停开关仍只在左栏维度列表内，这里刻意不再放第二个开关。
                 位置在 motion.div（key=维度-模式）之外：切维度/切模式不重放它的入场动画，且它始终先于两态内容出现。 */}
             <div
               data-testid="rule-engine-dimension-header"
               aria-label={`${selectedDim.name} 维度概览（只读）`}
-              className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
+              className="mb-2 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
             >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">{selectedDim.name}</h2>
-                  {/* 启停只读徽标：配色与左栏观察态徽标同款；开关本体保持在左栏，避免重复控件 */}
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      selectedDim.enabled
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                        : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
-                    }`}
-                  >
-                    {selectedDim.enabled ? '已启用' : '已停用'}
-                  </span>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-400">
+                      维度 {dimensionIndex} / {dimensions.length}
+                    </span>
+                    {/* 启停只读徽标：配色与左栏观察态徽标同款；开关本体保持在左栏，避免重复控件 */}
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        selectedDim.enabled
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                          : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
+                      }`}
+                    >
+                      {selectedDim.enabled ? '已启用' : '已停用'}
+                    </span>
+                  </div>
+                  <h2 className="mt-1.5 text-[22px] font-bold leading-tight tracking-tight text-[#101d28] dark:text-white">
+                    {selectedDim.name}
+                  </h2>
+                  <div className="mt-1 font-mono text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                    ID: {selectedDim.ruleId}
+                  </div>
+                  {/* 接管事件类型 chip 行：value → label 用 data.options.event_types 映射，找不到或
+                      选项未加载时回退 value；chip 内附 mono code（对齐原型 .chip-code） */}
+                  <div className="mt-3 flex flex-wrap items-start gap-2" data-testid="rule-engine-dim-event-types">
+                    <span className="pt-0.5 text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">
+                      接管事件类型
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedDim.eventTypes.map((eventType) => (
+                        <span
+                          key={eventType}
+                          className="inline-flex items-center gap-1 rounded-xl border border-[#004782]/30 bg-[#eef6ff] px-2 py-0.5 text-[11px] font-bold text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
+                        >
+                          {data.options.event_types.find((option) => option.value === eventType)?.label ?? eventType}
+                          <code className="font-mono text-[10px] opacity-70">{eventType}</code>
+                        </span>
+                      ))}
+                      {selectedDim.eventTypes.length === 0 && (
+                        <span className="text-[11px] text-slate-400 dark:text-slate-500">—</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-0.5 font-mono text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                  ID: {selectedDim.ruleId}
-                </div>
-              </div>
 
-              {/* 输入摘要：口径与左栏选中维度项一致（error → 加载中 → has_input → 无输入） */}
-              <div className="text-[12px]">
-                {data.inputsError ? (
-                  <span className="text-red-700 dark:text-red-300">输入健康度加载失败</span>
-                ) : data.inputs === null ? (
-                  <span className="text-slate-500 dark:text-slate-400">输入健康度加载中…</span>
-                ) : data.inputs.has_input ? (
-                  <span className="text-slate-600 dark:text-slate-300">近 30 天 {data.inputs.observed.length} 个信源有输入</span>
-                ) : (
-                  <span className="text-slate-500 dark:text-slate-400">当前无输入</span>
-                )}
+                {/* 右侧三块 stats：内层小卡与原型 .dim-stat 同构（10.5px 标签 + 13px 值 + mono 备注行） */}
+                <dl className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(140px,1fr))] content-start gap-3">
+                  <div className="min-w-0 rounded-xl border border-slate-200/80 bg-[#f8fafc] p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                    <dt className="text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">输入状态</dt>
+                    <dd className="mt-1 text-[13px] font-bold text-[#101d28] dark:text-white">
+                      {data.inputsError ? (
+                        <span className="text-red-700 dark:text-red-300">输入健康度加载失败</span>
+                      ) : data.inputs === null ? (
+                        <span className="font-normal text-slate-500 dark:text-slate-400">输入健康度加载中…</span>
+                      ) : data.inputs.has_input ? (
+                        <span>近 30 天 {data.inputs.observed.length} 个信源有输入</span>
+                      ) : (
+                        <span className="font-normal text-slate-500 dark:text-slate-400">当前无输入</span>
+                      )}
+                    </dd>
+                    {/* 备注行：各信源条数摘要（原型 dim-stat-note，scheme-b-two-tabs.html:634）；
+                        break-words + min-w-0 保证 CJK/英文混排（如「USGS 地震 3 条」）不溢出小卡 */}
+                    {!data.inputsError && data.inputs !== null && data.inputs.has_input && data.inputs.observed.length > 0 && (
+                      <dd
+                        data-testid="rule-engine-dim-input-note"
+                        className="mt-0.5 break-words font-mono text-[11px] font-normal text-slate-500 dark:text-slate-400"
+                      >
+                        {data.inputs.observed.map((item) => `${item.name} ${item.signal_count} 条`).join(' · ')}
+                      </dd>
+                    )}
+                  </div>
+                  {/* 引用信源：N = 已接入（linked）信源数，M = 声明信源总数（原型 :638） */}
+                  <div className="min-w-0 rounded-xl border border-slate-200/80 bg-[#f8fafc] p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                    <dt className="text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">引用信源</dt>
+                    <dd data-testid="rule-engine-dim-source-count" className="mt-1 break-words font-mono text-[13px] font-bold text-[#101d28] dark:text-white">
+                      {selectedDim.dataSources.filter((source) => source.linked).length} / {selectedDim.dataSources.length} 已接入
+                    </dd>
+                  </div>
+                  {/* 启用匹配柱：value → 中文标签（SUMMARY_MATCH_COLUMN_LABELS），· 连接（原型 :642） */}
+                  <div className="min-w-0 rounded-xl border border-slate-200/80 bg-[#f8fafc] p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                    <dt className="text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">启用匹配柱</dt>
+                    <dd data-testid="rule-engine-dim-match-columns" className="mt-1 break-words text-[13px] font-bold text-[#101d28] dark:text-white">
+                      {selectedDim.matchColumns.map((column) => SUMMARY_MATCH_COLUMN_LABELS[column] ?? column).join(' · ') || '—'}
+                    </dd>
+                  </div>
+                </dl>
               </div>
             </div>
+            {/* 维度路由提示行（原型 scheme-b-two-tabs.html:646）：显式声明路由边界，避免把矩阵表中
+                存在的某事件类型误读为「本维度会处理它」 */}
+            <p data-testid="rule-engine-dim-note" className="mb-4 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              该维度仅处理其声明的事件类型；未声明的类型不会路由到本维度。
+            </p>
             {/* 内容区：不用 AnimatePresence mode="wait"，避免切换时新面板延迟挂载 */}
             <motion.div
               key={`${selectedDim.id}-${effectiveMode}`}
@@ -669,10 +893,21 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       全局配置加载失败：{data.globalConfigError}
                     </div>
                   )}
+                  {/* ①② 两块维度级内容在 ≥1280px 并排（原型 .dim-layout，scheme-b-two-tabs.html:647、CSS :257）：
+                      1.05fr / 1fr、items-start，窄屏回落单列；grid 只做布局，两个锚点元素自身的
+                      testid / data-dimension 语义保持不变。 */}
+                  <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] xl:gap-4">
                   {/* ① 配置（维度级）锚点：观察态只读配置摘要的归属容器（摘要内容由 todo 13 填充）。
                       data-dimension 是机械可校验的归属标记——切维度后必须同步为新的 selectedDim.id，
                       让「这段内容属于哪个维度」不依赖页面文案判断。 */}
-                  <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} className="space-y-6">
+                  <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-config-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+                    <ScopeCardHeader
+                      num="①"
+                      titleId="rule-engine-scope-config-title"
+                      title="配置"
+                      dimensionName={selectedDim.name}
+                      note={`以下为『${selectedDim.name}』的维度级配置，仅在其接管的事件被处理时生效。`}
+                    />
                     {/* todo 13：观察态只读配置摘要。
                         为什么只读：观察态的职责是「如实讲清当前生效的规则」，而不是修改它；可编辑控件
                         全部只属于配置态（rule-engine-config-panel），这里只用文本与 chip，不出现
@@ -683,7 +918,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     <section
                       data-testid="rule-engine-config-summary"
                       aria-label={`${selectedDim.name} 维度级配置摘要（只读）`}
-                      className="space-y-5 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
+                      className="space-y-5"
                     >
                       <header className="flex flex-wrap items-baseline justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
                         <h2 className="font-bold text-[16px] text-[#101d28] dark:text-white">配置摘要</h2>
@@ -697,7 +932,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                           {selectedDim.matchColumns.map((column) => (
                             <span
                               key={column}
-                              className="rounded-md border border-[#004782]/30 bg-[#eef6ff] px-2 py-0.5 text-[11px] font-bold text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
+                              className="rounded-xl border border-[#004782]/30 bg-[#eef6ff] px-2 py-0.5 text-[11px] font-bold text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
                             >
                               {SUMMARY_MATCH_COLUMN_LABELS[column] ?? column}
                             </span>
@@ -715,7 +950,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                           {selectedDim.eventTypes.map((eventType) => (
                             <span
                               key={eventType}
-                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+                              className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
                             >
                               {data.options.event_types.find((option) => option.value === eventType)?.label ?? eventType}
                             </span>
@@ -726,68 +961,105 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                         </div>
                       </div>
 
-                      {/* 3. 严重程度分值 */}
-                      <div data-testid="rule-engine-summary-severity" className="space-y-1.5">
-                        <h3 className="text-[13px] font-bold text-[#424751] dark:text-slate-300">严重程度分值</h3>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                          {SUMMARY_SEVERITY_ORDER.map((key) => (
-                            <div
-                              key={key}
-                              className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-700 dark:bg-slate-900/40"
-                            >
-                              <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                                {SUMMARY_SEVERITY_LABELS[key] ?? key}
-                              </div>
+                      {/* 3. 严重程度分值：行式进度条（原型 scheme-b-two-tabs.html:666-674）。
+                          为什么观察态用 bar 而非数字宫格：严重程度是同一量纲（0–35）上的少数几档，
+                          bar 让「哪一档更重、差距多大」一眼可比，mono 数值右对齐后信息密度与原型对齐；
+                          数字宫格只能逐格读数字，横向比较成本高。条宽按真实值 / 35 计算，不写死。 */}
+                      <div data-testid="rule-engine-summary-severity" className="space-y-2">
+                        <h3 className="flex flex-wrap items-baseline gap-2 text-[13px] font-bold text-[#424751] dark:text-slate-300">
+                          严重程度分值
+                          <span className="text-[10.5px] font-normal text-slate-500 dark:text-slate-400">
+                            继承全局默认 · 可调范围 0–{SEVERITY_MAX}
+                          </span>
+                        </h3>
+                        <div className="grid gap-1.5">
+                          {SUMMARY_SEVERITY_ORDER.map((key) => {
+                            const value = selectedDim.severityScores[key];
+                            return (
                               <div
-                                data-testid={`rule-engine-summary-severity-${key}`}
-                                className="mt-0.5 font-mono text-[15px] font-black text-[#101d28] dark:text-white"
+                                key={key}
+                                className="grid grid-cols-[88px_minmax(0,1fr)_40px] items-center gap-2.5 sm:grid-cols-[100px_minmax(0,1fr)_40px]"
                               >
-                                {selectedDim.severityScores[key] ?? '—'}
+                                <span className="truncate text-[11.5px] font-bold text-slate-600 dark:text-slate-300">
+                                  {SUMMARY_SEVERITY_LABELS[key] ?? key}
+                                  <i className="ml-1 font-mono text-[10px] font-normal text-slate-400 dark:text-slate-500">{key}</i>
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  className="h-1.5 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800"
+                                >
+                                  <span
+                                    className="block h-full rounded-full bg-[#004782] dark:bg-blue-400"
+                                    style={{width: `${summaryBarPercent(value, SEVERITY_MAX)}%`}}
+                                  />
+                                </span>
+                                <span
+                                  data-testid={`rule-engine-summary-severity-${key}`}
+                                  className="text-right font-mono text-[12px] font-bold text-[#101d28] dark:text-white"
+                                >
+                                  {value ?? '—'}
+                                </span>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
 
-                      {/* 4. 关联类型分值：按 associationScores 键值展示，键序与配置态编辑器（Object.keys）一致 */}
-                      <div data-testid="rule-engine-summary-association" className="space-y-1.5">
-                        <h3 className="text-[13px] font-bold text-[#424751] dark:text-slate-300">关联类型分值</h3>
-                        <div className="flex flex-wrap gap-1.5">
-                          {Object.entries(selectedDim.associationScores).map(([key, value]) => (
-                            <span
-                              key={key}
-                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
-                            >
-                              {SUMMARY_ASSOCIATION_LABELS[key] ?? key}
-                              <span className="ml-1 font-mono font-bold text-[#101d28] dark:text-white">{value}</span>
-                            </span>
-                          ))}
-                          {Object.keys(selectedDim.associationScores).length === 0 && (
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500">—</span>
-                          )}
+                      {/* 4. 关联类型分值：6 组行式进度条，宽屏两列（原型 :675-685）。
+                          组内多键（法人全称/别名、地点距离/地点文本）取最高分，与评分引擎
+                          「命中多种关联时取最高分计入」的语义一致；条宽按真实值 / 30 计算。
+                          两列用「容器查询」而非视口断点：本卡在左栏 + 双卡并排下宽度远小于视口，
+                          容器 < 420px 时若强行两列，固定列（标签 + 数值）会把 bar 列压成 0 宽；
+                          容器 ≥ 420px（约 1920 视口起）再分两列，每列仍 ≥ 200px。 */}
+                      <div data-testid="rule-engine-summary-association" className="@container space-y-2">
+                        <h3 className="flex flex-wrap items-baseline gap-2 text-[13px] font-bold text-[#424751] dark:text-slate-300">
+                          关联类型分值
+                          <span className="text-[10.5px] font-normal text-slate-500 dark:text-slate-400">
+                            继承全局默认 · 命中多种关联时取最高分计入
+                          </span>
+                        </h3>
+                        <div className="grid gap-1.5 @min-[420px]:grid-cols-2 @min-[420px]:gap-x-5">
+                          {SUMMARY_ASSOCIATION_GROUPS.map((group) => {
+                            const value = summaryGroupMax(selectedDim.associationScores, group.keys);
+                            return (
+                              <div
+                                key={group.label}
+                                className="grid grid-cols-[88px_minmax(0,1fr)_40px] items-center gap-2.5 sm:grid-cols-[100px_minmax(0,1fr)_40px]"
+                              >
+                                <span className="truncate text-[11.5px] font-bold text-slate-600 dark:text-slate-300">{group.label}</span>
+                                <span
+                                  aria-hidden="true"
+                                  className="h-1.5 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800"
+                                >
+                                  <span
+                                    className="block h-full rounded-full bg-[#004782] dark:bg-blue-400"
+                                    style={{width: `${summaryBarPercent(value, ASSOCIATION_MAX)}%`}}
+                                  />
+                                </span>
+                                <span className="text-right font-mono text-[12px] font-bold text-[#101d28] dark:text-white">
+                                  {value ?? '—'}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
 
-                      {/* 5. 分级阈值 */}
-                      <div data-testid="rule-engine-summary-thresholds" className="space-y-1.5">
-                        <h3 className="text-[13px] font-bold text-[#424751] dark:text-slate-300">分级阈值</h3>
-                        <div className="flex flex-wrap gap-2">
+                      {/* 5. 分级阈值：单行三档「总分 ≥ N」（原型 :686-693），低于 P3 线即 P4 */}
+                      <div data-testid="rule-engine-summary-thresholds" className="space-y-2">
+                        <h3 className="flex flex-wrap items-baseline gap-2 text-[13px] font-bold text-[#424751] dark:text-slate-300">
+                          分级阈值
+                          <span className="text-[10.5px] font-normal text-slate-500 dark:text-slate-400">低于 P3 线为 P4</span>
+                        </h3>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                           {SUMMARY_THRESHOLD_KEYS.map((key) => (
-                            <span
-                              key={key}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] dark:border-slate-700 dark:bg-slate-900/40"
-                            >
-                              <span className={`rounded px-1.5 py-0.5 font-bold ${SUMMARY_THRESHOLD_CHIP_CLASS[key]}`}>
+                            <span key={key} className="inline-flex items-center gap-1.5 text-[12px]">
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold ${SUMMARY_THRESHOLD_CHIP_CLASS[key]}`}>
                                 {key.toUpperCase()}
                               </span>
-                              <span className="text-slate-600 dark:text-slate-300">总分 ≥</span>
-                              <span
-                                data-testid={`rule-engine-summary-threshold-${key}`}
-                                className="font-mono font-bold text-[#101d28] dark:text-white"
-                              >
-                                {selectedDim.thresholds[key]}
+                              <span className="font-mono text-[12px] font-bold text-[#101d28] dark:text-white">
+                                总分 ≥ <span data-testid={`rule-engine-summary-threshold-${key}`}>{selectedDim.thresholds[key]}</span>
                               </span>
-                              <span className="text-slate-400 dark:text-slate-500">分</span>
                             </span>
                           ))}
                         </div>
@@ -796,7 +1068,14 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   </div>
                   {/* ② 证据（维度级）锚点：本维度自己的运行轨迹与引用信源都属「证据」。
                       观察态/配置态两支互斥渲染，故两支各有一对同名锚点；同一时刻渲染的那一支里两个锚点必须同时存在。 */}
-                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} className="space-y-6">
+                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+                    <ScopeCardHeader
+                      num="②"
+                      titleId="rule-engine-scope-evidence-title"
+                      title="证据"
+                      dimensionName={selectedDim.name}
+                      note={`只展示『${selectedDim.name}』自己的信源与运行轨迹，不与其它维度混排。`}
+                    />
                     <RuleEnginePipeline
                       dimension={selectedDim}
                       trace={data.trace}
@@ -807,15 +1086,25 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     />
                     <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
                   </div>
+                  </div>
                   {/* 规则矩阵表 / 规则语义说明 / 信号过滤已迁入全局面板（全维度共用，全页唯一），
                       本分支不再挂载，避免同一语义出现两份实例与重复请求 */}
                 </div>
               ) : (
                 <div data-testid="rule-engine-config" data-mode={effectiveMode} className="space-y-6">
+                  {/* ①② 与观察态同一布局：≥1280px 两列（1.05fr / 1fr，items-start），窄屏回落单列 */}
+                  <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] xl:gap-4">
                   {/* ① 配置（维度级）锚点：包裹整张维度规则配置卡（头部 + 匹配柱/事件类型 + 评分编辑器 + configError + 提醒失效）。
                       data-dimension 是机械可校验的归属标记——切维度后必须同步为新的 selectedDim.id，
                       让「这段内容属于哪个维度」不依赖页面文案判断。 */}
-                  <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} className="space-y-6">
+                  <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-config-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+                    <ScopeCardHeader
+                      num="①"
+                      titleId="rule-engine-scope-config-title"
+                      title="配置"
+                      dimensionName={selectedDim.name}
+                      note={`以下为『${selectedDim.name}』的维度级配置，仅在其接管的事件被处理时生效。`}
+                    />
                     {/* 维度级可编辑控件主体集中在一个 panel（todo 12）：
                         ① 该容器只在配置态渲染；观察态渲染只读摘要（todo 13），不出现本容器，
                            机械校验据此即可确认「可编辑控件只属于配置态、不属于观察态」；
@@ -823,36 +1112,23 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                            校验控件归属时无需依赖页面文案判断；
                         ③ 沙箱测试是独立工具，不属于维度级配置主体，保持在 panel 之外。 */}
                     <div data-testid="rule-engine-config-panel">
-                    {/* Rule Configuration Card */}
-                    <div className="space-y-5 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-                        <div>
-                          <h2 className="font-bold text-[18px] text-[#101d28] dark:text-white">
-                            {selectedDim.name} 规则配置
-                          </h2>
-                          <span className="text-[11px] font-mono text-slate-400 font-bold">
-                            ID: {selectedDim.ruleId}
-                          </span>
-                        </div>
-
-                        <div className="flex gap-2">
-                          <button
-                            onClick={resetDraft}
-                            className="px-3 py-1.5 border border-[#e2e8f0] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                          >
-                            取消
-                          </button>
-                          <button
-                            onClick={() => void handleSaveConfig()}
-                            disabled={!isAdmin || saving}
-                            className="px-4 py-1.5 bg-[#004782] text-white rounded-lg text-[13px] font-bold shadow-sm hover:bg-[#185fa5] transition-colors disabled:opacity-60"
-                          >
-                            {saving ? '保存中…' : '保存配置'}
-                          </button>
-                        </div>
+                    {/* 配置卡：外层 scope-config 已是卡片，这里不再重复卡边框，只保留卡内纵向节奏 */}
+                    <div className="space-y-5">
+                      {/* config-panel-head：一行标题（原型 scheme-b-two-tabs.html:698-701）。
+                          规则 ID 是页面既有信息，保留在同一行右侧的 mono 位；原卡头的
+                          取消/保存按钮已按原型 :742-747 移到卡底 config-actions。 */}
+                      <div className="flex flex-wrap items-baseline justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
+                        <h2 className="font-bold text-[18px] text-[#101d28] dark:text-white">
+                          维度级配置 · {selectedDim.name}
+                        </h2>
+                        <span className="text-[11px] font-mono text-slate-400 font-bold">
+                          ID: {selectedDim.ruleId}
+                        </span>
                       </div>
 
-                      {/* 匹配柱与事件类型配置 */}
+                      {/* 组①「匹配柱」（原型四组之一）与一并保留的「事件类型」：复用的两个子组件自身
+                          即「组标题 + field-unit 提示 + 勾选控件」的完整小卡，外层不再重复包装标题，
+                          避免同一面板出现两份同名标题（既有测试以「匹配柱」标题定位该区块）。 */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <RuleEngineMatchColumns
                           options={data.options.match_columns}
@@ -870,8 +1146,16 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
 
                       {/* 强制规则（全局层）已迁入全局面板（全维度共用，全页唯一）：配置卡不再挂载副本 */}
 
-                      {/* 评分矩阵与阈值：todo 7 替换为可视化编辑器与解算预览 */}
-                      <RuleEngineScoringEditor mode={effectiveMode} />
+                      {/* 组②③④「严重程度分值 / 关联类型分值 / 分级阈值」：整块复用 RuleEngineScoringEditor，
+                          滑杆与数字输入逻辑零重写。要让四组「在视觉上成为四个小卡」而子组件文件不可改，
+                          只在外层作用域给子组件内部的编辑器节注入统一的小卡样式（圆角/边框/内边距）；
+                          解算预览节自身已是卡片，用 :not 排除，避免同属性样式互相覆盖。 */}
+                      <div
+                        data-testid="rule-engine-scoring-groups"
+                        className="[&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:rounded-xl [&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:border [&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:border-slate-200 [&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:bg-[#f8fafc] [&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:p-3 dark:[&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:border-slate-800 dark:[&>section>section:not([data-testid='rule-engine-solve-preview-panel'])]:bg-slate-950/40"
+                      >
+                        <RuleEngineScoringEditor mode={effectiveMode} />
+                      </div>
 
                       {configError && (
                         <div role="alert" className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 space-y-1 dark:text-red-300 dark:bg-red-950/30 dark:border-red-900">
@@ -897,6 +1181,39 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                           的有效期配置中管理。
                         </p>
                       </div>
+
+                      {/* config-actions 卡底按钮行（原型 :742-747）：保存配置/取消 从卡头移到卡底，
+                          新增与左栏开关共用同一 `sandboxOpen` 状态的「沙箱测试」入口；右侧 note 说明
+                          控件可操作但未保存前不影响现有生效配置。保存/取消行为仍走既有
+                          handleSaveConfig / resetDraft，未改变。 */}
+                      <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+                        <button
+                          onClick={() => void handleSaveConfig()}
+                          disabled={!isAdmin || saving}
+                          className="px-4 py-1.5 bg-[#004782] text-white rounded-lg text-[13px] font-bold shadow-sm hover:bg-[#185fa5] transition-colors disabled:opacity-60"
+                        >
+                          {saving ? '保存中…' : '保存配置'}
+                        </button>
+                        <button
+                          onClick={resetDraft}
+                          className="px-3 py-1.5 border border-[#e2e8f0] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          aria-expanded={sandboxOpen}
+                          aria-controls="rule-engine-sandbox"
+                          onClick={() => setSandboxOpen((open) => !open)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-[#e2e8f0] text-[#424751] rounded-lg text-[13px] font-medium hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          <span className="material-symbols-outlined text-[16px]" aria-hidden="true">science</span>
+                          沙箱测试
+                        </button>
+                        <span className="text-[10.5px] text-slate-500 dark:text-slate-400 sm:ml-auto">
+                          控件可操作，未保存前不会影响现有生效配置
+                        </span>
+                      </div>
                     </div>
                     </div>
                   </div>
@@ -905,7 +1222,14 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       将信源列表从配置卡内移出，对齐原型「② 证据（维度级）」的归属；同一时刻只渲染这一支，
                       DimensionSources 全页因此只出现一次（观察态那支另有一套同名锚点）。
                       监控内容改挂左栏维度项悬浮/详情；信源列表为两态共用的只读信息（todo 9：具体监控内容独立卡片已移除）。 */}
-                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} className="space-y-6">
+                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+                    <ScopeCardHeader
+                      num="②"
+                      titleId="rule-engine-scope-evidence-title"
+                      title="证据"
+                      dimensionName={selectedDim.name}
+                      note={`只展示『${selectedDim.name}』自己的信源与运行轨迹，不与其它维度混排。`}
+                    />
                     <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
                     {/* 运行轨迹与观察态同源（props 逐字一致）：配置态证据区同样需要「这条规则怎么跑」的
                         可解释证据，原型证据区两态均含「运行轨迹」。组件不额外发请求（数据由壳层下发）。 */}
@@ -917,6 +1241,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       inputsError={data.inputsError}
                       selectedSampleId={selectedSampleId}
                     />
+                  </div>
                   </div>
 
                   <AnimatePresence initial={false}>
@@ -1094,6 +1419,19 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               data-testid="rule-engine-tabpanel-global"
               hidden={activeTab !== 'global'}
             >
+              {/* 全局 Tab 说明段（原型 scheme-b-two-tabs.html:814-816）：进入即交代本 Tab 聚合的
+                  四块公有内容及「全页只呈现一份」的口径，避免与维度视图的私有内容混淆 */}
+              <p className="mb-4 max-w-[900px] text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+                「全局规则」集中展示对所有维度生效的公有内容：规则语义说明、信号过滤、全局强制规则与规则矩阵表。此处内容与维度选择无关，全页只呈现一份。
+              </p>
+
+              {/* 配置态提示条（原型 :818-820）：仅在配置模式显示；告知本页可编辑项与保存入口的所在位置 */}
+              {effectiveMode === 'config' && (
+                <div role="note" className="mb-3 rounded-xl border border-dashed border-[#004782]/45 bg-[#eef6ff] px-3.5 py-2.5 text-[12px] text-[#004782] dark:border-blue-300/45 dark:bg-slate-800 dark:text-blue-300">
+                  配置模式已开启：本页表格中的勾选与筛选项可直接编辑；『保存配置 / 取消 / 沙箱测试』入口位于『维度视图』的配置面板。
+                </div>
+              )}
+
               {/* 全局层：四件（规则语义说明 → 信号过滤规则 → 全局强制规则 → 规则矩阵表，顺序依据已批准原型）
                   物理移出维度内容区并只此一处挂载，原因：
                   1) 它们本就与具体维度无关（全局配置/过滤规则/矩阵表是全维度共用），留在维度区会暗示「每个维度各自配置」，
@@ -1105,17 +1443,30 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 aria-label="全维度共用规则"
                 className="space-y-6 min-w-0"
               >
-                {/* 可见标识：说明以下内容对所有维度统一生效，与左侧选中的具体维度无关 */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-[#004782] dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
+                {/* global-head（原型 :824-832）：保留「全维度共用」徽标与既有说明句，补标题
+                    「全维度共用规则」与右侧「N 项」计数；计数与 Tab 徽标同源（实际折叠分节数） */}
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60 sm:p-5">
+                  <span className="inline-flex shrink-0 items-center gap-1 self-start rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-[#004782] dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
                     <span className="material-symbols-outlined text-[14px]" aria-hidden="true">public</span>
                     全维度共用
                   </span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">以下内容对所有监控维度统一生效，与当前选中的具体维度无关。</span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-[16px] font-bold text-[#101d28] dark:text-white">全维度共用规则</h2>
+                    <p className="mt-1 text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400">
+                      以下内容对所有监控维度统一生效，与当前选中的具体维度无关。
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono text-[12px] font-bold text-slate-500 dark:text-slate-400">{globalSectionCount} 项</span>
                 </div>
-                <RuleEngineExplainers mode={effectiveMode} />
-                <SignalFilterSection role={role} mode={effectiveMode} />
-                <RuleEngineForcedRules mode={effectiveMode} />
+
+                {/* 三个折叠分节（原型 :834-840、:899-905、:1008-1014）：默认展开；矩阵表保持独立卡片、不折叠。
+                    子组件以 embedded 渲染（去掉自身卡片描边/底色与标题），标题统一由分节卡 summary 承担 */}
+                {globalSections.map((section, index) => (
+                  <GlobalSectionCard key={section.key} index={index + 1} title={section.title} meta={section.meta}>
+                    {section.body}
+                  </GlobalSectionCard>
+                ))}
+
                 <RuleEngineRuleMatrix
                   dimensions={dimensions}
                   options={data.options}

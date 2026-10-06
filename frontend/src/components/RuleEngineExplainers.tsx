@@ -10,6 +10,13 @@ import {
 export interface RuleEngineExplainersProps {
   /** 观察态与配置态都可读；说明层无 role 门控（viewer 也可读） */
   mode: RuleEngineMode;
+  /**
+   * 嵌入模式：作为全局层「规则语义说明」折叠分节的 body 渲染时置 true（原型
+   * scheme-b-two-tabs.html:834-840）。去掉自身的外层卡片描边/底色与顶部标题
+   * （标题由分节卡 summary 承担，避免同名标题重复），只渲染说明内容。
+   * 不传（默认 false）时行为与内部结构完全不变，保证独立单测不受影响。
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -20,19 +27,25 @@ export interface RuleEngineExplainersProps {
  * 文案集中在 `ruleEngineExplainerCopy.ts`，本文件只负责紧凑渲染：
  * 定义行内常显，例子与当前值收在可展开的 details 里，避免淹没界面。
  */
-export const RuleEngineExplainers: React.FC<RuleEngineExplainersProps> = ({mode}) => {
+export const RuleEngineExplainers: React.FC<RuleEngineExplainersProps> = ({mode, embedded = false}) => {
   return (
     <section
       data-testid="rule-engine-explainers"
       data-mode={mode}
-      className="space-y-3 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 bg-white/80 dark:bg-slate-800/60 p-4 shadow-sm"
+      className={
+        embedded
+          ? 'space-y-3'
+          : 'space-y-3 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 bg-white/80 dark:bg-slate-800/60 p-4 shadow-sm'
+      }
     >
-      <div>
-        <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">规则语义说明</h2>
-        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-          每个配置项一句定义、一个例子与当前值含义；展开「例与当前值」看细节，只读可查。
-        </p>
-      </div>
+      {!embedded && (
+        <div>
+          <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">规则语义说明</h2>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+            每个配置项一句定义、一个例子与当前值含义；展开「例与当前值」看细节，只读可查。
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
         {RULE_ENGINE_EXPLAINERS.map((entry) => (

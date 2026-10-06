@@ -283,18 +283,29 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
     >
       {sampleSelector}
 
-      <div>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">规则矩阵表</h2>
-          <span data-testid="rule-matrix-summary" className="text-[11px] text-slate-500 dark:text-slate-400">
-            共 {options.event_types.length} 个事件类型：{ownedCount} 个由启用维度接管，
-            {options.event_types.length - ownedCount} 个当前无接管
-          </span>
+      {/*
+        矩阵卡内头部（对齐 demo `:1065-1071` 的 `matrix-head`）：徽标 + 标题 + 说明。
+        取舍：矩阵表是「全维度共用」视角，demo 在矩阵卡内也补了一枚「全维度共用」徽标；
+        全局层顶部的同款徽标属于 `rule-engine-global-layer`（RuleEngineView 管理），此处叠加第二枚
+        仅补齐 demo 形态，不改动全局层。计数摘要 `rule-matrix-summary` 保持在标题行右侧。
+      */}
+      <header className="flex flex-wrap items-start gap-3">
+        <span className="inline-flex shrink-0 items-center self-start rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold tracking-wide text-[#004782] dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
+          全维度共用
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <h2 className="font-bold text-[16px] text-[#101d28] dark:text-white">规则矩阵表</h2>
+            <span data-testid="rule-matrix-summary" className="text-[11px] text-slate-500 dark:text-slate-400">
+              共 {options.event_types.length} 个事件类型：{ownedCount} 个由启用维度接管，
+              {options.event_types.length - ownedCount} 个当前无接管
+            </span>
+          </div>
+          <p className="mt-1 text-[11.5px] text-slate-500 dark:text-slate-400">
+            每行一个事件类型，只由一个启用维度接管；无接管事件类型折叠为一行汇总，行详情按需展开，分值来自接管维度的当前生效配置。
+          </p>
         </div>
-        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-          每个事件类型只由一个启用维度接管；下表展示接管该事件类型的规则口径，分值来自该维度的当前生效配置。
-        </p>
-      </div>
+      </header>
 
       {options.event_types.length === 0 ? (
         <p className="rounded-xl border border-slate-200 bg-[#f8fafc] px-3 py-2 text-[12px] text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
@@ -392,6 +403,10 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                   >
                     <td className="px-3 py-2">
                       <span className="font-bold text-slate-800 dark:text-slate-100">{option.label}</span>
+                      {/* 事件 code（demo `.mx-code`）：中文标签旁的 mono 小字，值直接取接口选项的 value，不新增映射表。 */}
+                      <span className="ml-1 font-mono text-[10.5px] font-medium text-slate-400 dark:text-slate-500">
+                        {option.value}
+                      </span>
                       {isHighlighted ? (
                         <span
                           data-testid="rule-matrix-active-marker"
@@ -408,7 +423,11 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
 
                     <td className="px-3 py-2">
                       {owner ? (
-                        <span className="font-bold text-[#004782] dark:text-blue-300">{owner.name}</span>
+                        /* 接管维度胶囊（demo `.dim-chip-sm`：浅底 + 描边 + 全圆角）；
+                           文案保持 owner.name，无接管时文案不变。 */
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-200">
+                          {owner.name}
+                        </span>
                       ) : (
                         <span className="text-slate-400 dark:text-slate-500">当前无启用维度接管</span>
                       )}
@@ -432,17 +451,32 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                       {sources === null ? (
                         <span className="text-slate-400 dark:text-slate-500">—</span>
                       ) : sources.linkedCount > 0 ? (
-                        <span className="text-slate-600 dark:text-slate-300">
-                          已接入 {sources.linkedCount}/{sources.declaredTotal} 个信源
-                          <span className="block font-mono text-[10px] text-slate-400 dark:text-slate-500">
-                            有效信号 {sources.validSignalCount}
+                        /* 信源可用性（demo `:1089`）：主文案 mono「N/M 已接入」+ 圆点状态。
+                           状态严格映射现有数据口径：validSignalCount>0 → 有信号（品牌色点）；
+                           已接入但 0 有效信号 → 无输入（灰点）；不改动统计来源。 */
+                        <span className="flex flex-col gap-y-0.5">
+                          <span className="font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                            {sources.linkedCount}/{sources.declaredTotal} 已接入
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 text-[10.5px] text-slate-500 dark:text-slate-400">
+                            <span
+                              aria-hidden="true"
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                                sources.validSignalCount > 0 ? 'bg-[#007aff] dark:bg-blue-400' : 'bg-slate-300 dark:bg-slate-600'
+                              }`}
+                            />
+                            {sources.validSignalCount > 0 ? '有信号' : '无输入'}
                           </span>
                         </span>
                       ) : sources.declaredTotal > 0 ? (
-                        <span className="text-amber-700 dark:text-amber-300">
-                          无已接入信源
-                          <span className="block text-[10px] text-slate-400 dark:text-slate-500">
-                            声明 {sources.declaredTotal} 个，均未接入
+                        /* 已声明但 0 接入：主文案仍为「0/M 已接入」，状态点用现有文案「无已接入信源」（灰点）。 */
+                        <span className="flex flex-col gap-y-0.5">
+                          <span className="font-mono text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                            0/{sources.declaredTotal} 已接入
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 text-[10.5px] text-slate-500 dark:text-slate-400">
+                            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300 dark:bg-slate-600" />
+                            无已接入信源
                           </span>
                         </span>
                       ) : (
@@ -450,7 +484,10 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                       )}
                     </td>
 
-                    {/* 展开列：行内详情切换按钮（原生 button 天然支持 Enter/Space；深浅色样式齐全）。 */}
+                    {/* 展开列：行内详情切换按钮（原生 button 天然支持 Enter/Space；深浅色样式齐全）。
+                        demo `.row-toggle` 为全圆角胶囊 + chevron；chevron 复用页面现成的
+                        material-symbols-outlined 图标（expand_more/expand_less），随展开态切换方向；
+                        aria-expanded=true 时按 demo 使用选中底色（aria-expanded: 变体）。 */}
                     <td className="px-3 py-2">
                       <button
                         type="button"
@@ -458,9 +495,12 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                         aria-expanded={detailExpanded}
                         aria-controls={detailId}
                         onClick={() => toggleRowDetail(option.value)}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition-colors hover:border-[#004782] hover:text-[#004782] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-300 dark:hover:text-blue-300 dark:focus-visible:ring-blue-300"
+                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:border-[#004782] hover:text-[#004782] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 aria-expanded:border-blue-200 aria-expanded:bg-[#eef6ff] aria-expanded:text-[#004782] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-300 dark:hover:text-blue-300 dark:aria-expanded:border-blue-900 dark:aria-expanded:bg-slate-800 dark:aria-expanded:text-blue-300 dark:focus-visible:ring-blue-300"
                       >
                         {detailExpanded ? '收起' : '展开'}
+                        <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
+                          {detailExpanded ? 'expand_less' : 'expand_more'}
+                        </span>
                       </button>
                     </td>
                   </tr>
@@ -476,14 +516,21 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                     className="border-b border-slate-100 bg-slate-50/70 last:border-0 dark:border-slate-800 dark:bg-slate-950/30"
                   >
                     <td colSpan={5} className="px-3 py-3">
+                      {/*
+                        行内详情（demo `.row-detail` `:1094-1122`，CSS `:500`）：≥1280px 4 列网格、
+                        <1280px 2 列（Tailwind xl=1280px 与 demo 媒体查询断点一一对应）。
+                        demo 的 4 块 = 启用匹配柱 / 关联分值（6 项）/ 分级阈值 / 相关强制规则；
+                        「严重程度分值」按 demo 并入分值块上下文，但独立 testid
+                        `rule-matrix-severity-scores` 保留在此块内（不得删除）。
+                      */}
                       <div
                         data-testid="rule-matrix-row-detail"
                         hidden={!detailExpanded}
-                        className="space-y-2"
+                        className="grid grid-cols-2 gap-4 text-left xl:grid-cols-4"
                       >
-                        <div>
-                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">启用匹配柱</h4>
-                          <div className="mt-0.5 text-slate-600 dark:text-slate-300">
+                        <div className="min-w-0">
+                          <h4 className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200">启用匹配柱</h4>
+                          <div className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">
                             {owner ? (
                               owner.matchColumns.map((column) => MATCH_COLUMN_LABELS[column] ?? column).join('、')
                             ) : (
@@ -492,49 +539,60 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                           </div>
                         </div>
 
-                        <div>
-                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">严重程度分值</h4>
-                          <div className="mt-0.5">
-                            {owner ? (
-                              <span data-testid="rule-matrix-severity-scores" className="flex flex-wrap gap-x-2 font-mono">
-                                {SEVERITY_ORDER.map((key) => (
-                                  <span key={key} className="whitespace-nowrap">
-                                    <span className="text-slate-400 dark:text-slate-500">{SEVERITY_LABELS[key] ?? key}</span>{' '}
-                                    <span className="font-bold text-slate-700 dark:text-slate-200">
-                                      {owner.severityScores[key] ?? '—'}
-                                    </span>
+                        {/* 分值块：严重程度（作为上下文并入）+ 关联分值 6 项两列列表（demo `.assoc-list`）。 */}
+                        <div className="min-w-0">
+                          <h4 className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200">分值明细</h4>
+                          <div className="mt-1 space-y-1.5">
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">严重程度</span>
+                              <div className="mt-0.5">
+                                {owner ? (
+                                  <span data-testid="rule-matrix-severity-scores" className="flex flex-wrap gap-x-2 font-mono text-[11px]">
+                                    {SEVERITY_ORDER.map((key) => (
+                                      <span key={key} className="whitespace-nowrap">
+                                        <span className="text-slate-400 dark:text-slate-500">{SEVERITY_LABELS[key] ?? key}</span>{' '}
+                                        <span className="font-bold text-slate-700 dark:text-slate-200">
+                                          {owner.severityScores[key] ?? '—'}
+                                        </span>
+                                      </span>
+                                    ))}
                                   </span>
-                                ))}
+                                ) : (
+                                  <span className="text-slate-400 dark:text-slate-500">—</span>
+                                )}
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
+                                关联分值（6 项，取最高计入）
                               </span>
-                            ) : (
-                              <span className="text-slate-400 dark:text-slate-500">—</span>
-                            )}
+                              <div className="mt-0.5">
+                                {owner ? (
+                                  <span
+                                    data-testid="rule-matrix-association-scores"
+                                    className="grid grid-cols-1 gap-x-4 gap-y-0.5 font-mono text-[11px] sm:grid-cols-2"
+                                  >
+                                    {groupAssociationScores(owner.associationScores).map((group) => (
+                                      <span
+                                        key={group.label}
+                                        className="flex items-baseline justify-between gap-2 border-b border-dashed border-slate-200 pb-0.5 dark:border-slate-700"
+                                      >
+                                        <span className="truncate text-slate-400 dark:text-slate-500">{group.label}</span>{' '}
+                                        <span className="shrink-0 font-bold text-slate-700 dark:text-slate-200">{group.value}</span>
+                                      </span>
+                                    ))}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400 dark:text-slate-500">—</span>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         </div>
 
-                        <div>
-                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">
-                            关联分值（6 项，取最高计入）
-                          </h4>
-                          <div className="mt-0.5">
-                            {owner ? (
-                              <span data-testid="rule-matrix-association-scores" className="flex flex-wrap gap-x-2 font-mono">
-                                {groupAssociationScores(owner.associationScores).map((group) => (
-                                  <span key={group.label} className="whitespace-nowrap">
-                                    <span className="text-slate-400 dark:text-slate-500">{group.label}</span>{' '}
-                                    <span className="font-bold text-slate-700 dark:text-slate-200">{group.value}</span>
-                                  </span>
-                                ))}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 dark:text-slate-500">—</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div>
-                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">分级阈值</h4>
-                          <div className="mt-0.5">
+                        <div className="min-w-0">
+                          <h4 className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200">分级阈值</h4>
+                          <div className="mt-1">
                             {owner ? (
                               <span className="flex flex-wrap gap-x-2 whitespace-nowrap font-mono">
                                 <span>
@@ -556,9 +614,9 @@ export const RuleEngineRuleMatrix: React.FC<RuleEngineRuleMatrixProps> = ({
                           </div>
                         </div>
 
-                        <div>
-                          <h4 className="text-[10px] font-bold text-slate-400 dark:text-slate-500">相关强制规则</h4>
-                          <div className="mt-0.5">
+                        <div className="min-w-0">
+                          <h4 className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200">相关强制规则</h4>
+                          <div className="mt-1">
                             {forcedRules.length === 0 ? (
                               <span className="text-slate-400 dark:text-slate-500">无</span>
                             ) : (

@@ -207,6 +207,25 @@ const clickSolvePreviewWhenReady = async () => {
 };
 
 /**
+ * 等待强制规则只读行渲染（慢环境时序加固）。
+ *
+ * `forced-rule-row` 依赖 `api.globalConfig.get()` 异步解析后才出现；`findBy*` 默认
+ * 超时仅 1000ms，在 Docker 构建（36 个测试文件并发、CPU 调度更慢）下会先于数据就绪
+ * 而超时，表现为 `Unable to find an element by: [data-testid="forced-rule-row"]`
+ * 的假失败（本机全量通过、镜像内 2 failed）。此处定点放宽到 5000ms——与 vitest
+ * 默认 testTimeout 对齐；若环境慢到 5s 仍未就绪，测试超时已由 vitest 兜底，更大值
+ * 无意义。只放宽等待上限，不改变任何断言。
+ */
+const waitForForcedRuleRow = () => screen.findByTestId('forced-rule-row', {}, {timeout: 5000});
+
+/** 等待并展开首条强制规则只读行（缺陷 C 回归与窗口用例共用，避免等待条件再次分叉）。 */
+const expandFirstForcedRuleRow = async () => {
+  const row = await waitForForcedRuleRow();
+  fireEvent.click(within(row).getByTestId('forced-rule-expand'));
+  return row;
+};
+
+/**
  * 勾选/取消壳层「匹配柱」里的某一柱。
  * 匹配柱标签内嵌 material 图标文本，`getByLabelText` 会把图标连字算进标签文本，
  * 因此定位到 label 元素后直接点击其内部 checkbox（与用户点击标签等价）。
@@ -498,8 +517,7 @@ describe('配置态评分与阈值可视化编辑（todo 7）', () => {
     });
 
     renderAdminConfig([naturalDimension()]);
-    const row = await screen.findByTestId('forced-rule-row');
-    fireEvent.click(within(row).getByTestId('forced-rule-expand'));
+    const row = await expandFirstForcedRuleRow();
 
     // 第一步：合法编辑（只改原因）→ 全局草稿仍有效，解算预览可用，且不显示全局草稿错误
     fireEvent.change(within(row).getByLabelText('原因'), {target: {value: '合法编辑后的原因'}});
@@ -681,12 +699,6 @@ describe('解算预览：全局草稿门控（F2 修复轮次 2）', () => {
       effective: {...base.effective, forced_rules: [seededRule]},
       defaults: {forced_rules: [seededRule]},
     };
-  };
-
-  const expandFirstForcedRuleRow = async () => {
-    const row = await screen.findByTestId('forced-rule-row');
-    fireEvent.click(within(row).getByTestId('forced-rule-expand'));
-    return row;
   };
 
   it('窗口 1：全局配置仍在加载时，解算预览禁用、零 /test 请求，并以 role=alert 说明「全局配置未加载」', async () => {

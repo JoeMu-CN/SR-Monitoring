@@ -125,7 +125,13 @@ describe('规则引擎观察/配置双态壳层', () => {
     fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
     const globalPanel = screen.getByTestId('rule-engine-tabpanel-global');
     const filterSection = (await screen.findByTestId('signal-filter-field-keywords')).closest('section') as HTMLElement;
-    expect(within(filterSection).getByText('信号过滤规则')).toBeInTheDocument();
+    // align-T 迁移：SignalFilter embedded 后不再自带标题「信号过滤规则」，标题改由全局层
+    // 分节卡 summary 承担。断言改为「分节卡存在 + summary 标题正确 + 分节 body 内含过滤字段
+    // （section 归属该卡）」，语义等价于原「该区块内可读到其标题」。
+    const filterCard = filterSection.closest('details') as HTMLElement;
+    expect(filterCard).not.toBeNull();
+    expect(filterCard.querySelector('summary') as HTMLElement).toHaveTextContent('信号过滤规则');
+    expect(filterCard).toContainElement(filterSection);
     // 写控件可用（编辑输入框在全局面板内渲染）
     expect((await within(globalPanel).findAllByRole('textbox')).length).toBeGreaterThan(0);
   });

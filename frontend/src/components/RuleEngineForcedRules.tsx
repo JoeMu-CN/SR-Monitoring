@@ -99,6 +99,13 @@ interface RuleOption {
 export interface RuleEngineForcedRulesProps {
   /** 由壳组件控制：config = 可编辑编辑器；observation = 只读列表（复用 PlainRuleCard） */
   mode: RuleEngineMode;
+  /**
+   * 嵌入模式：作为全局层「全局强制规则」折叠分节的 body 渲染时置 true（原型
+   * scheme-b-two-tabs.html:1008-1014）。去掉外层卡片描边/底色与顶部标题（标题由
+   * 分节卡 summary 承担，避免重复），只渲染规则内容；观察态只读列表与配置态编辑器
+   * 两种形态都响应。不传（默认 false）时行为与内部结构完全不变，保证独立单测不受影响。
+   */
+  embedded?: boolean;
 }
 
 /**
@@ -283,7 +290,7 @@ const PlainRuleCard: React.FC<PlainRuleCardProps> = ({rule, eventLabel, subtypeL
  * （DELETE 会连带删除全局评分与阈值）。任何会移除当前生效规则的提交都带
  * `?confirm_disable_forced_rules=true`（由壳组件传入的 saveGlobalConfig 落到查询参数）。
  */
-export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mode}) => {
+export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mode, embedded = false}) => {
   const {
     role,
     globalConfig,
@@ -533,11 +540,14 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   };
 
   const sectionClasses = 'rounded-xl bg-[#f8fafc] dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 p-3';
+  // 嵌入模式（全局层折叠分节的 body）：去掉外层卡片类；分节 body 容器已提供 padding 与分隔线，
+  // 内层不需要第二层描边/底色。非嵌入时与原来逐字一致。
+  const cardClasses = embedded ? '' : sectionClasses;
 
   // 加载/错误门控对两种模式共用：globalConfig 未就绪时观察态同样要给出可访问反馈。
   if (globalConfigError && globalConfig === null) {
     return (
-      <section role="alert" data-testid="rule-engine-forced-rules" data-mode={mode} className={`${sectionClasses} text-[12px] text-red-700 dark:text-red-300`}>
+      <section role="alert" data-testid="rule-engine-forced-rules" data-mode={mode} className={`${cardClasses} text-[12px] text-red-700 dark:text-red-300`}>
         <p>全局强制规则加载失败：{globalConfigError}</p>
         <button type="button" onClick={() => void refreshGlobalConfig()} className={`${SECONDARY_BUTTON_CLASSES} mt-2`}>
           重试
@@ -548,8 +558,8 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
 
   if (globalConfig === null) {
     return (
-      <section data-testid="rule-engine-forced-rules" data-mode={mode} className={sectionClasses}>
-        <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">强制规则</h3>
+      <section data-testid="rule-engine-forced-rules" data-mode={mode} className={cardClasses}>
+        {!embedded && <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-2">强制规则</h3>}
         <p className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
           <span className="sr-only">全局强制规则加载中…</span>
         </p>
@@ -564,10 +574,10 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   // Tab 无关的数据扰动解算预览的草稿门控。数据与编辑器初始值同源（effective 层 + 同一过滤）。
   if (mode === 'observation') {
     return (
-      <section data-testid="rule-engine-forced-rules" data-mode={mode} className={sectionClasses}>
+      <section data-testid="rule-engine-forced-rules" data-mode={mode} className={cardClasses}>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-          <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">强制规则（全局表）</h3>
-          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+          {!embedded && <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">强制规则（全局表）</h3>}
+          <span className="ml-auto text-[10px] text-slate-400 dark:text-slate-500">
             全局层 {globalConfig.source === 'configured' ? '已自定义' : '默认'}
           </span>
         </div>
@@ -617,13 +627,15 @@ export const RuleEngineForcedRules: React.FC<RuleEngineForcedRulesProps> = ({mod
   const dirtyLabel = dirty ? '有未保存的更改' : globalConfigError ? '尚未与服务器同步' : '与服务器一致';
 
   return (
-    <section data-testid="rule-engine-forced-rules" data-mode={mode} className={sectionClasses}>
+    <section data-testid="rule-engine-forced-rules" data-mode={mode} className={cardClasses}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">
-          强制规则（全局表）
-          {canEdit && <span className="ml-1 font-normal text-slate-400 dark:text-slate-500">· 顺序即优先级，越靠前越先命中</span>}
-        </h3>
-        <span className="text-[10px] text-slate-400 dark:text-slate-500">
+        {!embedded && (
+          <h3 className="text-[12px] font-bold text-[#424751] dark:text-slate-300">
+            强制规则（全局表）
+            {canEdit && <span className="ml-1 font-normal text-slate-400 dark:text-slate-500">· 顺序即优先级，越靠前越先命中</span>}
+          </h3>
+        )}
+        <span className="ml-auto text-[10px] text-slate-400 dark:text-slate-500">
           全局层 {globalConfig.source === 'configured' ? '已自定义' : '默认'}
           {canEdit && ` · ${matchesDefaults ? '与系统默认一致' : '与系统默认不同'}`}
           {canEdit && ` · ${dirtyLabel}`}

@@ -193,7 +193,10 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
       ],
     });
     expect(within(row('weather')).getByText('无已接入信源')).toBeInTheDocument();
-    expect(within(row('weather')).getByText('声明 1 个，均未接入')).toBeInTheDocument();
+    // align-T 迁移：表层文案由「声明 1 个，均未接入」改为「0/1 已接入」+ 灰点状态。
+    // 「0/1 已接入」等价承载「声明 1 个、均未接入」的事实（接入数 0 / 声明数 1），
+    // 状态语义由上一行的「无已接入信源」承担；数据口径（summarizeSources）未变。
+    expect(within(row('weather')).getByText('0/1 已接入')).toBeInTheDocument();
   });
 
   it('列覆盖分值摘要/信源可用性，其余口径在可展开的行内详情中', () => {
@@ -213,9 +216,13 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
     const scoreSummary = within(weatherRow).getByTestId('rule-matrix-score-summary');
     expect(scoreSummary).toHaveTextContent('严重 35·28·20·10');
     expect(scoreSummary).toHaveTextContent('关联最高 30');
-    // 信源可用性列仍在表层单元格
-    expect(within(weatherRow).getByText('已接入 1/2 个信源')).toBeInTheDocument();
-    expect(within(weatherRow).getByText('有效信号 12')).toBeInTheDocument();
+    // 信源可用性列仍在表层单元格：新形态为「N/M 已接入」（mono 主文案）+ 圆点状态。
+    // align-T 迁移：具体有效信号数（12）已不在表层与行内详情中渲染，等价信息由
+    // 「有信号」状态点承载（validSignalCount>0 → 品牌色圆点），故以状态语义断言替代，
+    // 并核对圆点确为「信号存在」的品牌色形态而非灰点。
+    expect(within(weatherRow).getByText('1/2 已接入')).toBeInTheDocument();
+    const weatherSignalState = within(weatherRow).getByText('有信号');
+    expect(weatherSignalState.querySelector('span[aria-hidden="true"]')).toHaveClass('bg-[#007aff]');
 
     // 行内详情默认折叠（hidden）不可见；点击该行「展开」后才可见
     expect(rowDetail('weather')).not.toBeVisible();
@@ -252,7 +259,7 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
     const forcedRuleItem = within(rowDetail('geopolitical')).getByTestId('rule-matrix-forced-sanctions_geopolitical_entity_hit');
     expect(forcedRuleItem).toHaveTextContent('sanctions_geopolitical_entity_hit');
     expect(forcedRuleItem).toHaveTextContent('P1');
-    expect(within(geopoliticalRow).getByText('已接入 1/1 个信源')).toBeInTheDocument();
+    expect(within(geopoliticalRow).getByText('1/1 已接入')).toBeInTheDocument();
   });
 
   it('行来自接口选项（数据驱动，不是静态伪数据）：选项变少时行数随之变化', () => {

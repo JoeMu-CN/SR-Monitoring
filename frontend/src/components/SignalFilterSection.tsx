@@ -7,6 +7,13 @@ interface SignalFilterSectionProps {
   role: 'viewer' | 'admin';
   /** 观察态只读展示说明与当前值；配置态（且 admin）才渲染编辑控件 */
   mode: RuleEngineMode;
+  /**
+   * 嵌入模式：作为全局层「信号过滤规则」折叠分节的 body 渲染时置 true（原型
+   * scheme-b-two-tabs.html:899-905）。去掉外层卡片描边/底色与顶部标题块（图标、
+   * 标题、状态徽标与说明句——分节卡 summary 已承担标题），只渲染过滤内容。
+   * 不传（默认 false）时行为与内部结构完全不变，保证独立单测不受影响。
+   */
+  embedded?: boolean;
 }
 
 /** 候选池与 backend/app/signals/relevance.py 的 `_HIGH_IMPACT_KEYWORDS` 默认值逐项一致；仅作「可加入」提示，已选一律以 API 数组为准。 */
@@ -123,7 +130,7 @@ const FilterTagField: React.FC<FilterTagFieldProps> = ({
  * 信号过滤规则（LLM 前确定性预筛）配置区块：高影响关键词 / 重点关注国家可编辑
  * （PUT /api/v1/signals/filter-config），清单类信源只读；分态门控，读取失败只告警不伪装。
  */
-export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, mode}) => {
+export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, mode, embedded = false}) => {
   const canEdit = role === 'admin' && mode === 'config';
   const [config, setConfig] = useState<SignalFilterConfig | null>(null);
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -195,35 +202,55 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, m
 
   if (loading) {
     return (
-      <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60">
+      <section className={embedded ? '' : 'rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60'}>
         <div className="flex items-center gap-2 text-[12px] text-slate-500"><span className="sr-only">信号过滤规则加载中…</span></div>
       </section>
     );
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 text-[#101d28] shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
-      <div className="flex items-start gap-3">
-        <span className="material-symbols-outlined text-[22px] text-[#004782] mt-0.5">filter_alt</span>
-        <div className="flex-1">
-          <h3 className="text-[14px] font-bold text-[#101d28] dark:text-white">
-            信号过滤规则
-            {config && (
-              <span className={`ml-2 text-[10px] font-bold rounded-full px-2 py-0.5 align-middle ${sourceBadgeClass}`}>
-                {config.source === 'configured' ? '已自定义' : '默认规则'}
-              </span>
-            )}
-            {mode === 'observation' && (
-              <span className="ml-2 text-[10px] font-bold rounded-full px-2 py-0.5 align-middle bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                只读查看
-              </span>
-            )}
-          </h3>
-          <p className="text-[11px] leading-relaxed text-pretty text-slate-500 dark:text-slate-400 mt-1">
-            {renderExplainerCopy(SIGNAL_FILTER_EXPLAINER_COPY)}
-          </p>
+    <section className={embedded
+      ? 'space-y-4 text-[#101d28] dark:text-slate-200'
+      : 'space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 text-[#101d28] shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60'}
+    >
+      {embedded ? (
+        // 嵌入模式：只保留功能性状态徽标（数据来源「已自定义/默认规则」、观察态「只读查看」），
+        // 它们是被嵌入内容的一部分而非标题；图标、标题与说明句由分节卡 summary/meta 承担。
+        <div className="flex flex-wrap items-center gap-2">
+          {config && (
+            <span className={`text-[10px] font-bold rounded-full px-2 py-0.5 ${sourceBadgeClass}`}>
+              {config.source === 'configured' ? '已自定义' : '默认规则'}
+            </span>
+          )}
+          {mode === 'observation' && (
+            <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+              只读查看
+            </span>
+          )}
         </div>
-      </div>
+      ) : (
+        <div className="flex items-start gap-3">
+          <span className="material-symbols-outlined text-[22px] text-[#004782] mt-0.5">filter_alt</span>
+          <div className="flex-1">
+            <h3 className="text-[14px] font-bold text-[#101d28] dark:text-white">
+              信号过滤规则
+              {config && (
+                <span className={`ml-2 text-[10px] font-bold rounded-full px-2 py-0.5 align-middle ${sourceBadgeClass}`}>
+                  {config.source === 'configured' ? '已自定义' : '默认规则'}
+                </span>
+              )}
+              {mode === 'observation' && (
+                <span className="ml-2 text-[10px] font-bold rounded-full px-2 py-0.5 align-middle bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                  只读查看
+                </span>
+              )}
+            </h3>
+            <p className="text-[11px] leading-relaxed text-pretty text-slate-500 dark:text-slate-400 mt-1">
+              {renderExplainerCopy(SIGNAL_FILTER_EXPLAINER_COPY)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {loadFailed && (
         <div role="alert" className="text-[12px] rounded-lg px-3 py-2 text-red-700 bg-red-50 border border-red-200 dark:text-red-300 dark:bg-red-950/30 dark:border-red-900">过滤配置加载失败，暂时无法确认生效的关键词与重点国家；请刷新页面后重试。</div>

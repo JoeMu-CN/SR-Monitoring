@@ -327,19 +327,25 @@ describe('规则引擎观察/配置双态：模式感知壳层挂载', () => {
     // 壳层关键文案：配置面板标题、维度规则 ID、提醒失效只读说明。
     // 维度规则 ID 限定在配置面板内查找：维度头卡（rule-engine-dimension-header，两种模式常驻）
     // 也渲染同一枚 `ID: {ruleId}` 文本，全局 getByText 会歧义；断言意图（配置卡头部展示规则 ID）不变。
-    expect(screen.getByText('地缘政治与安全 规则配置')).toBeInTheDocument();
+    // align-T 迁移：卡头标题按 demo 改为「维度级配置 · {name}」，限定在配置面板内断言。
+    expect(within(configPanel).getByText('维度级配置 · 地缘政治与安全')).toBeInTheDocument();
     expect(within(configPanel).getByText('ID: geopolitical-v1')).toBeInTheDocument();
     expect(screen.getByText('提醒失效')).toBeInTheDocument();
     const link = screen.getByRole('link', {name: '信息源'});
     expect(link).toHaveAttribute('href', '/sources');
 
-    // 配置态沙箱入口出现（写控件细节由各子组件测试与 shell.test 覆盖）
-    expect(screen.getByRole('button', {name: /沙箱测试/})).toBeInTheDocument();
+    // 配置态沙箱入口出现（写控件细节由各子组件测试与 shell.test 覆盖）。
+    // align-T 迁移：配置卡底新增「沙箱测试」按钮后全页有双入口（卡底 + 左栏开关），
+    // 必须限定在 rule-engine-config-panel 内选择，避免全局正则多重匹配。
+    expect(within(configPanel).getByRole('button', {name: /沙箱测试/})).toBeInTheDocument();
     // 信号过滤区块已迁入全局面板（常驻、只切 hidden）：切到「全局规则」Tab 后断言；
-    // 标题限定在 SignalFilterSection 根节点内，避免与 Explainers 说明卡同名标题歧义
+    // align-T 迁移：embedded 模式去掉自身标题，改为断言全局层分节卡 summary 标题 + body 归属。
     fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
     const filterSection = (await screen.findByTestId('signal-filter-field-keywords')).closest('section') as HTMLElement;
-    expect(within(filterSection).getByText('信号过滤规则')).toBeInTheDocument();
+    const filterCard = filterSection.closest('details') as HTMLElement;
+    expect(filterCard).not.toBeNull();
+    expect(filterCard.querySelector('summary') as HTMLElement).toHaveTextContent('信号过滤规则');
+    expect(filterCard).toContainElement(filterSection);
   });
 
   it('viewer 不能切换：按钮禁用、点击无效、始终停留在观察态', () => {

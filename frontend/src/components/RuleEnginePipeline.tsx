@@ -269,7 +269,20 @@ export interface RuleEnginePipelineProps {
   inputs: DimensionInputsRead | null;
   inputsError: string;
   selectedSampleId: number | null;
+  /**
+   * 嵌入模式（#18）：作为「② 证据」卡内的运行轨迹块渲染时置 true——去掉外层整卡描边/底色/阴影，
+   * 头部改为 demo 的内嵌块形态（「运行轨迹」标题 + 「{N} 阶段」计数 + 说明行）；默认 false
+   * 保持原独立卡形态，既有调用方与既有测试不受影响（向后兼容）。
+   */
+  embedded?: boolean;
 }
+
+/** 流水线固定七个阶段（①—⑦），用于嵌入块头的「N 阶段」计数；增删阶段时需同步更新。 */
+const PIPELINE_STAGE_COUNT = 7;
+
+/** 流水线说明行：嵌入与非嵌入两种形态共用同一句，避免两处文案漂移。 */
+const PIPELINE_SUBTITLE =
+  '一条信号如何变成 P1/P2 风险：信号输入 → 事件路由 → 匹配柱 → 得分构成 → 总分 → 封顶/强制规则 → 输出等级';
 
 export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
   dimension,
@@ -278,6 +291,7 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
   inputs,
   inputsError,
   selectedSampleId,
+  embedded = false,
 }) => {
   // motion 的 useReducedMotion 类型为 boolean | null：未知时按"不减少"处理，显式 true 才静止。
   const reduceMotion = useReducedMotion() === true;
@@ -287,7 +301,10 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
       <section
         role="alert"
         data-testid="rule-engine-pipeline"
-        className="min-w-0 rounded-2xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+        data-embedded={embedded ? 'true' : 'false'}
+        className={`min-w-0 border-red-200 bg-red-50 text-[12px] text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300 ${
+          embedded ? 'rounded-xl border p-3' : 'rounded-2xl border p-4'
+        }`}
       >
         运行轨迹加载失败：{traceError}
       </section>
@@ -299,9 +316,16 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
       <section
         data-testid="rule-engine-pipeline"
         data-available="false"
-        className="min-w-0 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60"
+        data-embedded={embedded ? 'true' : 'false'}
+        className={
+          embedded
+            ? 'min-w-0'
+            : 'min-w-0 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60'
+        }
       >
-        <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">规则运行流水线</h2>
+        <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">
+          {embedded ? '运行轨迹' : '规则运行流水线'}
+        </h2>
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-slate-400 dark:text-slate-500">
           <span className="sr-only">运行轨迹加载中…</span>
         </p>
@@ -410,21 +434,48 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
       data-testid="rule-engine-pipeline"
       data-available={available ? 'true' : 'false'}
       data-reduced-motion={reduceMotion ? 'true' : 'false'}
-      className="min-w-0 space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
+      data-embedded={embedded ? 'true' : 'false'}
+      className={
+        embedded
+          ? // 嵌入形态（#18）：透明底以呈现 demo 的内嵌块形态，只在深色下给一层极浅的层次底。
+            // 说明：既有 e2e 以本节点浅/深计算背景色差证明 dark 生效（rule-engine-gauge-overlap.spec.ts），
+            // 深色下的这层浅底同时承载该契约，避免内嵌后卡背景消失导致该回归误报。
+            'min-w-0 space-y-3 bg-transparent dark:bg-slate-950/30'
+          : 'min-w-0 space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60'
+      }
     >
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">规则运行流水线</h2>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-            一条信号如何变成 P1/P2 风险：信号输入 → 事件路由 → 匹配柱 → 得分构成 → 总分 → 封顶/强制规则 → 输出等级
-          </p>
+      {embedded ? (
+        /* 嵌入块头（demo scheme-b-two-tabs.html:791-796 的 block-head + count-chip + block-note）：
+           「运行轨迹」标题 +「{N} 阶段」计数 + 真实样本徽标 + 说明行；不再重复整卡标题与卡框。 */
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-[12.5px] font-bold text-[#101d28] dark:text-white">运行轨迹</h3>
+            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-mono text-[10.5px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+              {PIPELINE_STAGE_COUNT} 阶段
+            </span>
+            <span className="ml-auto shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-[#424751] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {available
+                ? `真实样本${selectedSampleId ? ` #${selectedSampleId}` : '（最近一条）'}`
+                : '当前无真实样本'}
+            </span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{PIPELINE_SUBTITLE}</p>
         </div>
-        <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-[#424751] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          {available
-            ? `真实样本${selectedSampleId ? ` #${selectedSampleId}` : '（最近一条）'}`
-            : '当前无真实样本'}
-        </span>
-      </div>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-bold text-[#101d28] dark:text-white">规则运行流水线</h2>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              {PIPELINE_SUBTITLE}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-bold text-[#424751] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            {available
+              ? `真实样本${selectedSampleId ? ` #${selectedSampleId}` : '（最近一条）'}`
+              : '当前无真实样本'}
+          </span>
+        </div>
+      )}
 
       {!available && (
         <div

@@ -162,6 +162,7 @@ const renderPipeline = (
     inputsError?: string;
     dimension?: MonitoringDimension;
     selectedSampleId?: number | null;
+    embedded?: boolean;
   } = {},
 ) =>
   render(
@@ -172,6 +173,7 @@ const renderPipeline = (
       inputs={options.inputs === undefined ? inputs() : options.inputs}
       inputsError={options.inputsError ?? ''}
       selectedSampleId={options.selectedSampleId ?? null}
+      embedded={options.embedded}
     />,
   );
 
@@ -485,5 +487,52 @@ describe('规则引擎观察态流水线：响应式、深色模式与减少动�
 
     expect(screen.getByTestId('rule-engine-pipeline')).toHaveAttribute('data-reduced-motion', 'false');
     expect(container.querySelectorAll('[style*="translate"]').length).toBeGreaterThan(0);
+  });
+});
+
+describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独立卡）', () => {
+  it('embedded=true：无整卡描边/阴影/模糊，头部为「运行轨迹」+「7 阶段」块头，阶段语义不变', () => {
+    renderPipeline({embedded: true});
+
+    const root = screen.getByTestId('rule-engine-pipeline');
+    expect(root).toHaveAttribute('data-embedded', 'true');
+    // 不再是第二张完整独立仪表卡
+    expect(root.className).not.toContain('rounded-2xl');
+    expect(root.className).not.toContain('shadow-sm');
+    expect(root.className).not.toContain('backdrop-blur-md');
+    // demo 内嵌块头形态（原型 block-head + count-chip）
+    expect(screen.getByText('运行轨迹')).toBeInTheDocument();
+    expect(screen.getByText('7 阶段')).toBeInTheDocument();
+    expect(screen.queryByText('规则运行流水线')).not.toBeInTheDocument();
+    // 七阶段与真实数据全部保留（加载/错误/轨迹语义未被改变）
+    for (const label of STAGE_LABELS) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId('rule-engine-pipeline-level')).toHaveAttribute('data-level', 'P1');
+    expect(screen.getByTestId('rule-engine-pipeline-composition-severity')).toHaveAttribute('data-value', '35');
+    expect(screen.getByText('真实样本（最近一条）')).toBeInTheDocument();
+  });
+
+  it('embedded=true 且 trace 不可用：保留无样本引导与七阶段占位，仍无整卡外壳', () => {
+    renderPipeline({trace: emptyTrace(), embedded: true});
+
+    const root = screen.getByTestId('rule-engine-pipeline');
+    expect(root).toHaveAttribute('data-available', 'false');
+    expect(root.className).not.toContain('rounded-2xl');
+    expect(screen.getByTestId('rule-engine-pipeline-guidance')).toHaveTextContent(/当前无真实样本，请选择样例事件/);
+    for (const label of STAGE_LABELS) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  it('embedded 缺省（false）：保持原独立卡形态向后兼容', () => {
+    renderPipeline();
+
+    const root = screen.getByTestId('rule-engine-pipeline');
+    expect(root).toHaveAttribute('data-embedded', 'false');
+    expect(root.className).toContain('rounded-2xl');
+    expect(root.className).toContain('shadow-sm');
+    expect(screen.getByText('规则运行流水线')).toBeInTheDocument();
+    expect(screen.queryByText('7 阶段')).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import {useSearchParams} from 'react-router-dom';
-import {api, ApiError, mapSupplierListItem, SUPPLIER_PAGE_SIZE, type SupplierListResponse} from '../api';
+import {api, ApiError, mapSupplierListItem, type SupplierCollection} from '../api';
 import {isSupplierStatusFilter, supplierSearchParams, type SupplierStatusFilter} from '../routes';
 import type {Supplier} from '../types';
 import {SupplierRow} from './SupplierRow';
@@ -37,19 +37,17 @@ export const SuppliersView = ({
 }: SuppliersViewProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestSequence = useRef(0);
-  const [data, setData] = useState<SupplierListResponse | null>(null);
+  const [data, setData] = useState<SupplierCollection | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
 
-  const rawPage = searchParams.get('page');
   const query = (searchParams.get('q') ?? '').trim();
   const statusFilter: SupplierStatusFilter = isSupplierStatusFilter(searchParams.get('status'))
     ? (searchParams.get('status') as SupplierStatusFilter)
     : 'all';
-  const parsedPage = Number(rawPage);
-  const page = rawPage !== null && /^[1-9]\d*$/.test(rawPage) && Number.isSafeInteger(parsedPage) ? parsedPage : 1;
-  const canonicalSearch = supplierSearchParams(query, statusFilter, page).toString();
+  // 单页展示全部供应商：规范 URL 不含 page，旧书签里的 page 会被规范化替换掉，不再限制数据。
+  const canonicalSearch = supplierSearchParams(query, statusFilter).toString();
   const isCanonical = searchParams.toString() === canonicalSearch;
 
   const [draftQuery, setDraftQuery] = useState(query);
@@ -65,7 +63,7 @@ export const SuppliersView = ({
   useEffect(() => {
     if (draftQuery === query) return;
     const timer = setTimeout(
-      () => setSearchParams(supplierSearchParams(draftQuery.trim(), statusFilter, 1), {replace: true}),
+      () => setSearchParams(supplierSearchParams(draftQuery.trim(), statusFilter), {replace: true}),
       SEARCH_DEBOUNCE_MS,
     );
     return () => clearTimeout(timer);
@@ -79,7 +77,7 @@ export const SuppliersView = ({
     setError(null);
     setData(null);
 
-    void api.supplierPage(query, statusFilter, (page - 1) * SUPPLIER_PAGE_SIZE)
+    void api.supplierAll(query, statusFilter)
       .then((response) => {
         if (requestSequence.current !== sequence) return;
         setData(response);
@@ -98,26 +96,15 @@ export const SuppliersView = ({
     return () => {
       if (requestSequence.current === sequence) requestSequence.current += 1;
     };
-  }, [isCanonical, onRequestError, page, query, refreshToken, retryKey, statusFilter]);
-
-  // 末页记录被删光后回退到仍然存在的最后一页，避免停在永远为空的页码上。
-  useEffect(() => {
-    if (data === null || data.items.length > 0 || data.total === 0 || data.offset < data.total) return;
-    const lastPage = Math.max(1, Math.ceil(data.total / SUPPLIER_PAGE_SIZE));
-    if (lastPage !== page) setSearchParams(supplierSearchParams(query, statusFilter, lastPage), {replace: true});
-  }, [data, page, query, setSearchParams, statusFilter]);
+  }, [isCanonical, onRequestError, query, refreshToken, retryKey, statusFilter]);
 
   const applyStatus = (nextStatus: SupplierStatusFilter) => {
-    if (nextStatus !== statusFilter) setSearchParams(supplierSearchParams(query, nextStatus, 1));
+    if (nextStatus !== statusFilter) setSearchParams(supplierSearchParams(query, nextStatus));
   };
 
-  const applyPage = (nextPage: number) => setSearchParams(supplierSearchParams(query, statusFilter, nextPage));
-
   const suppliers: Supplier[] = data ? data.items.map(mapSupplierListItem) : [];
-  const firstItem = data === null || data.items.length === 0 ? 0 : data.offset + 1;
-  const lastItem = data === null ? 0 : data.offset + data.items.length;
-  const total = data?.total ?? 0;
-  const hasNextPage = data !== null && lastItem < data.total;
+  const lastItem = data?.items.length ?? 0;
+  const total = data?.total ?? lastItem;
   const status = error instanceof ApiError ? error.status : null;
 
   return (
@@ -228,28 +215,9 @@ export const SuppliersView = ({
           </table>
         </div>
 
-        <nav aria-label="供应商分页" className="flex items-center justify-between border-t border-[#c2c6d2] bg-[#f7f9ff] p-3.5 text-[12px] text-[#424751] dark:bg-slate-800/50 dark:text-slate-400">
-          <div aria-live="polite">显示 {firstItem}-{lastItem}，共 {total.toLocaleString()} 条</div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => applyPage(page - 1)}
-              disabled={page <= 1}
-              className="rounded-md border border-[#c2c6d2] px-3 py-1 font-medium text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              上一页
-            </button>
-            <span className="font-mono">第 {page} 页</span>
-            <button
-              type="button"
-              onClick={() => applyPage(page + 1)}
-              disabled={!hasNextPage}
-              className="rounded-md border border-[#c2c6d2] px-3 py-1 font-medium text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              下一页
-            </button>
-          </div>
-        </nav>
+        <div aria-live="polite" className="border-t border-[#c2c6d2] bg-[#f7f9ff] p-3.5 text-[12px] text-[#424751] dark:bg-slate-800/50 dark:text-slate-400">
+          显示 {lastItem === 0 ? 0 : 1}-{lastItem}，共 {total.toLocaleString()} 条
+        </div>
       </div>
     </div>
   );

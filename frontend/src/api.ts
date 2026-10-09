@@ -332,9 +332,16 @@ export interface SupplierListResponse {
   offset: number;
 }
 
+/** 名录单页展示所需的聚合结果：total 沿用服务端同一筛选口径的总数。 */
+export interface SupplierCollection {
+  items: SupplierListItem[];
+  total: number;
+}
+
 export type SupplierStatusFilter = 'all' | 'normal' | 'high_risk' | 'paused';
 
-export const SUPPLIER_PAGE_SIZE = 20;
+// 后端 GET /api/v1/suppliers 的 limit 上限为 100（Query(le=100)），全量加载按该上限分页拉取。
+export const SUPPLIER_MAX_LIMIT = 100;
 
 // 监控状态在后端只有 enabled 与 has_current_alert 两个维度，这里固定四种前端语义的映射。
 const supplierStatusFilterParams: Record<SupplierStatusFilter, ReadonlyArray<readonly [string, string]>> = {
@@ -342,6 +349,14 @@ const supplierStatusFilterParams: Record<SupplierStatusFilter, ReadonlyArray<rea
   normal: [['enabled', 'true'], ['has_current_alert', 'false']],
   high_risk: [['enabled', 'true'], ['has_current_alert', 'true']],
   paused: [['enabled', 'false']],
+};
+
+/** 供应商列表查询串：单页全量加载按后端上限分页，搜索与监控状态口径必须与后端一致。 */
+const supplierListUrl = (query: string, status: SupplierStatusFilter, offset: number) => {
+  const params = new URLSearchParams({limit: String(SUPPLIER_MAX_LIMIT), offset: String(offset)});
+  if (query) params.set('q', query);
+  for (const [key, value] of supplierStatusFilterParams[status]) params.set(key, value);
+  return `/api/v1/suppliers?${params.toString()}`;
 };
 
 export interface DataSourceRead {
@@ -1092,11 +1107,21 @@ export const api = {
   dashboardSummary: (days: DashboardWindowDays) => request<DashboardSummary>(`/api/v1/dashboard/summary?days=${days}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
-  supplierPage: (query: string, status: SupplierStatusFilter, offset: number) => {
-    const params = new URLSearchParams({limit: String(SUPPLIER_PAGE_SIZE), offset: String(offset)});
-    if (query) params.set('q', query);
-    for (const [key, value] of supplierStatusFilterParams[status]) params.set(key, value);
-    return request<SupplierListResponse>(`/api/v1/suppliers?${params.toString()}`);
+  /**
+   * 名录单页展示：按后端单次上限逐页拉取并聚合，直到取满同一筛选口径的 total。
+   * 依赖 total 而不是「拿到空页」来终止，避免后端截断或并发增删导致漏数据/死循环。
+   */
+  supplierAll: async (query: string, status: SupplierStatusFilter): Promise<SupplierCollection> => {
+    const items: SupplierListItem[] = [];
+    let total = 0;
+    for (let offset = 0; ; offset += SUPPLIER_MAX_LIMIT) {
+      const page = await request<SupplierListResponse>(supplierListUrl(query, status, offset));
+      items.push(...page.items);
+      total = page.total;
+      if (items.length >= total) break;
+      if (page.items.length === 0) break;
+    }
+    return {items, total};
   },
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
   sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),

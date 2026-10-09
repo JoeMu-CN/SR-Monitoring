@@ -204,12 +204,12 @@ describe('路由元数据', () => {
     expect(screen.queryByText('调度器页面')).not.toBeInTheDocument();
   });
 
-  it('供应商清单地址省略默认值，只为非默认状态保留查询参数', () => {
+  it('供应商清单地址省略默认值，只为非默认状态保留查询参数且不含页码', () => {
     expect(suppliersPath()).toBe('/suppliers');
-    expect(suppliersPath('', 'all', 1)).toBe('/suppliers');
-    expect(suppliersPath('钢材', 'paused', 3)).toBe('/suppliers?q=%E9%92%A2%E6%9D%90&status=paused&page=3');
-    expect(suppliersPath('', 'high_risk', 1)).toBe('/suppliers?status=high_risk');
-    expect(supplierSearchParams('钢材', 'all', 2).toString()).toBe('q=%E9%92%A2%E6%9D%90&page=2');
+    expect(suppliersPath('', 'all')).toBe('/suppliers');
+    expect(suppliersPath('钢材', 'paused')).toBe('/suppliers?q=%E9%92%A2%E6%9D%90&status=paused');
+    expect(suppliersPath('', 'high_risk')).toBe('/suppliers?status=high_risk');
+    expect(supplierSearchParams('钢材', 'all').toString()).toBe('q=%E9%92%A2%E6%9D%90');
   });
 
   it('只接受四种监控状态筛选值', () => {

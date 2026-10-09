@@ -47,7 +47,7 @@ test('下载真实模板、导入有效工作簿并以结构化表格展示无�
   await page.getByLabel('搜索供应商').fill('TASK10-IMPORT-001');
   await expect(page.getByRole('row').filter({hasText: 'TASK10-IMPORT-001'})).toContainText('Task 10 Excel 导入供应商');
   await page.getByLabel('搜索供应商').fill('');
-  await expect(page.getByText('显示 1-20，共 26 条')).toBeVisible();
+  await expect(page.getByText('显示 1-26，共 26 条')).toBeVisible();
 
   await page.getByRole('button', {name: '导入供应商'}).click();
   await page.getByLabel('选择 Excel 文件').setInputFiles({

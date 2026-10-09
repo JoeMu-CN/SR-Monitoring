@@ -26,7 +26,7 @@ const supplierRow = (page: Page, code: string) => page.getByRole('row').filter({
 
 test.beforeAll(async () => { await mkdir(evidenceDirectory, {recursive: true}); });
 
-test('服务端分页、搜索与状态筛选把清单状态完整写入地址栏', async ({browser}) => {
+test('单页展示全部供应商，搜索与状态筛选把清单状态完整写入地址栏', async ({browser}) => {
   const context = await browser.newContext({viewport: {width: 1280, height: 720}, reducedMotion: 'reduce'});
   const page = await context.newPage();
   const consoleErrors: string[] = [];
@@ -37,26 +37,20 @@ test('服务端分页、搜索与状态筛选把清单状态完整写入地址�
   });
 
   await expect(page).toHaveURL(/\/suppliers$/);
-  await expect(page.getByText('显示 1-20，共 25 条')).toBeVisible();
+  // 25 条超过分页大小，必须单页全部可见且没有翻页控件。
+  await expect(page.getByText('显示 1-25，共 25 条')).toBeVisible();
   await expect(supplierRow(page, 'E2E-SUP-001')).toBeVisible();
-  await expect(supplierRow(page, 'E2E-SUP-021')).toHaveCount(0);
-  await expect(page.getByRole('button', {name: '上一页'})).toBeDisabled();
-
-  await page.getByRole('button', {name: '下一页'}).click();
-  await expect(page).toHaveURL(/\/suppliers\?page=2$/);
-  await expect(page.getByText('显示 21-25，共 25 条')).toBeVisible();
+  await expect(supplierRow(page, 'E2E-SUP-021')).toBeVisible();
   await expect(supplierRow(page, 'E2E-SUP-025')).toBeVisible();
-  await expect(page.getByRole('button', {name: '下一页'})).toBeDisabled();
+  await expect(page.getByRole('button', {name: '上一页'})).toHaveCount(0);
+  await expect(page.getByRole('button', {name: '下一页'})).toHaveCount(0);
 
-  // 深链刷新必须回到同一页，而不是回落到第一页。
-  await page.reload();
-  await expect(page.getByText('显示 21-25，共 25 条')).toBeVisible();
-  await page.goBack();
+  // 旧书签里的 page 参数不再限制数据：规范化后仍是全量 25 条。
+  await page.goto('/suppliers?page=2');
   await expect(page).toHaveURL(/\/suppliers$/);
-  await expect(page.getByText('显示 1-20，共 25 条')).toBeVisible();
+  await expect(page.getByText('显示 1-25，共 25 条')).toBeVisible();
+  await expect(supplierRow(page, 'E2E-SUP-025')).toBeVisible();
 
-  await page.getByRole('button', {name: '下一页'}).click();
-  await expect(page).toHaveURL(/page=2$/);
   await page.getByLabel('搜索供应商').fill('E2E Component 007');
   await expect(page).toHaveURL(/\/suppliers\?q=E2E\+Component\+007$/);
   await expect(page.getByText('显示 1-1，共 1 条')).toBeVisible();
@@ -78,7 +72,7 @@ test('服务端分页、搜索与状态筛选把清单状态完整写入地址�
   await expect(supplierRow(page, 'E2E-SUP-025')).toContainText('暂停监控');
 
   await page.getByLabel('监控状态:').selectOption('normal');
-  await expect(page.getByText('显示 1-20，共 23 条')).toBeVisible();
+  await expect(page.getByText('显示 1-23，共 23 条')).toBeVisible();
   await waitForSettledRoute(page);
   await page.screenshot({path: resolve(evidenceDirectory, 'task-9-frontend-gap-closure.png'), fullPage: true});
   await assertNoHorizontalOverflow(page);
@@ -98,7 +92,7 @@ test('移动端只读账号看不到写操作入口且非法查询参数被规�
 
   await page.goto('/suppliers?status=bogus&page=0&unknown=1');
   await expect(page).toHaveURL(/\/suppliers$/);
-  await expect(page.getByText('显示 1-20，共 25 条')).toBeVisible();
+  await expect(page.getByText('显示 1-25，共 25 条')).toBeVisible();
 
   await page.goto('/suppliers?status=paused');
   await expect(page.getByText('显示 1-1，共 1 条')).toBeVisible();

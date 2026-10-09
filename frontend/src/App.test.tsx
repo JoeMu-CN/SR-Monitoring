@@ -45,7 +45,7 @@ vi.mock('./api', async (importOriginal) => {
       alerts: vi.fn(),
       dashboardSummary: vi.fn(),
       suppliers: vi.fn(),
-      supplierPage: vi.fn(),
+      supplierAll: vi.fn(),
       sources: vi.fn(),
       sourcesAdmin: vi.fn(),
       collectionRuns: vi.fn(),
@@ -409,7 +409,7 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
   vi.mocked(api.dashboardSummary).mockResolvedValue(dashboardSummaryOk);
   vi.mocked(api.suppliers).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
-  vi.mocked(api.supplierPage).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
+  vi.mocked(api.supplierAll).mockResolvedValue({items: [supplierBackend], total: 1});
   vi.mocked(api.sources).mockResolvedValue([sourceBackend]);
   vi.mocked(api.sourcesAdmin).mockResolvedValue([sourceBackend]);
   vi.mocked(api.collectionRuns).mockResolvedValue(noCollectionRuns);
@@ -546,7 +546,7 @@ describe('App 中依赖 agentStatus 的视图', () => {
 
 const adminSetup = () => {
   defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
-  vi.mocked(api.supplierPage).mockResolvedValue({items: [supplierBackend, supplierListItemB], total: 2, limit: 20, offset: 0});
+  vi.mocked(api.supplierAll).mockResolvedValue({items: [supplierBackend, supplierListItemB], total: 2});
 };
 
 const openEditModal = async (label: string, code: string) => {

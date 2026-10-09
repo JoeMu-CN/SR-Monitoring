@@ -122,17 +122,16 @@ export const isSupplierStatusFilter = (value: string | null): value is SupplierS
   value !== null && supplierStatusFilters.includes(value as SupplierStatusFilter)
 );
 
-/** 供应商清单的规范查询串：省略默认值，保证同一视图状态只有一个 URL。 */
-export const supplierSearchParams = (query: string, status: SupplierStatusFilter, page: number) => {
+/** 供应商清单的规范查询串：单页展示全部供应商，省略默认值并保证同一视图状态只有一个 URL。 */
+export const supplierSearchParams = (query: string, status: SupplierStatusFilter) => {
   const params = new URLSearchParams();
   if (query) params.set('q', query);
   if (status !== 'all') params.set('status', status);
-  if (page > 1) params.set('page', String(page));
   return params;
 };
 
-export const suppliersPath = (query = '', status: SupplierStatusFilter = 'all', page = 1) => {
-  const search = supplierSearchParams(query, status, page).toString();
+export const suppliersPath = (query = '', status: SupplierStatusFilter = 'all') => {
+  const search = supplierSearchParams(query, status).toString();
   return search ? `${routePaths.suppliers}?${search}` : routePaths.suppliers;
 };
 

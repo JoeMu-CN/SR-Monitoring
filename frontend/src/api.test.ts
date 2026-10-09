@@ -211,31 +211,65 @@ describe('信息源采集记录 API 请求契约', () => {
 });
 
 describe('供应商清单 API 请求契约', () => {
-  const supplierQueries: ReadonlyArray<readonly [Parameters<typeof api.supplierPage>[1], string]> = [
-    ['all', '/api/v1/suppliers?limit=20&offset=40'],
-    ['normal', '/api/v1/suppliers?limit=20&offset=40&enabled=true&has_current_alert=false'],
-    ['high_risk', '/api/v1/suppliers?limit=20&offset=40&enabled=true&has_current_alert=true'],
-    ['paused', '/api/v1/suppliers?limit=20&offset=40&enabled=false'],
+  const supplierQueries: ReadonlyArray<readonly [Parameters<typeof api.supplierAll>[1], string]> = [
+    ['all', '/api/v1/suppliers?limit=100&offset=0'],
+    ['normal', '/api/v1/suppliers?limit=100&offset=0&enabled=true&has_current_alert=false'],
+    ['high_risk', '/api/v1/suppliers?limit=100&offset=0&enabled=true&has_current_alert=true'],
+    ['paused', '/api/v1/suppliers?limit=100&offset=0&enabled=false'],
   ];
 
-  it.each(supplierQueries)('把监控状态 %s 翻译为固定 20 条的服务端查询', async (status, expected) => {
-    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+  it.each(supplierQueries)('把监控状态 %s 翻译为后端单次上限的服务端查询', async (status, expected) => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: [], total: 0})});
     vi.stubGlobal('fetch', fetchMock);
 
-    await api.supplierPage('', status, 40);
+    await api.supplierAll('', status);
 
     expect(fetchMock).toHaveBeenCalledWith(expected, expect.objectContaining({credentials: 'include'}));
     vi.unstubAllGlobals();
   });
 
-  it('对查询词做百分号编码且空查询词不进入请求', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+  it('supplierAll 按后端单次上限分页拉取并聚合到 total', async () => {
+    const firstPage = Array.from({length: 100}, (_, index) => ({id: index + 1}));
+    const secondPage = Array.from({length: 35}, (_, index) => ({id: 101 + index}));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ok: true, status: 200, json: async () => ({items: firstPage, total: 135, limit: 100, offset: 0})})
+      .mockResolvedValueOnce({ok: true, status: 200, json: async () => ({items: secondPage, total: 135, limit: 100, offset: 100})});
     vi.stubGlobal('fetch', fetchMock);
 
-    await api.supplierPage('功率 & 100%', 'all', 0);
-    await api.supplierPage('', 'all', 0);
+    const result = await api.supplierAll('钢', 'paused');
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/suppliers?limit=20&offset=0&q=%E5%8A%9F%E7%8E%87+%26+100%25');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/suppliers?limit=100&offset=0&q=%E9%92%A2&enabled=false');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('/api/v1/suppliers?limit=100&offset=100&q=%E9%92%A2&enabled=false');
+    expect(result.items).toHaveLength(135);
+    expect(result.items[134]?.id).toBe(135);
+    expect(result.total).toBe(135);
+    vi.unstubAllGlobals();
+  });
+
+  it('supplierAll 在后端返回空页时终止而不是死循环', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => ({items: [], total: 500, limit: 100, offset: 0}),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.supplierAll('', 'all');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({items: [], total: 500});
+    vi.unstubAllGlobals();
+  });
+
+  it('对查询词做百分号编码且空查询词不进入请求', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: [], total: 0})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.supplierAll('功率 & 100%', 'all');
+    await api.supplierAll('', 'all');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      '/api/v1/suppliers?limit=100&offset=0&q=%E5%8A%9F%E7%8E%87+%26+100%25',
+    );
     expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain('q=');
     vi.unstubAllGlobals();
   });

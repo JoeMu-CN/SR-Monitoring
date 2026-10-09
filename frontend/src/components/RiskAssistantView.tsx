@@ -2,6 +2,8 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {api, type AgentStatusRead, type ToolCallRead} from '../api';
 import type {RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota, RiskLevel} from '../types';
+import {RiskAssistantStepTimeline} from './RiskAssistantStepTimeline';
+import {useRiskAssistantStepTimeline} from './useRiskAssistantStepTimeline';
 
 // 供应商卡片徽标按真实当前等级显示，等级名称与 RiskDetailView 一致；无当前等级才是「正常监控」。
 const RISK_LEVEL_BADGE: Record<RiskLevel, {label: string; className: string}> = {
@@ -24,7 +26,19 @@ interface RiskAssistantViewProps {
   onSelectSupplier: (supplier: Supplier) => void;
   pendingQuery?: string | null;
   onClearPendingQuery?: () => void;
+  // 清单内供应商核查会真实写入正式告警；助手回答落地后由父级重取风险列表，
+  // 避免页面停留在核查前的旧快照（以前必须刷新浏览器才更新）。
+  onAlertsChanged?: () => Promise<void>;
 }
+
+// 清单内核查（verify_company）按规则引擎创建或更新正式告警，返回的 alert_ids 非空
+// 才是风险列表失效的唯一信号；只读工具与未产生告警的核查都不需要重取。
+const writesRiskAlerts = (calls: readonly ToolCallRead[]): boolean =>
+  calls.some((call) => {
+    if (call.name !== 'verify_company') return false;
+    const alertIds = call.result.alert_ids;
+    return Array.isArray(alertIds) && alertIds.length > 0;
+  });
 
 export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   riskItems,
@@ -34,14 +48,13 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
   onSelectSupplier,
   pendingQuery,
   onClearPendingQuery,
+  onAlertsChanged,
 }) => {
   const welcomeMessage = (): ChatMessage => ({
     id: 'msg-welcome',
     sender: 'assistant',
     timestamp: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    content: `您好！我是 **SR 风险查询助手**。我可以帮助您查询当前启用的重点供应商、生产地点、供应产品，以及筛选当前有效的 P1–P4 风险提醒。天眼查网关启用后，还可发起清单外企业一次性工商核查并查询调用额度。
-
-💡 **只读提示**：本助手为**只读查询助手**，不具备新增/修改业务数据、更改监控状态或自动触发处置的权限。`,
+    content: `您好！我是 **SR 风险查询助手**。我可以帮助您查询当前启用的重点供应商、生产地点、供应产品，以及筛选当前有效的 P1–P4 风险提醒。天眼查网关启用后，还可发起清单外企业一次性工商核查并查询调用额度。`,
   });
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => [welcomeMessage()]);
@@ -53,6 +66,12 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const consumedPendingQueryRef = useRef<string | null>(null);
+  // 运行期真实步骤时间线：轮询、合并与逐行展开全部由该控制器收口，
+  // 回答返回 / 重置对话 / 组件卸载都通过 stop() 作废在途响应并清理定时器。
+  const stepTimeline = useRiskAssistantStepTimeline();
+  const stepRows = stepTimeline.rows;
+  const stopStepsPolling = stepTimeline.stop;
+  const startStepsPolling = stepTimeline.start;
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -60,7 +79,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isTyping]);
+  }, [messages, isTyping, stepRows.length]);
 
   const toggleToolExpand = (msgId: string) => {
     setExpandedTools((prev) => ({ ...prev, [msgId]: !prev[msgId] }));
@@ -164,6 +183,12 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     get_budget: '查询天眼查真实调用额度',
   };
 
+  // 运行期步骤文案与合并规则已收敛到 useRiskAssistantStepTimeline，视图不再重复维护。
+
+  // 运行令牌：优先随机 UUID；旧环境无 crypto.randomUUID 时退化为时间戳 + 随机串，保证非空。
+  const createRunToken = (): string =>
+    crypto.randomUUID?.() ?? `run-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
   const buildResponseMessage = (answer: string, calls: ToolCallRead[]): ChatMessage => {
     const toolCalls: ToolCall[] = calls.map((call, index) => ({
       id: `tool-${Date.now()}-${index}`,
@@ -218,11 +243,30 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
     if (!textToSend) setInput('');
     setIsTyping(true);
 
+    // 每次发送使用新的运行令牌；start 内部会先作废上一轮并清空旧步骤，再按 700ms 增量轮询。
+    const runToken = createRunToken();
+    startStepsPolling(runToken);
+
     try {
-      const response = await api.chat(queryText, sessionId);
+      const response = await api.chat(queryText, sessionId, runToken);
       setSessionId(response.session_id);
       const responseMsg = buildResponseMessage(response.answer, response.tool_calls);
       setMessages((prev) => [...prev, responseMsg]);
+      // 核查已写入告警：立即重取风险列表，不必等浏览器刷新。
+      // 刷新失败只追加次级提示，不得把已成功的核查改写成查询失败。
+      if (onAlertsChanged && writesRiskAlerts(response.tool_calls)) {
+        try {
+          await onAlertsChanged();
+        } catch (caught) {
+          const reason = caught instanceof Error ? caught.message : '未知原因';
+          setMessages((prev) => [...prev, {
+            id: `asst-refresh-${Date.now()}`,
+            sender: 'assistant',
+            timestamp: new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'}),
+            content: `风险列表刷新失败：${reason}。当前风险监控页仍显示核查前的数据，请手动刷新页面。`,
+          }]);
+        }
+      }
     } catch (caught) {
       setMessages((prev) => [...prev, {
         id: `asst-error-${Date.now()}`,
@@ -231,9 +275,10 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
         content: `查询失败：${caught instanceof Error ? caught.message : '助手服务暂时不可用'}。请检查服务状态后重试。`,
       }]);
     } finally {
+      stopStepsPolling();
       setIsTyping(false);
     }
-  }, [input, isTyping, riskItems, sessionId, suppliers]);
+  }, [input, isTyping, onAlertsChanged, riskItems, sessionId, suppliers, startStepsPolling, stopStepsPolling]);
 
   useEffect(() => {
     const query = pendingQuery?.trim();
@@ -280,15 +325,14 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                   只读查询
                 </span>
               </div>
-              <p className="text-[11px] text-[#424751] dark:text-slate-400 mt-0.5">
-                支持检索重点供应商、风险提醒、生产地点、供应产品及清单外天眼查核查
-              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
+                stopStepsPolling();
+                setIsTyping(false);
                 setMessages([welcomeMessage()]);
                 setSessionId(null);
                 setQuota(null);
@@ -672,13 +716,8 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
           ))}
         </AnimatePresence>
 
-          {/* Typing Indicator */}
-          {isTyping && (
-            <div className="flex items-center gap-2 text-slate-400 text-[12px] italic p-2">
-              <span className="material-symbols-outlined text-[18px] animate-spin">sync</span>
-              <span>助手正在执行只读查询...</span>
-            </div>
-          )}
+          {/* 运行步骤时间线：每步一行、无行首图标；回答返回即整体撤下，不等展开队列。 */}
+          {isTyping && <RiskAssistantStepTimeline rows={stepRows} />}
 
           <div ref={chatEndRef} />
         </div>

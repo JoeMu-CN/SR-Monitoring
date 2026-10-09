@@ -1,4 +1,4 @@
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import {api, type ChatResponse} from '../api';
@@ -10,19 +10,21 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return {
     ...actual,
-    api: {...actual.api, chat: vi.fn()},
+    api: {...actual.api, chat: vi.fn(), chatSteps: vi.fn()},
   };
 });
 
 interface RenderOptions {
   readonly pendingQuery?: string | null;
   readonly suppliers?: Supplier[];
+  readonly onAlertsChanged?: () => Promise<void>;
 }
 
 const renderAssistant = (options: RenderOptions = {}) => {
   const onClearPendingQuery = vi.fn();
   const onSelectRisk = vi.fn();
   const onSelectSupplier = vi.fn();
+  const onAlertsChanged = options.onAlertsChanged ?? vi.fn().mockResolvedValue(undefined);
   const result = render(
     <RiskAssistantView
       riskItems={[]}
@@ -32,9 +34,10 @@ const renderAssistant = (options: RenderOptions = {}) => {
       onSelectSupplier={onSelectSupplier}
       pendingQuery={options.pendingQuery}
       onClearPendingQuery={onClearPendingQuery}
+      onAlertsChanged={onAlertsChanged}
     />,
   );
-  return {onClearPendingQuery, onSelectRisk, onSelectSupplier, ...result};
+  return {onClearPendingQuery, onSelectRisk, onSelectSupplier, onAlertsChanged, ...result};
 };
 
 const queryInput = () => screen.getByPlaceholderText('请输入自然语言对话查询') as HTMLInputElement;
@@ -49,10 +52,13 @@ beforeAll(() => {
 beforeEach(() => {
   // 本组测试只观察「是否发送」与「发送了什么」，用挂起 Promise 避免响应渲染干扰计数。
   vi.mocked(api.chat).mockReturnValue(new Promise<ChatResponse>(() => {}));
+  // 默认步骤轮询返回空步列表；个别用例再覆盖为真实步骤，避免未打桩导致定时器回调抛错。
+  vi.mocked(api.chatSteps).mockResolvedValue({run_token: 'test-run', status: 'running', steps: []});
 });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.resetAllMocks();
 });
 
@@ -79,7 +85,7 @@ describe('RiskAssistantView pendingQuery 预填与消费', () => {
     await user.click(screen.getByRole('button', {name: /发送/}));
 
     expect(api.chat).toHaveBeenCalledTimes(1);
-    expect(api.chat).toHaveBeenCalledWith(PRESET_QUERY, null);
+    expect(api.chat).toHaveBeenCalledWith(PRESET_QUERY, null, expect.any(String));
   });
 
   it('onClearPendingQuery 恰好消费一次，避免重复清理或重复发送', () => {
@@ -203,5 +209,131 @@ describe('RiskAssistantView 供应商卡片风险标识按真实等级显示', (
     expect(await screen.findByText('中风险')).toBeInTheDocument();
     expect(screen.getByText('低风险')).toBeInTheDocument();
     expect(screen.queryAllByText('高危预警')).toHaveLength(0);
+  });
+});
+
+// 缺陷回归：清单内供应商的 verify_company 会真实写入核查证据并创建/更新正式风险提醒，
+// 但助手页此前没有完成回调，App 的 riskItems 快照要等浏览器刷新才更新。
+describe('RiskAssistantView 核查写入告警后触发风险列表刷新', () => {
+  const checkResponse = (alertIds: readonly number[]): ChatResponse => ({
+    session_id: 31,
+    answer: '已完成实时多维度核查。',
+    tool_calls: [{
+      name: 'verify_company',
+      arguments: {company_name: '示例精密电子有限公司'},
+      result: {status: 'completed', company_name: '示例精密电子有限公司', alert_ids: alertIds},
+    }],
+  });
+
+  it('核查写入非空 alert_ids 时通知父级刷新风险列表', async () => {
+    vi.mocked(api.chat).mockResolvedValue(checkResponse([42]));
+    const onAlertsChanged = vi.fn().mockResolvedValue(undefined);
+    renderAssistant({onAlertsChanged});
+
+    const user = userEvent.setup();
+    await user.type(queryInput(), '核查示例精密电子有限公司');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    expect(await screen.findByText('已完成实时多维度核查。')).toBeInTheDocument();
+    await waitFor(() => expect(onAlertsChanged).toHaveBeenCalledTimes(1));
+  });
+
+  it('只读查询不触发刷新：没有核查写入就没有新增风险，无谓重取', async () => {
+    vi.mocked(api.chat).mockResolvedValue({
+      session_id: 32,
+      answer: '当前 P1 提醒 1 条。',
+      tool_calls: [{
+        name: 'query_current_alerts',
+        arguments: {level: 'P1'},
+        result: {status: 'success', total: 1, items: [{alert_id: 1, level: 'P1'}]},
+      }],
+    });
+    const onAlertsChanged = vi.fn().mockResolvedValue(undefined);
+    renderAssistant({onAlertsChanged});
+
+    const user = userEvent.setup();
+    await user.type(queryInput(), '查询当前所有 P1 风险');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    expect(await screen.findByText('当前 P1 提醒 1 条。')).toBeInTheDocument();
+    expect(onAlertsChanged).not.toHaveBeenCalled();
+  });
+
+  it('核查未产生告警（alert_ids 为空）时不触发刷新', async () => {
+    vi.mocked(api.chat).mockResolvedValue(checkResponse([]));
+    const onAlertsChanged = vi.fn().mockResolvedValue(undefined);
+    renderAssistant({onAlertsChanged});
+
+    const user = userEvent.setup();
+    await user.type(queryInput(), '核查示例精密电子有限公司');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    expect(await screen.findByText('已完成实时多维度核查。')).toBeInTheDocument();
+    expect(onAlertsChanged).not.toHaveBeenCalled();
+  });
+
+  it('刷新失败只追加次级提示，已成功的核查回答保持成功', async () => {
+    vi.mocked(api.chat).mockResolvedValue(checkResponse([42]));
+    const onAlertsChanged = vi.fn().mockRejectedValue(new Error('风险列表刷新失败'));
+    renderAssistant({onAlertsChanged});
+
+    const user = userEvent.setup();
+    await user.type(queryInput(), '核查示例精密电子有限公司');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    // 成功回答仍在：刷新失败不得把已完成的核查改写成查询失败。
+    expect(await screen.findByText('已完成实时多维度核查。')).toBeInTheDocument();
+    expect(screen.queryByText(/查询失败：/)).toBeNull();
+    await waitFor(() => expect(onAlertsChanged).toHaveBeenCalledTimes(1));
+  });
+});
+
+// 运行期增量轮询：真实执行步骤应在助手回复前逐条展示，替换旧的单行只读查询文案。
+describe('RiskAssistantView 运行期执行步骤时间线', () => {
+  const stepsResponse = {
+    run_token: 'test-run',
+    status: 'running' as const,
+    steps: [
+      {index: 1, kind: 'analyzing' as const, tool: null, detail: null},
+      {index: 2, kind: 'tool_start' as const, tool: 'query_suppliers', detail: null},
+      {index: 3, kind: 'tool_done' as const, tool: 'query_current_alerts', detail: null},
+    ],
+  };
+
+  it('发送后周期性调用 chatSteps，按真实事件逐行合并展示，且不再显示旧的单行只读查询指示器', async () => {
+    vi.mocked(api.chatSteps).mockResolvedValue(stepsResponse);
+    const user = userEvent.setup();
+    renderAssistant();
+
+    await user.type(queryInput(), '查询重点供应商');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    // 700ms 周期轮询：等待第一次步进数据到达。
+    await waitFor(() => expect(api.chatSteps).toHaveBeenCalled(), {timeout: 3000});
+    expect(api.chatSteps).toHaveBeenCalledWith(expect.any(String));
+
+    // 3 条真实事件对应 3 行；行按事件时序逐行展开，因此逐个等待而不是一次性断言。
+    expect(await screen.findByText('正在理解问题', {}, {timeout: 3000})).toBeInTheDocument();
+    expect(await screen.findByText('检索重点供应商、地点与产品', {}, {timeout: 3000})).toBeInTheDocument();
+    // 缺少匹配 tool_start 的 tool_done 仍单独成行，绝不丢事件。
+    expect(await screen.findByText('检索当前有效 P1–P4 风险提醒', {}, {timeout: 3000})).toBeInTheDocument();
+
+    // 没有行首图标，只有末尾的完成对钩。
+    const timeline = screen.getByTestId('execution-steps');
+    expect(timeline.querySelector('.material-symbols-outlined')).toBeNull();
+    expect(timeline.querySelector('.animate-spin')).toBeNull();
+
+    // 旧的静态只读查询单行提示必须已被步骤时间线替换。
+    expect(screen.queryByText(/助手正在执行只读查询/)).toBeNull();
+  });
+
+  it('欢迎语与头部不再包含只读提示与被删副标题文本', () => {
+    renderAssistant();
+
+    expect(screen.queryByText(/只读提示/)).toBeNull();
+    expect(screen.queryByText(/支持检索重点供应商/)).toBeNull();
+    // 欢迎正文与「只读查询」徽标仍然保留。
+    expect(screen.getByText(/我可以帮助您查询当前启用的重点供应商/)).toBeInTheDocument();
+    expect(screen.getByText('只读查询')).toBeInTheDocument();
   });
 });

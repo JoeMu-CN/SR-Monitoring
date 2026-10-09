@@ -44,6 +44,8 @@ vi.mock('./api', async (importOriginal) => {
       },
       alerts: vi.fn(),
       dashboardSummary: vi.fn(),
+      chat: vi.fn(),
+      chatSteps: vi.fn(),
       suppliers: vi.fn(),
       supplierAll: vi.fn(),
       sources: vi.fn(),
@@ -407,6 +409,8 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.auth.login).mockResolvedValue(user);
   vi.mocked(api.auth.logout).mockResolvedValue({detail: 'ok'});
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
+  // 助手运行期步骤轮询：默认返回空快照，未发送消息的用例不会被定时器干扰。
+  vi.mocked(api.chatSteps).mockResolvedValue({run_token: 'test-run', status: 'done', steps: []});
   vi.mocked(api.dashboardSummary).mockResolvedValue(dashboardSummaryOk);
   vi.mocked(api.suppliers).mockResolvedValue({items: [supplierBackend], total: 1, limit: 20, offset: 0});
   vi.mocked(api.supplierAll).mockResolvedValue({items: [supplierBackend], total: 1});
@@ -1156,4 +1160,72 @@ describe('App 询问风险助手：路由切换后最终输入框保留完整预
     const textbox = within(newRouteContent).getByRole('textbox');
     expect(textbox).toHaveValue(ASK_QUERY);
   });
+});
+
+// ---- 回归：助手核查写入正式告警后，风险监控数据必须自动同步 ----
+// 旧行为：riskItems 只在 loadData 里拉一次（仅登录态变化时），助手核查创建的告警
+// 要等浏览器刷新才出现在风险页。断言锁定「无需刷新即重新拉取并更新风险视图」。
+describe('App 助手核查写入告警后自动同步风险监控数据', () => {
+  const secondAlert: RiskAlertRead = {
+    ...alertBackend,
+    id: 2,
+    supplier_name: '核查新增风险企业有限公司',
+    event_id: 20,
+    event_summary: '核查后新确认的出口管制风险',
+  };
+
+  const assistantCheck = (alertIds: readonly number[]) => ({
+    session_id: 41,
+    answer: '已完成实时多维度核查。',
+    tool_calls: [{
+      name: 'verify_company',
+      arguments: {company_name: '示例精密电子有限公司'},
+      result: {status: 'completed', company_name: '示例精密电子有限公司', alert_ids: alertIds},
+    }],
+  });
+
+  const askInAssistant = async () => {
+    const user = userEvent.setup();
+    renderApp('/assistant');
+    const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
+    const textbox = within(routeContent).getByRole('textbox');
+    await user.type(textbox, '核查示例精密电子有限公司');
+    await user.click(within(routeContent).getByRole('button', {name: /发送/}));
+    return routeContent;
+  };
+
+  it('核查写入告警后重新拉取 alerts，风险监控页无需刷新即显示新增提醒', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    // 首次加载只有 1 条；核查写入后重取必须拿到包含新增提醒的 2 条。
+    vi.mocked(api.alerts)
+      .mockResolvedValueOnce({items: [alertBackend], total: 1})
+      .mockResolvedValue({items: [alertBackend, secondAlert], total: 2});
+    vi.mocked(api.chat).mockResolvedValue(assistantCheck([2]));
+
+    await askInAssistant();
+
+    // 真实行为：初始 1 条被替换为 2 条，无需任何页面刷新。
+    await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(2), {timeout: 5000});
+    await userEvent.setup().click(screen.getByRole('link', {name: /当前风险监控/}));
+    expect(await screen.findByText('核查新增风险企业有限公司', {}, {timeout: 5000})).toBeInTheDocument();
+  }, 15000);
+
+  it('只读查询不额外请求 alerts', async () => {
+    defaultMocks({user: platformAdminUser, permissions: ADMIN_PERMISSIONS});
+    vi.mocked(api.chat).mockResolvedValue({
+      session_id: 42,
+      answer: '当前有效 P1 提醒 1 条。',
+      tool_calls: [{
+        name: 'query_current_alerts',
+        arguments: {level: 'P1'},
+        result: {status: 'success', total: 1, items: [{alert_id: 1, level: 'P1'}]},
+      }],
+    });
+
+    const routeContent = await askInAssistant();
+
+    expect(await within(routeContent).findByText('当前有效 P1 提醒 1 条。', {}, {timeout: 5000})).toBeInTheDocument();
+    // 首屏加载一次后不再重取：只读查询没有写入任何告警。
+    expect(api.alerts).toHaveBeenCalledTimes(1);
+  }, 15000);
 });

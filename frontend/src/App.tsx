@@ -320,6 +320,13 @@ export function App() {
     [riskItems],
   );
 
+  // 助手清单内核查会真实创建/更新正式告警（后端同一事务内已提交）：回答落地后重取当前提醒，
+  // 使风险监控页与 P1 计数立即反映核查结果，不再依赖浏览器刷新。失败由调用方降级提示。
+  const refreshRiskAlerts = useCallback(async () => {
+    const alertsResponse = await api.alerts();
+    setRiskItems(alertsResponse.items.map(mapRiskAlert));
+  }, []);
+
   const handleAskAssistant = (query: string) => {
     if (!canUseRiskAssistant) {
       setError('当前账号没有使用风险查询助手的权限');
@@ -551,7 +558,7 @@ export function App() {
     overview: <OverviewView onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} onRequestError={handleDetailRequestError} monitoringHealth={monitoringHealth} />,
     risks: riskRouteView,
     riskDetail: riskRouteView,
-    assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
+    assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} onAlertsChanged={refreshRiskAlerts} />,
     suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} monitoringHealth={monitoringHealth} />,
     // 独立调度器实况页：只消费同一 hook 的 monitoringHealth 快照，不自带请求或轮询。

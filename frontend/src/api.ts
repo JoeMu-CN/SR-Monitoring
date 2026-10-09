@@ -827,6 +827,23 @@ export interface ChatResponse {
   onboarding_draft?: SourceOnboardingDraftRead | null;
 }
 
+// 助手运行期增量步骤（GET /api/v1/chat/steps/{run_token}）。
+// kind 固定四态：analyzing（理解问题）/ tool_start（工具开始）/ tool_done（工具完成）/ finalizing（生成回答）。
+export type AgentStepKind = 'analyzing' | 'tool_start' | 'tool_done' | 'finalizing';
+
+export interface AgentStepRead {
+  index: number;
+  kind: AgentStepKind;
+  tool: string | null;
+  detail: string | null;
+}
+
+export interface AgentRunStepsRead {
+  run_token: string;
+  status: 'running' | 'done' | 'unknown';
+  steps: AgentStepRead[];
+}
+
 export interface AgentStatusRead {
   llm_configured: boolean;
   model: string;
@@ -1205,10 +1222,12 @@ export const api = {
     }),
     reports: (taskId: number) => request<{items: ResearchReportRead[]}>(`/api/v1/research/tasks/${taskId}/reports`),
   },
-  chat: (question: string, sessionId: number | null) => request<ChatResponse>('/api/v1/chat', {
+  // runToken 由前端生成并随请求下发，用于运行期按令牌增量查询执行步骤。
+  chat: (question: string, sessionId: number | null, runToken?: string | null) => request<ChatResponse>('/api/v1/chat', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question, session_id: sessionId}),
+    body: JSON.stringify({question, session_id: sessionId, run_token: runToken ?? null}),
   }),
+  chatSteps: (runToken: string) => request<AgentRunStepsRead>(`/api/v1/chat/steps/${encodeURIComponent(runToken)}`),
   sourceAgentChat: (question: string, sessionId: number | null, draftId: number | null) => request<ChatResponse>('/api/v1/source-agent/chat', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({question, session_id: sessionId, draft_id: draftId}),

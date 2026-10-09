@@ -22,10 +22,8 @@ DIMENSION = DimensionConfig(
     ),
     data_sources=(
         DimensionDataSource("nmc-weather", "中央气象台", "connected"),
-        DimensionDataSource("usgs-earthquake-day", "美国地质调查局 USGS 地震", "connected"),
-        DimensionDataSource("mem-incident-bulletin", "应急管理部", "planned"),
-        DimensionDataSource("cenc-earthquake", "中国地震台网", "planned"),
-        DimensionDataSource("nhc-cdc", "国家卫健委 / 中国疾控中心", "planned"),
+        DimensionDataSource("usgs-earthquake-day", "USGS 全天地震速报", "connected"),
+        DimensionDataSource("mem-incident-bulletin", "应急管理部事故通报", "planned"),
     ),
     match_columns=DEFAULT_COLUMNS,
 )

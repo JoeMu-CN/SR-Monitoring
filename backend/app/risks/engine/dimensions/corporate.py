@@ -21,11 +21,7 @@ DIMENSION = DimensionConfig(
         "主体信息变更",
     ),
     data_sources=(
-        DimensionDataSource("tianyancha", "天眼查", "external_tool"),
-        DimensionDataSource("credit-china", "信用中国", "planned"),
-        DimensionDataSource("court-public-info", "人民法院公告与执行信息", "planned"),
-        DimensionDataSource("samr-public-info", "市场监管总局", "planned"),
-        DimensionDataSource("mem-incident-bulletin", "应急管理部", "planned"),
+        DimensionDataSource("tianyancha", "天眼查企业核查", "external_tool"),
     ),
     match_columns=DEFAULT_COLUMNS,
 )

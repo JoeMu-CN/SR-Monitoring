@@ -2,8 +2,8 @@
 
 覆盖任务 13：表中存在且 enabled 的信源返回真实状态；表中存在但 disabled 的信源
 enabled=false（不因 declared_status='connected' 而被渲染成已接入）；
-cenc-earthquake 返回 linked=false 且全部实时字段为 None；六个维度全量请求
-的 SQL 查询次数不随维度数增长（N+1 回归门）。
+未接入的 code 返回 linked=false 且全部实时字段为 None（用例用临时 code 构造）；
+六个维度全量请求的 SQL 查询次数不随维度数增长（N+1 回归门）。
 
 覆盖任务 14（维度输入健康度反查接口）：
 - alert→raw_signals 关联链路测试先行锁定
@@ -131,17 +131,19 @@ def test_disabled_source_not_rendered_as_connected(
     assert nmc["enabled"] is False
 
 
-def test_unlinked_source_returns_none_real_fields(
-    client: TestClient, db_session: Session
-) -> None:
-    sources = _natural_sources(client)
-    cenc = next(s for s in sources if s["code"] == "cenc-earthquake")
-    assert cenc["declared_status"] == "planned"
-    assert cenc["linked"] is False
-    assert cenc["enabled"] is None
-    assert cenc["adapter_status"] is None
-    assert cenc["last_collected_at"] is None
-    assert cenc["valid_signal_count"] is None
+def test_unlinked_source_returns_none_real_fields(db_session: Session) -> None:
+    """未接入（data_sources 无行）的 code 返回 linked=false 且实时字段全为 None。
+
+    cenc-earthquake 等旧占位已随 19 个真实信源校正移除；本用例改用临时 code
+    直接校验批量 join 的未接入分支（行为契约不变）。
+    """
+    state = _source_status_map(db_session, {"temp-unlinked-source"})
+    unlinked = state["temp-unlinked-source"]
+    assert unlinked.linked is False
+    assert unlinked.enabled is None
+    assert unlinked.adapter_status is None
+    assert unlinked.last_collected_at is None
+    assert unlinked.valid_signal_count is None
 
 
 def test_full_dimensions_query_count_does_not_grow_with_dimensions(
@@ -186,8 +188,8 @@ def test_source_status_map_query_count_is_constant_regardless_of_code_count(
             [
                 "nmc-weather",
                 "ofac-sdn",
-                "cenc-earthquake",
-                "nhc-cdc",
+                "commodity-futures",
+                "sse-shipping",
                 "mem-incident-bulletin",
                 "usgs-earthquake-day",
             ]

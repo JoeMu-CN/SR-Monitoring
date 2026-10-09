@@ -86,9 +86,46 @@ def load_suppliers(session: Session) -> list[Supplier]:
     )
 
 
+def _declaring_dimensions(
+    dimensions: list[RuntimeDimension], source_code: str
+) -> list[RuntimeDimension]:
+    """声明该信源 code 的维度（不区分 enabled），保持传入声明顺序。"""
+    return [
+        dimension
+        for dimension in dimensions
+        if any(source.code == source_code for source in dimension.config.data_sources)
+    ]
+
+
 def resolve_dimension(
-    dimensions: list[RuntimeDimension], event_type: str
+    dimensions: list[RuntimeDimension],
+    event_type: str,
+    source_code: str | None = None,
 ) -> RuntimeDimension | None:
+    """解析事件接管维度：信源归属优先、事件类型兜底。
+
+    合同（source-first）：
+    - source_code 恰好被一个维度声明且该维度 enabled：返回该维度，**不受 AI
+      粗事件类型影响**（用于 policy 等不占用事件类型的信源维度）。
+    - source_code 被恰好一个维度声明但该维度 disabled：返回 None，**禁止**
+      回退到 event_type（否则会错误地把政策信号交给其它维度评分）。
+    - source_code 被多个维度重复声明：归属冲突，返回 None 并记 warning，
+      交由调用方写入可诊断的复核原因。
+    - source_code 未声明（或为 None）：保留旧 event_type 匹配逻辑（含重复
+      事件类型时记 warning 并取第一个）。
+    """
+    if source_code is not None:
+        owners = _declaring_dimensions(dimensions, source_code)
+        if len(owners) > 1:
+            logger.warning(
+                "信源 %s 被多个维度重复声明（%s），归属冲突，拒绝接管",
+                source_code,
+                ", ".join(dimension.key for dimension in owners),
+            )
+            return None
+        if len(owners) == 1:
+            owner = owners[0]
+            return owner if owner.enabled else None
     matches = [
         dimension
         for dimension in dimensions
@@ -102,6 +139,29 @@ def resolve_dimension(
             matches[0].key,
         )
     return matches[0] if matches else None
+
+
+def resolve_dimension_reason(
+    dimensions: list[RuntimeDimension],
+    event_type: str,
+    source_code: str | None,
+) -> str:
+    """为 resolve_dimension 返回 None 生成准确、可诊断的复核原因。
+
+    区分三种失败：信源归属冲突、信源归属维度已禁用、以及无任何维度接管
+    （未声明信源或事件类型无归属）。信源已知时原因中必须出现该 code，避免
+    把"归属维度被禁用/冲突"泛化为"无事件类型接管"。
+    """
+    if source_code is not None:
+        owners = _declaring_dimensions(dimensions, source_code)
+        if len(owners) > 1:
+            return (
+                f"信源 {source_code} 被多个维度重复声明"
+                f"（{'、'.join(dimension.key for dimension in owners)}），归属冲突"
+            )
+        if len(owners) == 1:
+            return f"信源 {source_code} 的归属维度 {owners[0].key} 已禁用，未接管事件"
+    return f"没有启用的维度接管信源 {source_code or '未声明'} / 事件类型 {event_type}"
 
 
 def match_suppliers(
@@ -194,10 +254,13 @@ def process_event(
     support = refresh_event_support(session, event, now_utc=now)
     source = session.get(DataSource, signal.source_id)
     assert source is not None
-    dimension = resolve_dimension(load_dimensions(session), result.event_type)
+    dimensions = load_dimensions(session)
+    dimension = resolve_dimension(
+        dimensions, result.event_type, source_code=source.code
+    )
     if dimension is None:
         analysis.needs_review = True
-        reason = f"没有启用的维度接管事件类型 {result.event_type}"
+        reason = resolve_dimension_reason(dimensions, result.event_type, source.code)
         analysis.review_reason = "；".join(
             item for item in (analysis.review_reason, reason) if item
         )

@@ -27,10 +27,7 @@ DIMENSION = DimensionConfig(
         "劳动力市场",
     ),
     data_sources=(
-        DimensionDataSource("industry-associations", "国家级行业协会", "planned"),
-        DimensionDataSource("commodity-exchanges", "境内期货交易所", "planned"),
-        DimensionDataSource("port-notices", "港口与交通主管部门公告", "planned"),
-        DimensionDataSource("shipping-indices", "权威航运指数", "planned"),
+        DimensionDataSource("sse-shipping", "上海航运交易所 CCFI", "connected"),
     ),
     match_columns=(COLUMN_ENTITY, COLUMN_LOCATION, COLUMN_PRODUCT, COLUMN_INDUSTRY),
     scoring_overrides={"association_scores": {"industry": 12}},

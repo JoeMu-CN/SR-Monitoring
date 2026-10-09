@@ -23,11 +23,11 @@ DIMENSION = DimensionConfig(
     event_types=("trade_policy",),
     content_items=("宏观经济", "汇率与外汇管制", "大宗商品与原材料", "货币政策", "贸易摩擦与关税"),
     data_sources=(
-        DimensionDataSource("gacc-public-info", "海关总署", "planned"),
-        DimensionDataSource("mofcom-public-info", "商务部", "planned"),
-        DimensionDataSource("wto-trade-monitoring", "世界贸易组织 WTO", "planned"),
-        DimensionDataSource("pboc-safe", "中国人民银行 / 国家外汇管理局", "planned"),
-        DimensionDataSource("world-bank", "世界银行", "planned"),
+        DimensionDataSource("commodity-futures", "大宗商品期货行情", "connected"),
+        DimensionDataSource("fx-rates", "国际汇率", "connected"),
+        DimensionDataSource("pbc-lpr", "中国人民银行 LPR 报价", "connected"),
+        DimensionDataSource("stats-pmi", "国家统计局制造业 PMI", "connected"),
+        DimensionDataSource("wto-news", "WTO 新闻", "connected"),
     ),
     match_columns=(
         COLUMN_ENTITY,

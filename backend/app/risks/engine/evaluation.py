@@ -4,7 +4,13 @@ from sqlalchemy.orm import Session
 
 from app.ai.schemas import SignalAnalysisResult
 from app.risks.engine.matching import MatchCandidate
-from app.risks.engine.processing import MATCHERS, load_suppliers, match_type, resolve_dimension
+from app.risks.engine.processing import (
+    MATCHERS,
+    load_suppliers,
+    match_type,
+    resolve_dimension,
+    resolve_dimension_reason,
+)
 from app.risks.engine.registry import RuntimeDimension, load_dimensions
 from app.risks.scoring import LlmSuggestion, compute_score, resolve_level
 
@@ -15,9 +21,25 @@ def evaluate_event(
     *,
     credibility: int = 80,
     has_published_at: bool = True,
+    source_code: str | None = None,
 ) -> dict[str, object]:
-    """按当前维度配置执行匹配与评分，但不落库。"""
-    dimension = resolve_dimension(load_dimensions(session), result.event_type)
+    """按当前维度配置执行匹配与评分，但不落库。
+
+    可选 ``source_code`` 复用与真实处理链相同的信源优先路由：提供时按信源
+    归属优先判定接管维度；不提供时保持旧的事件类型匹配语义。
+    """
+    dimensions = load_dimensions(session)
+    dimension = resolve_dimension(
+        dimensions, result.event_type, source_code=source_code
+    )
+    if dimension is None and source_code is not None:
+        return {
+            "dimension": None,
+            "message": resolve_dimension_reason(
+                dimensions, result.event_type, source_code
+            ),
+            "candidates": [],
+        }
     return evaluate_event_with_dimension(
         session,
         dimension,

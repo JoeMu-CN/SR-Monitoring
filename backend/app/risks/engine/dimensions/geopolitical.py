@@ -24,11 +24,10 @@ DIMENSION = DimensionConfig(
     event_types=("geopolitical",),
     content_items=("武装冲突", "制裁与出口管制", "政局动荡", "双边关系", "公共安全事件"),
     data_sources=(
-        DimensionDataSource("ofac-sdn", "美国财政部 OFAC SDN", "connected"),
-        DimensionDataSource("mofcom-entity-control", "商务部管制与不可靠实体清单", "planned"),
-        DimensionDataSource("bis-entity-list", "美国商务部 BIS Entity List", "planned"),
-        DimensionDataSource("un-consolidated-sanctions", "联合国综合制裁清单", "planned"),
-        DimensionDataSource("mfa-public-info", "外交部公开信息", "planned"),
+        DimensionDataSource("ofac-sdn", "OFAC SDN 制裁名单", "connected"),
+        DimensionDataSource("bis-entity-list", "美国商务部 BIS Entity List", "connected"),
+        DimensionDataSource("mofcom-entity-detail", "商务部实体名单详情", "connected"),
+        DimensionDataSource("fmprc-press", "外交部例行记者会", "connected"),
     ),
     match_columns=(
         COLUMN_ENTITY,

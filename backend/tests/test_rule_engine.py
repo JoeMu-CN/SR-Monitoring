@@ -516,10 +516,17 @@ def test_dimension_api_exposes_content_and_source_status(client: TestClient) -> 
         s for s in dimensions["corporate"]["data_sources"] if s["code"] == "tianyancha"
     )
     assert tyc["declared_status"] == "external_tool"
-    assert all(
-        s["declared_status"] == "planned"
-        for s in dimensions["policy"]["data_sources"]
-    )
+    # policy 已按 19 个真实信源校正：声明 5 个已接入政策类信源（status=connected），
+    # 但维度代码默认仍 event_types=() + enabled=False，靠 DB 启用后按信源归属接管。
+    policy_sources = dimensions["policy"]["data_sources"]
+    assert {s["code"] for s in policy_sources} == {
+        "customs-announcement",
+        "eu-official-journal",
+        "eu-compliance",
+        "uflpa-entity-list",
+        "mee-announcement",
+    }
+    assert all(s["declared_status"] == "connected" for s in policy_sources)
 
 
 def test_dimension_metadata_survives_database_override(

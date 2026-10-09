@@ -2,7 +2,7 @@
 
 - 原始风险信号和 AI 分析结果默认保留 90 天（可配置 RETENTION_SIGNAL_DAYS）。
 - 风险事件和风险提醒保留至失效后 90 天（可配置 RETENTION_EVENT_DAYS）。
-- 采集运行记录默认保留 30 天（可配置 RETENTION_RUN_DAYS）。
+- 采集运行记录与调度执行历史默认保留 30 天（可配置 RETENTION_RUN_DAYS）。
 
 证据闭包与删除顺序：任何尚保留提醒（current 有效、legacy 保守保留、expired
 未过 90 天窗口）所连接的 match → event → RiskEventSignal → RawSignal 及该信号
@@ -36,6 +36,7 @@ from app.risks.models import (
     RiskEventSignal,
     SupplierEventMatch,
 )
+from app.scheduler.observability_models import SchedulerJobRun
 from app.scheduler.retention_queries import (
     classify_expired_alerts,
     protected_signal_ids,
@@ -55,6 +56,7 @@ class CleanupResult:
     deleted_signals: int = 0
     deleted_analysis: int = 0
     deleted_runs: int = 0
+    deleted_scheduler_runs: int = 0
     protected_skipped: int = 0
     anomaly_anchor_skipped: int = 0
 
@@ -224,6 +226,15 @@ def _run_cleanup(
         delete(CollectionRun).where(CollectionRun.started_at < run_cutoff)
     )
     result.deleted_runs = _rowcount(runs_deleted)
+
+    # 4) 调度执行历史与采集运行同口径：超过 run_days 的调度记录删除
+    scheduler_run_cutoff = now - timedelta(days=settings.run_days)
+    scheduler_runs_deleted = session.execute(
+        delete(SchedulerJobRun).where(
+            SchedulerJobRun.scheduled_run_at < scheduler_run_cutoff
+        )
+    )
+    result.deleted_scheduler_runs = _rowcount(scheduler_runs_deleted)
     session.flush()
     return result
 

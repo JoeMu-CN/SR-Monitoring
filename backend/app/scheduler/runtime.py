@@ -6,8 +6,11 @@
   显式 ``commit``；任何异常只记稳定日志，绝不向上抛、绝不改写业务结果、
   也绝不把失败伪装成健康。
 - 进程锁未获得的重复批次直接跳过，不在此写 ``failed``。
-- 任务开始与结束都写状态：``record_job_started`` 置 running，
+- 任务开始与结束都写状态：``record_job_started`` 置 running 并登记当前工作项，
   ``record_job_result`` 置 succeeded/failed；成功时间仅在成功结论后更新。
+- 当前工作字段（current_kind/current_stage/current_item_id）只在任务运行期间
+  有值：结束时由 ``record_job_result`` / ``record_job_neutral`` 一并清空，
+  避免健康聚合把已结束任务继续当作“正在工作”。
 """
 
 from __future__ import annotations
@@ -18,7 +21,11 @@ from datetime import UTC, datetime
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database import SessionLocal
-from app.scheduler.runtime_models import SchedulerRuntimeState
+from app.scheduler.runtime_models import (
+    CurrentWorkKind,
+    CurrentWorkStage,
+    SchedulerRuntimeState,
+)
 
 logger = logging.getLogger("scheduler.runtime")
 
@@ -108,7 +115,7 @@ def record_source_collection_deferred(
 
 
 def record_job_neutral(job_key: str, *, now: datetime | None = None) -> bool:
-    """中性完成：状态收敛为 idle 并清空当前 error_code，保留 last_success_at。"""
+    """中性完成：状态收敛为 idle、清空 error_code 与当前工作项，保留 last_success_at。"""
     moment = now or datetime.now(UTC)
     return _write(
         job_key,
@@ -116,17 +123,57 @@ def record_job_neutral(job_key: str, *, now: datetime | None = None) -> bool:
             "status": "idle",
             "last_finished_at": moment,
             "error_code": None,
+            "current_kind": None,
+            "current_stage": None,
+            "current_item_id": None,
             "updated_at": moment,
         },
     )
 
 
-def record_job_started(job_key: str, *, now: datetime | None = None) -> bool:
-    """任务开始时标记观测点为 running（独立短事务；写失败不影响业务）。"""
+def record_job_started(
+    job_key: str,
+    *,
+    kind: CurrentWorkKind,
+    stage: CurrentWorkStage,
+    item_id: int | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """任务开始时标记观测点为 running 并登记当前工作项（独立短事务；写失败不影响业务）。
+
+    ``item_id`` 缺省即写入 NULL：新一轮开始必须覆盖上一轮残留的当前项，
+    不允许继承旧观测。单信号粒度更新请用 ``record_pending_signal_started``。
+    """
     moment = now or datetime.now(UTC)
     return _write(
         job_key,
-        {"status": "running", "last_started_at": moment, "updated_at": moment},
+        {
+            "status": "running",
+            "last_started_at": moment,
+            "current_kind": kind,
+            "current_stage": stage,
+            "current_item_id": item_id,
+            "updated_at": moment,
+        },
+    )
+
+
+def record_pending_signal_started(signal_id: int, *, now: datetime | None = None) -> bool:
+    """处理单个待处理信号前刷新当前工作项（item_id 与 stage）。
+
+    不刷新批次级 ``last_started_at``：``pending_signals`` 行的开始时间仍表示
+    本批次处理开始，而不是最后一个信号的开始。
+    """
+    moment = now or datetime.now(UTC)
+    return _write(
+        PENDING_SIGNALS_JOB_KEY,
+        {
+            "status": "running",
+            "current_kind": "pending_signal_processing",
+            "current_stage": "processing_signal",
+            "current_item_id": signal_id,
+            "updated_at": moment,
+        },
     )
 
 
@@ -153,6 +200,9 @@ def record_job_result(
         "filtered_count": max(filtered, 0),
         "failed_count": max(failed, 0),
         "error_code": stable_error,
+        "current_kind": None,
+        "current_stage": None,
+        "current_item_id": None,
         "updated_at": moment,
     }
     if succeeded:

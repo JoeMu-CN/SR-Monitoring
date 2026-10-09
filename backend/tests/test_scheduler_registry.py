@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from threading import Event
 from types import SimpleNamespace
+from typing import NoReturn
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 import app.research.schedule as research_schedule
 import app.scheduler.jobs as scheduler_jobs
 import app.scheduler.main as scheduler_main
+import app.scheduler.observability as scheduler_observability
 from app.ai.models import AIAnalysisRecord
 from app.auth.models import User
 from app.config import SearchSettings
 from app.research.models import ResearchBatch, ResearchTask
+from app.scheduler.observability import JobLike
+from app.scheduler.observability_models import SchedulerJobRegistry
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.service import STALE_COLLECTION_RUN_ERROR
 from app.suppliers.models import Supplier
@@ -701,3 +706,144 @@ def test_collect_tyc_shard_job_persists_usage_and_report_signal(
     assert len(signals) == 1
     assert signals[0].raw_data["report_kind"] == "supplier_profile"
     assert processed == [1]
+
+
+# ---------------------------------------------------------------------------
+# 排期快照同步（0057）：真实 next_run_time 落库、排除内部 job、移除即删除
+# ---------------------------------------------------------------------------
+
+
+def test_job_registry_snapshot_uses_real_next_run_time_and_removes_departed(
+    db_session, monkeypatch
+) -> None:
+    """Given 调度器注册了业务/维护 job，When 同步快照，Then 只落非内部 job 的真实排期。"""
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
+    def _noop() -> None:
+        return None
+
+    scheduler.add_job(_noop, "interval", seconds=60, id="collect", name="定时采集与处理")
+    scheduler.add_job(
+        _noop, "interval", seconds=60, id="source-7", name="采集信息源 ofac-sdn"
+    )
+    scheduler.add_job(
+        _noop, "interval", seconds=60, id="runtime-heartbeat", name="持久化调度器心跳"
+    )
+    scheduler.add_job(_noop, "interval", seconds=60, id="notify", name="风险提醒推送")
+    collect_job = scheduler.get_job("collect")
+    source_job = scheduler.get_job("source-7")
+    notify_job = scheduler.get_job("notify")
+    assert collect_job is not None
+    assert source_job is not None
+    assert notify_job is not None
+    collect_fire = datetime(2026, 10, 7, 4, 0, tzinfo=UTC)
+    source_fire = collect_fire + timedelta(minutes=5)
+    collect_job.next_run_time = collect_fire
+    source_job.next_run_time = source_fire
+    # 暂停/无下一次触发的 job：如实写 NULL，不推算。
+    notify_job.next_run_time = None
+    monkeypatch.setattr(
+        scheduler_observability, "SessionLocal", lambda: nullcontext(db_session)
+    )
+
+    assert scheduler_observability.sync_job_registry(scheduler) is True
+
+    rows = {
+        row.job_id: row for row in db_session.scalars(select(SchedulerJobRegistry))
+    }
+    assert set(rows) == {"collect", "source-7", "notify"}
+    assert rows["collect"].name == "定时采集与处理"
+    assert rows["collect"].next_run_at == collect_fire
+    assert rows["source-7"].next_run_at == source_fire
+    assert rows["notify"].next_run_at is None
+
+    # When 移除一个 job 后再次同步，Then 该行从 registry 删除，其余保留。
+    scheduler.remove_job("source-7")
+    assert scheduler_observability.sync_job_registry(scheduler) is True
+    remaining = {row.job_id for row in db_session.scalars(select(SchedulerJobRegistry))}
+    assert remaining == {"collect", "notify"}
+
+    # 就地改名/改排期的 job 在下次同步后更新，不产生新行。
+    updated_fire = collect_fire + timedelta(hours=1)
+    collect_job.name = "定时采集与处理（新）"
+    collect_job.next_run_time = updated_fire
+    assert scheduler_observability.sync_job_registry(scheduler) is True
+    rows = {
+        row.job_id: row for row in db_session.scalars(select(SchedulerJobRegistry))
+    }
+    assert rows["collect"].name == "定时采集与处理（新）"
+    assert rows["collect"].next_run_at == updated_fire
+
+
+def test_job_registry_sync_failure_is_isolated(monkeypatch) -> None:
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
+    def _broken_session() -> NoReturn:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(scheduler_observability, "SessionLocal", _broken_session)
+
+    # 观测失败只返回 False，不向上抛、不影响调度器。
+    assert scheduler_observability.sync_job_registry(scheduler) is False
+
+
+def test_job_registry_sync_tolerates_pending_job_missing_next_run_time(
+    db_session, monkeypatch
+) -> None:
+    """pending Job 缺 next_run_time 槽位：同步成功、如实落 NULL，之后更新真实值。"""
+
+    class _PendingJob:
+        """模拟 APScheduler 3.11.3 启动前 pending Job：next_run_time 槽位未赋值。"""
+
+        __slots__ = ("id", "name")
+
+        def __init__(self, job_id: str, name: str) -> None:
+            self.id = job_id
+            self.name = name
+
+        @property
+        def next_run_time(self) -> datetime:
+            raise AttributeError("next_run_time")
+
+    class _ReadyJob:
+        """启动完成后同一 job：next_run_time 可读。"""
+
+        def __init__(self, job_id: str, name: str, next_run_at: datetime | None) -> None:
+            self.id = job_id
+            self.name = name
+            self.next_run_time = next_run_at
+
+    class _MutableScheduler:
+        def __init__(self, jobs: list[JobLike]) -> None:
+            self.jobs = jobs
+
+        def get_jobs(self) -> Sequence[JobLike]:
+            return list(self.jobs)
+
+    monkeypatch.setattr(
+        scheduler_observability, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    db_session.execute(delete(SchedulerJobRegistry))
+    db_session.flush()
+
+    # Given 启动中 get_jobs 返回尚未处理的 pending Job（属性访问抛 AttributeError），
+    # When 同步快照，Then 不失败，且该行如实落 next_run_at=NULL。
+    scheduler = _MutableScheduler([_PendingJob("source-9", "采集信息源 pending")])
+    assert scheduler_observability.sync_job_registry(scheduler) is True
+    pending_row = db_session.scalar(
+        select(SchedulerJobRegistry).where(SchedulerJobRegistry.job_id == "source-9")
+    )
+    assert pending_row is not None
+    assert pending_row.name == "采集信息源 pending"
+    assert pending_row.next_run_at is None
+
+    # When 同一 job 属性已可读后再次同步，Then 更新为真实 UTC 排期。
+    fire = datetime(2026, 10, 7, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    scheduler.jobs = [_ReadyJob("source-9", "采集信息源 pending", fire)]
+    assert scheduler_observability.sync_job_registry(scheduler) is True
+    db_session.expire_all()
+    updated_row = db_session.scalar(
+        select(SchedulerJobRegistry).where(SchedulerJobRegistry.job_id == "source-9")
+    )
+    assert updated_row is not None
+    assert updated_row.next_run_at == datetime(2026, 10, 7, 4, 0, tzinfo=UTC)

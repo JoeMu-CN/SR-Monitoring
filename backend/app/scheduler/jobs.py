@@ -117,7 +117,11 @@ def _collect_enabled_sources(
                 logger.info("跳过信息源 %s（非拉取式）: %s", source.code, exc)
                 continue
             # 任务开始写观测（独立短事务；写失败不影响采集业务）。
-            runtime.record_job_started(runtime.source_collection_job_key(source.id))
+            runtime.record_job_started(
+                runtime.source_collection_job_key(source.id),
+                kind="source_collection",
+                stage="collecting",
+            )
             try:
                 run = collect_source(session, source, pull_adapter)
             except CollectionDeferred as exc:
@@ -244,7 +248,11 @@ def _process_pending_signals(
         return 0
 
     # 任务开始写观测（独立短事务；lock 未获得时保持零观测）。失败不影响业务。
-    runtime.record_job_started(runtime.PENDING_SIGNALS_JOB_KEY)
+    runtime.record_job_started(
+        runtime.PENDING_SIGNALS_JOB_KEY,
+        kind="pending_signal_processing",
+        stage="processing_signal",
+    )
 
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
     now = now_utc or datetime.now(UTC)
@@ -277,6 +285,8 @@ def _process_pending_signals(
                 signal = session.get(RawSignal, signal_id)
                 if signal is None:
                     continue
+                # 处理前登记当前信号（独立短事务；写失败不影响业务）。
+                runtime.record_pending_signal_started(signal.id, now=now)
                 analysis = session.scalar(
                     select(AIAnalysisRecord)
                     .where(

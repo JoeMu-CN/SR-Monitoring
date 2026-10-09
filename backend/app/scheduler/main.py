@@ -31,6 +31,7 @@ from app.config import (
 from app.database import SessionLocal
 from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
+from app.scheduler.events import attach_observability_listener
 from app.scheduler.health_rules import cron_to_apscheduler
 from app.scheduler.jobs import (
     TYC_SHARD_CRONS,
@@ -209,6 +210,10 @@ def _register_weekly_research_job(scheduler: BlockingScheduler) -> None:
 
 def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+    # 排期快照与执行历史监听：必须在 scheduler.start() 前注册，使
+    # SCHEDULER_STARTED 后立即落真实 next_run_time，并随 JOB_ADDED /
+    # MODIFIED / REMOVED / SUBMITTED 持续同步；监听器异常自身隔离。
+    attach_observability_listener(scheduler)
     # 启动恢复：仅本进程启动时收尾一次遗留 running 采集运行，然后才注册周期
     # 任务；正常采集循环不再扫描 running，避免误伤仍在执行的长任务。
     _finalize_stale_collection_runs_on_startup()

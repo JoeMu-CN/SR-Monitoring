@@ -7,6 +7,28 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     session_id: int | None = None
     draft_id: int | None = None
+    run_token: str | None = Field(
+        default=None,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class AgentStepRead(BaseModel):
+    """单条真实执行步骤（只记录模型调用与工具执行，不含模型隐藏思维链）。"""
+
+    index: int
+    kind: str
+    tool: str | None = None
+    detail: str | None = None
+
+
+class AgentRunStepsRead(BaseModel):
+    """一次运行的步骤快照，供前端轮询展示。"""
+
+    run_token: str
+    status: str
+    steps: list[AgentStepRead]
 
 
 class ToolCallInfo(BaseModel):

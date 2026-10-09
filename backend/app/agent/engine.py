@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -14,6 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.agent.schemas import ToolCallInfo
 from app.agent.tools import Tool, build_tool_specs
+from app.agent.turn_tracker import (
+    STEP_ANALYZING,
+    STEP_FINALIZING,
+    STEP_TOOL_DONE,
+    STEP_TOOL_START,
+)
 from app.config import AGENT_MAX_STEPS, AISettings, get_ai_settings
 
 AGENT_SYSTEM_PROMPT = (
@@ -52,6 +59,10 @@ class AgentLLM(Protocol):
 class AgentRunResult:
     answer: str
     tool_calls: list[ToolCallInfo]
+
+
+#: 步骤回调：``(kind, tool) -> None``，用于把真实执行进度透出给轮询层。
+StepCallback = Callable[[str, str | None], None]
 
 
 class AgentError(RuntimeError):
@@ -206,6 +217,13 @@ def _history_messages(history: list[dict[str, str]]) -> list[dict[str, object]]:
     ]
 
 
+def _emit_step(on_step: StepCallback | None, kind: str, tool: str | None) -> None:
+    """安全地发出一次步骤事件；回调缺失时忽略。"""
+    if on_step is None:
+        return
+    on_step(kind, tool)
+
+
 async def run_agent(
     session: Session,
     question: str,
@@ -215,8 +233,13 @@ async def run_agent(
     tools: list[Tool],
     max_steps: int = AGENT_MAX_STEPS,
     system_prompt: str = AGENT_SYSTEM_PROMPT,
+    on_step: StepCallback | None = None,
 ) -> AgentRunResult:
-    """执行 ReAct 循环：模型请求工具 → 本地执行 → 结果回填 → 直到模型给出最终回答。"""
+    """执行 ReAct 循环：模型请求工具 → 本地执行 → 结果回填 → 直到模型给出最终回答。
+
+    ``on_step`` 只上报真实发生的模型调用与工具执行，便于前端轮询展示；
+    不改变既有返回值与异常语义。
+    """
     messages: list[dict[str, object]] = [
         {"role": "system", "content": system_prompt}
     ]
@@ -227,9 +250,11 @@ async def run_agent(
     executed: list[ToolCallInfo] = []
 
     for _ in range(max_steps):
+        _emit_step(on_step, STEP_ANALYZING, None)
         response = await llm.respond(messages, tool_specs)
         if response.tool_calls:
             for call in response.tool_calls:
+                _emit_step(on_step, STEP_TOOL_START, call.name)
                 tool = tool_by_name.get(call.name)
                 if tool is None:
                     result: dict[str, object] = {
@@ -241,6 +266,7 @@ async def run_agent(
                         result = await tool.execute(call.arguments, session)
                     except Exception as exc:  # noqa: BLE001
                         result = {"status": "error", "message": str(exc)[:500]}
+                _emit_step(on_step, STEP_TOOL_DONE, call.name)
                 executed.append(
                     ToolCallInfo(
                         name=call.name,
@@ -256,6 +282,7 @@ async def run_agent(
                 )
             continue
         if response.content:
+            _emit_step(on_step, STEP_FINALIZING, None)
             return AgentRunResult(answer=response.content, tool_calls=executed)
         raise AgentError("Agent 模型未返回内容")
 

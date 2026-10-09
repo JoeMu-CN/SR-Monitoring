@@ -11,6 +11,7 @@ from app.agent.engine import (
     AGENT_SYSTEM_PROMPT,
     AgentError,
     AgentLLM,
+    StepCallback,
     get_agent_llm,
     run_agent,
 )
@@ -19,6 +20,7 @@ from app.agent.schemas import ChatResponse, SourceOnboardingDraftRead
 from app.agent.source_skill import ONBOARDING_STEPS, STEP_QUESTIONS, build_source_onboarding_skill
 from app.agent.source_tools import build_source_onboarding_tools
 from app.agent.tools import Tool, build_tools
+from app.agent.turn_tracker import finish_run, record_step, start_run
 
 HISTORY_WINDOW = 8
 RISK_QUERY = "risk_query"
@@ -43,11 +45,14 @@ async def chat(
     session_id: int | None = None,
     llm: AgentLLM | None = None,
     owner_user_id: int,
+    run_token: str | None = None,
 ) -> ChatResponse:
     """风险查询 Agent：不加载信息源写入工具。
 
     ``verify_company`` 对清单内启用供应商有已批准的副作用（写入一条核查证据
     信号并按规则引擎创建或更新正式告警）；其余工具只读。
+
+    ``run_token`` 存在时，会把真实执行步骤记录到进程内追踪表供前端轮询。
     """
     return await _chat(
         session,
@@ -58,6 +63,7 @@ async def chat(
         agent_kind=RISK_QUERY,
         tools=build_tools(now_utc=datetime.now(UTC)),
         system_prompt=AGENT_SYSTEM_PROMPT,
+        run_token=run_token,
     )
 
 
@@ -142,6 +148,7 @@ async def _chat(
     tools: list[Tool],
     system_prompt: str,
     persisted_question: str | None = None,
+    run_token: str | None = None,
 ) -> ChatResponse:
     active_session = _load_or_create_session(
         session, session_id, agent_kind, owner_user_id
@@ -157,14 +164,23 @@ async def _chat(
 
     history = _recent_history(session, active_session.id)
     active_llm = llm or get_agent_llm()
-    result = await run_agent(
-        session,
-        question,
-        history,
-        llm=active_llm,
-        tools=tools,
-        system_prompt=system_prompt,
-    )
+    on_step: StepCallback | None = None
+    if run_token is not None:
+        start_run(run_token, owner_user_id)
+        on_step = _step_recorder(run_token)
+    try:
+        result = await run_agent(
+            session,
+            question,
+            history,
+            llm=active_llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            on_step=on_step,
+        )
+    finally:
+        if run_token is not None:
+            finish_run(run_token)
 
     tool_records = [
         {
@@ -188,6 +204,15 @@ async def _chat(
         answer=_redact_sensitive_text(result.answer),
         tool_calls=result.tool_calls,
     )
+
+
+def _step_recorder(run_token: str) -> StepCallback:
+    """构造绑定 run_token 的步骤回调，避免在 ReAct 循环内反复捕获上下文。"""
+
+    def record(kind: str, tool: str | None) -> None:
+        record_step(run_token, kind, tool)
+
+    return record
 
 
 def _load_or_create_session(

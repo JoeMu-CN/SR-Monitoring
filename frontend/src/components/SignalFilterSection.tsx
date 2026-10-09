@@ -28,11 +28,11 @@ const KEYWORD_CANDIDATES: readonly string[] = [
 /** 主要制造经济体（ISO 3166-1 alpha-2）；GB 为英国官方码，有意保留。 */
 const COUNTRY_CANDIDATES: readonly string[] = ['CN', 'US', 'DE', 'JP', 'KR', 'IN', 'MX', 'VN', 'IT', 'FR', 'GB', 'BR', 'ID', 'TR', 'TH', 'TW'];
 
-/** 已选/生效值芯片：信息蓝高亮，与只读清单类信源芯片同一色系，深色模式同步。 */
-const SELECTED_CHIP_CLASS = 'inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300';
+/** 已选/生效值芯片：信息蓝高亮，与只读清单类信源芯片同一色系，深色模式同步；12px 圆角对齐原型 `.chip`（#33）。 */
+const SELECTED_CHIP_CLASS = 'inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300';
 
-/** 未选候选：虚线描边弱化，作为按钮提供一键加入与清晰焦点环。 */
-const CANDIDATE_CHIP_CLASS = 'inline-flex items-center rounded-md border border-dashed border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/40 dark:hover:text-blue-300 dark:focus-visible:ring-blue-400';
+/** 未选候选：虚线描边弱化，作为按钮提供一键加入与清晰焦点环；12px 圆角对齐原型 `.chip`（#33）。 */
+const CANDIDATE_CHIP_CLASS = 'inline-flex items-center rounded-xl border border-dashed border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-800 dark:hover:bg-blue-950/40 dark:hover:text-blue-300 dark:focus-visible:ring-blue-400';
 
 const GROUP_LABEL_CLASS = 'text-[10px] font-bold text-slate-500 dark:text-slate-400';
 const EMPTY_HINT_CLASS = 'text-[11px] text-slate-400 dark:text-slate-500';
@@ -272,7 +272,7 @@ export const SignalFilterSection: React.FC<SignalFilterSectionProps> = ({role, m
           <h4 className="text-[12px] font-bold text-[#424751] dark:text-slate-300 mb-1.5">清单类信源（只读，供应商名预筛）</h4>
           <div className="flex flex-wrap gap-1.5">
             {(config?.list_sources ?? []).map((code) => (
-              <span key={code} className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-[11px] text-blue-700 dark:text-blue-300 font-mono">{code}</span>
+              <span key={code} className="px-2 py-0.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-[11px] text-blue-700 dark:text-blue-300 font-mono">{code}</span>
             ))}
           </div>
         </div>

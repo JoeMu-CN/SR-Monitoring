@@ -5,6 +5,7 @@ import type {DimensionTraceSampleRead, ForcedRuleRead, RuleEngineOptions} from '
 import type {MonitoringDimension} from '../types';
 import {RuleEngineRuleMatrix} from './RuleEngineRuleMatrix';
 import type {RuleEngineRuleMatrixProps} from './RuleEngineRuleMatrix';
+import {RuleEngineSampleSelector} from './RuleEngineSampleSelector';
 
 afterEach(cleanup);
 
@@ -96,8 +97,6 @@ const defaultProps = (overrides: Partial<RuleEngineRuleMatrixProps> = {}): RuleE
   options: options(),
   optionsError: '',
   samples: [],
-  selectedSampleId: null,
-  onSelectSample: vi.fn(),
   activeEventType: null,
   ...overrides,
 });
@@ -284,8 +283,11 @@ describe('规则矩阵表：行=事件类型，列=接管维度与规则口径',
   });
 });
 
-describe('样例事件选择器：真实样例驱动矩阵高亮', () => {
-  /** 模拟壳组件：选择样例会重新加载轨迹，再把新的事件类型通过 activeEventType 回传。 */
+describe('样例驱动矩阵高亮（选择器 #17 已迁至证据卡，此处按壳组件接法组合验证）', () => {
+  /**
+   * 模拟壳组件：样例选择器与矩阵表并排挂载（真实壳中二者分别位于维度证据卡与全局 Tab），
+   * 选择样例会重新加载轨迹，再把新的事件类型通过 activeEventType 回传给矩阵。
+   */
   const Harness = ({
     onSelect,
     traceBySample,
@@ -296,18 +298,24 @@ describe('样例事件选择器：真实样例驱动矩阵高亮', () => {
     const [selectedSampleId, setSelectedSampleId] = useState<number | null>(null);
     const activeEventType = selectedSampleId === null ? 'weather' : traceBySample[selectedSampleId] ?? null;
     return (
-      <RuleEngineRuleMatrix
-        dimensions={[naturalDimension(), geopoliticalDimension()]}
-        options={options()}
-        optionsError=""
-        samples={samples}
-        selectedSampleId={selectedSampleId}
-        onSelectSample={(sampleId) => {
-          onSelect(sampleId);
-          setSelectedSampleId(sampleId);
-        }}
-        activeEventType={activeEventType}
-      />
+      <>
+        <RuleEngineSampleSelector
+          options={options()}
+          samples={samples}
+          selectedSampleId={selectedSampleId}
+          onSelectSample={(sampleId) => {
+            onSelect(sampleId);
+            setSelectedSampleId(sampleId);
+          }}
+        />
+        <RuleEngineRuleMatrix
+          dimensions={[naturalDimension(), geopoliticalDimension()]}
+          options={options()}
+          optionsError=""
+          samples={samples}
+          activeEventType={activeEventType}
+        />
+      </>
     );
   };
 
@@ -346,7 +354,18 @@ describe('样例事件选择器：真实样例驱动矩阵高亮', () => {
 
   it('无真实样例时使用内置样例事件（沙箱字段结构）兜底并显式标注非真实数据', () => {
     const onSelect = vi.fn();
-    renderMatrix({samples: [], activeEventType: null, onSelectSample: onSelect});
+    render(
+      <>
+        <RuleEngineSampleSelector options={options()} samples={[]} selectedSampleId={null} onSelectSample={onSelect} />
+        <RuleEngineRuleMatrix
+          dimensions={[naturalDimension(), geopoliticalDimension()]}
+          options={options()}
+          optionsError=""
+          samples={[]}
+          activeEventType={null}
+        />
+      </>,
+    );
 
     const builtinChip = screen.getByTestId('rule-matrix-sample-builtin');
     expect(builtinChip).toHaveAttribute('aria-pressed', 'true');
@@ -360,6 +379,16 @@ describe('样例事件选择器：真实样例驱动矩阵高亮', () => {
 
     fireEvent.click(builtinChip);
     expect(onSelect).toHaveBeenCalledWith(null);
+  });
+});
+
+describe('样例选择器位置契约（#17）', () => {
+  it('矩阵卡不再内嵌任何样例选择控件（选择器已迁至证据卡）', () => {
+    renderMatrix({samples, activeEventType: 'weather'});
+
+    expect(screen.queryByTestId('rule-matrix-sample-latest')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-matrix-sample-11')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-matrix-sample-builtin')).not.toBeInTheDocument();
   });
 });
 
@@ -391,7 +420,8 @@ describe('窄屏滚动与失败降级', () => {
     expect(alert).toHaveTextContent('HTTP 503');
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-rule-matrix')).toBeInTheDocument();
-    // 真实样例选择器仍可用（降级不丢功能）
-    expect(screen.getByTestId('rule-matrix-sample-11')).toBeInTheDocument();
+    // #17：矩阵降级分支同样不再内嵌样例选择器（选择器已迁至证据卡，矩阵只负责表格本身）
+    expect(screen.queryByTestId('rule-matrix-sample-11')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-matrix-sample-latest')).not.toBeInTheDocument();
   });
 });

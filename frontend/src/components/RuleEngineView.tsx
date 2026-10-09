@@ -10,6 +10,7 @@ import {RuleEngineForcedRules, readForcedRules} from './RuleEngineForcedRules';
 import {RuleEngineScoringEditor, validateDimensionDraft} from './RuleEngineScoringEditor';
 import {RuleEnginePipeline} from './RuleEnginePipeline';
 import {RuleEngineRuleMatrix} from './RuleEngineRuleMatrix';
+import {RuleEngineSampleSelector} from './RuleEngineSampleSelector';
 import {RuleEngineExplainers} from './RuleEngineExplainers';
 import {useRuleEngineData} from './useRuleEngineData';
 import {
@@ -551,6 +552,50 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   ];
   const globalSectionCount = globalSections.length;
 
+  /**
+   * ② 证据（维度级）卡（#16/#17/#18/#19）：观察态与配置态渲染同一结构、同一顺序——
+   * 引用信源 → 样例事件（选择器）→ 运行轨迹（嵌入块），与 demo 证据网格（scheme-b-two-tabs.html:759-807）
+   * 一致；≥1280px（Tailwind `xl`）按 1.6fr / 1fr 两列排布、运行轨迹跨全宽，窄屏回落单列。
+   * 两个分支互斥渲染，同一时刻只有一支存在，元素可安全在两支中复用（保证两态顺序绝不分叉）。
+   * 样例选择器复用壳层唯一的 selectedSampleId / setSelectedSampleId：选中后由 useRuleEngineData
+   * 带 sampleId 重取轨迹，驱动本卡运行轨迹与全局 Tab 矩阵表高亮。
+   */
+  const evidenceCard = (
+    <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+      <ScopeCardHeader
+        num="②"
+        titleId="rule-engine-scope-evidence-title"
+        title="证据"
+        dimensionName={selectedDim.name}
+        note={`只展示『${selectedDim.name}』自己的信源、轨迹与样例，不与其它维度混排。`}
+      />
+      <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:items-start xl:gap-x-4">
+        <div data-testid="rule-engine-evidence-sources" className="min-w-0">
+          <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
+        </div>
+        <div data-testid="rule-engine-evidence-sample" className="min-w-0">
+          <RuleEngineSampleSelector
+            options={data.options}
+            samples={data.trace?.samples ?? []}
+            selectedSampleId={selectedSampleId}
+            onSelectSample={setSelectedSampleId}
+          />
+        </div>
+        <div data-testid="rule-engine-evidence-timeline" className="min-w-0 xl:col-span-2">
+          <RuleEnginePipeline
+            dimension={selectedDim}
+            trace={data.trace}
+            traceError={data.traceError}
+            inputs={data.inputs}
+            inputsError={data.inputsError}
+            selectedSampleId={selectedSampleId}
+            embedded
+          />
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <RuleEngineContext.Provider value={contextValue}>
       <div className="space-y-5 pb-20 lg:pb-8">
@@ -589,133 +634,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
           </div>
         </div>
 
-        {/* Main Grid Layout (Left: Dimensions List, Right: Observation / Config) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Monitoring Dimensions List (4 cols) */}
-          <div className="lg:col-span-4 lg:sticky lg:top-16 lg:self-start space-y-3 h-fit">
-            <div className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                <h2 className="font-bold text-[15px] text-[#101d28] dark:text-white">监控维度</h2>
-                {effectiveMode === 'config' && (
-                  <button
-                    disabled
-                    className="p-1 rounded-lg text-slate-300 cursor-not-allowed"
-                    title="当前版本不新增自定义维度"
-                  >
-                    <span className="material-symbols-outlined text-[20px]">add</span>
-                  </button>
-                )}
-              </div>
-
-              <div className="space-y-2" role="group" aria-label="监控维度">
-                {dimensions.map((dim) => {
-                  const isSelected = dim.id === activeDimId;
-                  return (
-                    <div
-                      key={dim.id}
-                      className={`p-3 rounded-xl border flex items-center justify-between gap-2 transition-all ${
-                        isSelected
-                          ? 'bg-[#eef6ff] dark:bg-slate-800 border-[#004782] shadow-2xs'
-                          : 'border-[#c2c6d2]/60 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                      }`}
-                    >
-                      {/* 原生 button：Tab 可达、Enter/Space 可操作，aria-pressed 暴露选中态；
-                          启停开关保持为按钮的兄弟节点，避免交互内容嵌套 */}
-                      <button
-                        type="button"
-                        data-testid={`rule-engine-dimension-${dim.id}`}
-                        aria-pressed={isSelected}
-                        onClick={() => setActiveDimId(dim.id)}
-                        className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400"
-                      >
-                        <span aria-hidden="true" className="material-symbols-outlined text-[#004782] text-[22px]">
-                          {dim.icon}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="font-bold text-[14px] text-[#101d28] dark:text-white">{dim.name}</div>
-                          {/* 「具体监控内容」卡片已按 todo 9 移除：完整清单改挂维度项悬浮/详情，
-                              文本节点保留全部条目（truncate 仅做视觉裁剪），信息不丢失 */}
-                          <div
-                            className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate"
-                            title={dim.contentItems.length > 0 ? dim.contentItems.join(' · ') : undefined}
-                          >
-                            {dim.contentItems.join(' · ') || '待配置监控内容'}
-                          </div>
-                          {isSelected && (
-                            <div className="text-[11px] mt-0.5">
-                              {data.inputsError ? (
-                                <span className="text-red-700 dark:text-red-300">输入健康度加载失败</span>
-                              ) : data.inputs === null ? (
-                                <span className="inline-flex items-center gap-1 text-slate-400 dark:text-slate-500"><span className="sr-only">输入健康度加载中…</span></span>
-                              ) : data.inputs.has_input ? (
-                                <span className="text-slate-600 dark:text-slate-300">近 30 天 {data.inputs.observed.length} 个信源有输入</span>
-                              ) : (
-                                <span className="text-slate-500 dark:text-slate-400">当前无输入</span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </button>
-
-                      {/* 观察态：只读启停状态；配置态：管理员启停开关 */}
-                      {effectiveMode === 'config' ? (
-                        <label
-                          onClick={(e) => e.stopPropagation()}
-                          className="relative inline-flex items-center cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            aria-label={`${dim.name} 启用状态`}
-                            checked={dim.enabled}
-                            onChange={() => { if (isAdmin) void onToggleDimension(dim.id); }}
-                            disabled={!isAdmin}
-                            className="sr-only peer"
-                          />
-                          <div className="w-9 h-5 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#004782]"></div>
-                        </label>
-                      ) : (
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            dim.enabled
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                              : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
-                          }`}
-                        >
-                          {dim.enabled ? '已启用' : '已停用'}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 沙箱测试开关：仅配置态提供（评估接口为 rule_manage 权限，viewer 不可用） */}
-            {effectiveMode === 'config' && (
-              <button
-                type="button"
-                aria-expanded={sandboxOpen}
-                aria-controls="rule-engine-sandbox"
-                onClick={() => setSandboxOpen((open) => !open)}
-                className={`w-full min-h-12 px-4 py-3 rounded-xl border font-bold text-[14px] flex items-center justify-between gap-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 ${
-                  sandboxOpen
-                    ? 'bg-[#eef6ff] dark:bg-slate-800 border-[#004782] text-[#004782] dark:text-blue-300'
-                    : 'bg-white dark:bg-slate-900 border-[#e2e8f0] dark:border-slate-800 text-[#101d28] dark:text-white hover:bg-[#f7f9ff] dark:hover:bg-slate-800'
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[20px] text-[#004782] dark:text-blue-300">science</span>
-                  沙箱测试
-                </span>
-                <span className="material-symbols-outlined text-[20px]" aria-hidden="true">
-                  {sandboxOpen ? 'expand_less' : 'expand_more'}
-                </span>
-              </button>
-            )}
-          </div>
-
-          {/* Right Column：外层容器承载栅格跨度与 Tab 栏，动画只包裹内容区，Tab 栏不随模式/维度切换重放动画 */}
-          <div className="lg:col-span-8 min-w-0 space-y-6">
+        {/* Tab 栏与面板容器：维度选择器已迁入维度 Tab（#1，对齐原型 scheme-b-two-tabs.html:605-614），
+            页面级左栏维度列表与其中重复的沙箱入口整体移除；页面收敛为单列布局。 */}
+        <div className="min-w-0 space-y-6">
             {/* 一级 Tab 栏（下划线式，原型 scheme-b-two-tabs.html:589-594 + CSS :131-145）：
                 与「观察态/配置态」模式切换正交——Tab 决定看哪一层内容，模式只决定是否可编辑。
                 保持既有无障碍契约：role=tablist / role=tab / aria-selected / aria-controls /
@@ -775,9 +696,49 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
             <p className="mb-4 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
               维度视图只保留『当前维度自己的』配置与证据；规则语义说明、信号过滤与全局强制规则等公有内容已全部移至『全局规则』Tab，不再随维度重复。
             </p>
+            {/* 维度选择 chips（#1，原型 scheme-b-two-tabs.html:605-614）：由页面级左栏迁入维度 Tab 内、
+                维度头卡之前；切到全局 Tab 时随本面板 hidden 一并隐藏，两个 Tab 不共享维度选择器。
+                保留既有无障碍契约：role=group 分组名「监控维度」、原生 button、aria-pressed 选中态、
+                Enter/Space 触发与 focus-visible 焦点环；已停用维度沿用 demo 的虚线描边 + 「已停用」徽标。
+                监控内容清单改挂 chip 悬浮提示，信息不丢失（原左栏列表项的 title 行为）。 */}
+            <div
+              data-testid="rule-engine-dimension-chips"
+              role="group"
+              aria-label="监控维度"
+              className="mb-4 flex flex-wrap gap-2"
+            >
+              {dimensions.map((dim) => {
+                const isSelected = dim.id === activeDimId;
+                return (
+                  <button
+                    key={dim.id}
+                    type="button"
+                    data-testid={`rule-engine-dimension-${dim.id}`}
+                    aria-pressed={isSelected}
+                    onClick={() => setActiveDimId(dim.id)}
+                    title={dim.contentItems.length > 0 ? dim.contentItems.join(' · ') : undefined}
+                    className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-[12.5px] font-semibold leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400 ${
+                      isSelected
+                        ? 'border-[#004782] bg-[#eef6ff] text-[#004782] dark:border-blue-300 dark:bg-slate-800 dark:text-blue-300'
+                        : `bg-white text-[#424751] hover:border-[#004782] hover:text-[#004782] dark:bg-slate-900 dark:text-slate-300 dark:hover:border-blue-300 dark:hover:text-blue-300 ${
+                            dim.enabled ? 'border-[#e2e8f0] dark:border-slate-700' : 'border-dashed border-[#e2e8f0] dark:border-slate-700'
+                          }`
+                    }`}
+                  >
+                    {dim.name}
+                    {!dim.enabled && (
+                      <span className="rounded-full border border-[#e2e8f0] bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                        已停用
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
             {/* 维度头卡（原型 scheme-b-two-tabs.html:617-645）：序号 / 名称 / ID / 启停 /
                 接管事件类型 chips / 右侧三块 stats（输入状态+备注、引用信源、启用匹配柱）。
-                只读概览，两种模式（观察/配置）均可见；启停开关仍只在左栏维度列表内，这里刻意不再放第二个开关。
+                只读概览，两种模式（观察/配置）均可见；启停开关随维度选择器一起从左栏迁入头卡
+                （仅配置态 admin 可操作，观察态为只读徽标），不再有页面级左栏。
                 位置在 motion.div（key=维度-模式）之外：切维度/切模式不重放它的入场动画，且它始终先于两态内容出现。 */}
             <div
               data-testid="rule-engine-dimension-header"
@@ -790,16 +751,31 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     <span className="font-mono text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-400">
                       维度 {dimensionIndex} / {dimensions.length}
                     </span>
-                    {/* 启停只读徽标：配色与左栏观察态徽标同款；开关本体保持在左栏，避免重复控件 */}
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                        selectedDim.enabled
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                          : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
-                      }`}
-                    >
-                      {selectedDim.enabled ? '已启用' : '已停用'}
-                    </span>
+                    {/* 启停控件：观察态为只读徽标；配置态（admin）为可操作开关。
+                        开关原在左栏维度列表内，随维度选择器迁入头卡；onToggleDimension 与权限门控不变。 */}
+                    {effectiveMode === 'config' ? (
+                      <label className="relative inline-flex cursor-pointer items-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`${selectedDim.name} 启用状态`}
+                          checked={selectedDim.enabled}
+                          onChange={() => { if (isAdmin) void onToggleDimension(selectedDim.id); }}
+                          disabled={!isAdmin}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#004782]"></div>
+                      </label>
+                    ) : (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          selectedDim.enabled
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                            : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
+                        }`}
+                      >
+                        {selectedDim.enabled ? '已启用' : '已停用'}
+                      </span>
+                    )}
                   </div>
                   <h2 className="mt-1.5 text-[22px] font-bold leading-tight tracking-tight text-[#101d28] dark:text-white">
                     {selectedDim.name}
@@ -1066,26 +1042,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       </div>
                     </section>
                   </div>
-                  {/* ② 证据（维度级）锚点：本维度自己的运行轨迹与引用信源都属「证据」。
-                      观察态/配置态两支互斥渲染，故两支各有一对同名锚点；同一时刻渲染的那一支里两个锚点必须同时存在。 */}
-                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
-                    <ScopeCardHeader
-                      num="②"
-                      titleId="rule-engine-scope-evidence-title"
-                      title="证据"
-                      dimensionName={selectedDim.name}
-                      note={`只展示『${selectedDim.name}』自己的信源与运行轨迹，不与其它维度混排。`}
-                    />
-                    <RuleEnginePipeline
-                      dimension={selectedDim}
-                      trace={data.trace}
-                      traceError={data.traceError}
-                      inputs={data.inputs}
-                      inputsError={data.inputsError}
-                      selectedSampleId={selectedSampleId}
-                    />
-                    <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
-                  </div>
+                  {/* ② 证据（维度级）锚点：本维度自己的运行轨迹、引用信源与样例都属「证据」。
+                      观察态/配置态两支互斥渲染，故两支各挂同一 evidenceCard；同一时刻只存在一支。 */}
+                  {evidenceCard}
                   </div>
                   {/* 规则矩阵表 / 规则语义说明 / 信号过滤已迁入全局面板（全维度共用，全页唯一），
                       本分支不再挂载，避免同一语义出现两份实例与重复请求 */}
@@ -1218,30 +1177,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     </div>
                   </div>
 
-                  {/* ② 证据（维度级）锚点：证据区 = 引用信源。
-                      将信源列表从配置卡内移出，对齐原型「② 证据（维度级）」的归属；同一时刻只渲染这一支，
-                      DimensionSources 全页因此只出现一次（观察态那支另有一套同名锚点）。
-                      监控内容改挂左栏维度项悬浮/详情；信源列表为两态共用的只读信息（todo 9：具体监控内容独立卡片已移除）。 */}
-                  <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
-                    <ScopeCardHeader
-                      num="②"
-                      titleId="rule-engine-scope-evidence-title"
-                      title="证据"
-                      dimensionName={selectedDim.name}
-                      note={`只展示『${selectedDim.name}』自己的信源与运行轨迹，不与其它维度混排。`}
-                    />
-                    <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
-                    {/* 运行轨迹与观察态同源（props 逐字一致）：配置态证据区同样需要「这条规则怎么跑」的
-                        可解释证据，原型证据区两态均含「运行轨迹」。组件不额外发请求（数据由壳层下发）。 */}
-                    <RuleEnginePipeline
-                      dimension={selectedDim}
-                      trace={data.trace}
-                      traceError={data.traceError}
-                      inputs={data.inputs}
-                      inputsError={data.inputsError}
-                      selectedSampleId={selectedSampleId}
-                    />
-                  </div>
+                  {/* ② 证据（维度级）锚点：与观察态同一 evidenceCard（信源 → 样例 → 运行轨迹），
+                      两态结构与顺序绝不分叉；同一时刻只渲染这一支，DimensionSources 全页只出现一次。 */}
+                  {evidenceCard}
                   </div>
 
                   <AnimatePresence initial={false}>
@@ -1472,13 +1410,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   options={data.options}
                   optionsError={data.optionsError}
                   samples={data.trace?.samples ?? []}
-                  selectedSampleId={selectedSampleId}
-                  onSelectSample={setSelectedSampleId}
                   activeEventType={data.trace?.event?.event_type ?? null}
                 />
               </section>
             </div>
-          </div>
         </div>
       </div>
     </RuleEngineContext.Provider>

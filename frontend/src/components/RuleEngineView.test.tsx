@@ -335,8 +335,8 @@ describe('规则引擎观察/配置双态：模式感知壳层挂载', () => {
     expect(link).toHaveAttribute('href', '/sources');
 
     // 配置态沙箱入口出现（写控件细节由各子组件测试与 shell.test 覆盖）。
-    // align-T 迁移：配置卡底新增「沙箱测试」按钮后全页有双入口（卡底 + 左栏开关），
-    // 必须限定在 rule-engine-config-panel 内选择，避免全局正则多重匹配。
+    // #1 迁移：左栏维度列表及其中的沙箱开关已整体移除，全页只剩配置卡底这一个入口，
+    // 断言仍在 rule-engine-config-panel 内，避免与其它文案混排。
     expect(within(configPanel).getByRole('button', {name: /沙箱测试/})).toBeInTheDocument();
     // 信号过滤区块已迁入全局面板（常驻、只切 hidden）：切到「全局规则」Tab 后断言；
     // align-T 迁移：embedded 模式去掉自身标题，改为断言全局层分节卡 summary 标题 + body 归属。
@@ -471,5 +471,165 @@ describe('规则引擎事件有效期控件移除', () => {
     expect(screen.getByText(/提醒失效由信号有效期策略决定/)).toBeInTheDocument();
     const link = screen.getByRole('link', {name: '信息源'});
     expect(link).toHaveAttribute('href', '/sources');
+  });
+});
+
+describe('方案 B 布局与位置契约（#1/#16/#17/#18/#19/#33）', () => {
+  /** 带两条真实样例的轨迹：验证选择器接驳唯一 selectedSampleId（无独立第二份状态）。 */
+  const sampleTrace = (): DimensionTraceRead => ({
+    available: true,
+    event: {event_type: 'weather', event_subtype: null, severity: 'high', summary: '样例事件', confidence: 0.9, published_at: null, source_name: null},
+    routing: {key: 'natural', label: '自然环境', match_columns: ['entity']},
+    match: null,
+    score: null,
+    samples: [
+      {id: 11, supplier_id: 1, supplier_name: '沿海科技', level: 'P2', event_summary: '沿岸强台风预警', updated_at: '2026-09-13T08:00:00Z'},
+      {id: 12, supplier_id: 2, supplier_name: '北岭实业', level: 'P1', event_summary: '出口管制清单更新', updated_at: '2026-09-12T08:00:00Z'},
+    ],
+  });
+
+  const renderViewer = (dims: MonitoringDimension[]) =>
+    renderWithRouter(
+      <RuleEngineView dimensions={dims} onToggleDimension={vi.fn()} onUpdateDimension={vi.fn()} role="viewer" />,
+    );
+
+  const evidenceOrder = () =>
+    within(screen.getByTestId('rule-engine-scope-evidence'))
+      .getAllByTestId(/^rule-engine-evidence-/)
+      .map((node) => node.getAttribute('data-testid'));
+
+  it('维度 chips 位于维度 tabpanel 内且先于维度头卡；切到全局 Tab 后随面板 hidden（#1）', () => {
+    renderViewer([dimension(), geopoliticalDimension()]);
+
+    const panel = screen.getByTestId('rule-engine-tabpanel-dimension');
+    const chips = screen.getByTestId('rule-engine-dimension-chips');
+    const naturalChip = screen.getByTestId('rule-engine-dimension-natural');
+    const header = screen.getByTestId('rule-engine-dimension-header');
+
+    expect(panel).toContainElement(chips);
+    expect(chips).toContainElement(naturalChip);
+    expect(screen.getByRole('group', {name: '监控维度'})).toBe(chips);
+    expect(naturalChip.tagName).toBe('BUTTON');
+    expect(naturalChip).toHaveAttribute('aria-pressed', 'true');
+    expect(naturalChip.className).toContain('focus-visible:ring-2');
+    // chips 在头卡之前（FOLLOWING 位证明头卡位于按钮之后）
+    expect(naturalChip.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
+    expect(panel).toHaveAttribute('hidden');
+    expect(panel).toContainElement(naturalChip);
+  });
+
+  it('样例选择器位于证据卡内而非矩阵卡或外层壳（#17）', () => {
+    renderViewer([dimension()]);
+
+    const selector = screen.getByTestId('rule-engine-sample-selector');
+    expect(screen.getByTestId('rule-engine-tabpanel-dimension')).toContainElement(selector);
+    expect(selector.closest('[data-testid="rule-engine-scope-evidence"]')).not.toBeNull();
+    expect(selector.closest('[data-testid="rule-engine-rule-matrix"]')).toBeNull();
+    expect(within(screen.getByTestId('rule-engine-rule-matrix')).queryByTestId('rule-engine-sample-selector')).toBeNull();
+  });
+
+  it('观察态与配置态证据块顺序一致：信源 → 样例 → 运行轨迹（#19），且 1280px 宽屏网格为两列（#16）', () => {
+    const expected = ['rule-engine-evidence-sources', 'rule-engine-evidence-sample', 'rule-engine-evidence-timeline'];
+
+    renderViewer([geopoliticalDimension()]);
+    expect(evidenceOrder()).toEqual(expected);
+    // #16：证据网格在 xl 起两列、窄屏单列兜底；运行轨迹跨全宽
+    const grid = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
+    expect(grid.className).toContain('grid-cols-1');
+    expect(grid.className).toContain('xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]');
+    expect(screen.getByTestId('rule-engine-evidence-timeline').className).toContain('xl:col-span-2');
+
+    cleanup();
+    renderAdminConfig([geopoliticalDimension()]);
+    expect(screen.getByTestId('rule-engine-config')).toBeInTheDocument();
+    expect(evidenceOrder()).toEqual(expected);
+    const configGrid = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
+    expect(configGrid.className).toContain('xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]');
+    expect(screen.getByTestId('rule-engine-evidence-timeline').className).toContain('xl:col-span-2');
+  });
+
+  it('运行轨迹以嵌入块形态位于证据卡内，不再是第二张独立整卡（#18）', async () => {
+    renderViewer([geopoliticalDimension()]);
+
+    const pipeline = screen.getByTestId('rule-engine-pipeline');
+    expect(screen.getByTestId('rule-engine-evidence-timeline')).toContainElement(pipeline);
+    expect(pipeline).toHaveAttribute('data-embedded', 'true');
+    expect(pipeline.className).not.toContain('rounded-2xl');
+    // 等待轨迹请求落地：嵌入块头（标题 + 「7 阶段」计数）出现；加载中分支同标题、无计数
+    expect(await screen.findByText('7 阶段')).toBeInTheDocument();
+    expect(screen.getByText('运行轨迹')).toBeInTheDocument();
+  });
+
+  it('配置态全页恰有一个沙箱测试入口，位于配置卡底并接线到 sandbox 面板', () => {
+    const {container} = renderAdminConfig([geopoliticalDimension()]);
+
+    const triggers = screen.getAllByRole('button', {name: /沙箱测试/});
+    expect(triggers).toHaveLength(1);
+    const trigger = triggers[0];
+    expect(within(screen.getByTestId('rule-engine-config-panel')).getByRole('button', {name: /沙箱测试/})).toBe(trigger);
+    expect(trigger).toHaveAttribute('aria-controls', 'rule-engine-sandbox');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('#rule-engine-sandbox')).not.toBeNull();
+  });
+
+  it('样例选择器接驳唯一 selectedSampleId：点击样例后按该样例重取轨迹并驱动证据卡流水线（#17）', async () => {
+    vi.spyOn(api, 'dimensionTrace').mockResolvedValue(sampleTrace());
+    renderViewer([dimension()]);
+
+    const chip = await screen.findByTestId('rule-matrix-sample-12');
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(api.dimensionTrace).toHaveBeenLastCalledWith('natural', 12));
+    // 同一状态源驱动证据卡内流水线：被选样例编号出现在嵌入块头
+    expect(await screen.findByText('真实样本 #12')).toBeInTheDocument();
+  });
+
+  it('配置态：头卡启停开关仍接驳 onToggleDimension（左栏移除后行为不变）', () => {
+    const onToggleDimension = vi.fn().mockResolvedValue(undefined);
+    renderWithRouter(
+      <RuleEngineView
+        dimensions={[geopoliticalDimension()]}
+        onToggleDimension={onToggleDimension}
+        onUpdateDimension={vi.fn()}
+        role="admin"
+      />,
+    );
+    fireEvent.click(screen.getByTestId('rule-engine-mode-toggle'));
+
+    fireEvent.click(screen.getByLabelText('地缘政治与安全 启用状态'));
+    expect(onToggleDimension).toHaveBeenCalledWith('geopolitical');
+  });
+
+  it('信号过滤与样例选择 chips 使用 12px 圆角（#33）', async () => {
+    vi.spyOn(api.filterConfig, 'get').mockResolvedValue({
+      high_impact: ['cbam'], priority_countries: [], list_sources: ['ofac-sdn'], source: 'default',
+    });
+    renderAdminConfig([geopoliticalDimension()]);
+    fireEvent.click(screen.getByTestId('rule-engine-tab-global'));
+
+    const selectedContainer = await screen.findByTestId('signal-filter-keywords-selected');
+    const selectedChip = within(selectedContainer).getByText('cbam');
+    expect(selectedChip.className).toContain('rounded-xl');
+    expect(selectedChip.className).not.toContain('rounded-md');
+
+    const candidateChip = await screen.findByLabelText('加入 制裁');
+    expect(candidateChip.className).toContain('rounded-xl');
+    expect(candidateChip.className).not.toContain('rounded-md');
+
+    const listSourceChip = screen.getByText('ofac-sdn');
+    expect(listSourceChip.className).toContain('rounded-xl');
+    expect(listSourceChip.className).not.toContain('rounded-md');
+
+    // 样例选择 chips（证据卡内）同为 12px
+    const sampleChip = screen.getByTestId('rule-matrix-sample-builtin');
+    expect(sampleChip.className).toContain('rounded-xl');
+    expect(sampleChip.className).not.toContain('rounded-md');
   });
 });

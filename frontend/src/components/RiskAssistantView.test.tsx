@@ -2,6 +2,7 @@ import {cleanup, render, screen} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
 import {api, type ChatResponse} from '../api';
+import type {Supplier} from '../types';
 import {RiskAssistantView} from './RiskAssistantView';
 
 // 仅把 chat 网络方法替换为可控 mock，保留真实 ApiError 与其他 api 成员。
@@ -15,6 +16,7 @@ vi.mock('../api', async (importOriginal) => {
 
 interface RenderOptions {
   readonly pendingQuery?: string | null;
+  readonly suppliers?: Supplier[];
 }
 
 const renderAssistant = (options: RenderOptions = {}) => {
@@ -24,7 +26,7 @@ const renderAssistant = (options: RenderOptions = {}) => {
   const result = render(
     <RiskAssistantView
       riskItems={[]}
-      suppliers={[]}
+      suppliers={options.suppliers ?? []}
       agentStatus={null}
       onSelectRisk={onSelectRisk}
       onSelectSupplier={onSelectSupplier}
@@ -137,5 +139,69 @@ describe('RiskAssistantView 库内已采集核查结果映射', () => {
     // 来源必须按真实出处标注：库内已采集核查，而不是实时 MCP。
     expect(screen.getByText('库内已采集核查')).toBeInTheDocument();
     expect(screen.queryAllByText('天眼查 MCP 实时核查')).toHaveLength(0);
+  });
+});
+
+// 回归：monitoringStatus='high_risk' 只表示「存在任意当前风险(P1–P4)」，
+// 卡片却一律显示「高危预警」，使已降级为 P2 的供应商仍被标成最高级。
+describe('RiskAssistantView 供应商卡片风险标识按真实等级显示', () => {
+  const makeSupplier = (id: string, riskLevel?: Supplier['riskLevel']): Supplier => ({
+    id,
+    code: `SUP-${id}`,
+    legalName: `测试供应商${id}`,
+    registrationNo: `91310000MA${id}`,
+    productionLocation: '苏州 工业园区',
+    tier: '核心',
+    category: '微电子元件',
+    suppliedProduct: '功率器件',
+    monitoringStatus: riskLevel ? 'high_risk' : 'normal',
+    riskLevel,
+    lastUpdated: '2026-10-01 08:00:00',
+  });
+
+  const suppliersResponse = (ids: string[]): ChatResponse => ({
+    session_id: 21,
+    answer: '已检索启用中的重点供应商。',
+    tool_calls: [{
+      name: 'query_suppliers',
+      arguments: {query: '重点供应商'},
+      result: {status: 'success', total: ids.length, items: ids.map((id) => ({id, enabled: true}))},
+    }],
+  });
+
+  const askAndSettle = async (suppliers: Supplier[]) => {
+    vi.mocked(api.chat).mockResolvedValue(suppliersResponse(suppliers.map((sup) => sup.id)));
+    const user = userEvent.setup();
+    renderAssistant({suppliers});
+    await user.type(queryInput(), '查询重点供应商');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+    return screen.findByText(/重点供应商台账/);
+  };
+
+  it('riskLevel=P2 显示「高风险」而不是「高危预警」', async () => {
+    await askAndSettle([makeSupplier('01', 'P2')]);
+
+    expect(await screen.findByText('高风险')).toBeInTheDocument();
+    expect(screen.queryAllByText('高危预警')).toHaveLength(0);
+  });
+
+  it('riskLevel=P1 显示「重大风险」', async () => {
+    await askAndSettle([makeSupplier('02', 'P1')]);
+
+    expect(await screen.findByText('重大风险')).toBeInTheDocument();
+  });
+
+  it('无当前等级时显示「正常监控」', async () => {
+    await askAndSettle([makeSupplier('03')]);
+
+    expect(await screen.findByText('正常监控')).toBeInTheDocument();
+  });
+
+  it('P3/P4 同样按真实等级显示中风险与低风险', async () => {
+    await askAndSettle([makeSupplier('04', 'P3'), makeSupplier('05', 'P4')]);
+
+    expect(await screen.findByText('中风险')).toBeInTheDocument();
+    expect(screen.getByText('低风险')).toBeInTheDocument();
+    expect(screen.queryAllByText('高危预警')).toHaveLength(0);
   });
 });

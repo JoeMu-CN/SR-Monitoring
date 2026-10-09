@@ -1,7 +1,20 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {api, type AgentStatusRead, type ToolCallRead} from '../api';
-import type {RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota} from '../types';
+import type {RiskItem, Supplier, ChatMessage, ToolCall, ExternalCompanyCheck, TianYanChaQuota, RiskLevel} from '../types';
+
+// 供应商卡片徽标按真实当前等级显示，等级名称与 RiskDetailView 一致；无当前等级才是「正常监控」。
+const RISK_LEVEL_BADGE: Record<RiskLevel, {label: string; className: string}> = {
+  P1: {label: '重大风险', className: 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300'},
+  P2: {label: '高风险', className: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'},
+  P3: {label: '中风险', className: 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'},
+  P4: {label: '低风险', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'},
+};
+
+const NO_RISK_BADGE = {
+  label: '正常监控',
+  className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+};
 
 interface RiskAssistantViewProps {
   riskItems: RiskItem[];
@@ -481,12 +494,10 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                                 </div>
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                    sup.monitoringStatus === 'high_risk'
-                                      ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
-                                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                                    (sup.riskLevel ? RISK_LEVEL_BADGE[sup.riskLevel] : NO_RISK_BADGE).className
                                   }`}
                                 >
-                                  {sup.monitoringStatus === 'high_risk' ? '高危预警' : '正常监控'}
+                                  {(sup.riskLevel ? RISK_LEVEL_BADGE[sup.riskLevel] : NO_RISK_BADGE).label}
                                 </span>
                               </div>
 

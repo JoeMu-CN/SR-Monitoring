@@ -138,37 +138,27 @@ const TAB_ITEMS: ReadonlyArray<{tab: RuleEngineTab; label: string}> = [
 ];
 
 interface ScopeCardHeaderProps {
-  /** 圆形序号徽标（配置=①，证据=②），装饰性元素，对读屏隐藏 */
-  num: string;
   /** 标题元素 id：观察态/配置态互斥渲染，同一时刻只有一支存在，可安全复用同一 id */
   titleId: string;
   /** 区块标题（「配置」/「证据」） */
   title: string;
-  /** 当前维度名：同时用于「归属于」与 scope-note */
+  /** 当前维度名：用于「归属于」标签 */
   dimensionName: string;
-  /** 归属说明句（逐字对齐原型 scheme-b-two-tabs.html:654、:757） */
-  note: string;
 }
 
 /**
- * 维度级区块（①配置 / ②证据）的统一卡头（原型 scheme-b-two-tabs.html:650-654、753-757）。
+ * 维度级区块（配置 / 证据）的统一卡头（原型 scheme-b-two-tabs.html:650-654、753-757）。
  *
  * 为什么维度级从属关系要显式写在卡头上：
- * ①配置与②证据在视觉上与全局层卡片同构，用户切维度、切 Tab 或深链直达后，可能在滚动中
+ * 配置与证据在视觉上与全局层卡片同构，用户切维度、切 Tab 或深链直达后，可能在滚动中
  * 失去「这块内容作用于哪个维度」的上下文；只靠左栏选中态暗示归属并不够——左栏可能不在
- * 视口内，窄屏下也可能被折叠。把「序号 + 标题 + 维度级副标 + 归属于：<维度名>」以及一句
- * 归属说明直接写进卡头，让每个维度级区块在自身位置自证从属关系：人可读的文案负责「一眼看懂」，
+ * 视口内，窄屏下也可能被折叠。把「标题 + 维度级副标 + 归属于：<维度名>」直接写进卡头，
+ * 让每个维度级区块在自身位置自证从属关系：人可读的文案负责「一眼看懂」，
  * 容器上的 data-dimension 负责「机械可校验」，两层表达同一事实、互相兜底。
  */
-const ScopeCardHeader: React.FC<ScopeCardHeaderProps> = ({num, titleId, title, dimensionName, note}) => (
+const ScopeCardHeader: React.FC<ScopeCardHeaderProps> = ({titleId, title, dimensionName}) => (
   <header className="space-y-2">
     <div className="flex flex-wrap items-center gap-2.5">
-      <span
-        aria-hidden="true"
-        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#004782]/35 bg-[#eef6ff] font-mono text-[13px] font-bold leading-none text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300"
-      >
-        {num}
-      </span>
       <h2 id={titleId} className="text-[15px] font-bold text-[#101d28] dark:text-white">{title}</h2>
       <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10.5px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400">
         维度级
@@ -177,9 +167,6 @@ const ScopeCardHeader: React.FC<ScopeCardHeaderProps> = ({num, titleId, title, d
         归属于：<b className="font-bold text-[#101d28] dark:text-white">{dimensionName}</b>
       </span>
     </div>
-    <p className="border-b border-dashed border-slate-200 pb-3 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:text-slate-400">
-      {note}
-    </p>
   </header>
 );
 
@@ -553,9 +540,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const globalSectionCount = globalSections.length;
 
   /**
-   * ② 证据（维度级）卡（#16/#17/#18/#19）：观察态与配置态渲染同一结构、同一顺序——
-   * 引用信源 → 样例事件（选择器）→ 运行轨迹（嵌入块），与 demo 证据网格（scheme-b-two-tabs.html:759-807）
-   * 一致；≥1280px（Tailwind `xl`）按 1.6fr / 1fr 两列排布、运行轨迹跨全宽，窄屏回落单列。
+   * ② 证据（维度级）卡（#17/#18/#19）：观察态与配置态渲染同一结构、同一顺序——
+   * 引用信源 → 样例事件（选择器）→ 运行轨迹（嵌入块），三块统一单列垂直堆叠（`space-y-2.5`），
+   * 任何视口宽度下顺序与层次一致。
    * 两个分支互斥渲染，同一时刻只有一支存在，元素可安全在两支中复用（保证两态顺序绝不分叉）。
    * 样例选择器复用壳层唯一的 selectedSampleId / setSelectedSampleId：选中后由 useRuleEngineData
    * 带 sampleId 重取轨迹，驱动本卡运行轨迹与全局 Tab 矩阵表高亮。
@@ -563,13 +550,11 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
   const evidenceCard = (
     <div data-testid="rule-engine-scope-evidence" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-evidence-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
       <ScopeCardHeader
-        num="②"
         titleId="rule-engine-scope-evidence-title"
         title="证据"
         dimensionName={selectedDim.name}
-        note={`只展示『${selectedDim.name}』自己的信源、轨迹与样例，不与其它维度混排。`}
       />
-      <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:items-start xl:gap-x-4">
+      <div className="space-y-2.5">
         <div data-testid="rule-engine-evidence-sources" className="min-w-0">
           <RuleEngineDimensionSources dimension={selectedDim} inputs={data.inputs} inputsError={data.inputsError} />
         </div>
@@ -581,7 +566,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
             onSelectSample={setSelectedSampleId}
           />
         </div>
-        <div data-testid="rule-engine-evidence-timeline" className="min-w-0 xl:col-span-2">
+        <div data-testid="rule-engine-evidence-timeline" className="min-w-0">
           <RuleEnginePipeline
             dimension={selectedDim}
             trace={data.trace}
@@ -605,11 +590,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
             <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">
               规则引擎与权重配置
             </h1>
-            <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
-              {effectiveMode === 'observation'
-                ? '用真实最近的提醒讲清一条信号如何一路变成 P1/P2 风险；切换模式后可编辑配置。'
-                : '自定义监控维度、计算权重及沙箱仿真评估。'}
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <button
@@ -687,11 +667,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               data-testid="rule-engine-tabpanel-dimension"
               hidden={activeTab !== 'dimension'}
             >
-            {/* 维度视图说明段（原型 scheme-b-two-tabs.html:601-603）：先交代「公有内容已移至全局规则 Tab」，
-                让用户进入维度视图即知道此处只保留维度私有内容，不会把全局项的缺席误读为功能缺失 */}
-            <p className="mb-4 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-              维度视图只保留『当前维度自己的』配置与证据；规则语义说明、信号过滤与全局强制规则等公有内容已全部移至『全局规则』Tab，不再随维度重复。
-            </p>
             {/* 维度选择 chips（#1，原型 scheme-b-two-tabs.html:605-614）：由页面级左栏迁入维度 Tab 内、
                 维度头卡之前；切到全局 Tab 时随本面板 hidden 一并隐藏，两个 Tab 不共享维度选择器。
                 保留既有无障碍契约：role=group 分组名「监控维度」、原生 button、aria-pressed 选中态、
@@ -845,11 +820,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 </dl>
               </div>
             </div>
-            {/* 维度路由提示行（原型 scheme-b-two-tabs.html:646）：显式声明路由边界，避免把矩阵表中
-                存在的某事件类型误读为「本维度会处理它」 */}
-            <p data-testid="rule-engine-dim-note" className="mb-4 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-              该维度仅处理其声明的事件类型；未声明的类型不会路由到本维度。
-            </p>
             {/* 内容区：不用 AnimatePresence mode="wait"，避免切换时新面板延迟挂载 */}
             <motion.div
               key={`${selectedDim.id}-${effectiveMode}`}
@@ -874,11 +844,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       让「这段内容属于哪个维度」不依赖页面文案判断。 */}
                   <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-config-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
                     <ScopeCardHeader
-                      num="①"
                       titleId="rule-engine-scope-config-title"
                       title="配置"
                       dimensionName={selectedDim.name}
-                      note={`以下为『${selectedDim.name}』的维度级配置，仅在其接管的事件被处理时生效。`}
                     />
                     {/* todo 13：观察态只读配置摘要。
                         为什么只读：观察态的职责是「如实讲清当前生效的规则」，而不是修改它；可编辑控件
@@ -892,11 +860,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       aria-label={`${selectedDim.name} 维度级配置摘要（只读）`}
                       className="space-y-5"
                     >
-                      <header className="flex flex-wrap items-baseline justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
-                        <h2 className="font-bold text-[16px] text-[#101d28] dark:text-white">配置摘要</h2>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400">当前生效值 · 只读</span>
-                      </header>
-
                       {/* 1. 启用匹配柱 */}
                       <div data-testid="rule-engine-summary-match-columns" className="space-y-1.5">
                         <h3 className="text-[13px] font-bold text-[#424751] dark:text-slate-300">启用匹配柱</h3>
@@ -1054,11 +1017,9 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       让「这段内容属于哪个维度」不依赖页面文案判断。 */}
                   <div data-testid="rule-engine-scope-config" data-dimension={selectedDim.id} aria-labelledby="rule-engine-scope-config-title" className="space-y-4 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
                     <ScopeCardHeader
-                      num="①"
                       titleId="rule-engine-scope-config-title"
                       title="配置"
                       dimensionName={selectedDim.name}
-                      note={`以下为『${selectedDim.name}』的维度级配置，仅在其接管的事件被处理时生效。`}
                     />
                     {/* 维度级可编辑控件主体集中在一个 panel（todo 12）：
                         ① 该容器只在配置态渲染；观察态渲染只读摘要（todo 13），不出现本容器，

@@ -469,7 +469,7 @@ const withScore = (
 };
 
 describe('规则引擎观察态流水线：⑥ LLM 等级建议（resolve_level 审计键）', () => {
-  it('已采纳：展示建议等级、置信度、采纳阈值与依据，并给出确定性基线等级', () => {
+  it('已采纳：展示建议等级、置信度与采纳阈值，并给出确定性基线等级', () => {
     renderPipeline();
 
     const stage = screen.getByTestId('rule-engine-pipeline-llm');
@@ -480,8 +480,9 @@ describe('规则引擎观察态流水线：⑥ LLM 等级建议（resolve_level 
     expect(within(stage).getByText('建议等级：P1（重大风险）')).toBeInTheDocument();
     expect(within(stage).getByText('建议置信度：90%')).toBeInTheDocument();
     expect(within(stage).getByText('采纳阈值 θ：75%')).toBeInTheDocument();
-    expect(within(stage).getByText('建议依据：主体直接命中制裁清单，建议按最高等级处置')).toBeInTheDocument();
     expect(within(stage).getByTestId('rule-engine-pipeline-llm-deterministic')).toHaveTextContent('确定性评分基线等级：P1（重大风险）');
+    // 自由文本依据整段不再渲染：只保留可机械核对的审计字段，避免长文本挤占本阶段版面
+    expect(screen.queryByText(/建议依据/)).not.toBeInTheDocument();
     // 采纳只说明建议并入评分链，不等于最终等级（封顶与强制规则在其后生效）
     expect(screen.getByTestId('rule-engine-pipeline-stage-llm')).toHaveTextContent('最终等级仍以流水线末端的输出等级为准');
   });
@@ -682,26 +683,6 @@ describe('规则引擎观察态流水线：⑥ LLM 等级建议（resolve_level 
     const stage = screen.getByTestId('rule-engine-pipeline-llm');
     expect(within(stage).getByText('建议置信度：—')).toBeInTheDocument();
     expect(screen.queryByText('建议置信度：100%')).not.toBeInTheDocument();
-  });
-
-  it('llm_rationale 缺失时明说未记录依据，不留空白也不编造理由', () => {
-    renderPipeline({
-      trace: withScore(trace(), {
-        total: 72,
-        level: 'P2',
-        detail: llmDetail({
-          deterministic_level: 'P2',
-          llm_level: 'P2',
-          llm_confidence: 0.9,
-          llm_theta: 0.75,
-          llm_adopted: true,
-        }),
-      }),
-    });
-
-    const stage = screen.getByTestId('rule-engine-pipeline-llm');
-    expect(within(stage).getByText('建议依据：明细未记录建议依据')).toBeInTheDocument();
-    expect(screen.queryByText('建议依据：')).not.toBeInTheDocument();
   });
 
   it('score=null（无评分记录）时仍渲染 ⑥ 阶段并说明无审计记录', () => {

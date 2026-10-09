@@ -1,5 +1,5 @@
 import React from 'react';
-import {cleanup, fireEvent, render, screen} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {DimensionTraceSampleRead, RuleEngineOptions} from '../api';
@@ -62,7 +62,7 @@ describe('样例事件选择器（#17：证据卡内）', () => {
 
     expect(screen.getByTestId('rule-matrix-sample-12')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('rule-matrix-sample-latest')).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByText(/已选样例：北岭实业 · P1 · 出口管制清单更新/)).toBeInTheDocument();
+    expect(screen.getByText('已选样例：北岭实业 · P1')).toBeInTheDocument();
   });
 
   it('无真实样例：使用内置样例事件兜底并显式标注非真实数据，点击回传 null', () => {
@@ -92,6 +92,14 @@ describe('样例事件选择器（#17：证据卡内）', () => {
     expect(chip).toHaveFocus();
     await user.keyboard('{Enter}');
     expect(onSelectSample).toHaveBeenCalledWith(11);
+  });
+
+  it('胶囊按钮以风险等级结尾，等级不被公司名省略号吞掉', () => {
+    renderSelector();
+
+    const chip = screen.getByTestId('rule-matrix-sample-11');
+    expect(within(chip).getByText('沿海科技').className).toContain('truncate');
+    expect(within(chip).getByText('· P2').className).toContain('shrink-0');
   });
 
   it('chip 使用 12px 圆角（#33 对齐原型 .chip）', () => {

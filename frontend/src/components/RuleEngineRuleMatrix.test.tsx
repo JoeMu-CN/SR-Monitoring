@@ -339,7 +339,7 @@ describe('样例驱动矩阵高亮（选择器 #17 已迁至证据卡，此处�
     expect(row('geopolitical')).toHaveAttribute('data-active', 'true');
     expect(within(row('geopolitical')).getByText('当前样例')).toBeInTheDocument();
     expect(row('weather')).toHaveAttribute('data-active', 'false');
-    expect(screen.getByText(/已选样例：北岭实业 · P1 · 出口管制清单更新/)).toBeInTheDocument();
+    expect(screen.getByText(/已选样例：北岭实业 · P1/)).toBeInTheDocument();
 
     // 切回第一条：高亮回到天气行
     fireEvent.click(screen.getByTestId('rule-matrix-sample-11'));

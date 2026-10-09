@@ -530,24 +530,25 @@ describe('方案 B 布局与位置契约（#1/#16/#17/#18/#19/#33）', () => {
     expect(within(screen.getByTestId('rule-engine-rule-matrix')).queryByTestId('rule-engine-sample-selector')).toBeNull();
   });
 
-  it('观察态与配置态证据块顺序一致：信源 → 样例 → 运行轨迹（#19），且 1280px 宽屏网格为两列（#16）', () => {
+  it('观察态与配置态证据块顺序一致：信源 → 样例 → 运行轨迹（#19）且三者垂直堆叠', () => {
     const expected = ['rule-engine-evidence-sources', 'rule-engine-evidence-sample', 'rule-engine-evidence-timeline'];
 
     renderViewer([geopoliticalDimension()]);
     expect(evidenceOrder()).toEqual(expected);
-    // #16：证据网格在 xl 起两列、窄屏单列兜底；运行轨迹跨全宽
-    const grid = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
-    expect(grid.className).toContain('grid-cols-1');
-    expect(grid.className).toContain('xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]');
-    expect(screen.getByTestId('rule-engine-evidence-timeline').className).toContain('xl:col-span-2');
+    // 三块统一单列垂直堆叠：任何视口宽度下都不再回落为两列网格
+    const stack = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
+    expect(stack.className).not.toContain('xl:grid-cols-');
+    expect(stack).toContainElement(screen.getByTestId('rule-engine-evidence-sample'));
+    expect(stack).toContainElement(screen.getByTestId('rule-engine-evidence-timeline'));
 
     cleanup();
     renderAdminConfig([geopoliticalDimension()]);
     expect(screen.getByTestId('rule-engine-config')).toBeInTheDocument();
     expect(evidenceOrder()).toEqual(expected);
-    const configGrid = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
-    expect(configGrid.className).toContain('xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]');
-    expect(screen.getByTestId('rule-engine-evidence-timeline').className).toContain('xl:col-span-2');
+    const configStack = screen.getByTestId('rule-engine-evidence-sources').parentElement as HTMLElement;
+    expect(configStack.className).not.toContain('xl:grid-cols-');
+    expect(configStack).toContainElement(screen.getByTestId('rule-engine-evidence-sample'));
+    expect(configStack).toContainElement(screen.getByTestId('rule-engine-evidence-timeline'));
   });
 
   it('运行轨迹以嵌入块形态位于证据卡内，不再是第二张独立整卡（#18）', async () => {

@@ -21,7 +21,7 @@ export interface RuleEngineSampleSelectorProps {
 const SEVERITY_LABELS: Record<string, string> = {critical: '严重', high: '高', medium: '中', low: '低'};
 
 const CHIP_BASE =
-  'max-w-[220px] truncate rounded-xl border px-2 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:focus-visible:ring-blue-300';
+  'inline-flex max-w-[220px] items-center gap-1 rounded-xl border px-2 py-1 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 dark:focus-visible:ring-blue-300';
 const CHIP_ACTIVE =
   'border-[#004782] bg-[#eef6ff] font-bold text-[#004782] dark:border-blue-300 dark:bg-slate-800 dark:text-blue-300';
 const CHIP_IDLE =
@@ -99,16 +99,18 @@ export const RuleEngineSampleSelector: React.FC<RuleEngineSampleSelectorProps> =
                 data-testid={`rule-matrix-sample-${sample.id}`}
                 aria-pressed={selectedSampleId === sample.id}
                 onClick={() => onSelectSample(sample.id)}
-                title={`${sample.event_summary}（${formatSampleTime(sample.updated_at)}）`}
+                title={formatSampleTime(sample.updated_at)}
                 className={`${CHIP_BASE} ${selectedSampleId === sample.id ? CHIP_ACTIVE : CHIP_IDLE}`}
               >
-                {sample.supplier_name} · {sample.level}
+                {/* 公司名过长时只让它自己出省略号：等级用 shrink-0 固定不被吞掉 */}
+                <span className="min-w-0 truncate">{sample.supplier_name}</span>
+                <span className="shrink-0">· {sample.level}</span>
               </button>
             ))}
           </div>
           {selectedSample ? (
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              已选样例：{selectedSample.supplier_name} · {selectedSample.level} · {selectedSample.event_summary}
+              已选样例：{selectedSample.supplier_name} · {selectedSample.level}
             </p>
           ) : (
             <p className="text-[11px] text-slate-500 dark:text-slate-400">

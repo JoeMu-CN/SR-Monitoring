@@ -568,7 +568,6 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
                 : '当前无真实样本'}
             </span>
           </div>
-          <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">{PIPELINE_SUBTITLE}</p>
         </div>
       ) : (
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -842,9 +841,7 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
                       采纳阈值 θ：{formatRatio(llm.theta)}
                     </li>
                   </ul>
-                  <p data-testid="rule-engine-pipeline-llm-rationale" className="mt-0.5 break-words text-[11px] text-slate-500 dark:text-slate-400">
-                    建议依据：{llm.rationale || '明细未记录建议依据'}
-                  </p>
+                  {/* 不渲染 llm_rationale：自由文本依据过长的模型建议原文会挤占本阶段版面，改为只展示可机械核对的审计字段 */}
                   <p className="mt-0.5 break-words text-[11px] text-slate-500 dark:text-slate-400">{llmDetailText}</p>
                 </>
               ) : (

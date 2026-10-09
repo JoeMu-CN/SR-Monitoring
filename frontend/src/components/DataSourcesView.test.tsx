@@ -1037,14 +1037,17 @@ describe('信息源列表信息架构与操作区', () => {
     expect(screen.getByText('tianyancha')).toBeInTheDocument();
   });
 
-  // 768px CJK 回归：名称与类别挤在同一不可换行 flex 行，名称被压到 36px 全部截断。
-  // 要求名称标题行可换行，且名称节点以 title 暴露完整名称以兜底截断。
-  it('名称标题行可换行且名称节点以 title 暴露完整名称', () => {
+  // 类别标签必须始终留在标题右侧同一行：标题行不换行，标题可截断，
+  // 标签不参与压缩；完整名称由 title 兜底。
+  it('类别标签与标题保持同一行且标题以 title 暴露完整名称', () => {
     renderView([source]);
 
     const nameNode = screen.getByTestId('source-name-17');
     expect(nameNode).toHaveAttribute('title', '官方风险源');
-    expect(nameNode.parentElement).toHaveClass('flex-wrap');
+    expect(nameNode.parentElement).toHaveClass('flex-nowrap');
+    expect(nameNode).toHaveClass('truncate');
+    expect(nameNode).toHaveClass('min-w-0');
+    expect(screen.getByTestId('source-category-17')).toHaveClass('shrink-0');
   });
 
   it('操作按刷新、编辑、停用/启用排列，按钮均带明确 aria-label 与 title', () => {

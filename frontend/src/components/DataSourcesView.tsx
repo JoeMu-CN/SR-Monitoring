@@ -605,8 +605,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       </span>
                     </div>
                     <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 min-w-0">
-                        <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate">{displayName}</h3>
+                      <div className="flex flex-nowrap items-center gap-2 min-w-0">
+                        <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate min-w-0">{displayName}</h3>
                         <span data-testid={`source-category-${source.id}`} className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
                           {sourceCategory(source)}
                         </span>

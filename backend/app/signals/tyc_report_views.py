@@ -12,10 +12,10 @@
 """
 
 import json
-from collections.abc import Mapping
 
 from pydantic import ValidationError
 
+from app.agent.tyc_analysis_context import report_payload
 from app.agent.tyc_report import TycRiskReport, render_key_summary
 
 #: 列表摘要统一最大字符数（码点）。证据 todo10.md 说明取值理由。
@@ -43,19 +43,26 @@ def clip_text(text: str, limit: int) -> str:
 
 
 def extract_report(raw_data: object) -> TycRiskReport | None:
-    """把 ORM ``raw_data`` 解析为报告；非报告或 malformed 一律返回 None。"""
-    if not isinstance(raw_data, Mapping):
-        return None
-    if raw_data.get("report_kind") != _REPORT_KIND:
+    """把 ORM ``raw_data`` 解析为报告；非报告或 malformed 一律返回 None。
+
+    只剔除已知私有上下文字段（``report_payload``）：其他未知键仍由
+    ``extra="forbid"`` 拒绝，因此这里绝不会把损坏报告当成正常报告。
+    """
+    payload = report_payload(raw_data)
+    if payload is None or payload.get("report_kind") != _REPORT_KIND:
         return None
     try:
-        return TycRiskReport.model_validate(dict(raw_data))
+        return TycRiskReport.model_validate(payload)
     except (ValidationError, TypeError, ValueError):
         return None
 
 
 def raw_data_json_bytes(raw_data: object) -> int:
-    """``raw_data`` 以 JSON（UTF-8、非 ASCII 直出）编码后的字节数；不可编码按 0。"""
+    """``raw_data`` 以 JSON（UTF-8、非 ASCII 直出）编码后的字节数；不可编码按 0。
+
+    私有分析上下文本就不进入 API 响应（报告只回 ``TycRiskReport``），因此仍按完整
+    ``raw_data`` 计量：新增私有上下文只会让体积检查更保守，不会放松可见报告边界。
+    """
     if raw_data is None:
         return 0
     try:

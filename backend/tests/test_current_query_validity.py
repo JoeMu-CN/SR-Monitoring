@@ -1,6 +1,7 @@
 """任务 9：查询、统计与 Agent 工具共享实时判活口径。"""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -98,6 +99,58 @@ def test_invalid_null_deadline_mode_is_not_effective_and_is_diagnosed_by_constra
     assert is_signal_effective(invalid_window, now_utc=now_utc) is False
     with pytest.raises(IntegrityError, match="ck_risk_alerts_expiry_value"):
         db_session.commit()
+
+
+def test_current_alerts_tool_result_is_json_serializable_with_finite_deadlines(
+    db_session: Session,
+) -> None:
+    """会话 tool_calls 以 JSONB 落库，工具返回必须可 json.dumps（曾因 datetime 导致聊天 500）。"""
+    # Given
+    now_utc = datetime.now(UTC)
+    deadline = now_utc + timedelta(days=1)
+    risk = linked_risk(
+        db_session,
+        (SignalSpec("task-9-json-deadlines", valid_until=deadline),),
+        now_utc=now_utc,
+    )
+    risk.event.valid_until = deadline
+    risk.event.review_due_at = deadline
+    risk.alert.expiry_kind = "finite"
+    risk.alert.expires_at = deadline
+    db_session.commit()
+
+    # When
+    result = asyncio.run(QueryCurrentAlertsTool(now_utc=now_utc).execute({}, db_session))
+
+    # Then
+    assert result["total"] == 1
+    serialized = json.loads(json.dumps(result))
+    assert serialized["items"][0]["expires_at"] == deadline.isoformat()
+    assert serialized["items"][0]["valid_until"] == deadline.isoformat()
+    assert serialized["items"][0]["review_due_at"] == deadline.isoformat()
+
+
+def test_current_alerts_tool_result_serializes_unbounded_alert_as_null(
+    db_session: Session,
+) -> None:
+    # Given
+    now_utc = datetime.now(UTC)
+    linked_risk(
+        db_session,
+        (SignalSpec("task-9-json-null-deadlines", mode="until_revoked"),),
+        now_utc=now_utc,
+    )
+    db_session.commit()
+
+    # When
+    result = asyncio.run(QueryCurrentAlertsTool(now_utc=now_utc).execute({}, db_session))
+
+    # Then
+    assert result["total"] == 1
+    serialized = json.loads(json.dumps(result))
+    assert serialized["items"][0]["expires_at"] is None
+    assert serialized["items"][0]["valid_until"] is None
+    assert serialized["items"][0]["review_due_at"] is None
 
 
 def test_current_query_boundaries_reject_invalid_scope_and_status(

@@ -12,6 +12,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
+from risk_validity_fixtures import SignalSpec, linked_risk
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
@@ -85,6 +86,7 @@ class FakeTycGateway:
     def __init__(self, status: str = "success") -> None:
         self.status = status
         self.calls: list[str] = []
+        self.dimension_calls: list[str] = []
 
     async def verify(self, company_name: str) -> dict[str, object]:
         self.calls.append(company_name)
@@ -100,6 +102,25 @@ class FakeTycGateway:
         if self.status == "error":
             raise RuntimeError("天眼查服务暂时不可用")
         return {"status": "error", "message": "未知错误"}
+
+    async def fetch_dimensions(self, company_name: str) -> dict[str, object]:
+        """清单内实时完整核查入口：记录调用并返回确定性 fetch 合同。"""
+        self.dimension_calls.append(company_name)
+        if self.status == "not_configured":
+            return {
+                "status": "not_configured",
+                "company_name": company_name,
+                "credit_code": None,
+                "reg_status": None,
+                "dimensions": {},
+            }
+        return {
+            "status": "success",
+            "company_name": company_name,
+            "credit_code": "91310000FAKE00001",
+            "reg_status": "存续",
+            "dimensions": {},
+        }
 
 
 @pytest.fixture
@@ -962,6 +983,46 @@ def test_chat_endpoint(
     assert body["tool_calls"][0]["name"] == "query_current_alerts"
 
 
+def test_chat_endpoint_persists_alert_tool_calls_as_json(
+    client: TestClient, clean_agent_tables: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """真实存在有效告警时：/chat 返回 200 且 assistant 工具记录以 JSON 落库。"""
+    import app.agent.service as agent_service
+
+    # Given
+    now_utc = datetime.now(UTC)
+    deadline = now_utc + timedelta(days=1)
+    risk = linked_risk(
+        clean_agent_tables,
+        (SignalSpec("agent-chat-json", valid_until=deadline),),
+        now_utc=now_utc,
+    )
+    risk.event.valid_until = deadline
+    risk.event.review_due_at = deadline
+    risk.alert.expiry_kind = "finite"
+    risk.alert.expires_at = deadline
+    clean_agent_tables.commit()
+    monkeypatch.setattr(agent_service, "get_agent_llm", lambda: FakeAgentLLM())
+
+    # When
+    response = client.post("/api/v1/chat", json={"question": "今天有什么风险？"})
+
+    # Then
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tool_calls"][0]["name"] == "query_current_alerts"
+    assert body["tool_calls"][0]["result"]["total"] >= 1
+    stored = clean_agent_tables.scalar(
+        select(AgentMessage).where(
+            AgentMessage.session_id == body["session_id"],
+            AgentMessage.role == "assistant",
+        )
+    )
+    assert stored is not None
+    assert stored.tool_calls[0]["result"]["total"] >= 1
+    assert stored.tool_calls[0]["result"]["items"][0]["expires_at"] == deadline.isoformat()
+
+
 def test_chat_endpoint_validation(client: TestClient) -> None:
     response = client.post("/api/v1/chat", json={"question": ""})
     assert response.status_code == 422
@@ -1006,10 +1067,14 @@ def test_agent_status_endpoint(
     assert body["max_steps"] >= 1
 
 
-def test_verify_company_serves_latest_signal_for_registered_supplier(
+def test_verify_company_no_longer_serves_history_for_registered_supplier(
     clean_agent_tables: Session, enable_tyc: None
 ) -> None:
-    """清单内供应商：只读已入库最新天眼查信号，不调 MCP、不消耗额度。"""
+    """清单内供应商：即使已有历史信号也不回读历史替代实时核查。
+
+    回归锁定：清单内路径必须发起实时多维核查（这里网关未配置密钥，故返回
+    not_configured 而不是历史信号内容）。
+    """
     supplier = Supplier(
         supplier_code="SUP-001",
         legal_name="上海华美精密机械有限公司",
@@ -1028,18 +1093,19 @@ def test_verify_company_serves_latest_signal_for_registered_supplier(
     )
     clean_agent_tables.flush()
 
-    gateway = FakeTycGateway(status="success")
+    gateway = FakeTycGateway(status="not_configured")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
         tool.execute({"company_name": "上海华美精密机械有限公司"}, clean_agent_tables)
     )
-    assert result["status"] == "success"
-    assert result["source"] == "database"  # type: ignore[index]
-    assert "存续" in str(result["content"])  # type: ignore[index]
-    # 不消耗额度：网关未被调用
+    assert result["status"] == "not_configured"
+    assert result["source"] == "tianyancha_realtime"
+    assert result["signal_id"] is None
+    assert result["alert_ids"] == []
+    # 走的是实时多维核查，不是回读历史信号。
+    assert gateway.dimension_calls == ["上海华美精密机械有限公司"]
     assert gateway.calls == []
-    assert get_tyc_usage(clean_agent_tables).daily_used == 0
-    # 信号仍在库中
+    assert signal.external_id not in str(result["message"])
     stored = clean_agent_tables.scalar(
         select(RawSignal).where(RawSignal.external_id == signal.external_id)
     )
@@ -1182,10 +1248,10 @@ def test_format_tyc_signal_result_prefers_raw_data_and_falls_back_to_content(
     assert sparse["candidates"] == []
 
 
-def test_verify_company_registered_supplier_without_signal_returns_empty(
+def test_verify_company_registered_supplier_never_reports_database_source(
     clean_agent_tables: Session, enable_tyc: None
 ) -> None:
-    """清单内供应商但无已入库信号：返回 empty（database），不调 MCP。"""
+    """回归：清单内路径不再返回 source=database（历史回读路径已移除）。"""
     supplier = Supplier(
         supplier_code="SUP-002",
         legal_name="宁波鸿腾精密有限公司",
@@ -1195,13 +1261,15 @@ def test_verify_company_registered_supplier_without_signal_returns_empty(
     clean_agent_tables.add(supplier)
     clean_agent_tables.flush()
 
-    gateway = FakeTycGateway(status="success")
+    gateway = FakeTycGateway(status="not_configured")
     tool = VerifyCompanyTool(gateway=gateway)
     result = asyncio.run(
         tool.execute({"company_name": "宁波鸿腾精密有限公司"}, clean_agent_tables)
     )
-    assert result["status"] == "empty"
-    assert result["source"] == "database"  # type: ignore[index]
+    assert result["status"] == "not_configured"
+    assert result["source"] == "tianyancha_realtime"
+    assert result["verification_status"] == "not_configured"
+    assert gateway.dimension_calls == ["宁波鸿腾精密有限公司"]
     assert gateway.calls == []
     assert get_tyc_usage(clean_agent_tables).daily_used == 0
 

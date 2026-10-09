@@ -82,11 +82,14 @@ class ScoringSettings:
     forced_rules: tuple[ForcedRule, ...] = (
         ForcedRule(
             name="sanctions_entity_hit",
-            description="供应商主体直接命中制裁或合规事件",
+            description="供应商主体直接命中制裁事件",
             event_types=("compliance", "judicial"),
             match_types=("registry_no", "legal_name", "alias"),
             forced_level="P1",
-            reason="供应商主体直接命中制裁/合规事件，强制提升为 P1",
+            reason="供应商主体直接命中制裁事件，强制提升为 P1",
+            # 只认明确制裁子类型：普通 judicial_case / compliance_violation 是常规
+            # 司法与合规事项，走评分链的等级上限，不得粗放升级为 P1。
+            event_subtypes=("sanctions",),
         ),
     )
 

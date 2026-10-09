@@ -4,14 +4,12 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, selectinload
 
-from app.agent.tyc_report import TycRiskReport
 from app.ai.models import AIAnalysisRecord
-from app.ai.schemas import OrganizationReference, SignalAnalysisResult
+from app.ai.schemas import SignalAnalysisResult
 from app.risks.engine.alert_persistence import AlertValues, upsert_alert
 from app.risks.engine.config import (
     COLUMN_COUNTRY,
@@ -29,6 +27,11 @@ from app.risks.engine.matching import (
     match_industries,
     match_locations,
     match_products,
+)
+from app.risks.engine.profile_target import (
+    ProfileTarget,
+    expire_off_target_alerts,
+    resolve_profile_target,
 )
 from app.risks.engine.registry import RuntimeDimension, load_dimensions
 from app.risks.models import RiskEventSignal, SupplierEventMatch
@@ -147,34 +150,11 @@ def _upsert_match(
     return match
 
 
-def _resolve_profile_identity(
-    signal: RawSignal, result: SignalAnalysisResult
-) -> tuple[SignalAnalysisResult, str | None]:
-    """supplier_profile 周度报告：从 raw_data 确定性注入主体与稳定身份。
-
-    仅当 ``signal.raw_data.report_kind == "supplier_profile"`` 时生效：解析
-    完整 TycRiskReport 合同（缺字段/空白 supplier_code 明确失败，绝不回退
-    普通逻辑造成错误合并），用报告 company_name/credit_code 覆盖
-    organizations（registry_no 仅非空时填充），并返回恒为非空且不含周次的
-    身份覆盖 ``supplier_profile:<supplier_code>``。其余信号原样返回。
-    """
-    raw_data = signal.raw_data
-    if not isinstance(raw_data, dict) or raw_data.get("report_kind") != "supplier_profile":
-        return result, None
-    try:
-        report = TycRiskReport.model_validate(raw_data)
-    except ValidationError as exc:
-        raise ValueError("supplier_profile 报告信号缺少必要字段，拒绝处理") from exc
-    organizations = [
-        OrganizationReference(
-            name=report.company_name,
-            registry_no=report.credit_code or None,
-        )
-    ]
-    return (
-        result.model_copy(update={"organizations": organizations}),
-        f"supplier_profile:{report.supplier_code}",
-    )
+def _matchable_suppliers(
+    session: Session, target: ProfileTarget | None
+) -> list[Supplier]:
+    """画像事件只在目标供应商内匹配；普通事件沿用全清单。"""
+    return [target.supplier] if target is not None else load_suppliers(session)
 
 
 def process_event(
@@ -191,8 +171,11 @@ def process_event(
     if not is_raw_signal_effective(signal, now_utc=now):
         raise InactiveRiskSignalError(signal.id, signal.validity_state)
     result = SignalAnalysisResult.model_validate(analysis.result)
-    # 画像报告：服务端确定性注入主体与稳定身份（其余信号原样通过）。
-    result, identity_override = _resolve_profile_identity(signal, result)
+    # 画像报告：服务端确定性注入主体、稳定身份与唯一目标供应商（其余信号原样通过）。
+    result, profile_target = resolve_profile_target(session, signal, result)
+    identity_override = (
+        profile_target.identity_override if profile_target is not None else None
+    )
     event, event_created = find_or_create_event(
         session, result, identity_override=identity_override
     )
@@ -223,11 +206,19 @@ def process_event(
     if dimension is not None:
         scoring = dimension.scoring
         matches: dict[int, MatchCandidate] = {}
-        suppliers = load_suppliers(session)
+        suppliers = _matchable_suppliers(session, profile_target)
         for column in dimension.config.match_columns:
             matcher = MATCHERS.get(column)
             if matcher is not None:
                 matcher(session, result, suppliers, scoring.association_scores, matches)
+        # 画像事件：非目标供应商的历史 current 提醒收敛为 expired，原评分与 match 保留。
+        if profile_target is not None:
+            expire_off_target_alerts(
+                session,
+                event.id,
+                profile_target.supplier.id,
+                now_utc=now,
+            )
         for candidate in (matches[key] for key in sorted(matches)):
             match = _upsert_match(session, event.id, candidate)
             product_relevant = any(

@@ -5,8 +5,9 @@
   当前分析刷新（不留首周快照）；
 - 两个均无 registry_no 的不同 supplier_code 不归并（各自独立事件）；
 - AI 未抽到 organizations 时服务端注入仍命中主体（legal_name 精确匹配）；
-- 画像报告分析为 judicial/compliance 且强主体匹配 → 经强制规则得 P1；
-- 首周 corporate、次周 judicial/compliance 时同一 event id 且次周强制 P1；
+- 画像报告分析为 compliance/sanctions 且强主体匹配 → 经强制规则得 P1；
+  普通 judicial_case 走常规评分（见 test_profile_event_targeting.py 的同级回归）；
+- 首周 corporate、次周 compliance/sanctions 时同一 event id 且次周强制 P1；
 - 非画像信号走原身份逻辑（dedup 公式不变）；
 - 缺失/空白 supplier_code 的报告不允许构造 override 且不得错误合并（明确失败）；
 - identity_override 不含周次/主体字段，跨周恒定；空白 override 拒绝；
@@ -349,8 +350,10 @@ def test_injected_subject_matches_without_ai_organizations(db_session: Session) 
     assert event.facts["organizations"][0]["name"] == "注入主体测试有限公司"
 
 
-def test_judicial_profile_strong_match_forces_p1(db_session: Session) -> None:
-    """画像分析为 judicial 且强主体匹配 → 强制规则升为 P1。"""
+def test_judicial_profile_strong_match_uses_regular_scoring(
+    db_session: Session,
+) -> None:
+    """画像分析为 judicial/judicial_case：不再被默认制裁强制规则提升为 P1。"""
     _prepare_source(db_session)
     supplier = _supplier(db_session, "SUP-JUD-1", "司法画像有限公司")
     signal = _store(
@@ -362,7 +365,48 @@ def test_judicial_profile_strong_match_forces_p1(db_session: Session) -> None:
     outcome = _process(
         db_session,
         signal,
-        _result(event_type="judicial", event_subtype="judicial_case", summary="司法画像摘要"),
+        _result(
+            event_type="judicial",
+            event_subtype="judicial_case",
+            severity="medium",
+            summary="司法画像摘要",
+        ),
+        now=_NOW_1,
+    )
+
+    assert outcome.alert_ids
+    alert = _current_alert(db_session)
+    assert "forced_rule" not in alert.score_detail
+    assert alert.level != "P1"
+    assert alert.score_detail["final_level"] == alert.level
+
+
+def test_compliance_sanctions_profile_strong_match_forces_p1(
+    db_session: Session,
+) -> None:
+    """画像分析为 compliance/sanctions 且强主体匹配 → 强制规则仍得 P1。"""
+    _prepare_source(db_session)
+    supplier = _supplier(db_session, "SUP-SANC-ID-1", "制裁画像主体有限公司")
+    signal = _store(
+        db_session,
+        supplier,
+        _report(
+            "SUP-SANC-ID-1",
+            "制裁画像主体有限公司",
+            period="2026-W19",
+            generated_at=_WEEK_1,
+        ),
+    )
+
+    outcome = _process(
+        db_session,
+        signal,
+        _result(
+            event_type="compliance",
+            event_subtype="sanctions",
+            severity="medium",
+            summary="制裁画像摘要",
+        ),
         now=_NOW_1,
     )
 
@@ -376,10 +420,10 @@ def test_judicial_profile_strong_match_forces_p1(db_session: Session) -> None:
     assert alert.score_detail["final_level"] == "P1"
 
 
-def test_corporate_then_judicial_same_event_and_fields_refreshed(
+def test_corporate_then_compliance_sanctions_same_event_and_fields_refreshed(
     db_session: Session,
 ) -> None:
-    """首周 corporate、次周 judicial：同一 event id，次周字段刷新并强制 P1。"""
+    """首周 corporate、次周 compliance/sanctions：同一 event id，次周字段刷新并强制 P1。"""
     _prepare_source(db_session)
     supplier = _supplier(db_session, "SUP-FLIP-1", "类型翻转有限公司")
     first = _store(
@@ -411,20 +455,20 @@ def test_corporate_then_judicial_same_event_and_fields_refreshed(
         db_session,
         second,
         _result(
-            event_type="judicial",
-            event_subtype="judicial_case",
-            summary="次周司法风险",
+            event_type="compliance",
+            event_subtype="sanctions",
+            summary="次周制裁风险",
         ),
         now=_NOW_2,
     )
 
     assert result_2.event_id == result_1.event_id
     db_session.refresh(event)
-    assert event.event_type == "judicial"
-    assert event.event_subtype == "judicial_case"
-    assert event.summary == "次周司法风险"
-    assert event.facts["event_type"] == "judicial"
-    assert event.facts["summary_zh"] == "次周司法风险"
+    assert event.event_type == "compliance"
+    assert event.event_subtype == "sanctions"
+    assert event.summary == "次周制裁风险"
+    assert event.facts["event_type"] == "compliance"
+    assert event.facts["summary_zh"] == "次周制裁风险"
     assert event.facts["organizations"][0]["name"] == "类型翻转有限公司"
     assert len(_events(db_session)) == 1
     alert = _current_alert(db_session)
@@ -434,10 +478,13 @@ def test_corporate_then_judicial_same_event_and_fields_refreshed(
 
 
 def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -> None:
-    """同一 supplier_code 跨周主体/地点 A→B：侧表精确替换，历史 Match 保留、旧 alert 不 current。"""
+    """同一 supplier_code 跨周刷新：侧表随当前周精确替换，历史 Match 保留、旧 alert 不 current。
+
+    目标供应商由报告 supplier_code 唯一决定；名称改投其他供应商的场景见
+    test_profile_report_does_not_reroute_to_name_matched_supplier（非目标零命中）。
+    """
     _prepare_source(db_session)
     carrier = _supplier(db_session, "SUP-SIDE-1", "甲主体有限公司")
-    supplier_b = _supplier(db_session, "SUP-SIDE-B", "乙主体有限公司")
     signal_1 = _store(
         db_session,
         carrier,
@@ -466,7 +513,7 @@ def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -
         carrier,
         _report(
             "SUP-SIDE-1",
-            "乙主体有限公司",
+            "甲主体有限公司",
             period="2026-W20",
             generated_at=_WEEK_2,
             credit_code="CC-SIDE-B",
@@ -476,7 +523,7 @@ def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -
         db_session,
         signal_2,
         _result(
-            summary="次周乙",
+            summary="次周甲",
             locations=[{"name": "杭州西湖", "country_code": "CN", "city": "杭州市"}],
         ),
         now=_NOW_2,
@@ -485,7 +532,7 @@ def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -
     assert result_2.event_id == result_1.event_id
     event = db_session.get(RiskEvent, result_1.event_id)
     assert event is not None
-    # 侧表精确反映当前周：仅乙/杭州西湖，旧甲/上海浦东不残留。
+    # 侧表精确反映当前周：仅当前主体/杭州西湖，旧地点不残留。
     entities = list(
         db_session.scalars(
             select(EventEntity)
@@ -493,7 +540,7 @@ def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -
             .order_by(EventEntity.id)
         )
     )
-    assert [entity.name for entity in entities] == ["乙主体有限公司"]
+    assert [entity.name for entity in entities] == ["甲主体有限公司"]
     assert entities[0].registry_no == "CC-SIDE-B"
     locations = list(
         db_session.scalars(
@@ -505,23 +552,44 @@ def test_weekly_subject_change_replaces_event_side_tables(db_session: Session) -
     assert [location.name for location in locations] == ["杭州西湖"]
     assert locations[0].city == "杭州市"
     # facts 与侧表一致（同一当前 result 快照）。
-    assert [item["name"] for item in event.facts["organizations"]] == ["乙主体有限公司"]
+    assert [item["name"] for item in event.facts["organizations"]] == ["甲主体有限公司"]
     assert [item["name"] for item in event.facts["locations"]] == ["杭州西湖"]
-    # 历史 Match/Alert 不被主动删除：甲仍有既往提醒行但已 expired，current 仅属于乙。
+    # 非目标供应商从未被画像事件命中：target 由 supplier_code 唯一确定。
     matches = list(db_session.scalars(select(SupplierEventMatch)))
-    assert {match.supplier_id for match in matches} == {carrier.id, supplier_b.id}
+    assert {match.supplier_id for match in matches} == {carrier.id}
     current = _current_alert(db_session)
     current_match = db_session.get(SupplierEventMatch, current.match_id)
     assert current_match is not None
-    assert current_match.supplier_id == supplier_b.id
-    carrier_statuses = set(
-        db_session.scalars(
-            select(RiskAlert.status)
-            .join(SupplierEventMatch, RiskAlert.match_id == SupplierEventMatch.id)
-            .where(SupplierEventMatch.supplier_id == carrier.id)
-        )
+    assert current_match.supplier_id == carrier.id
+    assert current.status == "current"
+
+
+def test_profile_report_does_not_reroute_to_name_matched_supplier(
+    db_session: Session,
+) -> None:
+    """报告 supplier_code 属甲但 company_name 是乙的法人全称：只按甲定位，乙零命中。"""
+    _prepare_source(db_session)
+    carrier = _supplier(db_session, "SUP-REROUTE-1", "甲画像主体有限公司")
+    supplier_b = _supplier(db_session, "SUP-REROUTE-B", "乙画像主体有限公司")
+    signal = _store(
+        db_session,
+        carrier,
+        _report(
+            "SUP-REROUTE-1",
+            "乙画像主体有限公司",
+            period="2026-W19",
+            generated_at=_WEEK_1,
+        ),
     )
-    assert carrier_statuses == {"expired"}
+
+    outcome = _process(db_session, signal, _result(summary="名称与编码不一致"), now=_NOW_1)
+
+    # company_name 与目标 legal_name 不一致 → 不产生任何 match（fail closed）。
+    assert outcome.alert_ids == []
+    assert _entity_names(db_session, outcome.event_id) == ["乙画像主体有限公司"]
+    matches = list(db_session.scalars(select(SupplierEventMatch)))
+    assert {match.supplier_id for match in matches} == set()
+    assert supplier_b.id != carrier.id
 
 
 def test_weekly_refresh_does_not_cross_supplier_boundaries(db_session: Session) -> None:

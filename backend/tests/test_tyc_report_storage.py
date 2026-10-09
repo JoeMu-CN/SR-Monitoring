@@ -32,14 +32,23 @@ from tyc_batch_support import MultidimMcpStub, configure_committed_tyc
 
 import app.agent.tyc_batch_supplier as tyc_batch_supplier_module
 import app.agent.tyc_gateway as tyc_gateway_module
+from app.agent.tyc_analysis_context import (
+    build_analysis_context,
+    load_analysis_context,
+    report_payload,
+)
 from app.agent.tyc_batch import run_tyc_supplier
 from app.agent.tyc_report import TycRiskReport, build_risk_report, render_key_summary
 from app.agent.tyc_report_storage import (
+    ManualObservation,
     TycReportWrite,
     report_fingerprint,
     store_tyc_report_signal,
 )
+from app.ai.schemas import SignalAnalysisResult
 from app.database import SessionLocal
+from app.signals.tyc_report_views import extract_report
+from app.risks.engine.event_identity import event_dedup_key
 from app.signals.models import DataSource, RawSignal
 from app.suppliers.models import Supplier
 
@@ -169,16 +178,15 @@ def test_same_week_same_fields_is_idempotent(db_session: Session) -> None:
     write_a = store_tyc_report_signal(db_session, supplier=supplier, report=first)
     write_b = store_tyc_report_signal(db_session, supplier=supplier, report=second)
 
-    assert write_a == TycReportWrite(
-        external_id=f"tyc-{_CODE}-{_PERIOD_1}", outcome="created"
-    )
-    assert write_b == TycReportWrite(
-        external_id=f"tyc-{_CODE}-{_PERIOD_1}", outcome="duplicate"
-    )
+    assert write_a.external_id == f"tyc-{_CODE}-{_PERIOD_1}"
+    assert write_a.outcome == "created"
+    assert write_b.outcome == "duplicate"
+    assert write_b.signal_id == write_a.signal_id
     assert report_fingerprint(first) == report_fingerprint(second)
     rows = _rows(db_session)
     assert len(rows) == 1
     signal = rows[0]
+    assert write_a.signal_id == signal.id
     assert signal.fingerprint == report_fingerprint(first)
     assert signal.title == f"天眼查多维度核查：{supplier.legal_name}"
     assert signal.content == render_key_summary(first)
@@ -190,6 +198,110 @@ def test_same_week_same_fields_is_idempotent(db_session: Session) -> None:
     assert signal.valid_from == _WEEK_1
     assert signal.validity_reason["code"] == "anchor_fallback"
     assert signal.validity_policy_version is not None
+
+
+def test_manual_observation_creates_distinct_rows_within_same_week(
+    db_session: Session,
+) -> None:
+    """手动实时观察：同周同内容也各自产生独立 external_id 与指纹（不被周内幂等吞掉）。"""
+    source = _fresh_source(db_session)
+    source.validity_policy = dict(_STORAGE_POLICY)
+    supplier = _supplier(db_session, "SUP-STORE-MANUAL")
+    first_report = _report(_WEEK_1, code="SUP-STORE-MANUAL")
+    second_report = _report(_WEEK_1 + timedelta(hours=2), code="SUP-STORE-MANUAL")
+
+    first = store_tyc_report_signal(
+        db_session,
+        supplier=supplier,
+        report=first_report,
+        observation=ManualObservation(observed_at=_WEEK_1),
+    )
+    second = store_tyc_report_signal(
+        db_session,
+        supplier=supplier,
+        report=second_report,
+        observation=ManualObservation(observed_at=_WEEK_1 + timedelta(hours=2)),
+    )
+    replay = store_tyc_report_signal(
+        db_session,
+        supplier=supplier,
+        report=second_report,
+        observation=ManualObservation(observed_at=_WEEK_1 + timedelta(hours=2)),
+    )
+
+    assert first.outcome == second.outcome == "created"
+    assert replay.outcome == "duplicate"
+    assert replay.signal_id == second.signal_id
+    assert first.external_id != second.external_id
+    assert first.signal_id is not None and second.signal_id is not None
+    assert first.signal_id != second.signal_id
+
+    rows = _rows(db_session, "SUP-STORE-MANUAL")
+    assert len(rows) == 2
+    # 业务字段完全相同（同周同内容，只有生成时刻不同）也留下两条独立证据版本。
+    assert len({row.fingerprint for row in rows}) == 2
+    first_payload = first_report.model_dump(mode="json")
+    first_payload.pop("generated_at")
+    for row in rows:
+        payload = dict(row.raw_data)
+        assert payload.pop("generated_at") is not None
+        assert payload == first_payload
+    # validity_key 不变：最新观察成为唯一 active，旧观察被原子替代。
+    assert {row.validity_key for row in rows} == {"tyc:SUP-STORE-MANUAL"}
+    assert [row.validity_state for row in rows] == ["superseded", "active"]
+
+
+def test_manual_observation_replay_of_same_moment_stays_idempotent(
+    db_session: Session,
+) -> None:
+    """同一权威时刻重放同一次实时核查：按观察 token 幂等，不产生第二条证据。"""
+    source = _fresh_source(db_session)
+    source.validity_policy = dict(_STORAGE_POLICY)
+    supplier = _supplier(db_session, "SUP-STORE-REPLAY")
+    report = _report(_WEEK_1, code="SUP-STORE-REPLAY")
+    observation = ManualObservation(observed_at=_WEEK_1)
+
+    first = store_tyc_report_signal(
+        db_session, supplier=supplier, report=report, observation=observation
+    )
+    replay = store_tyc_report_signal(
+        db_session, supplier=supplier, report=report, observation=observation
+    )
+
+    assert first.outcome == "created"
+    assert replay.outcome == "duplicate"
+    assert replay.external_id == first.external_id
+    assert replay.signal_id == first.signal_id
+    rows = _rows(db_session, "SUP-STORE-REPLAY")
+    assert [row.validity_state for row in rows] == ["active"]
+
+
+def test_manual_observation_keeps_profile_timestamp_out_of_event_identity(
+    db_session: Session,
+) -> None:
+    """画像时间戳只进证据版本身份，不进入事件身份键（跨周/跨观察恒同键）。"""
+    result = SignalAnalysisResult(
+        event_type="corporate",
+        event_subtype="corporate_distress",
+        suggested_severity="medium",
+        organizations=[],
+        locations=[],
+        affected_activities=[],
+        affected_products=[],
+        summary_zh="画像摘要",
+        evidence_sentences=["证据"],
+        confidence=0.8,
+    )
+
+    assert event_dedup_key(result, "supplier_profile:SUP-STORE-MANUAL") == event_dedup_key(
+        result.model_copy(update={"start_at": _WEEK_2}), "supplier_profile:SUP-STORE-MANUAL"
+    )
+    assert ManualObservation(observed_at=_WEEK_1).token != ManualObservation(
+        observed_at=_WEEK_1 + timedelta(hours=2)
+    ).token
+    assert ManualObservation(observed_at=_WEEK_1).token == ManualObservation(
+        observed_at=_WEEK_1
+    ).token
 
 
 def test_same_week_changed_fields_keeps_first_report(db_session: Session) -> None:
@@ -362,6 +474,57 @@ def test_report_fingerprint_uses_explicit_fixed_field_allowlist() -> None:
     assert report_fingerprint(changed) != report_fingerprint(report)
 
 
+def test_analysis_context_is_stored_without_changing_dedup(db_session: Session) -> None:
+    """上下文只作为 raw_data 附加键落库：根报告字段、指纹与同周去重口径均不变。"""
+    source = _fresh_source(db_session)
+    source.validity_policy = dict(_STORAGE_POLICY)
+    supplier = _supplier(db_session, "SUP-STORE-CTX")
+    report = _report(_WEEK_1, code="SUP-STORE-CTX")
+    context = build_analysis_context(_contract(), report=report)
+
+    write = store_tyc_report_signal(
+        db_session,
+        supplier=supplier,
+        report=report,
+        analysis_context=context,
+    )
+    repeat = store_tyc_report_signal(
+        db_session,
+        supplier=supplier,
+        report=_report(_WEEK_1 + timedelta(hours=2), code="SUP-STORE-CTX"),
+        analysis_context=build_analysis_context(
+            _contract(), report=_report(_WEEK_1 + timedelta(hours=2), code="SUP-STORE-CTX")
+        ),
+    )
+
+    assert write.outcome == "created"
+    assert repeat.outcome == "duplicate"
+    assert repeat.signal_id == write.signal_id
+    rows = _rows(db_session, "SUP-STORE-CTX")
+    assert len(rows) == 1
+    raw_data = rows[0].raw_data
+    assert set(raw_data) == _ALLOWLIST_KEYS | {"analysis_context"}
+    assert report_payload(raw_data) == report.model_dump(mode="json")
+    assert rows[0].fingerprint == report_fingerprint(report)
+    assert load_analysis_context(raw_data) is not None
+
+
+def test_batch_path_stores_analysis_context(db_session: Session, monkeypatch: MonkeyPatch) -> None:
+    """定时批次入口同样接入上下文：入库信号带私有上下文，报告字段不变。"""
+    source, supplier = _batch_setup(db_session, monkeypatch, code="SUP-STORE-BCTX")
+    source.validity_policy = dict(_STORAGE_POLICY)
+
+    run_tyc_supplier(db_session, source, supplier_id=supplier.id)
+
+    rows = _rows(db_session, "SUP-STORE-BCTX")
+    assert len(rows) == 1
+    context = load_analysis_context(rows[0].raw_data)
+    assert context is not None
+    assert context.supplier_code == "SUP-STORE-BCTX"
+    assert [item.key for item in context.dimensions] == _DIMS
+    assert extract_report(rows[0].raw_data) is not None
+
+
 def test_empty_report_is_not_persisted(db_session: Session) -> None:
     source = _fresh_source(db_session)
     source.validity_policy = dict(_STORAGE_POLICY)
@@ -374,9 +537,8 @@ def test_empty_report_is_not_persisted(db_session: Session) -> None:
 
     write = store_tyc_report_signal(db_session, supplier=supplier, report=empty)
 
-    assert write == TycReportWrite(
-        external_id=f"tyc-{_CODE}-{_PERIOD_1}", outcome="empty"
-    )
+    assert write.outcome == "empty"
+    assert write.external_id == f"tyc-{_CODE}-{_PERIOD_1}"
     assert _rows(db_session) == []
 
 

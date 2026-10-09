@@ -14,7 +14,7 @@ import app.scheduler.jobs as scheduler_jobs
 import app.scheduler.runtime as scheduler_runtime
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
-from app.ai.providers import AIProviderError, FakeAIProvider
+from app.ai.providers import PROMPT_VERSION, AIProviderError, FakeAIProvider
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
 from app.database import SessionLocal
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
@@ -282,10 +282,10 @@ def test_succeeded_v2_analysis_is_reused_without_v3_reanalysis(
     assert [record.prompt_version for record in records] == ["signal-analysis-v2"]
 
 
-def test_new_pending_candidate_is_analyzed_with_v3_and_level_suggestion(
+def test_new_pending_candidate_is_analyzed_with_current_prompt_and_level_suggestion(
     db_session: Session, monkeypatch: MonkeyPatch
 ) -> None:
-    """从未成功分析的候选：走 v3 分析并落 prompt_version=signal-analysis-v3。"""
+    """从未成功分析的候选：走当前提示版本分析并落对应 prompt_version。"""
     source = _source(db_session, "fresh-v3-level")
     _supplier(db_session, "VALIDITY-FRESH-V3")
     _signal(db_session, source, "fresh-v3", NOW_UTC - timedelta(hours=1))
@@ -310,7 +310,7 @@ def test_new_pending_candidate_is_analyzed_with_v3_and_level_suggestion(
     record = db_session.scalar(select(AIAnalysisRecord))
     assert record is not None
     assert record.status == "succeeded"
-    assert record.prompt_version == "signal-analysis-v3"
+    assert record.prompt_version == PROMPT_VERSION
     assert record.result is not None
     assert record.result["suggested_level"] == "P2"
     assert record.result["level_rationale"] == "文本明确提及台风导致停产，建议 P2。"

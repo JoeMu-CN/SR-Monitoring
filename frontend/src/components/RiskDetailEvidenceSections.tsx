@@ -18,6 +18,111 @@ const formatValue = (value: unknown): string => {
   return JSON.stringify(value) ?? '未披露';
 };
 
+/**
+ * 规则评分明细：后端 `score_detail` 的键是英文，且 JSONB 不保证键顺序；
+ * 这里统一定义中文标题与分组顺序，把同类小卡片排在一起。
+ */
+const SCORE_DETAIL_LABELS: Record<string, string> = {
+  // 等级判定
+  final_level: '最终等级',
+  capped_level: '封顶后等级',
+  level_cap: '等级封顶原因',
+  deterministic_level: '确定性基线等级',
+  llm_level: 'LLM 建议等级',
+  // 评分构成
+  severity: '事件严重程度',
+  association: '关联强度',
+  source_credibility: '来源可信度',
+  timeliness: '时效性',
+  product_relevance: '产品相关性',
+  // LLM 建议采纳
+  llm_adopted: '是否采纳 LLM 建议',
+  llm_confidence: 'LLM 置信度',
+  llm_theta: 'LLM 采纳阈值',
+  llm_rationale: 'LLM 采纳理由',
+  // 强制规则
+  forced_rule: '强制规则',
+  // 规则与维度
+  dimension: '监控维度',
+  rule_version: '规则版本',
+  subtotal: '评分小计',
+};
+
+/** 分组即展示顺序：数组顺序 = 组顺序，keys 顺序 = 组内卡片顺序。 */
+const SCORE_DETAIL_GROUPS: ReadonlyArray<{title: string; keys: readonly string[]}> = [
+  {title: '等级判定', keys: ['final_level', 'capped_level', 'level_cap', 'deterministic_level', 'llm_level']},
+  {title: '评分构成', keys: ['severity', 'association', 'source_credibility', 'timeliness', 'product_relevance']},
+  {title: 'LLM 建议采纳', keys: ['llm_adopted', 'llm_confidence', 'llm_theta', 'llm_rationale']},
+  {title: '强制规则', keys: ['forced_rule']},
+  {title: '规则与维度', keys: ['dimension', 'rule_version']},
+];
+
+/** 维度键 → 中文名称；与后端维度配置（engine/dimensions）一致。 */
+const DIMENSION_LABELS: Record<string, string> = {
+  natural: '自然环境',
+  geopolitical: '地缘政治与安全',
+  economic: '经济与金融',
+  policy: '政策与法规',
+  industry: '产业与供应市场',
+  corporate: '供应商主体',
+};
+
+const LEVEL_CAP_LABELS: Record<string, string> = {
+  country_only_max_p4: '仅命中国家，最高 P4',
+  weak_association_max_p2: '弱关联，最高 P2',
+};
+
+/** 按预定义分组切分明细：已知键按分组顺序排列，未知键兜底到「其他」。 */
+function groupScoreDetail(detail: Record<string, unknown>): Array<{title: string; entries: Array<[string, unknown]>}> {
+  const remaining = new Map<string, unknown>(Object.entries(detail));
+  const groups: Array<{title: string; entries: Array<[string, unknown]>}> = [];
+  for (const {title, keys} of SCORE_DETAIL_GROUPS) {
+    const entries: Array<[string, unknown]> = [];
+    for (const key of keys) {
+      if (remaining.has(key)) {
+        entries.push([key, remaining.get(key)]);
+        remaining.delete(key);
+      }
+    }
+    if (entries.length > 0) groups.push({title, entries});
+  }
+  if (remaining.size > 0) groups.push({title: '其他', entries: [...remaining.entries()]});
+  return groups;
+}
+
+/** 评分明细标量值的中文/可读化处理。 */
+function formatScoreDetailValue(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'string') {
+    if (key === 'dimension') return DIMENSION_LABELS[value] ?? value;
+    if (key === 'level_cap') return LEVEL_CAP_LABELS[value] ?? value;
+    return value;
+  }
+  return String(value);
+}
+
+/** 强制规则命中详情：以中文标签逐项展示，替代原来的裸 JSON。 */
+const ForcedRuleDetail = ({value}: {readonly value: Record<string, unknown>}) => (
+  <div className="mt-1 space-y-1 text-[12px] font-medium text-slate-700 dark:text-slate-300">
+    {value.name !== undefined && (
+      <p className="break-words"><span className="font-semibold text-slate-500 dark:text-slate-400">规则名称：</span>{formatValue(value.name)}</p>
+    )}
+    {value.description !== undefined && (
+      <p className="break-words"><span className="font-semibold text-slate-500 dark:text-slate-400">说明：</span>{formatValue(value.description)}</p>
+    )}
+    {value.reason !== undefined && (
+      <p className="break-words"><span className="font-semibold text-slate-500 dark:text-slate-400">原因：</span>{formatValue(value.reason)}</p>
+    )}
+    {value.original_level !== undefined && (
+      <p className="break-words"><span className="font-semibold text-slate-500 dark:text-slate-400">原始等级：</span>{formatValue(value.original_level)}</p>
+    )}
+    {value.original_score !== undefined && (
+      <p className="break-words"><span className="font-semibold text-slate-500 dark:text-slate-400">原始分数：</span>{formatValue(value.original_score)}</p>
+    )}
+  </div>
+);
+
 const EvidenceEmptyState = ({label}: {readonly label: string}) => (
   <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
     暂无{label}
@@ -109,14 +214,25 @@ export const RiskDetailEvidenceSections = ({alert, event}: RiskDetailEvidenceSec
         规则评分
       </SectionTitle>
       {Object.keys(alert.score_detail).length === 0 ? <EvidenceEmptyState label="评分明细" /> : (
-        <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Object.entries(alert.score_detail).map(([key, value]) => (
-            <div key={key} className="rounded-xl border border-[#c2c6d2] bg-[#f7f9ff] p-3 dark:border-slate-800 dark:bg-slate-900">
-              <dt className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{key}</dt>
-              <dd className="mt-1 break-words font-mono text-sm font-bold text-slate-800 dark:text-slate-200">{formatValue(value)}</dd>
+        <div className="space-y-4">
+          {groupScoreDetail(alert.score_detail).map((group) => (
+            <div key={group.title} className="space-y-2">
+              <h3 className="text-[11px] font-bold text-slate-500 dark:text-slate-400">{group.title}</h3>
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {group.entries.map(([key, value]) => (
+                  <div key={key} className="min-w-0 rounded-xl border border-[#c2c6d2] bg-[#f7f9ff] p-3 dark:border-slate-800 dark:bg-slate-900">
+                    <dt className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{SCORE_DETAIL_LABELS[key] ?? key}</dt>
+                    {key === 'forced_rule' && value !== null && typeof value === 'object' ? (
+                      <dd><ForcedRuleDetail value={value as Record<string, unknown>} /></dd>
+                    ) : (
+                      <dd className="mt-1 break-words font-mono text-sm font-bold text-slate-800 dark:text-slate-200">{formatScoreDetailValue(key, value)}</dd>
+                    )}
+                  </div>
+                ))}
+              </dl>
             </div>
           ))}
-        </dl>
+        </div>
       )}
     </section>
 

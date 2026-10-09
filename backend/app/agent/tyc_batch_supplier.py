@@ -17,6 +17,7 @@ from typing import Literal, assert_never
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.agent.tyc_analysis_context import build_analysis_context
 from app.agent.tyc_batch_models import BatchAccumulator, ToolOutcome
 from app.agent.tyc_gateway import TycGateway
 from app.agent.tyc_report import build_risk_report
@@ -132,16 +133,28 @@ class SupplierRunner:
     def _write_report(
         self, supplier: Supplier, results: Mapping[str, object]
     ) -> _ReportOutcome:
-        """构造并写入报告信号；返回汇总口径（单供应商隔离，不向上抛）。"""
+        """构造并写入报告信号；返回汇总口径（单供应商隔离，不向上抛）。
+
+        私有分析上下文是辅助输入：构造失败不得让本来可用的核查证据整体失败，因此
+        上下文缺失时仍按既有报告信号写入。
+        """
         try:
             report = build_risk_report(results, supplier_code=supplier.supplier_code)
         except ValueError as exc:
             logger.warning("天眼查报告构造 %s 失败：%s", supplier.legal_name, exc)
             return "failed"
         try:
+            context = build_analysis_context(results, report=report)
+        except ValueError as exc:
+            logger.warning("天眼查分析上下文构造 %s 失败：%s", supplier.legal_name, exc)
+            context = None
+        try:
             with self.session.begin_nested():
                 write = store_tyc_report_signal(
-                    self.session, supplier=supplier, report=report
+                    self.session,
+                    supplier=supplier,
+                    report=report,
+                    analysis_context=context,
                 )
         except (SQLAlchemyError, SignalIngestionError) as exc:
             # 单供应商信号持久化失败隔离：savepoint 已回滚本次写入（额度记账由

@@ -240,6 +240,20 @@ def match_locations(
                 )
 
 
+def _product_term_matches(term: str, affected: str) -> bool:
+    """单个供应产品词是否命中单个事件受影响产品词。
+
+    精确相等始终命中；否则只接受"供应词被事件词包含"这一单向包含，事件词必须是
+    更具体的表述。禁止反向包含（事件泛化词是供应词的前缀，例如事件"电梯"命中
+    供应"电梯配件"）——那会把无关供应商按产品拉进匹配。空白词永不命中。
+    """
+    if not term or not affected:
+        return False
+    if term == affected:
+        return True
+    return len(term) >= 2 and term in affected
+
+
 def match_products(
     session: Session,
     result: SignalAnalysisResult,
@@ -247,8 +261,11 @@ def match_products(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """产品柱：受影响产品关键词 vs 供应产品名称/关键词（双向包含）。"""
-    affected_products = [normalize_alias(item) for item in result.affected_products]
+    """产品柱：受影响产品关键词 vs 供应产品名称/关键词（单向包含，见 _product_term_matches）。"""
+    del session  # 保持 MatcherFn 签名兼容，产品柱不访问数据库
+    affected_products = [
+        value for value in map(normalize_alias, result.affected_products) if value
+    ]
     for supplier in suppliers:
         for product in supplier.products:
             terms = [normalize_alias(product.name), *map(normalize_alias, product.keywords)]
@@ -257,7 +274,7 @@ def match_products(
                     term
                     for term in terms
                     for affected in affected_products
-                    if len(term) >= 2 and (term in affected or affected in term)
+                    if _product_term_matches(term, affected)
                 ),
                 None,
             )

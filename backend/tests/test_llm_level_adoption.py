@@ -64,16 +64,17 @@ def _settings(**overrides: object) -> ScoringSettings:
 
 class TestResolveLevelChain:
     def test_forced_rule_p1_beats_llm_p4(self) -> None:
-        """① 主体强匹配的合规事件触发强制规则：LLM 建议 P4 不改变最终 P1。"""
+        """后置 强制规则（合规制裁记录）→ 强制 P1，压过 LLM 建议 P4。"""
         settings = _settings()
         detail: dict[str, object] = {}
         level, score = resolve_level(
             settings,
-            LlmSuggestion(suggested_level="P4", confidence=0.99, rationale="证据不足"),
+            LlmSuggestion(suggested_level="P4", confidence=0.99, rationale="证据充分"),
             "compliance",
             "legal_name",
             55,
             detail,
+            event_subtype="sanctions",
         )
         assert (level, score) == ("P1", 100)
         assert detail["deterministic_level"] == "P3"

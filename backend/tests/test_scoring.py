@@ -173,7 +173,13 @@ class TestApplyForcedRules:
         settings = ScoringSettings()
         detail: dict[str, object] = {}
         level, score = apply_forced_rules(
-            settings, "compliance", "legal_name", "P3", 55, detail
+            settings,
+            "compliance",
+            "legal_name",
+            "P3",
+            55,
+            detail,
+            event_subtype="sanctions",
         )
         assert level == "P1"
         assert score == 100
@@ -183,11 +189,43 @@ class TestApplyForcedRules:
         assert forced["original_level"] == "P3"
         assert forced["original_score"] == 55
 
+    def test_ordinary_judicial_case_is_not_forced(self) -> None:
+        """普通司法案件不再被默认制裁强制规则提升为 P1（保持常规评分）。"""
+        settings = ScoringSettings()
+        detail: dict[str, object] = {}
+        level, score = apply_forced_rules(
+            settings,
+            "judicial",
+            "registry_no",
+            "P2",
+            70,
+            detail,
+            event_subtype="judicial_case",
+        )
+        assert (level, score) == ("P2", 70)
+        assert "forced_rule" not in detail
+
+    def test_missing_event_subtype_is_not_forced(self) -> None:
+        """未给出明确制裁子类型时 fail closed：不靠事件类型粗放升级为 P1。"""
+        settings = ScoringSettings()
+        detail: dict[str, object] = {}
+        level, score = apply_forced_rules(
+            settings, "compliance", "legal_name", "P2", 70, detail
+        )
+        assert (level, score) == ("P2", 70)
+        assert "forced_rule" not in detail
+
     def test_non_matching_event_type_passes_through(self) -> None:
         settings = ScoringSettings()
         detail: dict[str, object] = {}
         level, score = apply_forced_rules(
-            settings, "weather", "legal_name", "P3", 55, detail
+            settings,
+            "weather",
+            "legal_name",
+            "P3",
+            55,
+            detail,
+            event_subtype="weather_alert",
         )
         assert level == "P3"
         assert score == 55
@@ -197,7 +235,13 @@ class TestApplyForcedRules:
         settings = ScoringSettings()
         detail: dict[str, object] = {}
         level, score = apply_forced_rules(
-            settings, "compliance", "site_distance", "P3", 55, detail
+            settings,
+            "compliance",
+            "site_distance",
+            "P3",
+            55,
+            detail,
+            event_subtype="sanctions",
         )
         assert level == "P3"
         assert score == 55
@@ -229,19 +273,23 @@ class TestApplyForcedRules:
         assert (level, score) == ("P3", 55)
         assert "forced_rule" not in detail
 
-    def test_judicial_event_also_triggers(self) -> None:
-        settings = ScoringSettings()
-        detail: dict[str, object] = {}
-        level, _ = apply_forced_rules(
-            settings, "judicial", "registry_no", "P2", 70, detail
-        )
-        assert level == "P1"
+    def test_default_entity_hit_rule_is_limited_to_sanctions_subtype(self) -> None:
+        """默认制裁主体规则只认明确 sanctions 子类型（配置层锁定，机器消费该元组）。"""
+        rule = ScoringSettings().forced_rules[0]
+        assert rule.name == "sanctions_entity_hit"
+        assert rule.event_subtypes == ("sanctions",)
 
     def test_no_forced_rules(self) -> None:
         settings = ScoringSettings(forced_rules=())
         detail: dict[str, object] = {}
         level, score = apply_forced_rules(
-            settings, "compliance", "legal_name", "P3", 55, detail
+            settings,
+            "compliance",
+            "legal_name",
+            "P3",
+            55,
+            detail,
+            event_subtype="sanctions",
         )
         assert level == "P3"
         assert score == 55

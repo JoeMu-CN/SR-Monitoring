@@ -452,14 +452,15 @@ def test_rule_change_preserves_previous_alert_revision(
 
 def test_sandbox_test_api(client: TestClient, db_session: Session) -> None:
     _add_supplier(
-        db_session, code="D1", name="沙箱供应商", registry_no="REG-D1", city="上海市"
+        db_session, code="D1", name="沙盘供应商", registry_no="REG-D1", city="上海市"
     )
     response = client.post(
         "/api/v1/rule-engine/test",
         json={
             "event_type": "compliance",
+            "event_subtype": "sanctions",
             "severity": "high",
-            "organizations": [{"name": "沙箱供应商", "aliases": [], "registry_no": "REG-D1"}],
+            "organizations": [{"name": "沙盘供应商", "aliases": [], "registry_no": "REG-D1"}],
             "locations": [{"name": "上海市", "country_code": "CN", "city": "上海市"}],
             "affected_products": [],
         },
@@ -468,8 +469,37 @@ def test_sandbox_test_api(client: TestClient, db_session: Session) -> None:
     payload = response.json()
     assert payload["dimension"]["key"] == "corporate"
     assert payload["candidates"]
-    assert payload["candidates"][0]["supplier_name"] == "沙箱供应商"
+    assert payload["candidates"][0]["supplier_name"] == "沙盘供应商"
     assert payload["candidates"][0]["level"] == "P1"
+
+
+def test_sandbox_without_subtype_is_not_forced_p1(
+    client: TestClient, db_session: Session
+) -> None:
+    """未给出明确制裁子类型时，沙箱也不粗放升级为 P1（与真实处理链口径一致）。"""
+    _add_supplier(
+        db_session,
+        code="D1-NOSUB",
+        name="无子类型供应商",
+        registry_no="REG-D1-NOSUB",
+        city="上海市",
+    )
+    response = client.post(
+        "/api/v1/rule-engine/test",
+        json={
+            "event_type": "compliance",
+            "severity": "high",
+            "organizations": [
+                {"name": "无子类型供应商", "aliases": [], "registry_no": "REG-D1-NOSUB"}
+            ],
+            "locations": [{"name": "上海市", "country_code": "CN", "city": "上海市"}],
+            "affected_products": [],
+        },
+    )
+    assert response.status_code == 200
+    candidate = response.json()["candidates"][0]
+    assert candidate["level"] != "P1"
+    assert candidate.get("forced_rule") is None
 
 
 def test_dimension_api_exposes_content_and_source_status(client: TestClient) -> None:

@@ -349,6 +349,65 @@ def test_detail_truncates_oversized_raw_data(
     assert len(response.content) < 200 * 1024
 
 
+def test_detail_never_exposes_analysis_context(
+    client: TestClient, db_session: Session
+) -> None:
+    """私有分析上下文只供模型消费：详情报告字段不变，响应体不含上下文内容。"""
+    source = _source(db_session, "ctx-hidden-source", None)
+    raw = _report_raw()
+    raw["analysis_context"] = {
+        "context_version": "tyc-analysis-context-v1",
+        "company_name": _report().company_name,
+        "supplier_code": "SUP-0001",
+        "generated_at": GENERATED_AT.isoformat(),
+        "query_incomplete": False,
+        "incomplete_dimensions": [],
+        "dimensions": [
+            {
+                "key": "get_risk_overview",
+                "name": "风险总览",
+                "status": "success",
+                "risk_level": "警示",
+                "hit": True,
+                "summary": "开庭公告 1 条",
+                "raw_state": "complete",
+                "raw_excerpt": f"内部原文片段-{SENTINEL}",
+            }
+        ],
+    }
+    signal = _signal(db_session, source, 1, raw_data=raw)
+    db_session.commit()
+
+    response = client.get(f"/api/v1/sources/{source.id}/signals/{signal.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["report"] == _report_raw()
+    assert "analysis_context" not in response.text
+    assert SENTINEL not in response.text
+    assert "raw_excerpt" not in response.text
+
+
+def test_detail_still_rejects_unknown_raw_fields_with_context_present(
+    client: TestClient, db_session: Session
+) -> None:
+    """共享提取只移除已知私有字段：其他未知键仍按 extra=forbid 拒绝。"""
+    source = _source(db_session, "ctx-extra-source", None)
+    raw = _report_raw()
+    raw["analysis_context"] = {"context_version": "tyc-analysis-context-v1"}
+    raw["unexpected_field"] = "不应被静默忽略"
+    signal = _signal(db_session, source, 1, raw_data=raw)
+    db_session.commit()
+
+    response = client.get(f"/api/v1/sources/{source.id}/signals/{signal.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["report"] is None
+    assert body["report_truncated"] is False
+    assert "不应被静默忽略" not in response.text
+
+
 def test_detail_ordinary_signal_report_is_none(
     client: TestClient, db_session: Session
 ) -> None:

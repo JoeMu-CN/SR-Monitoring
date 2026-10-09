@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -9,12 +10,19 @@ from pytest import MonkeyPatch
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.tyc_analysis_context import (
+    build_analysis_context,
+    is_supplier_profile_context,
+    render_analysis_context,
+)
+from app.agent.tyc_report import build_risk_report
 from app.ai import service as ai_service
 from app.ai.models import AIAnalysisRecord
 from app.ai.providers import (
     AIProviderError,
     FakeAIProvider,
     OpenAICompatibleProvider,
+    supplier_profile_system_prompt,
     system_prompt,
 )
 from app.ai.schemas import SignalAnalysisInput, SignalAnalysisResult
@@ -101,6 +109,15 @@ def test_system_prompt_embeds_level_enum_in_json_schema() -> None:
 
     level_schema = schema["properties"]["suggested_level"]
     assert set(level_schema["anyOf"][0]["enum"]) == {"P1", "P2", "P3", "P4"}
+
+
+def test_profile_system_prompt_keeps_same_machine_consumed_schema() -> None:
+    """画像上下文提示词只追加叙述约束：等级枚举与 Schema 契约保持一致。"""
+    profile_prompt = supplier_profile_system_prompt()
+    profile_schema = json.loads(profile_prompt[profile_prompt.index("{") :])
+    base_schema = json.loads(system_prompt()[system_prompt().index("{") :])
+
+    assert profile_schema == base_schema
 
 
 def import_signal(client: TestClient) -> None:
@@ -494,6 +511,197 @@ def test_invalid_suggested_level_is_marked_needs_review(
     assert record.status == "failed"
     assert record.needs_review is True
     assert record.review_reason == "AI 分类最终失败，需人工复核"
+
+
+def _capturing_provider(captured: list[dict[str, object]]) -> OpenAICompatibleProvider:
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(valid_result())}}]},
+        )
+
+    return OpenAICompatibleProvider(
+        AISettings(
+            provider="openai-compatible",
+            base_url="https://model.example.test/v1",
+            model="test-model",
+            api_key="test-secret",
+            timeout_seconds=5,
+            max_retries=0,
+        ),
+        transport=httpx.MockTransport(handler),
+        retry_delay_seconds=0,
+    )
+
+
+def _profile_signal(db_session: Session, raw_data: dict[str, object]) -> RawSignal:
+    source = db_session.scalar(select(DataSource).order_by(DataSource.id))
+    assert source is not None
+    signal = RawSignal(
+        source_id=source.id,
+        external_id="ctx-profile-signal",
+        title="天眼查多维度核查：上下文测试有限公司",
+        content="重点命中：风险总览：开庭公告 1 条",
+        collected_at=datetime(2026, 9, 29, 4, 30, tzinfo=UTC),
+        fingerprint="ctx-profile-fingerprint",
+        raw_data=raw_data,
+        validity_state="legacy",
+        validity_reason={
+            "code": "legacy_unmigrated",
+            "anchor_source": "legacy",
+            "details": {},
+        },
+    )
+    db_session.add(signal)
+    db_session.commit()
+    return signal
+
+
+def _profile_raw_data(context_payload: dict[str, object] | None) -> dict[str, object]:
+    report = build_risk_report(
+        {
+            "status": "success",
+            "company_name": "上下文测试有限公司",
+            "credit_code": "91330000CTXTEST001",
+            "reg_status": "存续",
+            "dimensions": {
+                "get_risk_overview": {
+                    "status": "success",
+                    "raw": "# 风险总览\n\n> 摘要：开庭公告 1 条。\n",
+                    "message": None,
+                }
+            },
+        },
+        supplier_code="SUP-CTX-001",
+        generated_at=datetime(2026, 9, 29, 4, 30, tzinfo=UTC),
+    )
+    raw_data = report.model_dump(mode="json")
+    if context_payload is not None:
+        raw_data["analysis_context"] = context_payload
+    return raw_data
+
+
+def test_analysis_content_uses_profile_context_for_tyc_signal(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """画像信号：LLM 正文是私有上下文 JSON，且只发生一次模型调用。"""
+    results = {
+        "status": "success",
+        "company_name": "上下文测试有限公司",
+        "credit_code": "91330000CTXTEST001",
+        "reg_status": "存续",
+        "dimensions": {
+            "get_risk_overview": {
+                "status": "success",
+                "raw": "# 风险总览\n\n> 摘要：开庭公告 1 条。\n",
+                "message": None,
+            }
+        },
+    }
+    report = build_risk_report(
+        results,
+        supplier_code="SUP-CTX-001",
+        generated_at=datetime(2026, 9, 29, 4, 30, tzinfo=UTC),
+    )
+    context = build_analysis_context(results, report=report)
+    signal = _profile_signal(
+        db_session, _profile_raw_data(context.model_dump(mode="json"))
+    )
+    captured: list[dict[str, object]] = []
+    provider = _capturing_provider(captured)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+
+    asyncio.run(ai_service.analyze_raw_signal(db_session, signal))
+
+    assert len(captured) == 1
+    messages = captured[0]["messages"]
+    sent_content = json.loads(messages[1]["content"])["content"]
+    assert sent_content == render_analysis_context(context)
+    assert is_supplier_profile_context(sent_content) is True
+
+
+def test_analysis_content_keeps_signal_text_for_ordinary_signal(
+    client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """普通信号：正文与提示词路由都保持既有行为（无上下文、不触发画像约束）。"""
+    import_signal(client)
+    signal = db_session.scalar(select(RawSignal))
+    assert signal is not None
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        ai_service, "get_ai_provider", lambda _settings: _capturing_provider(captured)
+    )
+
+    asyncio.run(ai_service.analyze_raw_signal(db_session, signal))
+
+    assert len(captured) == 1
+    messages = captured[0]["messages"]
+    user_payload = json.loads(messages[1]["content"])
+    assert user_payload["content"] == signal.content
+    assert messages[0]["content"] == system_prompt()
+
+
+@pytest.mark.parametrize(
+    "raw_data",
+    [
+        {"analysis_context": {"context_version": "tyc-analysis-context-v1"}},
+        {"analysis_context": "damaged"},
+        {"analysis_context": None},
+    ],
+    ids=["missing-fields", "not-object", "none"],
+)
+def test_analysis_content_falls_back_to_signal_text_on_damaged_context(
+    db_session: Session, monkeypatch: MonkeyPatch, raw_data: dict[str, object]
+) -> None:
+    """上下文缺失或损坏：回落既有正文，普通提示词，不抛错。"""
+    signal = _profile_signal(db_session, {**_profile_raw_data(None), **raw_data})
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        ai_service, "get_ai_provider", lambda _settings: _capturing_provider(captured)
+    )
+
+    asyncio.run(ai_service.analyze_raw_signal(db_session, signal))
+
+    assert len(captured) == 1
+    messages = captured[0]["messages"]
+    assert json.loads(messages[1]["content"])["content"] == signal.content
+    assert messages[0]["content"] == system_prompt()
+
+
+def test_profile_signal_uses_profile_prompt_rules(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """画像上下文的提示词走画像分支，且与通用分支的 Schema 契约一致。"""
+    results = {
+        "status": "success",
+        "company_name": "上下文测试有限公司",
+        "dimensions": {
+            "get_risk_overview": {
+                "status": "success",
+                "raw": "# 风险总览\n\n> 摘要：开庭公告 1 条。\n",
+                "message": None,
+            }
+        },
+    }
+    report = build_risk_report(
+        results,
+        supplier_code="SUP-CTX-001",
+        generated_at=datetime(2026, 9, 29, 4, 30, tzinfo=UTC),
+    )
+    context = build_analysis_context(results, report=report)
+    signal = _profile_signal(
+        db_session, _profile_raw_data(context.model_dump(mode="json"))
+    )
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        ai_service, "get_ai_provider", lambda _settings: _capturing_provider(captured)
+    )
+
+    asyncio.run(ai_service.analyze_raw_signal(db_session, signal))
+
+    system_message = captured[0]["messages"][0]["content"]
+    assert system_message == supplier_profile_system_prompt()
 
 
 def test_signal_analysis_result_accepts_naive_datetime() -> None:

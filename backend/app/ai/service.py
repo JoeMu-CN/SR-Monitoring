@@ -3,11 +3,25 @@ from time import perf_counter
 
 from sqlalchemy.orm import Session
 
+from app.agent.tyc_analysis_context import (
+    load_analysis_context,
+    render_analysis_context,
+)
 from app.ai.models import AIAnalysisRecord
 from app.ai.providers import PROMPT_VERSION, AIProviderError, get_ai_provider
 from app.ai.schemas import SignalAnalysisInput
 from app.config import get_ai_settings
 from app.signals.models import RawSignal
+
+
+def analysis_content(signal: RawSignal) -> str:
+    """LLM 输入正文：天眼查画像用私有上下文 JSON，普通信号沿用既有 content。
+
+    上下文缺失或损坏时回落 ``signal.content``，因此历史数据与普通信号行为完全不变；
+    仍然只有一次 LLM 调用，规则与判定链路不受影响。
+    """
+    context = load_analysis_context(signal.raw_data)
+    return render_analysis_context(context) if context is not None else signal.content
 
 
 async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisRecord:
@@ -29,7 +43,7 @@ async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisR
             SignalAnalysisInput(
                 signal_id=signal.id,
                 title=signal.title,
-                content=signal.content,
+                content=analysis_content(signal),
                 url=signal.url,
                 published_at=signal.published_at,
             )

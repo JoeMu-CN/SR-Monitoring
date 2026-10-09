@@ -190,7 +190,7 @@ def _build_finding(
     if status is DimensionStatus.EMPTY:
         summary = f"未发现{spec.name}记录"
     elif status is DimensionStatus.ERROR:
-        detail = _clip(_mask_sensitive(message), 80) if message else ""
+        detail = _clip(mask_sensitive(message), 80) if message else ""
         summary = f"查询失败：{detail}" if detail else "查询失败"
     elif status is DimensionStatus.QUOTA_EXHAUSTED:
         summary = "额度耗尽，未执行查询"
@@ -234,7 +234,7 @@ def _parse_facts(raw: str) -> _Facts:
         elif stripped.startswith("> 摘要："):
             abstract = abstract or stripped[len("> 摘要：") :].strip()
         elif stripped.startswith("- ") and not stripped.startswith("- tool:"):
-            value = _mask_sensitive(
+            value = mask_sensitive(
                 _BULLET_SPLIT_RE.split(stripped[2:].strip())[0].strip()
             )
             value = _clip(value, _MAX_ITEM_CHARS + 1)
@@ -256,7 +256,7 @@ def _summarize(facts: _Facts) -> str:
         text = "；".join(parts)
     else:
         return ""
-    return _clip(_mask_sensitive(text), _MAX_SUMMARY_CHARS)
+    return _clip(mask_sensitive(text), _MAX_SUMMARY_CHARS)
 
 
 def _risk_level(raw: str) -> RiskLevel | None:
@@ -267,7 +267,7 @@ def _label_cell(header: list[str], cells: list[str]) -> str | None:
     index = 1 if header and header[0] == "#" else 0
     if index >= len(cells):
         return None
-    text = _mask_sensitive(_WHITESPACE_RE.sub(" ", cells[index]).strip())
+    text = mask_sensitive(_WHITESPACE_RE.sub(" ", cells[index]).strip())
     value = _bounded_item(text)
     if not value or value == "-" or _NUMERIC_RE.fullmatch(value):
         return None
@@ -275,7 +275,7 @@ def _label_cell(header: list[str], cells: list[str]) -> str | None:
 
 
 def _append_unique(items: list[str], value: str) -> None:
-    clean = _bounded_item(_mask_sensitive(value))
+    clean = _bounded_item(mask_sensitive(value))
     if clean and clean not in items and len(items) < _MAX_EVIDENCE_ITEMS:
         items.append(clean)
 
@@ -285,7 +285,8 @@ def _bounded_item(text: str) -> str:
     return text if len(text) <= _MAX_ITEM_CHARS else text[: _MAX_ITEM_CHARS] + "…"
 
 
-def _mask_sensitive(text: str) -> str:
+def mask_sensitive(text: str) -> str:
+    """电话/证件号脱敏；报告构造与分析上下文共用同一实现，避免两套屏蔽口径。"""
     for pattern in _SENSITIVE_PATTERNS:
         text = pattern.sub("[已脱敏]", text)
     return text

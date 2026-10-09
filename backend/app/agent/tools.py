@@ -1,7 +1,13 @@
 """Agent 工具白名单。
 
-所有工具只能读取业务库或调用外部核查网关，禁止任何写操作。
-写操作（加入监控、启停供应商等）必须由用户在前端确认后走既有 API。
+除 ``verify_company`` 对**清单内启用供应商**的已批准副作用外，所有工具只读取业务
+库或调用外部核查网关：``query_suppliers`` / ``query_current_alerts`` /
+``get_budget`` 与清单外企业的 ``verify_company`` 都不写业务表。
+
+清单内实时完整核查会在该企业名下写入一条天眼查证据信号，并按确定性规则引擎
+创建或更新正式风险提醒（用户已批准该副作用，沿用 ``PERM_RISK_QUERY_USE``，不新增
+权限或确认接口）。其余写操作（加入监控、启停供应商等）仍必须由用户在前端确认后走
+既有 API。
 """
 
 from datetime import UTC, datetime
@@ -149,11 +155,23 @@ class QueryCurrentAlertsTool:
                     "event_summary": event.summary,
                     "match_reasons": match.reasons,
                     "match_evidence": match.evidence,
-                    "expires_at": alert.expires_at,
+                    "expires_at": (
+                        alert.expires_at.isoformat()
+                        if alert.expires_at is not None
+                        else None
+                    ),
                     "expiry_kind": alert.expiry_kind,
                     "validity_state": event.validity_state,
-                    "valid_until": event.valid_until,
-                    "review_due_at": event.review_due_at,
+                    "valid_until": (
+                        event.valid_until.isoformat()
+                        if event.valid_until is not None
+                        else None
+                    ),
+                    "review_due_at": (
+                        event.review_due_at.isoformat()
+                        if event.review_due_at is not None
+                        else None
+                    ),
                     "validity_policy_version": event.validity_policy_version,
                     "validity_reason": event.validity_reason,
                     "updated_at": alert.updated_at.isoformat(),
@@ -167,16 +185,21 @@ class VerifyCompanyTool:
     """企业风险核查（受预算控制器管控）。
 
     路由规则：
-    - 清单内（enabled 供应商）：只读已入库的最新天眼查信号，不调 MCP、不消耗额度；
+    - 清单内（enabled 供应商）：**实时完整多维度核查**（不再回读历史报告替代实时
+      结果）。新证据以显式手动观察身份入库，只对该新信号做 AI 解析与确定性规则
+      判定，达到条件即创建或更新正式风险提醒（已批准副作用）；
     - 清单外企业：实时调用天眼查 MCP，经共享单工具额度执行器
       （``execute_tyc_tool_with_quota``）在额度锁内重读余额、执行调用、记账并独立提交，
-      与批量路径共享同一日/月额度，调用事实不随 Agent 会话事务回滚。
+      与批量路径共享同一日/月额度，调用事实不随 Agent 会话事务回滚；不落库、不生成
+      告警，也不凭空创建供应商。
     """
 
     name = "verify_company"
     description = (
-        "对任意企业做风险核查（工商、司法、经营异常）。清单内供应商返回已入库最新信息；"
-        "清单外企业实时调用天眼查，受每日/每月调用额度限制。只读。"
+        "对任意企业做风险核查（工商、司法、经营异常）。清单内供应商执行实时完整核查："
+        "写入一条核查证据信号并按规则引擎创建或更新正式风险提醒（受每日/每月调用额度"
+        "限制）；额度耗尽、来源停用或网络/鉴权失败时返回未完成状态，不得解读为无风险。"
+        "清单外企业仅实时查询、不落库不生成告警。"
     )
     parameters: dict[str, object] = {
         "type": "object",
@@ -194,7 +217,7 @@ class VerifyCompanyTool:
         if not name:
             return {"status": "error", "message": "company_name 不能为空"}
 
-        # 清单内供应商：读已入库最新信号，不触发实时天眼查
+        # 按法人全称定位清单内启用供应商：命中走实时完整核查，未命中走一次性查询。
         supplier = session.scalar(
             select(Supplier).where(
                 Supplier.enabled.is_(True),
@@ -202,21 +225,13 @@ class VerifyCompanyTool:
             )
         )
         if supplier is not None:
-            from app.agent.supplier_tyc import (
-                format_tyc_signal_result,
-                latest_tyc_signals_for_supplier,
-            )
+            # 清单内供应商：实时完整核查（不再以历史报告替代实时结果）。
+            from app.agent.tyc_manual_verification import verify_supplier_realtime
 
-            signals = latest_tyc_signals_for_supplier(session, supplier)
-            if signals:
-                return format_tyc_signal_result(signals[0])
-            return {
-                "status": "empty",
-                "source": "database",
-                "message": "该供应商暂无已入库的天眼查核查记录（定时核查尚未执行或未命中）",
-                "supplier_id": supplier.id,
-                "supplier_code": supplier.supplier_code,
-            }
+            result = await verify_supplier_realtime(
+                session, supplier=supplier, gateway=self.gateway
+            )
+            return result.to_payload()
 
         # 清单外企业：实时调用（受预算控制器管控）
         usage = get_tyc_usage(session)
@@ -309,7 +324,11 @@ def _products(session: Session, supplier_id: int) -> list[SupplierProduct]:
 
 
 def build_tools(*, now_utc: datetime | None = None) -> list[Tool]:
-    """风险查询 Agent 的永久只读工具白名单。"""
+    """风险查询 Agent 的工具白名单。
+
+    ``verify_company`` 对清单内启用供应商有已批准的写入副作用（证据信号 +
+    正式告警），其余工具严格只读。
+    """
     return [
         QuerySuppliersTool(),
         QueryCurrentAlertsTool(now_utc=now_utc),

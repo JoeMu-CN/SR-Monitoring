@@ -1,10 +1,11 @@
 """供应商-天眼查信号桥接：查询/展示已采集的天眼查核查信号。
 
 设计原则：
-- 手动风险查询助手查「清单内供应商」时只读已入库最新天眼查信号（不消耗额度）；
-  清单外企业仍走 VerifyCompanyTool 实时 MCP 路径。
-- 定时批量核查的周度报告写入见 ``app.agent.tyc_report_storage``（until_superseded
-  周内幂等、跨周替代）；本模块只负责读取与展示，不负责写入。
+- 手动风险查询助手查「清单内供应商」时走实时完整核查（见
+  ``app.agent.tyc_manual_verification``），不再回读历史报告替代实时结果；
+  清单外企业仍走 VerifyCompanyTool 的一次性实时 MCP 查询路径。
+- 报告写入见 ``app.agent.tyc_report_storage``（定时周度 until_superseded 幂等、
+  手动实时按观察身份逐次入库）；本模块只负责读取与展示，不负责写入。
 """
 
 from __future__ import annotations

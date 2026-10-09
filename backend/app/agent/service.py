@@ -44,7 +44,11 @@ async def chat(
     llm: AgentLLM | None = None,
     owner_user_id: int,
 ) -> ChatResponse:
-    """风险查询 Agent：永久只读，不加载信息源写入工具。"""
+    """风险查询 Agent：不加载信息源写入工具。
+
+    ``verify_company`` 对清单内启用供应商有已批准的副作用（写入一条核查证据
+    信号并按规则引擎创建或更新正式告警）；其余工具只读。
+    """
     return await _chat(
         session,
         question,

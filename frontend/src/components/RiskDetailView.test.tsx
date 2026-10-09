@@ -195,6 +195,35 @@ describe('RiskDetailView', () => {
     expect(container.querySelector('.animate-spin')).toBeNull();
   });
 
+  it('规则评分卡片使用中文标题，并把同类等级卡片分组相邻', async () => {
+    const withLevels: RiskAlertRead = {
+      ...alert(7),
+      score_detail: {
+        severity: 30, association: 22, final_level: 'P1', capped_level: 'P2',
+        deterministic_level: 'P2', llm_level: null, rule_version: 'v1',
+      },
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(withLevels))
+      .mockResolvedValueOnce(response(event(70)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAt('/risks/7');
+
+    expect(await screen.findByText('最终等级')).toBeInTheDocument();
+    expect(screen.getByText('事件严重程度')).toBeInTheDocument();
+    expect(screen.getByText('规则版本')).toBeInTheDocument();
+    expect(screen.queryByText('final_level')).not.toBeInTheDocument();
+
+    // 同类等级卡片相邻：均落在「等级判定」分组内
+    const levelGroup = screen.getByText('等级判定').closest('div');
+    expect(levelGroup).not.toBeNull();
+    expect(levelGroup).toHaveTextContent('最终等级');
+    expect(levelGroup).toHaveTextContent('封顶后等级');
+    expect(levelGroup).toHaveTextContent('确定性基线等级');
+    expect(levelGroup).toHaveTextContent('LLM 建议等级');
+  });
+
   it('快速切换 alertId 时忽略旧提醒响应', async () => {
     let resolveFirstAlert: ((value: MockResponse) => void) | undefined;
     const firstAlert = new Promise<MockResponse>((resolve) => {

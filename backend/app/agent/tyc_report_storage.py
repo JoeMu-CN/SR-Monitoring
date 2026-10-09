@@ -4,13 +4,16 @@
 raw_signals」的持久化，不查远程、不改信源配置。
 
 契约：
-- ``external_id = tyc-<supplier_code>-<report.period_key>``：同一 ISO 周恒定，跨周变化；
-- 指纹 = 固定字段 allowlist 的 canonical JSON（含 period_key，显式排除 generated_at
-  等运行时字段）；模型未来新增字段不会悄然改变指纹，必须显式加入 allowlist；
-- 同周先到先得：external_id 已存在即返回 ``duplicate``，不新增也不替代（即使业务
-  字段变化），避免重复 external_id 与两条冲突画像；
-- 跨周：新 external_id 经既有 supersession 机制（同键 advisory lock + active 唯一
-  索引）原子替代旧 active；并发同周写入由同一把锁串行化，只保留一个 champion；
+- 定时路径（``observation=None``）：``external_id = tyc-<supplier_code>-<period_key>``
+  同一 ISO 周恒定，跨周变化；指纹 = 固定字段 allowlist 的 canonical JSON（含
+  period_key，显式排除 generated_at 等运行时字段）；模型未来新增字段不会悄然改变
+  指纹，必须显式加入 allowlist；同周先到先得，external_id 已存在即返回
+  ``duplicate``，不新增也不替代；
+- 手动实时路径（传入 ``ManualObservation``）：external_id 与指纹都追加显式观察
+  token，使同周每次实时核查都成为独立证据版本、不被周内幂等吞掉；``validity_key``
+  不变，因此 until_superseded 仍把最新观察原子替代旧 active；
+- 手动路径额外返回真实 ``signal_id``（按唯一键 ``(source_id, fingerprint)`` 取回），
+  供调用方继续对该信号做 AI 解析与规则判定；定时路径不需要该 id，故不额外查询；
 - 空报告（无任何维度条目）不落库并返回 ``empty``，由批次计入 empty；维度条目全部
   失败的非空报告仍如实落库（与 Todo 7 的部分报告契约一致）。
 """
@@ -20,12 +23,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.agent.supplier_tyc import TYC_SOURCE_CODE, tyc_source
+from app.agent.tyc_analysis_context import PRIVATE_RAW_FIELD, TycAnalysisContext
 from app.agent.tyc_report import TycRiskReport, render_key_summary
 from app.signals.ingestion import (
     LifecycleAuthority,
@@ -42,11 +47,28 @@ TycReportOutcome = Literal["created", "duplicate", "empty"]
 
 
 @dataclass(frozen=True, slots=True)
+class ManualObservation:
+    """一次手动实时核查的观察身份。
+
+    ``observed_at`` 既是权威时间（决定 until_superseded 替代胜负），也派生唯一
+    token，使同周的多次实时核查各自成为独立证据版本；同一时刻重放同一次核查得到
+    相同 token，因而仍然幂等。
+    """
+
+    observed_at: datetime
+
+    @property
+    def token(self) -> str:
+        return self.observed_at.astimezone(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+@dataclass(frozen=True, slots=True)
 class TycReportWrite:
-    """一次报告写入的判定结果；``external_id`` 同周恒定。"""
+    """一次报告写入的判定结果；``external_id`` 同周恒定（手动路径含观察 token）。"""
 
     external_id: str
     outcome: TycReportOutcome
+    signal_id: int | None = None
 
 
 def report_fingerprint(report: TycRiskReport) -> str:
@@ -83,9 +105,22 @@ def store_tyc_report_signal(
     *,
     supplier: Supplier,
     report: TycRiskReport,
+    observation: ManualObservation | None = None,
+    analysis_context: TycAnalysisContext | None = None,
 ) -> TycReportWrite:
-    """写入一份周度报告信号；返回 external_id 与结果（created/duplicate/empty）。"""
+    """写入一份报告信号；返回 external_id、真实 signal_id 与结果。
+
+    ``observation`` 为 None 时是定时周度写入（同周幂等、跨周原子替代）；非 None 时
+    是手动实时观察，external_id 与指纹都带观察 token，因此同周重复实时核查会
+    产生新证据行而不被周内去重吞掉。
+
+    ``analysis_context`` 是可选的私有 LLM 上下文：只作为 ``raw_data`` 的附加键落库，
+    不参与指纹（``report_fingerprint`` 仍只覆盖原报告字段），因此补上下文既不会
+    改变去重口径，也不会让既有报告 API 报告字段变化；缺省（None）保持历史行为。
+    """
     external_id = f"tyc-{supplier.supplier_code}-{report.period_key}"
+    if observation is not None:
+        external_id = f"{external_id}-{observation.token}"
     if not report.dimensions:
         return TycReportWrite(external_id=external_id, outcome="empty")
     source = tyc_source(session)
@@ -98,7 +133,19 @@ def store_tyc_report_signal(
         )
     )
     if duplicate is not None:
-        return TycReportWrite(external_id=external_id, outcome="duplicate")
+        return TycReportWrite(
+            external_id=external_id, outcome="duplicate", signal_id=duplicate
+        )
+    base_fingerprint = report_fingerprint(report)
+    fingerprint = (
+        base_fingerprint
+        if observation is None
+        else _observation_fingerprint(base_fingerprint, observation)
+    )
+    raw_data = report.model_dump(mode="json")
+    if analysis_context is not None:
+        # 私有上下文只作为附加键落库：根报告既有字段保持不变，指纹口径也不含它。
+        raw_data[PRIVATE_RAW_FIELD] = analysis_context.model_dump(mode="json")
     created = persist_signal_ingestions(
         session,
         [
@@ -112,18 +159,39 @@ def store_tyc_report_signal(
                     validity_key=validity_key,
                     lifecycle_action=LifecycleAction.ASSERT,
                 ),
-                fingerprint=report_fingerprint(report),
+                fingerprint=fingerprint,
                 collected_at=report.generated_at,
                 authority=LifecycleAuthority("adapter", TYC_SOURCE_CODE),
                 anchor_fallback_source=TYC_SOURCE_CODE,
-                raw_data=report.model_dump(mode="json"),
+                raw_data=raw_data,
             )
         ],
     )
+    # 观察身份参与指纹后无法从写入返回值取 id；按唯一键 (source_id, fingerprint)
+    # 取回本行主键，供手动路径继续对该信号做 AI 解析与规则判定。
     return TycReportWrite(
         external_id=external_id,
         outcome="created" if created else "duplicate",
+        signal_id=session.scalar(
+            select(RawSignal.id).where(
+                RawSignal.source_id == source.id,
+                RawSignal.fingerprint == fingerprint,
+            )
+        ),
     )
+
+
+def _observation_fingerprint(
+    base_fingerprint: str, observation: ManualObservation
+) -> str:
+    """把观察 token 混入报告指纹：同报告、不同观察时刻即为不同证据版本。"""
+    payload = json.dumps(
+        {"report": base_fingerprint, "observation": observation.token},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _lock_validity_key(session: Session, source_id: int, validity_key: str) -> None:

@@ -115,6 +115,27 @@ textarea {
   transition-duration: 0.01ms !important;
 }
 
+/* 风险查询助手运行步骤的三个跳动点：逐点错峰，只动 transform/opacity 合成属性。
+   必须放进 components 层，否则未分层规则的优先级高于 utilities 层，
+   会盖掉 motion-reduce:animate-none，减少动态效果设置将失效。 */
+@keyframes step-timeline-dot-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  .step-timeline-dot {
+    display: inline-block;
+    animation: step-timeline-dot-bounce 1.2s ease-in-out infinite;
+  }
+}
+
 @media print {
   body * {
     visibility: hidden !important;

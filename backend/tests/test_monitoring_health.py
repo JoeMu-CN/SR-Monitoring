@@ -14,6 +14,8 @@
    首次创建/最近配置更新）。
 5. 观测写入：started→running、结束 succeeded/failed、独立短事务与失败隔离、
    锁跳过零观测。
+6. current_work：只读当前工作投影（kind/job_key/source_id/source_name/stage/
+   started_at/item_id），只含运行中任务；不泄露信号标题、正文、异常文本与凭据。
 """
 
 from __future__ import annotations
@@ -32,11 +34,22 @@ import app.scheduler.health as health_module
 import app.scheduler.jobs as scheduler_jobs
 import app.scheduler.runtime as scheduler_runtime
 from app.agent.models import TycUsageRecord
+from app.ai.models import AIAnalysisRecord
 from app.auth import security as auth_security
 from app.scheduler.health import build_monitoring_health
 from app.scheduler.health_schemas import MonitoringHealthRead
+from app.scheduler.observability_models import (
+    JOB_RUN_STATUS_VALUES,
+    SchedulerJobRegistry,
+    SchedulerJobRun,
+)
 from app.scheduler.runtime import PENDING_SIGNALS_JOB_KEY, source_collection_job_key
-from app.scheduler.runtime_models import RUNTIME_STATUS_VALUES, SchedulerRuntimeState
+from app.scheduler.runtime_models import (
+    CURRENT_WORK_KIND_VALUES,
+    CURRENT_WORK_STAGE_VALUES,
+    RUNTIME_STATUS_VALUES,
+    SchedulerRuntimeState,
+)
 from app.signals.models import CollectionRun, DataSource, RawSignal
 
 NOW = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)  # 周四
@@ -326,8 +339,13 @@ def test_runtime_table_columns_match_plan(db_session: Session) -> None:
         "failed_count",
         "error_code",
         "updated_at",
+        "current_kind",
+        "current_stage",
+        "current_item_id",
     }
     assert RUNTIME_STATUS_VALUES == ("idle", "running", "succeeded", "failed")
+    assert CURRENT_WORK_KIND_VALUES == ("source_collection", "pending_signal_processing")
+    assert CURRENT_WORK_STAGE_VALUES == ("collecting", "processing_signal")
 
 
 def test_migration_0049_declares_single_incremental_chain() -> None:
@@ -346,6 +364,21 @@ def test_migration_0049_declares_single_incremental_chain() -> None:
         "error_code",
     )
     for column in plan_columns:
+        assert f'"{column}"' in text
+
+
+def test_migration_0056_extends_runtime_state_for_current_work() -> None:
+    """静态守卫：0056 紧接 0055，新增 current_work 三列（可空，向后兼容）。"""
+    migration_path = (
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "0056_scheduler_runtime_current_work.py"
+    )
+    text = migration_path.read_text(encoding="utf-8")
+    assert 'revision: str = "0056"' in text
+    assert 'down_revision: str | None = "0055"' in text
+    for column in ("current_kind", "current_stage", "current_item_id"):
         assert f'"{column}"' in text
 
 
@@ -1019,7 +1052,15 @@ def test_record_heartbeat_upserts_single_row(
 def test_record_job_started_marks_running(
     db_session: Session, runtime_uses_test_session: None
 ) -> None:
-    assert scheduler_runtime.record_job_started(PENDING_SIGNALS_JOB_KEY, now=NOW) is True
+    assert (
+        scheduler_runtime.record_job_started(
+            PENDING_SIGNALS_JOB_KEY,
+            kind="pending_signal_processing",
+            stage="processing_signal",
+            now=NOW,
+        )
+        is True
+    )
 
     row = db_session.scalar(
         select(SchedulerRuntimeState).where(
@@ -1029,6 +1070,93 @@ def test_record_job_started_marks_running(
     assert row is not None
     assert row.status == "running"
     assert row.last_started_at == NOW
+    assert row.current_kind == "pending_signal_processing"
+    assert row.current_stage == "processing_signal"
+    assert row.current_item_id is None
+
+
+def test_record_job_started_overwrites_stale_current_work(
+    db_session: Session, runtime_uses_test_session: None
+) -> None:
+    """开始新任务必须覆盖上一轮残留：item_id 缺省即清空，不继承旧观测。"""
+    scheduler_runtime.record_job_started(
+        PENDING_SIGNALS_JOB_KEY,
+        kind="pending_signal_processing",
+        stage="processing_signal",
+        item_id=41,
+        now=NOW,
+    )
+    scheduler_runtime.record_job_started(
+        PENDING_SIGNALS_JOB_KEY,
+        kind="pending_signal_processing",
+        stage="processing_signal",
+        now=NOW + timedelta(seconds=60),
+    )
+
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(
+            SchedulerRuntimeState.job_key == PENDING_SIGNALS_JOB_KEY
+        )
+    )
+    assert row is not None
+    assert row.current_item_id is None
+
+
+def test_record_pending_signal_started_only_refreshes_current_item(
+    db_session: Session, runtime_uses_test_session: None
+) -> None:
+    """单信号埋点只刷新当前项；批次级 last_started_at 不被逐信号刷新。"""
+    scheduler_runtime.record_job_started(
+        PENDING_SIGNALS_JOB_KEY,
+        kind="pending_signal_processing",
+        stage="processing_signal",
+        now=NOW,
+    )
+    assert (
+        scheduler_runtime.record_pending_signal_started(
+            41, now=NOW + timedelta(seconds=5)
+        )
+        is True
+    )
+
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(
+            SchedulerRuntimeState.job_key == PENDING_SIGNALS_JOB_KEY
+        )
+    )
+    assert row is not None
+    assert row.current_kind == "pending_signal_processing"
+    assert row.current_stage == "processing_signal"
+    assert row.current_item_id == 41
+    assert row.last_started_at == NOW
+
+
+def test_record_job_result_and_neutral_clear_current_work(
+    db_session: Session, runtime_uses_test_session: None
+) -> None:
+    """结束结论（failed / 中性）必须清空 current_*，不残留“运行中”信息。"""
+    key = source_collection_job_key(7)
+    scheduler_runtime.record_job_started(
+        key, kind="source_collection", stage="collecting", now=NOW
+    )
+    scheduler_runtime.record_job_result(key, succeeded=False, now=NOW)
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(SchedulerRuntimeState.job_key == key)
+    )
+    assert row is not None
+    assert row.status == "failed"
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
+
+    scheduler_runtime.record_job_started(
+        key, kind="source_collection", stage="collecting", now=NOW
+    )
+    scheduler_runtime.record_job_neutral(key, now=NOW)
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(SchedulerRuntimeState.job_key == key)
+    )
+    assert row is not None
+    assert row.status == "idle"
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
 
 
 def test_record_job_result_persists_only_stable_error_code(
@@ -1083,7 +1211,13 @@ def test_observation_write_failure_does_not_raise(
         is False
     )
     assert (
-        scheduler_runtime.record_job_started(PENDING_SIGNALS_JOB_KEY, now=NOW) is False
+        scheduler_runtime.record_job_started(
+            PENDING_SIGNALS_JOB_KEY,
+            kind="pending_signal_processing",
+            stage="processing_signal",
+            now=NOW,
+        )
+        is False
     )
 
 
@@ -1128,6 +1262,7 @@ def test_pending_processing_writes_started_then_succeeded(
     assert row.last_finished_at is not None
     assert row.last_success_at is not None
     assert row.error_code is None
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
 
 
 def _fake_run(count: int) -> SimpleNamespace:
@@ -1164,6 +1299,7 @@ def test_collect_source_writes_started_and_succeeded(
     assert row.last_started_at is not None
     assert row.last_finished_at is not None
     assert row.last_success_at is not None
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
 
 
 def test_collect_source_failure_records_failed_observation(
@@ -1236,6 +1372,7 @@ def test_collect_source_deferred_records_neutral_observation(
     assert row.error_code is None
     assert row.last_finished_at is not None
     assert row.last_success_at == NOW - timedelta(hours=1)
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
 
 
 def test_runtime_success_anchor_survives_neutral_completion(db_session: Session) -> None:
@@ -1307,3 +1444,456 @@ def test_monitoring_health_requires_permission(client, monkeypatch) -> None:
     monkeypatch.setattr(auth_security, "ROLE_PERMISSIONS", patched)
     response = client.get("/api/v1/system/monitoring-health")
     assert response.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# 9. current_work：调度器当前工作观测
+# --------------------------------------------------------------------------- #
+def _running_current_row(
+    *,
+    job_key: str,
+    kind: str,
+    stage: str,
+    item_id: int | None = None,
+    started_at: datetime | None = None,
+) -> SchedulerRuntimeState:
+    return SchedulerRuntimeState(
+        job_key=job_key,
+        status="running",
+        last_started_at=started_at or NOW,
+        current_kind=kind,
+        current_stage=stage,
+        current_item_id=item_id,
+    )
+
+
+def test_current_work_lists_running_collection(db_session: Session) -> None:
+    """运行中的 collect:<source_id> 映射为信源采集，并带信源名称。"""
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="ofac-sdn", schedule="*/30 * * * *")
+    db_session.add(
+        _running_current_row(
+            job_key=source_collection_job_key(source.id),
+            kind="source_collection",
+            stage="collecting",
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    current = build_monitoring_health(db_session, now=NOW).scheduler.current_work
+    assert len(current) == 1
+    item = current[0]
+    assert item.kind == "source_collection"
+    assert item.job_key == source_collection_job_key(source.id)
+    assert item.source_id == source.id
+    assert item.source_name == source.name
+    assert item.stage == "collecting"
+    assert item.started_at == NOW
+    assert item.item_id is None
+
+
+def test_current_work_lists_running_pending_signal_item(db_session: Session) -> None:
+    """运行中的 pending_signals 映射为待处理信号，item_id 是当前信号 id。"""
+    _disable_all_sources(db_session)
+    db_session.add(
+        _running_current_row(
+            job_key=PENDING_SIGNALS_JOB_KEY,
+            kind="pending_signal_processing",
+            stage="processing_signal",
+            item_id=42,
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    current = build_monitoring_health(db_session, now=NOW).scheduler.current_work
+    assert len(current) == 1
+    item = current[0]
+    assert item.kind == "pending_signal_processing"
+    assert item.job_key == PENDING_SIGNALS_JOB_KEY
+    assert item.source_id is None
+    assert item.source_name is None
+    assert item.stage == "processing_signal"
+    assert item.started_at == NOW
+    assert item.item_id == 42
+
+
+def test_current_work_excludes_finished_unlabeled_and_unknown_rows(
+    db_session: Session,
+) -> None:
+    """只包含运行中且可识别的任务；结束行、未登记行、未知 job_key 与缺信源行全部省略。"""
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="ofac-sdn", schedule="*/30 * * * *")
+    db_session.add(
+        SchedulerRuntimeState(
+            job_key=source_collection_job_key(source.id),
+            status="succeeded",
+            last_started_at=NOW - timedelta(minutes=5),
+            current_kind="source_collection",
+            current_stage="collecting",
+        )
+    )
+    db_session.add(
+        SchedulerRuntimeState(job_key=PENDING_SIGNALS_JOB_KEY, status="running")
+    )
+    db_session.add(
+        _running_current_row(
+            job_key="mystery-job", kind="source_collection", stage="collecting"
+        )
+    )
+    db_session.add(
+        _running_current_row(
+            job_key="collect:987654321", kind="source_collection", stage="collecting"
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session)
+
+    assert build_monitoring_health(db_session, now=NOW).scheduler.current_work == []
+
+
+def test_pending_processing_records_current_item_before_each_signal(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """处理每个信号前写入 item_id/stage；处理期间可观察，批次结束后清空。"""
+    monkeypatch.setattr(
+        scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    _disable_all_sources(db_session)
+    source = _make_source(db_session, code="src-current-work", schedule="*/30 * * * *")
+    signal = _make_signal(
+        db_session,
+        source=source,
+        fingerprint="current-work",
+        collected_at=NOW - timedelta(minutes=30),
+    )
+    db_session.add(
+        AIAnalysisRecord(
+            signal_id=signal.id,
+            provider="current-work-test",
+            model="current-work-v1",
+            prompt_version="current-work-v1",
+            status="succeeded",
+            result={},
+        )
+    )
+    db_session.flush()
+
+    observed: list[tuple[int | None, str | None]] = []
+
+    def spy_process_analysis(
+        session: Session,
+        current: RawSignal,
+        analysis: AIAnalysisRecord,
+        *,
+        now_utc: datetime,
+    ) -> None:
+        del session, current, analysis, now_utc
+        row = db_session.scalar(
+            select(SchedulerRuntimeState).where(
+                SchedulerRuntimeState.job_key == PENDING_SIGNALS_JOB_KEY
+            )
+        )
+        assert row is not None
+        observed.append((row.current_item_id, row.current_stage))
+
+    monkeypatch.setattr(scheduler_jobs, "process_analysis", spy_process_analysis)
+
+    assert scheduler_jobs._process_pending_signals(limit=5, now_utc=NOW) == 1
+    assert observed == [(signal.id, "processing_signal")]
+
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(
+            SchedulerRuntimeState.job_key == PENDING_SIGNALS_JOB_KEY
+        )
+    )
+    assert row is not None
+    assert row.status == "succeeded"
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
+
+
+def test_collect_source_current_work_visible_during_collection_and_cleared_after(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """采集期间 current_work 显示该信源的采集任务；采集结束后清理。"""
+    monkeypatch.setattr(
+        scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    monkeypatch.setattr(
+        scheduler_runtime, "SessionLocal", lambda: nullcontext(db_session)
+    )
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="nmc-weather", schedule="*/30 * * * *")
+    observed: list[tuple[str | None, str | None]] = []
+
+    def fake_collect(session: object, src: object, adapter: object) -> object:
+        del session, src, adapter
+        row = db_session.scalar(
+            select(SchedulerRuntimeState).where(
+                SchedulerRuntimeState.job_key == source_collection_job_key(source.id)
+            )
+        )
+        assert row is not None
+        observed.append((row.current_kind, row.current_stage))
+        return _fake_run(2)
+
+    monkeypatch.setattr(scheduler_jobs, "collect_source", fake_collect)
+
+    assert scheduler_jobs._collect_enabled_sources(source_ids=[source.id]) == {
+        "nmc-weather": 2
+    }
+    assert observed == [("source_collection", "collecting")]
+
+    row = db_session.scalar(
+        select(SchedulerRuntimeState).where(
+            SchedulerRuntimeState.job_key == source_collection_job_key(source.id)
+        )
+    )
+    assert row is not None
+    assert row.status == "succeeded"
+    assert (row.current_kind, row.current_stage, row.current_item_id) == (None, None, None)
+
+
+def test_monitoring_health_http_current_work_contract(
+    client, db_session: Session
+) -> None:
+    """HTTP 契约：current_work 只含 7 个白名单字段，不泄露标题、正文与凭据。"""
+    real_now = datetime.now(UTC)
+    _disable_all_sources(db_session)
+    source = _pull_source(db_session, code="ofac-sdn", schedule="*/30 * * * *")
+    source.endpoint_url = "https://secret.internal.example/collect"
+    source.credential_ref = "env:SECRET_TOKEN"
+    signal = _make_signal(
+        db_session,
+        source=source,
+        fingerprint="current-work-secret",
+        collected_at=real_now - timedelta(minutes=5),
+    )
+    db_session.add(
+        SchedulerRuntimeState(
+            job_key=source_collection_job_key(source.id),
+            status="running",
+            last_started_at=real_now - timedelta(seconds=5),
+            current_kind="source_collection",
+            current_stage="collecting",
+        )
+    )
+    db_session.add(
+        SchedulerRuntimeState(
+            job_key=PENDING_SIGNALS_JOB_KEY,
+            status="running",
+            last_started_at=real_now - timedelta(seconds=3),
+            current_kind="pending_signal_processing",
+            current_stage="processing_signal",
+            current_item_id=signal.id,
+        )
+    )
+    db_session.flush()
+    _healthy_heartbeat(db_session, at=real_now - timedelta(seconds=10))
+
+    response = client.get("/api/v1/system/monitoring-health")
+    assert response.status_code == 200
+    body = response.json()
+    work = body["scheduler"]["current_work"]
+    assert len(work) == 2
+    by_kind = {item["kind"]: item for item in work}
+    assert set(by_kind) == {"source_collection", "pending_signal_processing"}
+    collection = by_kind["source_collection"]
+    assert set(collection) == {
+        "kind",
+        "job_key",
+        "source_id",
+        "source_name",
+        "stage",
+        "started_at",
+        "item_id",
+    }
+    assert collection["job_key"] == source_collection_job_key(source.id)
+    assert collection["source_id"] == source.id
+    assert collection["source_name"] == source.name
+    assert collection["stage"] == "collecting"
+    assert collection["item_id"] is None
+    assert collection["started_at"] is not None
+    pending = by_kind["pending_signal_processing"]
+    # current_item_id 指向真实信号：投影该信号所属信源，而非批次级 null。
+    assert pending["source_id"] == source.id
+    assert pending["source_name"] == source.name
+    assert pending["stage"] == "processing_signal"
+    assert pending["item_id"] == signal.id
+    # 不泄露信号标题/正文、采集地址与凭据引用。
+    assert signal.title not in response.text
+    assert signal.content not in response.text
+    assert "secret.internal.example" not in response.text
+    assert "SECRET_TOKEN" not in response.text
+
+
+# --------------------------------------------------------------------------- #
+# 10. scheduler 排期快照与执行历史（0057）
+# --------------------------------------------------------------------------- #
+def _clear_observability_rows(session: Session) -> None:
+    session.execute(delete(SchedulerJobRun))
+    session.execute(delete(SchedulerJobRegistry))
+    session.flush()
+
+
+def test_observability_tables_match_contract(db_session: Session) -> None:
+    registry_columns = {
+        column["name"]
+        for column in inspect(db_session.bind).get_columns("scheduler_job_registry")
+    }
+    assert registry_columns == {"job_id", "name", "next_run_at", "updated_at"}
+
+    run_columns = {
+        column["name"]
+        for column in inspect(db_session.bind).get_columns("scheduler_job_run")
+    }
+    assert run_columns == {
+        "id",
+        "job_id",
+        "name",
+        "status",
+        "scheduled_run_at",
+        "started_at",
+        "finished_at",
+        "created_at",
+    }
+    assert JOB_RUN_STATUS_VALUES == (
+        "running",
+        "completed",
+        "error",
+        "missed",
+        "max_instances",
+    )
+    # 事件幂等键由唯一约束兜底并发。
+    unique = {
+        tuple(constraint["column_names"])
+        for constraint in inspect(db_session.bind).get_unique_constraints("scheduler_job_run")
+    }
+    assert ("job_id", "scheduled_run_at") in unique
+
+
+def test_scheduled_jobs_sorted_by_next_run_at_with_null_last(db_session: Session) -> None:
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    db_session.add_all(
+        [
+            SchedulerJobRegistry(
+                job_id="collect", name="定时采集与处理", next_run_at=NOW + timedelta(minutes=5)
+            ),
+            SchedulerJobRegistry(
+                job_id="source-7",
+                name="采集信息源 ofac-sdn",
+                next_run_at=NOW + timedelta(minutes=1),
+            ),
+            SchedulerJobRegistry(job_id="notify", name="风险提醒推送", next_run_at=None),
+        ]
+    )
+    db_session.flush()
+
+    scheduled = build_monitoring_health(db_session, now=NOW).scheduler.scheduled_jobs
+    assert [item.job_id for item in scheduled] == ["source-7", "collect", "notify"]
+    assert scheduled[0].next_run_at == NOW + timedelta(minutes=1)
+    assert scheduled[0].name == "采集信息源 ofac-sdn"
+    # 无下次触发时间的 job 排在最后且如实为 null，Web 不推算。
+    assert scheduled[2].next_run_at is None
+
+
+def test_recent_runs_limited_to_latest_30_desc(db_session: Session) -> None:
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    for index in range(33):
+        db_session.add(
+            SchedulerJobRun(
+                job_id="collect",
+                name="定时采集与处理",
+                status="completed",
+                scheduled_run_at=NOW - timedelta(minutes=index),
+                started_at=NOW - timedelta(minutes=index),
+                finished_at=NOW - timedelta(minutes=index),
+            )
+        )
+    db_session.flush()
+
+    recent = build_monitoring_health(db_session, now=NOW).scheduler.recent_runs
+    assert len(recent) == 30
+    assert [item.scheduled_run_at for item in recent] == [
+        NOW - timedelta(minutes=index) for index in range(30)
+    ]
+    assert all(item.job_id == "collect" for item in recent)
+
+
+def test_monitoring_health_http_lists_scheduled_jobs_and_recent_runs(
+    client, db_session: Session
+) -> None:
+    real_now = datetime.now(UTC)
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    db_session.add(
+        SchedulerJobRegistry(
+            job_id="collect",
+            name="定时采集与处理",
+            next_run_at=real_now + timedelta(minutes=3),
+        )
+    )
+    db_session.add(
+        SchedulerJobRun(
+            job_id="collect",
+            name="定时采集与处理",
+            status="completed",
+            scheduled_run_at=real_now - timedelta(minutes=2),
+            started_at=real_now - timedelta(minutes=2),
+            finished_at=real_now - timedelta(minutes=1),
+        )
+    )
+    _healthy_heartbeat(db_session, at=real_now - timedelta(seconds=10))
+    db_session.flush()
+
+    response = client.get("/api/v1/system/monitoring-health")
+    assert response.status_code == 200
+    body = response.json()
+
+    scheduled = body["scheduler"]["scheduled_jobs"]
+    assert len(scheduled) == 1
+    assert set(scheduled[0]) == {"job_id", "name", "next_run_at"}
+    assert scheduled[0]["job_id"] == "collect"
+    assert scheduled[0]["name"] == "定时采集与处理"
+    assert scheduled[0]["next_run_at"] is not None
+
+    runs = body["scheduler"]["recent_runs"]
+    assert len(runs) == 1
+    assert set(runs[0]) == {
+        "id",
+        "job_id",
+        "name",
+        "status",
+        "scheduled_run_at",
+        "started_at",
+        "finished_at",
+    }
+    assert runs[0]["job_id"] == "collect"
+    assert runs[0]["name"] == "定时采集与处理"
+    assert runs[0]["status"] == "completed"
+    assert runs[0]["scheduled_run_at"] is not None
+    assert runs[0]["started_at"] is not None
+    assert runs[0]["finished_at"] is not None
+    # completed 只表示 callable 正常返回；绝不出现 succeeded 命名。
+    assert "succeeded" not in response.text
+
+
+def test_monitoring_health_http_observability_arrays_empty_without_data(
+    client, db_session: Session
+) -> None:
+    real_now = datetime.now(UTC)
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    _healthy_heartbeat(db_session, at=real_now - timedelta(seconds=10))
+
+    response = client.get("/api/v1/system/monitoring-health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scheduler"]["scheduled_jobs"] == []
+    assert body["scheduler"]["recent_runs"] == []

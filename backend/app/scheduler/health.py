@@ -32,16 +32,24 @@ from app.scheduler.health_rules import (
     overall_status,
 )
 from app.scheduler.health_schemas import (
+    CurrentWorkRead,
     HeartbeatStatus,
     MonitoringHealthRead,
     ProcessingHealthRead,
     ProcessingRunRead,
     RunStatus,
+    ScheduledJobRead,
     SchedulerHealthRead,
+    SchedulerJobRunRead,
     SourceHealthRead,
     SourceHealthStatus,
 )
 from app.scheduler.jobs import TYC_WEEKLY_SCHEDULE, pending_signal_candidate_id_select
+from app.scheduler.observability_models import (
+    JobRunStatus,
+    SchedulerJobRegistry,
+    SchedulerJobRun,
+)
 from app.scheduler.runtime import (
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_JOB_KEY,
@@ -49,18 +57,27 @@ from app.scheduler.runtime import (
     PENDING_SIGNALS_JOB_KEY,
     source_collection_job_key,
 )
-from app.scheduler.runtime_models import SchedulerRuntimeState
+from app.scheduler.runtime_models import (
+    CurrentWorkKind,
+    CurrentWorkStage,
+    SchedulerRuntimeState,
+)
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.router import build_pull_adapter
 from app.signals.service import SourceNotCollectable
 
 
-def _as_utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
+def _utc(value: datetime) -> datetime:
+    """非空时间戳的 UTC 规范化；naive 值视为 UTC。"""
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return _utc(value)
 
 
 # runtime.status 是普通 Text 列；仅接受四个稳定取值，其余按 idle 处理。
@@ -69,6 +86,28 @@ _RUN_STATUS_BY_NAME: dict[str, RunStatus] = {
     "running": "running",
     "succeeded": "succeeded",
     "failed": "failed",
+}
+
+# scheduler_job_run.status 同为 Text 列：只投影白名单枚举，未知值安全省略。
+_JOB_RUN_STATUS_BY_NAME: dict[str, JobRunStatus] = {
+    "running": "running",
+    "completed": "completed",
+    "error": "error",
+    "missed": "missed",
+    "max_instances": "max_instances",
+}
+
+# 最近调度执行历史条数上限：足以诊断最近调度，不做分页。
+RECENT_RUN_LIMIT = 30
+
+# current_kind/current_stage 同为 Text 列：只投影白名单枚举，其余一律省略。
+_CURRENT_WORK_KIND_BY_NAME: dict[str, CurrentWorkKind] = {
+    "source_collection": "source_collection",
+    "pending_signal_processing": "pending_signal_processing",
+}
+_CURRENT_WORK_STAGE_BY_NAME: dict[str, CurrentWorkStage] = {
+    "collecting": "collecting",
+    "processing_signal": "processing_signal",
 }
 
 
@@ -116,7 +155,64 @@ def _latest_successful_tyc_call(session: Session) -> datetime | None:
     )
 
 
-def _heartbeat(row: SchedulerRuntimeState | None, now: datetime) -> SchedulerHealthRead:
+def _scheduled_jobs(session: Session) -> list[ScheduledJobRead]:
+    """真实排期快照（只读）：按 next_run_at 升序，NULL（无下一次触发）排最后。
+
+    next_run_at 由 Scheduler 进程从 ``Job.next_run_time`` 写库，本模块不推算。
+    """
+    rows = session.scalars(
+        select(SchedulerJobRegistry).order_by(
+            SchedulerJobRegistry.next_run_at.asc().nulls_last(),
+            SchedulerJobRegistry.job_id,
+        )
+    )
+    return [
+        ScheduledJobRead(
+            job_id=row.job_id,
+            name=row.name,
+            next_run_at=_as_utc(row.next_run_at),
+        )
+        for row in rows
+    ]
+
+
+def _recent_runs(session: Session) -> list[SchedulerJobRunRead]:
+    """最新 ``RECENT_RUN_LIMIT`` 条调度执行历史：按调度时间倒序，同刻按 id 倒序。
+
+    未知状态（如历史脏值）安全省略，不猜测映射。
+    """
+    rows = session.scalars(
+        select(SchedulerJobRun)
+        .order_by(SchedulerJobRun.scheduled_run_at.desc(), SchedulerJobRun.id.desc())
+        .limit(RECENT_RUN_LIMIT)
+    )
+    items: list[SchedulerJobRunRead] = []
+    for row in rows:
+        status = _JOB_RUN_STATUS_BY_NAME.get(row.status)
+        if status is None:
+            continue
+        items.append(
+            SchedulerJobRunRead(
+                id=row.id,
+                job_id=row.job_id,
+                name=row.name,
+                status=status,
+                scheduled_run_at=_utc(row.scheduled_run_at),
+                started_at=_as_utc(row.started_at),
+                finished_at=_as_utc(row.finished_at),
+            )
+        )
+    return items
+
+
+def _heartbeat(
+    row: SchedulerRuntimeState | None,
+    now: datetime,
+    *,
+    current_work: list[CurrentWorkRead],
+    scheduled_jobs: list[ScheduledJobRead],
+    recent_runs: list[SchedulerJobRunRead],
+) -> SchedulerHealthRead:
     last = _as_utc(row.heartbeat_at) if row is not None else None
     status: HeartbeatStatus
     if last is None:
@@ -131,7 +227,116 @@ def _heartbeat(row: SchedulerRuntimeState | None, now: datetime) -> SchedulerHea
         age_seconds=age,
         interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
         stale_after_seconds=HEARTBEAT_STALE_SECONDS,
+        current_work=current_work,
+        scheduled_jobs=scheduled_jobs,
+        recent_runs=recent_runs,
     )
+
+
+def _source_id_from_collection_key(job_key: str) -> int | None:
+    """从 ``collect:<source_id>`` 解析信源 id；格式不符一律 None。"""
+    prefix, separator, raw = job_key.partition(":")
+    if prefix != "collect" or separator != ":" or not raw.isdigit():
+        return None
+    return int(raw)
+
+
+def _current_work(
+    session: Session, runtime: dict[str, SchedulerRuntimeState]
+) -> list[CurrentWorkRead]:
+    """运行中任务的当前工作投影（只读）。
+
+    只接受两个已知观测点：``collect:<source_id>``（信源采集）与
+    ``pending_signals``（待处理信号）。``status=running`` 且已登记
+    ``current_kind`` 才进入投影；结束行、未登记行、未知 job_key，以及
+    关联信源记录缺失（如已删除）的采集行一律安全省略。pending 行有
+    ``current_item_id`` 时投影该信号所属信源；缺失或关联已删除则
+    ``source_id``/``source_name`` 保持 null，但该行仍保留。
+    """
+    rows = sorted(
+        (
+            row
+            for row in runtime.values()
+            if row.status == "running" and row.current_kind is not None
+        ),
+        key=lambda row: row.job_key,
+    )
+    if not rows:
+        return []
+    collection_ids: set[int] = set()
+    pending_item_ids: set[int] = set()
+    for row in rows:
+        if row.current_kind == "source_collection":
+            parsed_source_id = _source_id_from_collection_key(row.job_key)
+            if parsed_source_id is not None:
+                collection_ids.add(parsed_source_id)
+        elif (
+            row.current_kind == "pending_signal_processing"
+            and row.job_key == PENDING_SIGNALS_JOB_KEY
+            and row.current_item_id is not None
+        ):
+            pending_item_ids.add(row.current_item_id)
+    names: dict[int, str] = {}
+    if collection_ids:
+        names = {
+            source.id: source.name
+            for source in session.scalars(
+                select(DataSource).where(DataSource.id.in_(collection_ids))
+            )
+        }
+    # 批量解析 pending 当前信号 → 所属信源，避免逐行 N+1；
+    # 关联 RawSignal/DataSource 缺失（已删除）时该 item 自然缺行，投影保持 null。
+    pending_sources: dict[int, tuple[int, str]] = {}
+    if pending_item_ids:
+        pending_sources = {
+            signal_id: (source_id, name)
+            for signal_id, source_id, name in session.execute(
+                select(RawSignal.id, RawSignal.source_id, DataSource.name)
+                .join(DataSource, DataSource.id == RawSignal.source_id)
+                .where(RawSignal.id.in_(pending_item_ids))
+            )
+        }
+    items: list[CurrentWorkRead] = []
+    for row in rows:
+        kind = _CURRENT_WORK_KIND_BY_NAME.get(row.current_kind or "")
+        stage = _CURRENT_WORK_STAGE_BY_NAME.get(row.current_stage or "")
+        if kind is None or stage is None:
+            continue
+        source_id: int | None = None
+        source_name: str | None = None
+        if kind == "source_collection":
+            collection_source_id = _source_id_from_collection_key(row.job_key)
+            # 缺失关联信源记录：该观测不完整，安全省略整条。
+            if collection_source_id is None or collection_source_id not in names:
+                continue
+            source_id = collection_source_id
+            source_name = names[collection_source_id]
+        elif kind == "pending_signal_processing":
+            # 只有已知的 pending 观测点才投影；其它 job_key 不展示。
+            if row.job_key != PENDING_SIGNALS_JOB_KEY:
+                continue
+            # 有 current_item_id 时投影该信号所属信源；缺失或关联已删除则保持 null。
+            resolved = (
+                pending_sources.get(row.current_item_id)
+                if row.current_item_id is not None
+                else None
+            )
+            if resolved is not None:
+                source_id, source_name = resolved
+        else:
+            continue
+        items.append(
+            CurrentWorkRead(
+                kind=kind,
+                job_key=row.job_key,
+                source_id=source_id,
+                source_name=source_name,
+                stage=stage,
+                started_at=_as_utc(row.last_started_at),
+                item_id=row.current_item_id,
+            )
+        )
+    return items
 
 
 def _pending(
@@ -307,7 +512,13 @@ def build_monitoring_health(
         row.job_key: row
         for row in session.scalars(select(SchedulerRuntimeState))
     }
-    scheduler_health = _heartbeat(runtime.get(HEARTBEAT_JOB_KEY), moment)
+    scheduler_health = _heartbeat(
+        runtime.get(HEARTBEAT_JOB_KEY),
+        moment,
+        current_work=_current_work(session, runtime),
+        scheduled_jobs=_scheduled_jobs(session),
+        recent_runs=_recent_runs(session),
+    )
     processing = _pending(session, runtime, moment)
     sources = _source_health(session, runtime, moment)
     return MonitoringHealthRead(

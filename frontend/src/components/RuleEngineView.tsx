@@ -641,7 +641,8 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                 与「观察态/配置态」模式切换正交——Tab 决定看哪一层内容，模式只决定是否可编辑。
                 保持既有无障碍契约：role=tablist / role=tab / aria-selected / aria-controls /
                 roving tabIndex / 方向键自动激活（handleTabListKeyDown）全部不变。
-                全局 Tab 的计数徽标取全局层实际折叠分节数（globalSectionCount），与 global-head 同源。 */}
+                Tab 文案只保留标签本身：全局 Tab 旁的计数胶囊已按需求移除，
+                 分节数仅在 global-head 的「N 项」处展示（仍取 globalSectionCount）。 */}
             <div
               role="tablist"
               aria-label="规则引擎视图切换"
@@ -671,11 +672,6 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                     }`}
                   >
                     {item.label}
-                    {item.tab === 'global' && (
-                      <span className="ml-[3px] inline-block align-[1px] rounded-full border border-[#004782]/35 bg-[#eef6ff] px-1.5 py-0.5 font-mono text-[10.5px] font-bold leading-none text-[#004782] dark:border-blue-300/40 dark:bg-slate-700 dark:text-blue-300">
-                        · {globalSectionCount}
-                      </span>
-                    )}
                   </button>
                 );
               })}

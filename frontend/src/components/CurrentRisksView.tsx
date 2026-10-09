@@ -1,7 +1,7 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
-import {VALIDITY_STATE_LABELS} from '../api';
+import {formatValidityReasonLabel, VALIDITY_STATE_LABELS} from '../api';
 import type {RiskItem} from '../types';
 
 interface CurrentRisksViewProps {
@@ -178,12 +178,11 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
                   </div>
                   <span className="flex items-center gap-1 font-bold text-[#185fa5]">查看详情<ChevronRight className="h-3.5 w-3.5" /></span>
                 </div>
-                {(item.validUntil || item.reviewDueAt || item.validityReason || item.validityPolicyVersion) && (
+                {(item.validUntil || item.reviewDueAt || item.validityReason) && (
                   <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800">
                     {item.validUntil && <div><dt className="inline font-bold">截止</dt> <dd className="inline font-mono">{formatDateTime(item.validUntil)}</dd></div>}
                     {item.reviewDueAt && <div><dt className="inline font-bold">复核</dt> <dd className="inline font-mono">{formatDateTime(item.reviewDueAt)}</dd></div>}
-                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline font-mono">{item.validityReason.code}</dd></div>}
-                    {item.validityPolicyVersion && <div><dt className="inline font-bold">策略版本</dt> <dd className="inline font-mono">{item.validityPolicyVersion}</dd></div>}
+                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline">{formatValidityReasonLabel(item.validityReason.code)}</dd></div>}
                   </dl>
                 )}
               </motion.button>

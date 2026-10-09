@@ -44,6 +44,27 @@ export const VALIDITY_STATE_LABELS: Record<ValidityState, string> = {
   legacy: '旧版兼容',
 };
 
+/** 有效期原因码中文映射；覆盖后端 risks/signals 实际写入的全部原因码。 */
+export const VALIDITY_REASON_LABELS: Record<string, string> = {
+  active: '有效',
+  effective_signal_support: '存在有效信号支撑',
+  no_effective_signal_support: '无有效信号支撑',
+  deadline_reached: '已到有效期截止',
+  classification_failed: '分类失败待复核',
+  classification_resolved: '分类已确认',
+  pending_classification: '等待分类',
+  anchor_fallback: '时间锚点降级',
+  policy_resolved: '策略已解析',
+  superseded_by_newer_version: '被更新版本取代',
+  same_authority_time_conflict: '权威时间冲突',
+  quarantine_promoted: '隔离后恢复采集',
+  two_consecutive_misses: '连续两次未命中',
+  legacy_unmigrated: '历史数据未迁移',
+};
+
+/** 未知原因码不裸露英文码，统一回落到中文说明。 */
+export const formatValidityReasonLabel = (code: string): string => VALIDITY_REASON_LABELS[code] ?? '其他原因';
+
 export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
 export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type ResearchTaskEventStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'info';

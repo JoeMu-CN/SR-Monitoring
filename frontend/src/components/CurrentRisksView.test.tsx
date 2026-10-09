@@ -18,7 +18,7 @@ const baseItem = (overrides: Partial<RiskItem> = {}): RiskItem => ({
   validityState: 'active',
   validUntil: '2026-09-30T08:00:00Z',
   reviewDueAt: '2026-09-15T08:00:00Z',
-  validityReason: {code: 'active', anchor_source: 'published_at', details: {}},
+  validityReason: {code: 'effective_signal_support', anchor_source: 'published_at', details: {}},
   validityPolicyVersion: 'v1',
   ...overrides,
 });
@@ -48,19 +48,37 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.getByText('旧版兼容')).toBeInTheDocument();
   });
 
-  it('展示截止时间、复核时间、原因与策略版本', () => {
+  it('展示截止时间、复核时间与中文原因，且不暴露策略版本', () => {
     render(
       <CurrentRisksView
-        riskItems={[baseItem()]}
+        riskItems={[baseItem({validityReason: {code: 'effective_signal_support', anchor_source: 'published_at', details: {}}})]}
         onSelectRisk={vi.fn()}
       />,
     );
 
     expect(screen.getByText('截止')).toBeInTheDocument();
     expect(screen.getByText('复核')).toBeInTheDocument();
-    expect(screen.getByText('active')).toBeInTheDocument();
-    expect(screen.getByText('策略版本')).toBeInTheDocument();
-    expect(screen.getByText('v1')).toBeInTheDocument();
+    expect(screen.getByText('原因')).toBeInTheDocument();
+    expect(screen.getByText('存在有效信号支撑')).toBeInTheDocument();
+    expect(screen.queryByText('effective_signal_support')).not.toBeInTheDocument();
+    expect(screen.queryByText('策略版本')).not.toBeInTheDocument();
+    expect(screen.queryByText('v1')).not.toBeInTheDocument();
+  });
+
+  it('未知原因码回落到中文说明，不裸露英文码', () => {
+    render(
+      <CurrentRisksView
+        riskItems={[baseItem({
+          id: '2',
+          companyName: '未知原因供应商',
+          validityReason: {code: 'brand_new_reason', anchor_source: 'published_at', details: {}},
+        })]}
+        onSelectRisk={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('其他原因')).toBeInTheDocument();
+    expect(screen.queryByText('brand_new_reason')).not.toBeInTheDocument();
   });
 
   it('当前/历史可切换：默认只显示当前有效，切换到已失效显示历史', async () => {

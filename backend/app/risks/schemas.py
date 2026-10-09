@@ -106,6 +106,8 @@ class EventSignalEvidence(BaseModel):
     content: str
     url: str | None
     published_at: datetime | None
+    collected_at: datetime
+    validity_state: str
 
 
 class EventDetailRead(BaseModel):

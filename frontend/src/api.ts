@@ -192,6 +192,8 @@ export interface EventSignalEvidence {
   readonly content: string;
   readonly url: string | null;
   readonly published_at: string | null;
+  readonly collected_at: string;
+  readonly validity_state: ValidityState;
 }
 
 export interface EventEntityEvidence {

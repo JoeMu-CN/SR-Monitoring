@@ -815,6 +815,9 @@ def test_event_detail_contains_signals_entities_locations(
     detail = response.json()
     assert detail["event_type"] == "weather"
     assert len(detail["signals"]) == 2
+    for signal in detail["signals"]:
+        assert signal["collected_at"]
+        assert signal["validity_state"]
     assert any(entity["name"] == "测试供应商有限公司" for entity in detail["entities"])
     assert any("上海" in str(location["city"]) for location in detail["locations"])
 

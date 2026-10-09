@@ -1,5 +1,6 @@
 import {Building2, CalendarDays, Database, FileText, MapPin, ShieldCheck, Signal, Target} from 'lucide-react';
 import type {EventDetailRead, RiskAlertRead} from '../api';
+import {ValidityStateBadge} from './ValidityStateBadge';
 
 interface RiskDetailEvidenceSectionsProps {
   readonly alert: RiskAlertRead;
@@ -241,9 +242,12 @@ export const RiskDetailEvidenceSections = ({alert, event}: RiskDetailEvidenceSec
         <SectionTitle icon={<Signal className="h-5 w-5 text-[#004782]" />}>原始信号</SectionTitle>
         {event.signals.length === 0 ? <EvidenceEmptyState label="原始信号" /> : <ul className="space-y-3">{event.signals.map((signal) => (
           <li key={signal.signal_id} className="rounded-xl border border-[#c2c6d2] bg-[#f7f9ff] p-3 dark:border-slate-800 dark:bg-slate-900">
-            <p className="font-bold text-slate-900 dark:text-white">{signal.title}</p>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <p className="min-w-0 break-words font-bold text-slate-900 dark:text-white">{signal.title}</p>
+              <ValidityStateBadge state={signal.validity_state} />
+            </div>
             <p className="mt-1 break-words text-xs leading-relaxed text-slate-600 dark:text-slate-300">{signal.content}</p>
-            <p className="mt-2 text-[11px] text-slate-500">{formatDateTime(signal.published_at)}</p>
+            <p className="mt-2 text-[11px] text-slate-500">采集时间：{formatDateTime(signal.collected_at)}</p>
             {signal.url !== null && <a className="mt-1 block break-all text-xs font-semibold text-[#004782] hover:underline dark:text-blue-400" href={signal.url} target="_blank" rel="noreferrer">{signal.url}</a>}
           </li>
         ))}</ul>}

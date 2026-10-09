@@ -271,6 +271,8 @@ def get_event_detail(
                 content=signal.content,
                 url=signal.url,
                 published_at=signal.published_at,
+                collected_at=signal.collected_at,
+                validity_state=signal.validity_state,
             )
             for signal in signals
         ],

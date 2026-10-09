@@ -1,10 +1,11 @@
 import {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ExternalLink, FileText} from 'lucide-react';
 import {Link, useParams, useSearchParams} from 'react-router-dom';
-import {api, ApiError, VALIDITY_MODE_LABELS, VALIDITY_STATE_LABELS, type SourceSignalListResponse} from '../api';
+import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse} from '../api';
 import {routePaths, type SourceSignalScope} from '../routes';
 import {SignalSummaryText} from './SignalSummaryText';
 import {SourceSignalReportModal, type ActiveSourceSignal} from './SourceSignalReportModal';
+import {ValidityStateBadge} from './ValidityStateBadge';
 
 const PAGE_SIZE = 20;
 
@@ -165,9 +166,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <h2 className="min-w-0 text-sm font-bold leading-relaxed text-slate-900 dark:text-white">{signal.title}</h2>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${signal.validity_state === 'active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : signal.validity_state === 'expired' ? 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300' : signal.validity_state === 'revoked' ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : signal.validity_state === 'superseded' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : signal.validity_state === 'conflicted' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300' : signal.validity_state === 'legacy' ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
-                        {VALIDITY_STATE_LABELS[signal.validity_state] ?? signal.validity_state}
-                      </span>
+                      <ValidityStateBadge state={signal.validity_state} />
                     </div>
                     {sourceUrl && (
                       <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 shrink-0 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300">

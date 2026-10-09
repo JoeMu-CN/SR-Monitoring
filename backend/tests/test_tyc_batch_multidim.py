@@ -39,6 +39,11 @@ from tyc_batch_support import (
 import app.agent.tyc_batch_supplier as tyc_batch_supplier_module
 import app.agent.tyc_gateway as tyc_gateway_module
 from app.agent.models import TycUsageRecord
+from app.agent.tyc_analysis_context import (
+    PRIVATE_RAW_FIELD,
+    TycAnalysisContext,
+    report_payload,
+)
 from app.agent.tyc_batch import (
     SHARD_COUNT,
     TycBatchBucketGateRejected,
@@ -525,8 +530,10 @@ def test_multi_dim_success_writes_report_signal_and_per_tool_usage(
     assert raw_data["report_kind"] == "supplier_profile"
     assert raw_data["supplier_code"] == code
     assert [dimension["key"] for dimension in raw_data["dimensions"]] == _TWO_DIMS
-    serialized = json.dumps(raw_data, ensure_ascii=False)
+    serialized = json.dumps(report_payload(raw_data), ensure_ascii=False)
     assert '"raw"' not in serialized and "tool:" not in serialized
+    # 私有分析上下文单独落库：报告字段仍不含原文，上下文不进入报告视图。
+    assert PRIVATE_RAW_FIELD in raw_data
     assert "重点命中" in signal.content
 
 
@@ -710,10 +717,16 @@ def test_signal_persistence_failure_is_isolated(
         *,
         supplier: Supplier,
         report: TycRiskReport,
+        analysis_context: TycAnalysisContext | None = None,
     ) -> TycReportWrite:
         if supplier.supplier_code == failing_code:
             raise SignalIngestionError("validity_conflict")
-        return real_store(session, supplier=supplier, report=report)
+        return real_store(
+            session,
+            supplier=supplier,
+            report=report,
+            analysis_context=analysis_context,
+        )
 
     monkeypatch.setattr(
         tyc_batch_supplier_module, "store_tyc_report_signal", _failing_store

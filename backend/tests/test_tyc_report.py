@@ -500,6 +500,7 @@ def test_dimension_status_enum_matches_input_contract() -> None:
         "error",
         "quota_exhausted",
         "busy",
+        "not_configured",
     }
 
 

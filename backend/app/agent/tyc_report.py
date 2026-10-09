@@ -146,13 +146,47 @@ def build_risk_report(
     )
 
 
+# 命中维度展示顺序：风险等级高的在前，无等级的最后。
+_RISK_LEVEL_ORDER: dict[RiskLevel, int] = {
+    RiskLevel.HIGH: 0,
+    RiskLevel.ALERT: 1,
+    RiskLevel.MEDIUM: 2,
+    RiskLevel.LOW: 3,
+}
+# 案号（含全角/半角圆括号与方括号）：摘要里只保留案件性质与状态，不堆案号。
+_CASE_NO_RE = re.compile(r"[（(〔]\s*\d{4}\s*[）)〕][\u4e00-\u9fa5A-Za-z0-9]{0,24}号")
+_SEPARATOR_RUN_RE = re.compile(r"[、；，,]{2,}")
+
+
 def render_key_summary(report: TycRiskReport) -> str:
-    """生成列表与正文用的中文重点摘要（重点命中项；确定性、可重复）。"""
+    """生成列表与正文用的中文重点摘要（确定性、可重复）。
+
+    命中维度按风险等级排序并在名称后标注等级；摘要去除案号堆砌并压缩重复分隔符，
+    突出风险性质、金额与状态。``content`` 在入库时固定，故本改动只对新采集的
+    信号生效，历史信号正文不回溯。
+    """
     hits = [finding for finding in report.dimensions if finding.hit]
     if not hits:
         return f"未发现重点风险命中（共核查 {len(report.dimensions)} 个维度）"
-    parts = [f"{finding.name}：{finding.summary}" for finding in hits]
+    ordered = sorted(hits, key=lambda item: _RISK_LEVEL_ORDER.get(item.risk_level, 4))
+    parts = []
+    for finding in ordered:
+        label = (
+            f"{finding.name}（{finding.risk_level.value}）"
+            if finding.risk_level is not None
+            else finding.name
+        )
+        summary = _strip_case_numbers(finding.summary)
+        parts.append(f"{label}：{summary}" if summary else label)
     return _clip("重点命中：" + "；".join(parts), 600)
+
+
+def _strip_case_numbers(summary: str) -> str:
+    """去除摘要中的案号并压缩重复分隔符，留下案件性质、金额、状态等要点。"""
+    text = _CASE_NO_RE.sub("", summary)
+    text = _SEPARATOR_RUN_RE.sub("、", text)
+    text = _WHITESPACE_RE.sub(" ", text)
+    return text.strip(" 、；，,:：。")
 
 
 def _build_finding(
@@ -263,12 +297,26 @@ def _risk_level(raw: str) -> RiskLevel | None:
     return next((level for level in RiskLevel if level.value in raw), None)
 
 
+# 表格证据优先取这些列（按优先级），使摘要与证据突出案由/身份/金额/状态而非案号。
+_PREFERRED_COLUMNS = ("案由", "案件身份", "金额", "标的", "状态")
+
+
 def _label_cell(header: list[str], cells: list[str]) -> str | None:
+    for wanted in _PREFERRED_COLUMNS:
+        index = next(
+            (position for position, name in enumerate(header) if wanted in name),
+            None,
+        )
+        if index is None:
+            continue
+        # 命中优先级列：该列取值即证据；空值/-/纯数字表示本行没有可用要点。
+        return _clean_cell(cells[index]) if index < len(cells) else None
     index = 1 if header and header[0] == "#" else 0
-    if index >= len(cells):
-        return None
-    text = mask_sensitive(_WHITESPACE_RE.sub(" ", cells[index]).strip())
-    value = _bounded_item(text)
+    return _clean_cell(cells[index]) if index < len(cells) else None
+
+
+def _clean_cell(text: str) -> str | None:
+    value = _bounded_item(mask_sensitive(_WHITESPACE_RE.sub(" ", text).strip()))
     if not value or value == "-" or _NUMERIC_RE.fullmatch(value):
         return None
     return value

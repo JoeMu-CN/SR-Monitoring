@@ -18,9 +18,9 @@ import {RuleEngineView} from './RuleEngineView';
  *
  * 迁移自旧 `RuleEngineView.test.tsx:106-128`（linked=false 渲染「未创建」）与
  * `:165-204`（四种信源呈现互不相同、链接只在 linked 项出现）两个用例，改写为：
- * - 未接入信源默认不出现，折叠为「另有 N 个声明信源未接入」+ 指向 /sources 的链接；
+ * - 未接入信源默认不出现，且不再渲染「另有 N 个声明信源未接入」汇总行与「去信息源接入」链接；
  * - 零接入维度（declared_linked===0）显著标注「无已接入信源，当前不会产生提醒」；
- * - 折叠计数与零接入判定以 `api.dimensionInputs` 的声明计数为**权威口径**；`dimension.dataSources`
+ * - 零接入判定以 `api.dimensionInputs` 的声明计数为**权威口径**；`dimension.dataSources`
  *   快照仅在同名请求未返回（加载中/失败）时兜底，绝不覆盖接口值（快照与接口来自独立请求）；
  * - 输入健康度区块保留，接口失败仍渲染信源列表并给出可访问错误；
  * - 「具体监控内容」独立卡片移除，contentItems 改挂左栏维度项悬浮/详情（不丢信息）。
@@ -114,26 +114,23 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe('引用信息源：未接入信源默认折叠（迁移旧 106-128 / 165-204 用例）', () => {
-  it('未接入信源默认不出现，折叠为「另有 1 个声明信源未接入」并链接到 /sources（迁移自旧「未创建渲染」用例）', () => {
+describe('引用信息源：未接入信源完全隐藏且不再提供汇总入口（迁移旧 106-128 / 165-204 用例）', () => {
+  it('未接入信源不出现，也没有「声明信源未接入」汇总行与「去信息源接入」链接（迁移自旧「未创建渲染」用例）', () => {
     const dim = makeDimension({dataSources: [cencSource]});
     renderSources(dim, inputs({declared_total: 1, declared_linked: 0}));
 
-    // 旧行为是单行渲染「未创建」徽标；新行为默认完全隐藏
+    // 旧行为是单行渲染「未创建」徽标；现在未接入项与接入入口都完全不存在
     expect(screen.queryByText('中国地震台网')).not.toBeInTheDocument();
     expect(screen.queryByText('未创建')).not.toBeInTheDocument();
-
-    // 折叠汇总行：数量正确 + 接入入口指向 /sources
-    expect(screen.getByText('另有 1 个声明信源未接入')).toBeInTheDocument();
-    expect(screen.getByTestId('rule-engine-unlinked-sources-summary')).toBeInTheDocument();
-    const link = screen.getByRole('link', {name: '去信息源接入'});
-    expect(link).toHaveAttribute('href', '/sources');
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
+    expect(screen.queryByText(/声明信源未接入/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
 
     // 零接入维度仍显著标注
     expect(screen.getByText('无已接入信源，当前不会产生提醒')).toBeInTheDocument();
   });
 
-  it('四种声明信源：已接入两项按真实状态与深链渲染，未接入两项折叠且计数为 2（迁移自旧「四种信源呈现」用例）', () => {
+  it('四种声明信源：已接入两项按真实状态与深链渲染，未接入两项不出现在卡片中（迁移自旧「四种信源呈现」用例）', () => {
     const dim = makeDimension({dataSources: [nmcSource, usgsSource, cencSource, nhcSource]});
     renderSources(dim, inputs({declared_total: 4, declared_linked: 2, declared_enabled: 1}));
 
@@ -147,33 +144,34 @@ describe('引用信息源：未接入信源默认折叠（迁移旧 106-128 / 16
     expect(within(nmcRow).getByRole('link')).toHaveAttribute('href', '/sources/nmc-weather/signals?scope=valid&page=1');
     expect(within(usgsRow).getByRole('link')).toHaveAttribute('href', '/sources/usgs-earthquake/signals?scope=valid&page=1');
 
-    // 未接入项：默认完全隐藏（不是旧「未创建」行）
+    // 未接入项：完全隐藏（不是旧「未创建」行，也没有折叠汇总或接入链接）
     expect(screen.queryByText('中国地震台网')).not.toBeInTheDocument();
     expect(screen.queryByText('国家卫健委')).not.toBeInTheDocument();
-
-    // 折叠汇总：数量取自接口声明计数（declared_total 4 - declared_linked 2 = 2），链接指向 /sources
-    expect(screen.getByText('另有 2 个声明信源未接入')).toBeInTheDocument();
-    expect(screen.getByRole('link', {name: '去信息源接入'})).toHaveAttribute('href', '/sources');
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('另有 2 个声明信源未接入')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
 
     // 有已接入信源的维度不出现零接入标注
     expect(screen.queryByText('无已接入信源，当前不会产生提醒')).not.toBeInTheDocument();
   });
 
-  it('全部声明信源均已接入时不渲染折叠汇总行', () => {
+  it('全部声明信源均已接入时只渲染已接入行，不出现任何未接入汇总', () => {
     renderSources(makeDimension({dataSources: [nmcSource]}), inputs({declared_total: 1, declared_linked: 1, declared_enabled: 1}));
 
     expect(screen.getByText('中央气象台')).toBeInTheDocument();
-    expect(screen.queryByText(/另有 \d+ 个声明信源未接入/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/声明信源未接入/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
   });
 
-  it('declared_linked=0 的维度显著标注「无已接入信源，当前不会产生提醒」，折叠计数覆盖全部未接入项', () => {
+  it('declared_linked=0 的维度显著标注「无已接入信源，当前不会产生提醒」，且不渲染任何接入入口', () => {
     const dim = makeDimension({dataSources: [cencSource, nhcSource]});
     renderSources(dim, inputs({declared_total: 2, declared_linked: 0, observed: [], has_input: false}));
 
     const annotation = screen.getByTestId('rule-engine-no-linked-sources');
     expect(annotation).toHaveTextContent('无已接入信源，当前不会产生提醒');
-    expect(screen.getByText('另有 2 个声明信源未接入')).toBeInTheDocument();
+    expect(screen.queryByText('另有 2 个声明信源未接入')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
     expect(screen.queryByRole('link', {name: /有效信号/})).not.toBeInTheDocument();
   });
 
@@ -213,7 +211,7 @@ describe('信源行排版：空间不足时元数据组整体换行，不挤压�
   });
 });
 
-describe('权威计数：折叠计数与零接入标注取 api.dimensionInputs，快照仅作接口缺失时的兜底', () => {
+describe('权威计数：零接入标注取 api.dimensionInputs，快照仅作接口缺失时的兜底', () => {
   it('快照仍有 2 个已接入项但接口 declared_linked=0：零接入标注按接口触发（不因快照漏报）', () => {
     // 维度快照（props）与接口计数来自各自独立的请求；接口可用时接口是唯一权威口径。
     renderSources(
@@ -224,22 +222,33 @@ describe('权威计数：折叠计数与零接入标注取 api.dimensionInputs�
     expect(screen.getByTestId('rule-engine-no-linked-sources')).toHaveTextContent('无已接入信源，当前不会产生提醒');
   });
 
-  it('快照未接入项数为 0 但接口声明 2 个未接入：折叠计数取接口值 2（而非快照的 0）', () => {
+  it('快照未接入项数为 0 但接口声明 2 个未接入：不出任何未接入汇总，只渲染已接入行', () => {
     renderSources(
       makeDimension({dataSources: [nmcSource, usgsSource]}),
       inputs({declared_total: 2, declared_linked: 0, declared_enabled: 0}),
     );
 
-    expect(screen.getByText('另有 2 个声明信源未接入')).toBeInTheDocument();
+    // 未接入汇总已从卡片移除：无论接口声明多少未接入项，都不会出现汇总行或接入链接
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('另有 2 个声明信源未接入')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
+    // 已接入行不受影响
+    expect(screen.getByText('中央气象台')).toBeInTheDocument();
+    expect(screen.getByText('USGS 地震')).toBeInTheDocument();
   });
 
-  it('快照 0 已接入 / 2 未接入但接口声明 3 个未接入：折叠计数取接口值 3（而非快照的 2）', () => {
+  it('快照 0 已接入 / 2 未接入但接口声明 3 个未接入：不出未接入汇总，零接入标注按接口已接入数判定', () => {
+    // 接口 declared_linked=2（>0）→ 快照虽无已接入项也不应误标零接入；
+    // 未接入汇总已移除，因此两种口径的计数都不再渲染任何行。
     renderSources(
       makeDimension({dataSources: [cencSource, nhcSource]}),
       inputs({declared_total: 5, declared_linked: 2, declared_enabled: 1}),
     );
 
-    expect(screen.getByText('另有 3 个声明信源未接入')).toBeInTheDocument();
+    expect(screen.queryByText('另有 3 个声明信源未接入')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-no-linked-sources')).not.toBeInTheDocument();
   });
 });
 
@@ -266,25 +275,29 @@ describe('输入健康度区块保留（两态共用的只读组件）', () => {
     expect(screen.getByText('当前无输入')).toBeInTheDocument();
   });
 
-  it('dimensionInputs 失败时仍渲染信源列表，并以 role=alert 给出可访问错误（malformed_input）', () => {
+  it('dimensionInputs 失败时仍渲染已接入信源列表，并以 role=alert 给出可访问错误（malformed_input）', () => {
     renderSources(makeDimension({dataSources: [nmcSource, cencSource]}), null, 'HTTP 503：输入健康度服务不可用');
 
-    // 信源列表（已接入）与折叠汇总在失败态下照常渲染，不被错误吞掉
+    // 已接入信源在失败态下照常渲染，不被错误吞掉；失败态也不再出现未接入汇总（兜底计数不再使用）
     expect(screen.getByText('中央气象台')).toBeInTheDocument();
-    expect(screen.getByText('另有 1 个声明信源未接入')).toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-unlinked-sources-summary')).not.toBeInTheDocument();
+    expect(screen.queryByText(/声明信源未接入/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: '去信息源接入'})).not.toBeInTheDocument();
     const alert = screen.getByRole('alert');
     expect(alert).toHaveTextContent('输入健康度加载失败');
     expect(alert).toHaveTextContent('HTTP 503');
   });
 
-  it('只读：无任何写控件（button/textbox/checkbox），仅保留导航链接', () => {
+  it('只读：无任何写控件（button/textbox/checkbox），唯一链接是已接入信源的信号深链', () => {
     renderSources(makeDimension({dataSources: [nmcSource, cencSource]}), inputs({declared_total: 2, declared_linked: 1, declared_enabled: 1}));
 
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-    // 两个链接：信源信号列表深链 + 去信息源接入；均为只读导航
-    expect(screen.getAllByRole('link')).toHaveLength(2);
+    // 唯一链接是已接入信源的信号列表深链（接入入口已移除），为只读导航
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', '/sources/nmc-weather/signals?scope=valid&page=1');
   });
 });
 

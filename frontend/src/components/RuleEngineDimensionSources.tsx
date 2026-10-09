@@ -1,7 +1,7 @@
 import React from 'react';
 import {Link} from 'react-router-dom';
 import type {DimensionInputsRead} from '../api';
-import {routePaths, sourceSignalsPath} from '../routes';
+import {sourceSignalsPath} from '../routes';
 import type {MonitoringDimension} from '../types';
 
 interface RuleEngineDimensionSourcesProps {
@@ -21,20 +21,18 @@ const formatDateTime = (value: string | null): string => {
  * 维度引用信息源（观察态/配置态共用，只读）。
  *
  * 信息架构精简（todo 9）：
- * - 默认只渲染已接入（linked=true）的声明信源，保留原有来源深链与启用状态；
- * - 未接入声明项折叠为一行「另有 N 个声明信源未接入」+「去信息源接入」链接（routePaths.sources）；
+ * - 只渲染已接入（linked=true）的声明信源，保留原有来源深链与启用状态；
+ * - 未接入声明项完全不出现在本卡片（含「另有 N 个声明信源未接入」汇总行与
+ *   「去信息源接入」导航链接）：信息源接入由信息源控制台单独承担，本卡片不再承载入口；
  * - 零接入维度（`declared_linked === 0`）显著标注「无已接入信源，当前不会产生提醒」；
- * - 输入健康度区块保留；折叠计数与零接入判定以 `api.dimensionInputs` 的声明计数为权威口径，
+ * - 输入健康度区块保留；零接入判定以 `api.dimensionInputs` 的声明计数为权威口径，
  *   `dimension.dataSources` 快照仅在接口未返回（加载中/失败）时兜底，不覆盖接口计数。
  */
 export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProps> = ({dimension, inputs, inputsError}) => {
   const linkedSources = dimension.dataSources.filter((source) => source.linked);
-  // 折叠计数与零接入判定以接口声明计数（declared_total/declared_linked）为准：维度快照与接口计数
-  // 来自相互独立的请求，接口可用时它就是唯一权威口径。快照仅在接口未返回（inputs===null，
-  // 加载中/失败）时兜底，绝不覆盖接口值。
-  const unlinkedCount = inputs !== null
-    ? Math.max(0, inputs.declared_total - inputs.declared_linked)
-    : dimension.dataSources.length - linkedSources.length;
+  // 零接入判定以接口声明计数（declared_linked）为准：维度快照与接口计数来自相互独立的请求，
+  // 接口可用时它就是唯一权威口径。快照仅在接口未返回（inputs===null，加载中/失败）时兜底，
+  // 绝不覆盖接口值。
   const noLinkedSources = inputs !== null
     ? inputs.declared_linked === 0
     : linkedSources.length === 0;
@@ -85,21 +83,6 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
           );
         })}
       </div>
-
-      {unlinkedCount > 0 && (
-        <div
-          data-testid="rule-engine-unlinked-sources-summary"
-          className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400"
-        >
-          <span>另有 {unlinkedCount} 个声明信源未接入</span>
-          <Link
-            to={routePaths.sources}
-            className="shrink-0 rounded-sm font-bold text-[#004782] underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-          >
-            去信息源接入
-          </Link>
-        </div>
-      )}
 
       {/* 输入健康度摘要 */}
       <div

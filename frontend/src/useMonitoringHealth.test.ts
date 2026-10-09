@@ -1,7 +1,13 @@
 import {act, cleanup, renderHook} from '@testing-library/react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {api, ApiError, type MonitoringHealthRead} from './api';
-import {MONITORING_HEALTH_REFRESH_MS, useMonitoringHealth} from './useMonitoringHealth';
+import {routePaths} from './routes';
+import {
+  MONITORING_HEALTH_REFRESH_MS,
+  MONITORING_HEALTH_SCHEDULER_REFRESH_MS,
+  monitoringHealthRefreshMsForPath,
+  useMonitoringHealth,
+} from './useMonitoringHealth';
 
 // 仅替换网络方法；保留真实 ApiError 与类型。
 vi.mock('./api', async (importOriginal) => {
@@ -21,6 +27,9 @@ const monitoringHealthOk: MonitoringHealthRead = {
     age_seconds: 30,
     interval_seconds: 60,
     stale_after_seconds: 180,
+    current_work: [],
+    scheduled_jobs: [],
+    recent_runs: [],
   },
   processing: {
     total: 0,
@@ -49,12 +58,14 @@ interface HookOptions {
   readonly enabled?: boolean;
   readonly active?: boolean;
   readonly refreshVersion?: number;
+  readonly refreshIntervalMs?: number;
 }
 
 interface HookProps {
   readonly enabled: boolean;
   readonly active: boolean;
   readonly refreshVersion: number;
+  readonly refreshIntervalMs?: number;
 }
 
 const renderHealthHook = (options: HookOptions = {}) => renderHook(
@@ -64,6 +75,7 @@ const renderHealthHook = (options: HookOptions = {}) => renderHook(
       enabled: options.enabled ?? true,
       active: options.active ?? true,
       refreshVersion: options.refreshVersion ?? 0,
+      ...(options.refreshIntervalMs === undefined ? {} : {refreshIntervalMs: options.refreshIntervalMs}),
     },
   },
 );
@@ -234,28 +246,31 @@ describe('useMonitoringHealth 错误分流', () => {
 });
 
 describe('useMonitoringHealth 竞态与清理', () => {
-  it('慢的旧响应晚到不覆盖新一轮状态', async () => {
+  // 行为变化（相对旧的“允许重叠请求 + 序号淘汰”设计）：同一 effect 内最多一个在途请求，
+  // 重新可见时的立即刷新若撞上在途请求会跳过，原响应正常采纳；跨 effect（refreshVersion/路由/周期
+  // 重建）仍由 abort + 序号保证新结论不被旧响应覆盖。下一条测试锁定重建路径的丢弃语义。
+  it('重新可见时在途请求未完成则跳过重叠请求，原响应正常采纳', async () => {
     let resolveFirst!: (value: MonitoringHealthRead) => void;
-    const staleHealth: MonitoringHealthRead = {...monitoringHealthOk, overall: 'degraded'};
-    vi.mocked(api.monitoringHealth)
-      .mockImplementationOnce(() => new Promise<MonitoringHealthRead>((resolve) => { resolveFirst = resolve; }))
-      .mockResolvedValueOnce(monitoringHealthOk);
+    const degradedHealth: MonitoringHealthRead = {...monitoringHealthOk, overall: 'degraded'};
+    vi.mocked(api.monitoringHealth).mockImplementationOnce(() => new Promise<MonitoringHealthRead>((resolve) => { resolveFirst = resolve; }));
 
     const {result} = renderHealthHook();
     await flushEffects();
     expect(result.current).toEqual({status: 'loading'});
+    const [signal] = vi.mocked(api.monitoringHealth).mock.calls[0] as [AbortSignal];
 
-    // 触发第二次（重新可见立即刷新）
+    // 隐藏再可见：仍有在途请求，立即刷新被跳过，不新增并发请求、不打断原请求。
     dispatchVisibility('hidden');
     dispatchVisibility('visible');
     await flushEffects();
-    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
 
-    // 旧响应此时才返回：必须被请求序号丢弃
+    // 原响应正常采纳，不因曾隐藏/重现被序号误杀。
     await act(async () => {
-      resolveFirst(staleHealth);
+      resolveFirst(degradedHealth);
     });
-    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+    expect(result.current).toEqual({status: 'ready', health: degradedHealth});
   });
 
   it('卸载时取消在途请求并停止后续轮询', async () => {
@@ -341,6 +356,40 @@ describe('useMonitoringHealth refreshVersion 即时刷新', () => {
     expect(onRequestError).not.toHaveBeenCalled();
   });
 
+  it('refreshVersion 重建后旧 effect 的 finally 不阻塞新 effect：下一周期照常发起请求', async () => {
+    const staleHealth: MonitoringHealthRead = {...monitoringHealthOk, overall: 'degraded'};
+    let resolveStale!: (value: MonitoringHealthRead) => void;
+    vi.mocked(api.monitoringHealth)
+      .mockImplementationOnce(() => new Promise<MonitoringHealthRead>((resolve) => {
+        resolveStale = resolve;
+      }))
+      .mockResolvedValue(monitoringHealthOk);
+
+    const {result, rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    const [staleSignal] = vi.mocked(api.monitoringHealth).mock.calls[0] as [AbortSignal];
+
+    // refreshVersion 递增：旧 effect 清理 abort 旧 controller 并推进序号，新 effect 立即刷新。
+    rerender({enabled: true, active: true, refreshVersion: 1});
+    await flushEffects();
+    expect(staleSignal.aborted).toBe(true);
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+
+    // 旧响应晚到：被 disposed/序号丢弃，不得覆盖新结论。
+    await act(async () => {
+      resolveStale(staleHealth);
+    });
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
+
+    // 旧 effect 的 finally 此刻已执行，但 guard 属于旧 effect 闭包：新 effect 下一周期必须照常发请求。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+  });
+
   it('refreshVersion 不变时不额外刷新', async () => {
     const {rerender} = renderHealthHook();
     await flushEffects();
@@ -384,5 +433,150 @@ describe('useMonitoringHealth refreshVersion 即时刷新', () => {
     dispatchVisibility('visible');
     await flushEffects();
     expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useMonitoringHealth 可配置诊断周期（scheduler 5 秒）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  const SCHEDULER_INTERVAL_MS = 5_000;
+
+  it('导出常量与 scheduler 展示页的 5 秒约定一致', () => {
+    expect(MONITORING_HEALTH_SCHEDULER_REFRESH_MS).toBe(SCHEDULER_INTERVAL_MS);
+    expect(MONITORING_HEALTH_REFRESH_MS).toBe(60_000);
+  });
+
+  it('按路由唯一映射轮询周期：/scheduler=5 秒，其余展示页=默认 60 秒', () => {
+    expect(monitoringHealthRefreshMsForPath(routePaths.scheduler)).toBe(SCHEDULER_INTERVAL_MS);
+    expect(monitoringHealthRefreshMsForPath(routePaths.overview)).toBe(MONITORING_HEALTH_REFRESH_MS);
+    expect(monitoringHealthRefreshMsForPath(routePaths.sources)).toBe(MONITORING_HEALTH_REFRESH_MS);
+    expect(monitoringHealthRefreshMsForPath(routePaths.scheduler + '/unmatched')).toBe(MONITORING_HEALTH_REFRESH_MS);
+    expect(monitoringHealthRefreshMsForPath(routePaths.rules)).toBe(MONITORING_HEALTH_REFRESH_MS);
+  });
+
+  it('refreshIntervalMs=5000 时每 5 秒刷新一次', async () => {
+    renderHealthHook({refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+  });
+
+  it('5000 切换到 60000 时重建唯一计时器：旧 5 秒表停止，新表按 60 秒从重建时刻计时', async () => {
+    const {rerender} = renderHealthHook({refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    // 周期切换：旧 effect 清理（含唯一 interval 计时器），立即按新周期发起一次并重建计时器。
+    rerender({enabled: true, active: true, refreshVersion: 0, refreshIntervalMs: MONITORING_HEALTH_REFRESH_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+
+    // 旧 5 秒表必须已被清理：再走一个 5 秒不得触发请求。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+
+    // 新 60 秒表从重建时刻计时：再走剩余 55 秒才触发。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(MONITORING_HEALTH_REFRESH_MS - SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(4);
+  });
+
+  it('60000 切换到 5000 时立即按新周期刷新，不残留下一条 60 秒计时器', async () => {
+    const {rerender} = renderHealthHook();
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    rerender({enabled: true, active: true, refreshVersion: 0, refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+
+    // 旧 60 秒表若残留：走完 60 秒会出现额外请求（3 → 5），这里按 5 秒节奏增长。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(4);
+  });
+
+  it('路由退出（active=false）停止轮询并取消在途请求；恢复展示后立即刷新且仍按 5 秒周期', async () => {
+    const {rerender} = renderHealthHook({refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    const [routeSignal] = vi.mocked(api.monitoringHealth).mock.calls[0] as [AbortSignal];
+
+    // 离开展示路由：清理唯一计时器并 abort 在途请求，后续 15 秒不得再请求。
+    rerender({enabled: true, active: false, refreshVersion: 0});
+    await flushEffects();
+    expect(routeSignal.aborted).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS * 3);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+
+    // 回到展示路由：立即刷新并按路由约定的 5 秒周期继续。
+    rerender({enabled: true, active: true, refreshVersion: 0, refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(3);
+  });
+
+  it('慢请求跨多个周期 tick 不增加并发；原响应正常采纳，完成后下一 tick 继续', async () => {
+    const slowFirst: MonitoringHealthRead = {...monitoringHealthOk, overall: 'degraded'};
+    let resolveSlow!: (value: MonitoringHealthRead) => void;
+    vi.mocked(api.monitoringHealth)
+      .mockImplementationOnce(() => new Promise<MonitoringHealthRead>((resolve) => { resolveSlow = resolve; }))
+      .mockResolvedValueOnce(monitoringHealthOk);
+
+    const {result} = renderHealthHook({refreshIntervalMs: SCHEDULER_INTERVAL_MS});
+    await flushEffects();
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    const [slowSignal] = vi.mocked(api.monitoringHealth).mock.calls[0] as [AbortSignal];
+
+    // 两个 5 秒 tick 都落在未完成的请求上：跳过而不是重叠发起，也不打断原请求。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS * 2);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
+    expect(slowSignal.aborted).toBe(false);
+
+    // 不饥饿：原响应正常采纳，慢请求不会永远拿不到结论。
+    await act(async () => {
+      resolveSlow(slowFirst);
+    });
+    expect(result.current).toEqual({status: 'ready', health: slowFirst});
+
+    // 完成后下一 tick 恢复轮询：发起新请求并采纳最新结论。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SCHEDULER_INTERVAL_MS);
+    });
+    expect(api.monitoringHealth).toHaveBeenCalledTimes(2);
+    expect(result.current).toEqual({status: 'ready', health: monitoringHealthOk});
   });
 });

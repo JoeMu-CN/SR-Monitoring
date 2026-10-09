@@ -38,10 +38,11 @@ import {SupplierImportModal} from './components/SupplierImportModal';
 import {OverviewView} from './components/OverviewView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
+import {SchedulerLiveView} from './components/SchedulerLiveView';
 import {SuppliersView} from './components/SuppliersView';
 import {UsersManagementView} from './components/UsersManagementView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
-import {useMonitoringHealth} from './useMonitoringHealth';
+import {monitoringHealthRefreshMsForPath, useMonitoringHealth} from './useMonitoringHealth';
 
 // 完整自检的观感与容错预算：既让状态变化可感知，也不让开屏长时间停留。
 const SELF_CHECK_MIN_DISPLAY_MS = 3000;
@@ -533,13 +534,16 @@ export function App() {
     }
     if (caught.status === 403) setError(caught.message);
   }, []);
-  // 任务8 只读诊断：按 source_status_view 权限请求，仅在展示它的页面（总览/信息源）轮询。
+  // 任务8 只读诊断：按 source_status_view 权限请求，仅在展示它的页面（总览/信息源/调度器实况）轮询。
+  // 调度器实况页经 monitoringHealthRefreshMsForPath 把同一 hook 的周期缩短为 5 秒（仍只有一个计时器）；
   // 403 由 hook 内部隐藏，403 不进入全局错误门；401 经 handleDetailRequestError 统一登出。
+  const onSchedulerRoute = location.pathname === routePaths.scheduler;
   const canViewSourceStatus = permissions.includes(routePermissions.sourceStatusView);
   const monitoringHealth = useMonitoringHealth({
     enabled: canViewSourceStatus,
-    active: onOverviewRoute || location.pathname === routePaths.sources,
+    active: onOverviewRoute || location.pathname === routePaths.sources || onSchedulerRoute,
     refreshVersion: monitoringHealthRefreshVersion,
+    refreshIntervalMs: monitoringHealthRefreshMsForPath(location.pathname),
     onRequestError: handleDetailRequestError,
   });
   const riskRouteView = <RiskRouteView riskItems={riskItems} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
@@ -550,6 +554,8 @@ export function App() {
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} />,
     suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} monitoringHealth={monitoringHealth} />,
+    // 独立调度器实况页：只消费同一 hook 的 monitoringHealth 快照，不自带请求或轮询。
+    scheduler: <SchedulerLiveView snapshot={monitoringHealth} />,
     sourceSignals: <SourceSignalsView onRequestError={handleDetailRequestError} />,
     rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,
     userSettings: auth ? <UsersManagementView currentUser={auth.user} onRequestError={handleDetailRequestError} onCurrentUserUpdated={handleCurrentUserUpdated} /> : null,

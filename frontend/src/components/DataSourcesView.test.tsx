@@ -42,7 +42,10 @@ const source: DataSource = {
   validityPolicyVersion: 'v1',
 };
 
-const monitoringHealthWith = (source: MonitoringHealthRead['sources'][number]): MonitoringHealthSnapshot => ({
+const monitoringHealthWith = (
+  source: MonitoringHealthRead['sources'][number],
+  schedulerOverrides: Partial<MonitoringHealthRead['scheduler']> = {},
+): MonitoringHealthSnapshot => ({
   status: 'ready',
   health: {
     as_of: '2026-09-11T06:00:00Z',
@@ -53,6 +56,10 @@ const monitoringHealthWith = (source: MonitoringHealthRead['sources'][number]): 
       age_seconds: 30,
       interval_seconds: 60,
       stale_after_seconds: 180,
+      current_work: [],
+      scheduled_jobs: [],
+      recent_runs: [],
+      ...schedulerOverrides,
     },
     processing: {
       total: 0,
@@ -124,6 +131,7 @@ describe('信息源采集记录入口', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -140,6 +148,7 @@ describe('信息源采集记录入口', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -157,6 +166,7 @@ describe('信息源采集记录入口', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -198,6 +208,7 @@ describe('信息源采集记录入口', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -216,6 +227,7 @@ describe('信息源采集记录入口', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -238,6 +250,7 @@ describe('信息源有效期策略表单', () => {
           role="admin"
           onUpdateSource={onUpdateSource}
           onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
           monitoringHealth={monitoringHealth}
         />
       </MemoryRouter>,
@@ -363,6 +376,7 @@ describe('信息源编辑表单：移除信源级复核配置（W1-T2）', () =>
           role="admin"
           onUpdateSource={onUpdateSource}
           onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -424,6 +438,7 @@ describe('信息源编辑表单：移除声明式 JSON 与替代判定键（W1-T
           role="admin"
           onUpdateSource={onUpdateSource}
           onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -524,6 +539,7 @@ describe('信息源运行密钥提交契约', () => {
             await updateSource(Number(id), payload);
           }}
           onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -584,6 +600,7 @@ describe('信息源编辑表单：类型只读与认证方式精简（W1-T1）',
           role="admin"
           onUpdateSource={onUpdateSource}
           onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -714,6 +731,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={readyHealth}
         />
       </MemoryRouter>,
@@ -733,6 +751,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={monitoringHealthWith({
             ...healthySource,
             state: 'failed',
@@ -757,6 +776,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={monitoringHealthWith({
             ...healthySource,
             state: 'disabled',
@@ -780,6 +800,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={monitoringHealthWith({
             ...healthySource,
             state: 'on_demand',
@@ -807,6 +828,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={monitoringHealthWith({
             ...healthySource,
             source_id: 23,
@@ -836,6 +858,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={{status: 'unknown'}}
         />
       </MemoryRouter>,
@@ -852,6 +875,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
           role="viewer"
           onUpdateSource={vi.fn()}
           onRefreshSources={vi.fn()}
+
           monitoringHealth={{status: 'hidden'}}
         />
       </MemoryRouter>,
@@ -870,8 +894,10 @@ describe('信息源列表信息架构与操作区', () => {
       <DataSourcesView
         dataSources={dataSources}
         role={role}
+
         onUpdateSource={vi.fn()}
         onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
         monitoringHealth={monitoringHealth}
       />
     </MemoryRouter>,
@@ -1056,6 +1082,7 @@ describe('信息源列表信息架构与操作区', () => {
           role="admin"
           onUpdateSource={vi.fn()}
           onRefreshSources={onRefreshSources}
+
           monitoringHealth={{status: 'hidden'}}
         />
       </MemoryRouter>,
@@ -1080,6 +1107,7 @@ describe('信息源列表信息架构与操作区', () => {
           role="admin"
           onUpdateSource={vi.fn()}
           onRefreshSources={onRefreshSources}
+
           monitoringHealth={{status: 'hidden'}}
         />
       </MemoryRouter>,
@@ -1114,6 +1142,7 @@ describe('信息源列表信息架构与操作区', () => {
           role="admin"
           onUpdateSource={vi.fn()}
           onRefreshSources={onRefreshSources}
+
           monitoringHealth={{status: 'hidden'}}
         />
       </MemoryRouter>,
@@ -1318,8 +1347,10 @@ describe('信息源连通徽标配色与采集状态解耦', () => {
       <DataSourcesView
         dataSources={dataSources}
         role={role}
+
         onUpdateSource={vi.fn()}
         onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
         monitoringHealth={{status: 'hidden'}}
       />
     </MemoryRouter>,
@@ -1451,8 +1482,10 @@ describe('信息源列表退役来源可见性（迁移0050）', () => {
       <DataSourcesView
         dataSources={dataSources}
         role={role}
+
         onUpdateSource={vi.fn()}
         onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
         monitoringHealth={monitoringHealth}
       />
     </MemoryRouter>,
@@ -1543,8 +1576,10 @@ describe('信息源调度周期列', () => {
       <DataSourcesView
         dataSources={dataSources}
         role="viewer"
+
         onUpdateSource={vi.fn()}
         onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+
         monitoringHealth={{status: 'hidden'}}
       />
     </MemoryRouter>,
@@ -1612,5 +1647,41 @@ describe('信息源调度周期列', () => {
       expect(value.className.split(/\s+/)).toContain(token);
     });
     expect(within(cell).getByText('调度:').className.split(/\s+/)).toContain('md:hidden');
+  });
+});
+
+// 调度器实况已迁移为独立 /scheduler 页面：信息源页不再承载按钮、弹窗与打开时的健康刷新回调。
+// 单源刷新成功后携带 {refreshMonitoringHealth: true} 意图的逻辑仍保留（见「信息源列表信息架构与操作区」用例）。
+describe('信息源页不再承载调度器实况入口（已迁移独立 /scheduler 页面）', () => {
+  const renderView = (monitoringHealth: MonitoringHealthSnapshot = {status: 'hidden'}) => render(
+    <MemoryRouter>
+      <DataSourcesView
+        dataSources={[source]}
+        role="viewer"
+        onUpdateSource={vi.fn()}
+        onRefreshSources={vi.fn().mockResolvedValue(undefined)}
+        monitoringHealth={monitoringHealth}
+      />
+    </MemoryRouter>,
+  );
+
+  it('页头不再渲染「调度器实况」按钮，也不挂载旧弹窗遮罩', () => {
+    renderView(readyHealth);
+
+    expect(screen.queryByTestId('scheduler-activity-button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '调度器实况'})).not.toBeInTheDocument();
+    expect(screen.queryByTestId('scheduler-activity-overlay')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // 列表与来源级新鲜度不受入口移除影响，页面照常渲染。
+    expect(screen.getByRole('link', {name: '官方风险源 有效记录 7 条'})).toBeInTheDocument();
+    expect(screen.getByTestId('source-health-17')).toHaveTextContent('采集正常');
+  });
+
+  it('挂在信息源页也不触碰旧弹窗的会话面板测试标识', () => {
+    renderView(readyHealth);
+
+    expect(screen.queryByTestId('scheduler-console')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('scheduler-activity-idle')).not.toBeInTheDocument();
+    expect(screen.queryByText('调度器实况')).not.toBeInTheDocument();
   });
 });

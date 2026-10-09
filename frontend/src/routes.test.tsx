@@ -7,9 +7,11 @@ import {
   allRoutePermissions,
   isSupplierStatusFilter,
   routeDefinitions,
+  routePaths,
   routePermissions,
   supplierSearchParams,
   suppliersPath,
+  visibleNavigationRoutes,
 } from './routes';
 
 const routeViews: RouteViews = {
@@ -20,6 +22,7 @@ const routeViews: RouteViews = {
   suppliers: <div>供应商页面</div>,
   sources: <div>信息源页面</div>,
   sourceSignals: <div>采集记录页面</div>,
+  scheduler: <div>调度器页面</div>,
   rules: <div>规则页面</div>,
   userSettings: <div>用户设置页面</div>,
 };
@@ -61,6 +64,7 @@ describe('显式路由白名单', () => {
     ['/suppliers', '供应商页面'],
     ['/sources', '信息源页面'],
     ['/sources/17/signals?scope=valid&page=1', '采集记录页面'],
+    ['/scheduler', '调度器页面'],
     ['/rules', '规则页面'],
     ['/settings/users', '用户设置页面'],
   ])('在拥有准确权限时渲染 %s', (path, page) => {
@@ -88,6 +92,7 @@ describe('显式路由白名单', () => {
     ['/suppliers', ['risk_view']],
     ['/sources', ['rule_summary_view']],
     ['/sources/17/signals?scope=all&page=2', ['rule_summary_view']],
+    ['/scheduler', ['rule_summary_view']],
     ['/rules', ['source_status_view']],
     ['/settings/users', ['source_manage']],
   ])('拒绝缺少准确权限的直接访问：%s', (path, permissions) => {
@@ -153,6 +158,7 @@ describe('路由元数据', () => {
       '/suppliers',
       '/sources',
       '/sources/:sourceId/signals',
+      '/scheduler',
       '/rules',
       '/settings/users',
     ]);
@@ -164,6 +170,38 @@ describe('路由元数据', () => {
     expect(routeDefinitions.find((route) => route.id === 'rules')?.permission).toBe(
       routePermissions.ruleSummaryView,
     );
+  });
+
+  it('调度器实况是独立路由：路径、source_status_view 权限与菜单标签唯一来源', () => {
+    expect(routePaths.scheduler).toBe('/scheduler');
+    const scheduler = routeDefinitions.find((route) => route.id === 'scheduler');
+    expect(scheduler?.path).toBe('/scheduler');
+    expect(scheduler?.permission).toBe(routePermissions.sourceStatusView);
+    expect(scheduler?.navigation?.desktopLabel).toBe('调度器实况');
+  });
+
+  it('桌面 system 导航顺序为信息源 → 调度器实况 → 规则引擎，且调度器不进入移动底栏', () => {
+    const desktopSystem = visibleNavigationRoutes(allRoutePermissions, 'desktop')
+      .filter((route) => route.navigation.section === 'system')
+      .map((route) => route.id);
+    expect(desktopSystem).toEqual(['sources', 'scheduler', 'rules', 'userSettings']);
+
+    // 移动端保持路由可达但不得挤进底部导航：底栏入口维持现有 7 项。
+    const mobileIds = visibleNavigationRoutes(allRoutePermissions, 'mobile').map((route) => route.id);
+    expect(mobileIds).toEqual(['overview', 'risks', 'assistant', 'suppliers', 'sources', 'rules', 'userSettings']);
+    expect(mobileIds).not.toContain('scheduler');
+  });
+
+  it('导航可见性与路由权限一致：缺少 source_status_view 时调度器既不可见也被路由守卫拒绝', () => {
+    const permissionsWithoutSourceStatus = allRoutePermissions.filter(
+      (permission) => permission !== routePermissions.sourceStatusView,
+    );
+    const desktopIds = visibleNavigationRoutes(permissionsWithoutSourceStatus, 'desktop').map((route) => route.id);
+    expect(desktopIds).not.toContain('scheduler');
+
+    renderRoute(['/scheduler'], permissionsWithoutSourceStatus);
+    expect(screen.getByRole('alert')).toHaveTextContent('无权访问');
+    expect(screen.queryByText('调度器页面')).not.toBeInTheDocument();
   });
 
   it('供应商清单地址省略默认值，只为非默认状态保留查询参数', () => {

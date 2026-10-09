@@ -1,8 +1,21 @@
 import {useEffect, useRef, useState} from 'react';
 import {api, ApiError, type MonitoringHealthRead} from './api';
+import {routePaths} from './routes';
 
 // 计划行212：页面可见时每 60 秒刷新；隐藏暂停、重新可见立即刷新、销毁取消。
 export const MONITORING_HEALTH_REFRESH_MS = 60_000;
+
+// 调度器实况页需要更密的 5 秒刷新；只改变调用方传入的周期，不新增第二套请求或轮询。
+export const MONITORING_HEALTH_SCHEDULER_REFRESH_MS = 5_000;
+
+/**
+ * 诊断轮询周期的唯一路由映射：调度器实况页 5 秒，其余展示页默认 60 秒。
+ * App 按当前 pathname 取周期传给同一个 useMonitoringHealth；
+ * 周期变化时 hook 会先清理旧计时器再按新周期起重，全程只有一条轮询。
+ */
+export const monitoringHealthRefreshMsForPath = (pathname: string): number => (
+  pathname === routePaths.scheduler ? MONITORING_HEALTH_SCHEDULER_REFRESH_MS : MONITORING_HEALTH_REFRESH_MS
+);
 
 const OVERALL_STATUSES: readonly string[] = ['ok', 'degraded', 'unknown', 'inactive'];
 
@@ -34,13 +47,19 @@ export type MonitoringHealthSnapshot =
 interface UseMonitoringHealthOptions {
   /** 当前账号是否具备 source_status_view 权限；false 时不发任何请求。 */
   readonly enabled: boolean;
-  /** 当前路由是否展示诊断（总览/信息源）；false 时暂停轮询。 */
+  /** 当前路由是否展示诊断（总览/信息源/调度器实况）；false 时暂停轮询。 */
   readonly active: boolean;
   /**
    * 外部刷新版本号（默认 0）：递增时若 enabled+active 且页面可见，
-   * 立即发起新请求并重置 60 秒周期；旧响应由 AbortController/序号抑制。
+   * 立即发起新请求并重置轮询周期；旧响应由请求序号丢弃。
    */
   readonly refreshVersion?: number;
+  /**
+   * 轮询周期（毫秒，默认 MONITORING_HEALTH_REFRESH_MS=60 秒）；
+   * 调度器实况页传入 MONITORING_HEALTH_SCHEDULER_REFRESH_MS=5 秒。
+   * 周期变化会重建同一个计时器（先清理旧表再按新周期起重），不产生第二条轮询。
+   */
+  readonly refreshIntervalMs?: number;
   /** 401 统一入口：交给 App 会话失效处理（403 不走这里）。 */
   readonly onRequestError: (error: ApiError) => void;
 }
@@ -49,6 +68,7 @@ export function useMonitoringHealth({
   enabled,
   active,
   refreshVersion = 0,
+  refreshIntervalMs = MONITORING_HEALTH_REFRESH_MS,
   onRequestError,
 }: UseMonitoringHealthOptions): MonitoringHealthSnapshot {
   const [snapshot, setSnapshot] = useState<MonitoringHealthSnapshot>({status: 'loading'});
@@ -66,9 +86,16 @@ export function useMonitoringHealth({
 
     let disposed = false;
     let timer: number | undefined;
+    // 当前 effect 至多一个在途请求：周期到点仍有请求未完成则跳过本轮，不并发、不静默堆积；
+    // 请求结束（成功/失败/中止）在 finally 复位，后续周期自动继续。
+    // 变量属于本 effect 闭包，旧 effect 的 finally 不会触碰新 effect 的 guard。
+    let inFlight = false;
 
     const fetchHealth = () => {
-      controllerRef.current?.abort();
+      if (inFlight) return;
+      inFlight = true;
+      // 在途请求不被下一轮无条件打断（慢请求仍能完成并被正常采纳）；
+      // 旧请求/旧响应的失效统一由清理时的 abort 与请求序号处理。
       const controller = new AbortController();
       controllerRef.current = controller;
       const sequence = sequenceRef.current + 1;
@@ -100,6 +127,9 @@ export function useMonitoringHealth({
           }
           // 其余失败（含 503）：展示「无法确认」，不沿用任何旧结论。
           setSnapshot({status: 'unknown'});
+        })
+        .finally(() => {
+          inFlight = false;
         });
     };
 
@@ -112,14 +142,14 @@ export function useMonitoringHealth({
     const startCycle = () => {
       fetchHealth();
       stopTimer();
-      timer = window.setInterval(fetchHealth, MONITORING_HEALTH_REFRESH_MS);
+      timer = window.setInterval(fetchHealth, refreshIntervalMs);
     };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        // 重新可见：立即刷新并重建 60 秒周期。
+        // 重新可见：立即刷新并按当前周期重建计时器。
         startCycle();
       } else {
-        // 隐藏页暂停：仅停表，不打断在途请求（其结果仍受序号保护）。
+        // 隐藏页暂停：仅停表，不打断在途请求（其完成结果正常采纳；重建时由序号丢弃）。
         stopTimer();
       }
     };
@@ -134,9 +164,9 @@ export function useMonitoringHealth({
       controllerRef.current?.abort();
       sequenceRef.current += 1;
     };
-    // refreshVersion 递增触发重建：清理会 abort 在途请求并推进序号，
-    // 新周期立即刷新并重置 60 秒表；隐藏或停用时仅重建、不发起请求。
-  }, [enabled, active, refreshVersion]);
+    // refreshVersion 递增或 refreshIntervalMs 变化触发重建：清理会 abort 在途请求并推进序号，
+    // 新周期立即刷新并按新周期重新计时；隐藏或停用时仅重建、不发起请求。
+  }, [enabled, active, refreshVersion, refreshIntervalMs]);
 
   return snapshot;
 }

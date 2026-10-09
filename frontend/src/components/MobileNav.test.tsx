@@ -29,6 +29,14 @@ describe('MobileNav 移动端底部导航', () => {
     }
   });
 
+  it('调度器实况只在桌面导航：移动底栏维持 7 个入口，不挤入第 8 项', () => {
+    renderNav();
+
+    expect(screen.getAllByRole('link')).toHaveLength(7);
+    expect(screen.queryByText('调度器实况')).not.toBeInTheDocument();
+    expect(screen.queryByText('调度')).not.toBeInTheDocument();
+  });
+
   it('P1 风险角标在有风险时才渲染，导航标签保持不可拆分', () => {
     renderNav(3);
 

@@ -11,10 +11,10 @@ export const routePermissions = {
 } as const;
 
 export type RoutePermission = typeof routePermissions[keyof typeof routePermissions];
-export type RouteId = 'overview' | 'risks' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'rules' | 'userSettings';
+export type RouteId = 'overview' | 'risks' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'scheduler' | 'rules' | 'userSettings';
 export type NavigationSurface = 'desktop' | 'mobile';
 export type NavigationSection = 'main' | 'system';
-export type NavigationIcon = 'overview' | 'risks' | 'assistant' | 'suppliers' | 'sources' | 'rules' | 'userSettings';
+export type NavigationIcon = 'overview' | 'risks' | 'assistant' | 'suppliers' | 'sources' | 'scheduler' | 'rules' | 'userSettings';
 
 interface NavigationMetadata {
   readonly surfaces: readonly NavigationSurface[];
@@ -44,6 +44,7 @@ export const routePaths = {
   suppliers: '/suppliers',
   sources: '/sources',
   sourceSignals: '/sources/:sourceId/signals',
+  scheduler: '/scheduler',
   rules: '/rules',
   userSettings: '/settings/users',
 } as const;
@@ -81,6 +82,14 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     navigation: {surfaces: ['desktop', 'mobile'], section: 'system', desktopLabel: '信息源列表', mobileLabel: '数据', icon: 'sources', end: true},
   },
   {id: 'sourceSignals', path: routePaths.sourceSignals, permission: routePermissions.sourceStatusView},
+  {
+    id: 'scheduler',
+    path: routePaths.scheduler,
+    permission: routePermissions.sourceStatusView,
+    // 独立调度器实况页只进入桌面 system 导航；移动端保持路由可达（直接访问/站内跳转），
+    // 但不挤入底部导航的第 8 个入口，也不新增「更多」菜单。
+    navigation: {surfaces: ['desktop'], section: 'system', desktopLabel: '调度器实况', mobileLabel: '调度器', icon: 'scheduler', end: true},
+  },
   {
     id: 'rules',
     path: routePaths.rules,

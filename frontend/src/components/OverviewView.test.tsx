@@ -84,6 +84,9 @@ const monitoringHealthOk: MonitoringHealthRead = {
     age_seconds: 30,
     interval_seconds: 60,
     stale_after_seconds: 180,
+    current_work: [],
+    scheduled_jobs: [],
+    recent_runs: [],
   },
   processing: {
     total: 0,

@@ -26,6 +26,7 @@ interface DataSourcesViewProps {
   monitoringHealth: MonitoringHealthSnapshot;
   // 草稿箱、新增信息源、立即全量同步已下线：平台不再开放人工接入新信息源，
   // 但保留"编辑现有信息源"（API Key / 调度周期 / 适配器等配置项）+ 启停 + 修改日志审计。
+  // 调度器实况已迁移为独立 /scheduler 页面，本页不再承载入口、弹窗或健康刷新回调。
 }
 
 const emptyForm: DataSourceWritePayload = {
@@ -424,6 +425,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       setError(caught instanceof Error ? caught.message : '审计日志加载失败');
     }
   };
+
+  // 调度器实况已迁移独立 /scheduler 页面（桌面 system 导航），本页不再提供打开入口。
 
   // 退役来源只隐藏不删除：行、运行提示、概览统计与空态判断必须基于同一可见集合，
   // 避免只过滤行导致统计数字仍把退役来源计入；filter 保留原始对象引用，可见行回调语义不变。

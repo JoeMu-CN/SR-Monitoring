@@ -122,6 +122,9 @@ const monitoringHealthOk: MonitoringHealthRead = {
     age_seconds: 30,
     interval_seconds: 60,
     stale_after_seconds: 180,
+    current_work: [],
+    scheduled_jobs: [],
+    recent_runs: [],
   },
   processing: {
     total: 0,
@@ -857,6 +860,34 @@ describe('App 监控健康只读诊断', () => {
     const routeContent = await screen.findByTestId('route-content', {}, {timeout: 5000});
     expect(within(routeContent).getAllByText('自然环境').length).toBeGreaterThan(0);
     expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+
+  it('独立 /scheduler 页请求诊断并渲染调度器实况视图', async () => {
+    defaultMocks();
+    renderApp('/scheduler');
+
+    const liveView = await screen.findByTestId('scheduler-live-view', {}, {timeout: 5000});
+    expect(liveView).toBeInTheDocument();
+    expect(api.monitoringHealth).toHaveBeenCalled();
+  });
+
+  it('无 source_status_view 权限时 /scheduler 与导航一致：守卫拒绝且不发起诊断请求', async () => {
+    defaultMocks({permissions: ['risk_view']});
+    renderApp('/scheduler');
+
+    expect(await screen.findByText('无权访问')).toBeInTheDocument();
+    expect(screen.queryByTestId('scheduler-live-view')).not.toBeInTheDocument();
+    expect(api.monitoringHealth).not.toHaveBeenCalled();
+  });
+
+  it('/sources 页不再承载调度器实况入口（已迁移独立页）', async () => {
+    defaultMocks();
+    renderApp('/sources');
+
+    expect(await screen.findByText('中央气象台预警')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '调度器实况'})).not.toBeInTheDocument();
+    expect(screen.queryByTestId('scheduler-activity-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('scheduler-activity-overlay')).not.toBeInTheDocument();
   });
 });
 

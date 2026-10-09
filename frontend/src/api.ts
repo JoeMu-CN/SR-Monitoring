@@ -824,12 +824,59 @@ export interface SystemHealth { status: string; database: string }
 export type MonitoringOverallStatus = 'ok' | 'degraded' | 'unknown' | 'inactive';
 export type MonitoringSourceState = 'ok' | 'failed' | 'overdue' | 'never_run' | 'disabled' | 'on_demand' | 'invalid_schedule';
 
+// 调度器当前进行中的工作快照：来源采集（collecting）或待处理信号解析（processing_signal）。
+// 只暴露来源标识、阶段与信号 ID，不含标题或正文；空数组表示空闲。
+export type MonitoringSchedulerWorkKind = 'source_collection' | 'pending_signal_processing';
+export type MonitoringSchedulerWorkStage = 'collecting' | 'processing_signal';
+
+export interface MonitoringSchedulerWork {
+  readonly kind: MonitoringSchedulerWorkKind;
+  readonly job_key: string;
+  /** 来源采集的信源 ID；待处理信号批次不绑定单一信源，为 null。 */
+  readonly source_id: number | null;
+  /** 来源采集的信源名称；待处理信号批次为 null。 */
+  readonly source_name: string | null;
+  readonly stage: MonitoringSchedulerWorkStage;
+  /** 任务登记的开始时间；缺失时为 null，不得编造运行时长。 */
+  readonly started_at: string | null;
+  /** 待处理信号解析对应的信号 ID；来源采集或批次级观测为 null。 */
+  readonly item_id: number | null;
+}
+
+// 计划任务：调度器注册表中的下一次触发时间；next_run_at 为 null 表示暂无后续排期。
+export interface MonitoringScheduledJob {
+  readonly job_id: string;
+  readonly name: string;
+  /** 下一次触发时间（ISO 8601）；null 表示该任务暂无后续排期。 */
+  readonly next_run_at: string | null;
+}
+
+// 最近执行记录的状态：与后端 job 运行状态一一对应，前端按穷举映射渲染。
+export type MonitoringScheduledRunStatus = 'running' | 'completed' | 'error' | 'missed' | 'max_instances';
+
+// 最近执行记录：已落库的调度运行事实（时间戳与状态码），不含异常文本或日志。
+export interface MonitoringScheduledRun {
+  readonly id: number;
+  readonly job_id: string;
+  readonly name: string;
+  readonly status: MonitoringScheduledRunStatus;
+  readonly scheduled_run_at: string;
+  readonly started_at: string | null;
+  readonly finished_at: string | null;
+}
+
 export interface MonitoringSchedulerHealth {
   status: 'unknown' | 'ok' | 'stale';
   last_heartbeat_at: string | null;
   age_seconds: number | null;
   interval_seconds: number;
   stale_after_seconds: number;
+  /** 当前进行中的调度工作；[] 表示空闲。 */
+  readonly current_work: readonly MonitoringSchedulerWork[];
+  /** 已注册的计划任务及下一次触发时间；[] 表示暂无排期。 */
+  readonly scheduled_jobs: readonly MonitoringScheduledJob[];
+  /** 最近执行记录（已落库事实）；[] 表示暂无历史。 */
+  readonly recent_runs: readonly MonitoringScheduledRun[];
 }
 
 export interface MonitoringProcessingRun {

@@ -1,0 +1,98 @@
+/* SchedulerLiveView 私有动画：只动 transform / opacity / stroke-dashoffset。
+   循环动画同时受三层约束：index.css 的全局 prefers-reduced-motion 与 .reduce-motion 降级、
+   根节点的 .scheduler-live-paused（document 隐藏时由组件添加）暂停、
+   以及 useReducedMotion 为 true 时心跳光点不渲染、波形不加扫掠类。 */
+
+@keyframes scheduler-live-ecg-sweep {
+  from {
+    stroke-dashoffset: 132;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes scheduler-live-scan-dot {
+  0% {
+    transform: translateX(0);
+    opacity: 0.1;
+  }
+  8% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(90px);
+    opacity: 0.1;
+  }
+}
+
+@keyframes scheduler-live-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 心跳波形从左到右扫掠，与扫描光点同周期同步。 */
+.scheduler-live-ecg {
+  stroke-dasharray: 132;
+  animation: scheduler-live-ecg-sweep 2.6s linear infinite;
+}
+
+.scheduler-live-heartbeat-dot {
+  animation: scheduler-live-scan-dot 2.6s linear infinite;
+}
+
+/* 新执行记录入场：CSS 动画只在元素挂载时播放，已验证记录随 React 复用 DOM 不重播。 */
+.scheduler-live-enter {
+  animation: scheduler-live-enter 0.36s ease-out both;
+}
+
+/* document 隐藏：暂停全部循环动画，不隐藏任何数据。 */
+.scheduler-live-paused .scheduler-live-ecg,
+.scheduler-live-paused .scheduler-live-heartbeat-dot,
+.scheduler-live-paused .scheduler-live-pulse,
+.scheduler-live-paused .scheduler-live-spin,
+.scheduler-live-paused .scheduler-live-enter {
+  animation-play-state: paused !important;
+}
+
+/* 减少动效：与全局媒体查询同向的组件级兜底，任何循环动画直接静止。 */
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-live-ecg,
+  .scheduler-live-heartbeat-dot,
+  .scheduler-live-pulse,
+  .scheduler-live-spin,
+  .scheduler-live-enter {
+    animation: none !important;
+  }
+}
+
+/* 执行流滚动容器：终端质感扫描线 + 细滚动条，不遮蔽任何数据行。 */
+.scheduler-live-stream {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(148, 163, 184, 0.04) 0,
+    rgba(148, 163, 184, 0.04) 1px,
+    transparent 1px,
+    transparent 28px
+  );
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+.scheduler-live-stream::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scheduler-live-stream::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background-color: #334155;
+}

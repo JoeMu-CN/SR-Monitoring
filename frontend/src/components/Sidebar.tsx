@@ -1,7 +1,7 @@
 import type {ReactNode} from 'react';
 import {motion} from 'motion/react';
 import {NavLink} from 'react-router-dom';
-import {Building2, Bot, Database, HelpCircle, LayoutDashboard, Settings, ShieldAlert, SlidersHorizontal, Users} from 'lucide-react';
+import {Activity, Building2, Bot, Database, HelpCircle, LayoutDashboard, Settings, ShieldAlert, SlidersHorizontal, Users} from 'lucide-react';
 import {visibleNavigationRoutes, type NavigationIcon, type NavigationRoute} from '../routes';
 
 interface SidebarProps {
@@ -16,6 +16,7 @@ const icons = {
   assistant: <Bot className="h-[18px] w-[18px]" />,
   suppliers: <Building2 className="h-[18px] w-[18px]" />,
   sources: <Database className="h-[18px] w-[18px]" />,
+  scheduler: <Activity className="h-[18px] w-[18px]" />,
   rules: <SlidersHorizontal className="h-[18px] w-[18px]" />,
   userSettings: <Users className="h-[18px] w-[18px]" />,
 } satisfies Record<NavigationIcon, ReactNode>;

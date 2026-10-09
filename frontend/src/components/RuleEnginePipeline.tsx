@@ -11,6 +11,7 @@ import {
   Radio,
   Route as RouteIcon,
   ShieldAlert,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import type {DimensionInputsRead, DimensionTraceRead} from '../api';
@@ -19,9 +20,9 @@ import type {MonitoringDimension} from '../types';
 /**
  * 观察态-规则运行流水线（todo 5）。
  *
- * 用 SVG/CSS + motion 把真实 `dimensionTrace` 讲成七段：
+ * 用 SVG/CSS + motion 把真实 `dimensionTrace` 讲成八段：
  * ① 信号输入 → ② 事件路由 → ③ 匹配柱 → ④ 得分构成 → ⑤ 总分层 →
- * ⑥ 封顶与强制规则 → ⑦ 输出等级。
+ * ⑥ LLM 等级建议 → ⑦ 封顶与强制规则 → ⑧ 输出等级。
  *
  * 约束（计划 todo 5）：
  * - 数据全部来自 props（`dimensionTrace` / `dimensionInputs`），不伪造数值；
@@ -174,6 +175,84 @@ function formatScore(value: number | null): string {
   return value === null ? '—' : String(value);
 }
 
+/** 比例展示占位：缺失 → —，有值 → 百分比（后端置信度与采纳阈值都是 0–1 小数）。 */
+function formatRatio(value: number | null): string {
+  return value === null ? '—' : `${Math.round(value * 100)}%`;
+}
+
+/** 采纳结果未记录时的唯一文案：既不说采纳，也不说未采纳。 */
+const ADOPTION_UNKNOWN = '未记录';
+
+/** 非 `suggested` 态的唯一状态文案出口，避免各分支各写一句而语义漂移。 */
+const LLM_STATE_STATUS: Record<Exclude<LlmSuggestionView['state'], 'suggested'>, string> = {
+  absent: '暂无 LLM 建议记录',
+  malformed: 'LLM 建议记录格式异常',
+  none: '未给出等级建议',
+};
+
+/**
+ * ⑥ LLM 等级建议的真实状态。
+ *
+ * 唯一数据源是 `resolve_level` 恒写入的审计键
+ * （`backend/app/risks/scoring.py:302-303`）：deterministic_level / llm_level /
+ * llm_confidence / llm_adopted / llm_theta / llm_rationale。前端只读这些键。
+ *
+ * 四种状态互不混淆：
+ * - `absent`：明细里没有 `llm_level` 键（历史审计数据）——只说"暂无 LLM 建议记录"，
+ *   绝不据此推断"LLM 没有运行"；
+ * - `malformed`：`llm_level` 既不是字符串等级也不是 null，无法解析；
+ * - `none`：`llm_level` 显式为 null——AI 分析确实未给出等级建议；
+ * - `suggested`：有建议值，采纳结果再按 `llm_adopted` 显式 true/false/缺失三态区分。
+ */
+interface LlmSuggestionView {
+  readonly state: 'absent' | 'malformed' | 'none' | 'suggested';
+  /** 建议等级原文；非 `suggested` 态为空串。 */
+  readonly level: string;
+  /** 建议等级是否落在后端 `LEVEL_RANK`（P1–P4）枚举内。 */
+  readonly knownLevel: boolean;
+  readonly confidence: number | null;
+  readonly theta: number | null;
+  /** null 表示未记录采纳结果（缺失或非布尔），不算采纳也不算未采纳。 */
+  readonly adopted: boolean | null;
+  readonly rationale: string;
+  /** 采纳前的确定性评分基线等级。 */
+  readonly deterministicLevel: string;
+}
+
+/**
+ * 采纳阈值/置信度的比例解析：布尔不是合法数值（后端 `coerce_llm_adopt_threshold`
+ * 同样显式拒绝 bool），先挡掉再交给既有 `asOptionalNumber`。
+ */
+function readRatio(value: unknown): number | null {
+  return typeof value === 'boolean' ? null : asOptionalNumber(value);
+}
+
+function readLlmSuggestion(detail: Record<string, unknown>): LlmSuggestionView {
+  const deterministicLevel = asText(detail.deterministic_level);
+  if (!('llm_level' in detail)) {
+    return {state: 'absent', level: '', knownLevel: false, confidence: null, theta: null, adopted: null, rationale: '', deterministicLevel};
+  }
+  const raw = detail.llm_level;
+  // 显式 null 是有效状态：AI 分析确实没给等级建议，与"根本没有审计记录"必须分开。
+  if (raw === null) {
+    return {state: 'none', level: '', knownLevel: false, confidence: null, theta: null, adopted: null, rationale: '', deterministicLevel};
+  }
+  if (typeof raw !== 'string' || raw === '') {
+    return {state: 'malformed', level: '', knownLevel: false, confidence: null, theta: null, adopted: null, rationale: '', deterministicLevel};
+  }
+  return {
+    state: 'suggested',
+    level: raw,
+    // LEVEL_NAMES 的键集合与后端 LEVEL_RANK（P1–P4）一致，可直接判定枚举合法性。
+    knownLevel: raw in LEVEL_NAMES,
+    confidence: readRatio(detail.llm_confidence),
+    theta: readRatio(detail.llm_theta),
+    adopted: typeof detail.llm_adopted === 'boolean' ? detail.llm_adopted : null,
+    rationale: asText(detail.llm_rationale),
+    deterministicLevel,
+  };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -277,12 +356,12 @@ export interface RuleEnginePipelineProps {
   embedded?: boolean;
 }
 
-/** 流水线固定七个阶段（①—⑦），用于嵌入块头的「N 阶段」计数；增删阶段时需同步更新。 */
-const PIPELINE_STAGE_COUNT = 7;
+/** 流水线固定八个阶段（①—⑧），用于嵌入块头的「N 阶段」计数；增删阶段时需同步更新。 */
+const PIPELINE_STAGE_COUNT = 8;
 
 /** 流水线说明行：嵌入与非嵌入两种形态共用同一句，避免两处文案漂移。 */
 const PIPELINE_SUBTITLE =
-  '一条信号如何变成 P1/P2 风险：信号输入 → 事件路由 → 匹配柱 → 得分构成 → 总分 → 封顶/强制规则 → 输出等级';
+  '一条信号如何变成 P1/P2 风险：信号输入 → 事件路由 → 匹配柱 → 得分构成 → 总分 → LLM 等级建议 → 封顶/强制规则 → 输出等级';
 
 export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
   dimension,
@@ -413,13 +492,43 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
       ]
     : [];
 
-  /* —— ⑥ 封顶与强制规则 —— */
+  /* —— ⑥ LLM 等级建议：只还原 resolve_level 已落库的审计键 —— */
+  const llm = readLlmSuggestion(detail);
+  const llmBelowTheta = llm.confidence !== null && llm.theta !== null && llm.confidence < llm.theta;
+  const llmStatusText =
+    llm.state === 'suggested'
+      ? llm.adopted === true
+        ? '建议已采纳'
+        : llm.adopted === false
+          ? '建议未采纳'
+          : `建议等级已记录 · ${ADOPTION_UNKNOWN}采纳结果`
+      : LLM_STATE_STATUS[llm.state];
+  const llmDetailText =
+    llm.state === 'absent'
+      ? '评分明细里没有 LLM 建议审计键（历史评分数据或未记录该字段），无法判断本次 LLM 是否参与。'
+      : llm.state === 'malformed'
+        ? 'llm_level 既不是等级枚举也不是 null，无法解析建议等级，也不对采纳结果下结论。'
+        : llm.state === 'none'
+          ? 'AI 分析结果未包含等级建议；确定性评分链照常执行，最终等级不受 LLM 建议影响。'
+          : llm.adopted === true
+            ? '置信度已达到采纳阈值，建议等级被并入确定性评分链（只能确认或提升严格度，不会降低确定性等级）。'
+            : llm.adopted === false
+              ? !llm.knownLevel
+                ? '建议等级不在 P1–P4 枚举内，判定为不采纳。'
+                : llm.confidence === null || llm.theta === null
+                  ? '判定为未采纳，但明细未记录置信度或采纳阈值，无法核对原因。'
+                  : llmBelowTheta
+                    ? `置信度 ${formatRatio(llm.confidence)} 低于采纳阈值 ${formatRatio(llm.theta)}，未采纳。`
+                    : '判定为未采纳，但置信度并不低于采纳阈值，未采纳原因无法从明细判定。'
+              : '明细未记录采纳结果（llm_adopted 缺失或非布尔），无法判断建议是否进入评分链。';
+
+  /* —— ⑦ 封顶与强制规则 —— */
   const levelCapCode = asText(score?.level_cap);
   const capInfo = levelCapCode ? CAP_EXPLANATIONS[levelCapCode] ?? {title: levelCapCode, detail: '命中未收录的封顶规则代码，请对照评分实现核对。'} : null;
   const forcedRule = asRecord(score?.forced_rule);
   const forcedRuleHit = Object.keys(forcedRule).length > 0;
 
-  /* —— ⑦ 输出等级 —— */
+  /* —— ⑧ 输出等级 —— */
   const level = asText(score?.level, '—');
   const levelReason = forcedRuleHit
     ? `命中强制规则「${asText(forcedRule.name, '未命名规则')}」：直接定级并记满分，绕过常规评分。`
@@ -700,8 +809,61 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
             </div>
           </StageShell>
 
-          {/* ⑥ 封顶与强制规则 */}
-          <StageShell stageId="caps" label="⑥ 封顶与强制规则" icon={ShieldAlert} reduceMotion={reduceMotion} delay={0.15} isLast={false}>
+          {/* ⑥ LLM 等级建议 */}
+          <StageShell stageId="llm" label="⑥ LLM 等级建议" icon={Sparkles} reduceMotion={reduceMotion} delay={0.15} isLast={false}>
+            <div
+              data-testid="rule-engine-pipeline-llm"
+              data-state={llm.state}
+              data-adopted={llm.adopted === null ? ADOPTION_UNKNOWN : String(llm.adopted)}
+              className={`rounded-lg border px-2.5 py-2 ${
+                llm.state === 'suggested' && llm.adopted === true
+                  ? 'border-[#0E9F6E] bg-emerald-50 dark:border-emerald-600/70 dark:bg-emerald-950/30'
+                  : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900'
+              }`}
+            >
+              <p className={`text-[11px] font-bold ${llm.state === 'suggested' && llm.adopted === true ? 'text-[#0E9F6E] dark:text-emerald-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                {llmStatusText}
+              </p>
+              {llm.state === 'suggested' ? (
+                <>
+                  <p
+                    data-testid="rule-engine-pipeline-llm-level"
+                    data-level={llm.level}
+                    className="mt-0.5 text-[12px] font-bold text-[#101d28] dark:text-white"
+                  >
+                    建议等级：{llm.level}
+                    {llm.knownLevel ? `（${LEVEL_NAMES[llm.level]}）` : '（不在 P1–P4 枚举内）'}
+                  </p>
+                  <ul className="mt-0.5 space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+                    <li data-testid="rule-engine-pipeline-llm-confidence">
+                      建议置信度：{formatRatio(llm.confidence)}
+                    </li>
+                    <li data-testid="rule-engine-pipeline-llm-theta">
+                      采纳阈值 θ：{formatRatio(llm.theta)}
+                    </li>
+                  </ul>
+                  <p data-testid="rule-engine-pipeline-llm-rationale" className="mt-0.5 break-words text-[11px] text-slate-500 dark:text-slate-400">
+                    建议依据：{llm.rationale || '明细未记录建议依据'}
+                  </p>
+                  <p className="mt-0.5 break-words text-[11px] text-slate-500 dark:text-slate-400">{llmDetailText}</p>
+                </>
+              ) : (
+                <p className="mt-0.5 break-words text-[11px] text-slate-500 dark:text-slate-400">{llmDetailText}</p>
+              )}
+              {llm.deterministicLevel && (
+                <p data-testid="rule-engine-pipeline-llm-deterministic" className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  确定性评分基线等级：{llm.deterministicLevel}
+                  {llm.deterministicLevel in LEVEL_NAMES ? `（${LEVEL_NAMES[llm.deterministicLevel]}）` : ''}
+                </p>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 dark:text-slate-500">
+              本阶段只反映评分明细中已落库的审计字段；采纳发生在封顶与强制规则之前，最终等级仍以流水线末端的输出等级为准。
+            </p>
+          </StageShell>
+
+          {/* ⑦ 封顶与强制规则 */}
+          <StageShell stageId="caps" label="⑦ 封顶与强制规则" icon={ShieldAlert} reduceMotion={reduceMotion} delay={0.18} isLast={false}>
             <div
               data-testid="rule-engine-pipeline-cap"
               data-hit={capInfo ? 'true' : 'false'}
@@ -761,8 +923,8 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
             </div>
           </StageShell>
 
-          {/* ⑦ 输出等级 */}
-          <StageShell stageId="level" label="⑦ 输出等级" icon={Flag} reduceMotion={reduceMotion} delay={0.18} isLast>
+          {/* ⑧ 输出等级 */}
+          <StageShell stageId="level" label="⑧ 输出等级" icon={Flag} reduceMotion={reduceMotion} delay={0.21} isLast>
             <div className="flex flex-wrap items-center gap-3">
               <span
                 data-testid="rule-engine-pipeline-level"

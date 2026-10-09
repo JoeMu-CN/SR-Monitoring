@@ -7,7 +7,9 @@ import {RuleEnginePipeline} from './RuleEnginePipeline';
 
 /**
  * todo 5 验收用例（观察态规则流水线）：
- * - 七阶段标签、命中匹配柱/封顶/强制规则高亮、无数据引导、窄屏结构、深色类名、减少动效；
+ * - 八阶段标签、命中匹配柱/封顶/强制规则高亮、无数据引导、窄屏结构、深色类名、减少动效；
+ * - ⑥ LLM 等级建议（#20）：只还原 `resolve_level` 落库的审计键，采纳/未采纳/显式无建议/
+ *   缺失历史键/畸形值/无 score 六类真实状态都不许互相冒充，也绝不把"未采纳"说成"LLM 没运行"；
  * - 对抗类：malformed_input（缺字段/空轨迹不崩溃并降级）、misleading_success_output
  *   （数值断言直接读 DOM 的 data-value，不依赖组件自述）；
  * - 修复轮次（独立评审 3 缺陷）改用后端真实 `MatchType`（registry_no/site_text 等，
@@ -77,7 +79,10 @@ const inputs = (overrides: Partial<DimensionInputsRead> = {}): DimensionInputsRe
 /**
  * 与后端真实语义一致的轨迹 fixture：
  * compute_score 合计 93（severity 35 + association 30 + credibility 18 + timeliness 5 + product 5）
- * → 命中 weak_association_max_p2 封顶（P1→P2）→ 命中 sanctions_entity_hit 强制规则（P2→P1、满分 100）。
+ * → resolve_level 链：base=compute_level(93)=P1 → LLM 建议 P1/置信度 0.9 ≥ θ0.75 被采纳
+ * （merged 取更严者，仍为 P1）→ 命中 weak_association_max_p2 封顶（P1→P2）
+ * → 命中 sanctions_entity_hit 强制规则（P2→P1、满分 100）。
+ * 故 deterministic_level=P1、capped_level=P2、final_level=P1，采纳结果并非最终等级。
  */
 const trace = (overrides: Partial<DimensionTraceRead> = {}): DimensionTraceRead => ({
   available: true,
@@ -113,6 +118,15 @@ const trace = (overrides: Partial<DimensionTraceRead> = {}): DimensionTraceRead 
       source_credibility: 18,
       timeliness: 5,
       product_relevance: 5,
+      // resolve_level 恒写的审计键（backend/app/risks/scoring.py:313-332）
+      deterministic_level: 'P1',
+      llm_level: 'P1',
+      llm_confidence: 0.9,
+      llm_adopted: true,
+      llm_theta: 0.75,
+      llm_rationale: '主体直接命中制裁清单，建议按最高等级处置',
+      capped_level: 'P2',
+      final_level: 'P1',
       level_cap: 'weak_association_max_p2',
       forced_rule: {
         name: 'sanctions_entity_hit',
@@ -150,8 +164,9 @@ const STAGE_LABELS = [
   '③ 匹配柱',
   '④ 得分构成',
   '⑤ 总分层',
-  '⑥ 封顶与强制规则',
-  '⑦ 输出等级',
+  '⑥ LLM 等级建议',
+  '⑦ 封顶与强制规则',
+  '⑧ 输出等级',
 ];
 
 const renderPipeline = (
@@ -182,8 +197,8 @@ afterEach(() => {
   motionControl.reduced = false;
 });
 
-describe('规则引擎观察态流水线：七阶段渲染', () => {
-  it('真实轨迹下七个阶段标签与阶段数值全部渲染', () => {
+describe('规则引擎观察态流水线：八阶段渲染', () => {
+  it('真实轨迹下八个阶段标签与阶段数值全部渲染', () => {
     renderPipeline();
 
     for (const label of STAGE_LABELS) {
@@ -206,7 +221,7 @@ describe('规则引擎观察态流水线：七阶段渲染', () => {
     expect(screen.getByTestId('rule-engine-pipeline-tick-P1')).toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-pipeline-tick-P2')).toBeInTheDocument();
     expect(screen.getByTestId('rule-engine-pipeline-tick-P3')).toBeInTheDocument();
-    // ⑦ 输出等级：P1 芯片 + 中文等级名
+    // ⑧ 输出等级：P1 芯片 + 中文等级名
     expect(screen.getByTestId('rule-engine-pipeline-level')).toHaveAttribute('data-level', 'P1');
     expect(screen.getByText('重大风险 · 100 分')).toBeInTheDocument();
     // ① 信号输入：真实信源与近 30 天信号
@@ -402,7 +417,7 @@ describe('规则引擎观察态流水线：无数据与脏数据降级', () => {
     renderPipeline({inputsError: '输入健康度服务不可用'});
 
     expect(screen.getByText('输入健康度加载失败：输入健康度服务不可用')).toBeInTheDocument();
-    expect(screen.getByText('⑦ 输出等级')).toBeInTheDocument();
+    expect(screen.getByText('⑧ 输出等级')).toBeInTheDocument();
     expect(screen.getByText('地缘政治 → 地缘政治与安全')).toBeInTheDocument();
   });
 
@@ -424,6 +439,290 @@ describe('规则引擎观察态流水线：无数据与脏数据降级', () => {
   });
 });
 
+/**
+ * 构造「只替换 LLM 审计键」的 detail：五项分值固定 28+25+14+5+0=72（确定性等级 P2），
+ * `llmKeys` 里写什么明细里就有什么——缺失的键真的缺失，与显式 null 可区分。
+ * 键名与语义对齐 `backend/app/risks/scoring.py:resolve_level`（313-332 行）。
+ */
+const llmDetail = (llmKeys: Record<string, unknown>): Record<string, unknown> => ({
+  severity: 28,
+  association: 25,
+  source_credibility: 14,
+  timeliness: 5,
+  product_relevance: 0,
+  ...llmKeys,
+});
+
+/** 逐用例替换 score：llmKeys 落到 detail，levelCap/forcedRule 为 null 表示未命中。 */
+const withScore = (
+  target: DimensionTraceRead,
+  score: {total: number; level: string; detail: Record<string, unknown>; level_cap?: string | null; forced_rule?: Record<string, unknown> | null},
+): DimensionTraceRead => {
+  target.score = {
+    total: score.total,
+    level: score.level,
+    detail: score.detail,
+    level_cap: score.level_cap ?? null,
+    forced_rule: score.forced_rule ?? null,
+  };
+  return target;
+};
+
+describe('规则引擎观察态流水线：⑥ LLM 等级建议（resolve_level 审计键）', () => {
+  it('已采纳：展示建议等级、置信度、采纳阈值与依据，并给出确定性基线等级', () => {
+    renderPipeline();
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-state', 'suggested');
+    expect(stage).toHaveAttribute('data-adopted', 'true');
+    expect(stage).toHaveTextContent('建议已采纳');
+    expect(within(stage).getByTestId('rule-engine-pipeline-llm-level')).toHaveAttribute('data-level', 'P1');
+    expect(within(stage).getByText('建议等级：P1（重大风险）')).toBeInTheDocument();
+    expect(within(stage).getByText('建议置信度：90%')).toBeInTheDocument();
+    expect(within(stage).getByText('采纳阈值 θ：75%')).toBeInTheDocument();
+    expect(within(stage).getByText('建议依据：主体直接命中制裁清单，建议按最高等级处置')).toBeInTheDocument();
+    expect(within(stage).getByTestId('rule-engine-pipeline-llm-deterministic')).toHaveTextContent('确定性评分基线等级：P1（重大风险）');
+    // 采纳只说明建议并入评分链，不等于最终等级（封顶与强制规则在其后生效）
+    expect(screen.getByTestId('rule-engine-pipeline-stage-llm')).toHaveTextContent('最终等级仍以流水线末端的输出等级为准');
+  });
+
+  it('采纳后的建议等级仍可被封顶规则改写：阶段只陈述采纳，不声称建议等级即最终等级', () => {
+    // 72 分 → deterministic P2；建议 P1/置信度 0.95 ≥ θ0.75 采纳 → merged P1；
+    // 仅命中 country 柱 → apply_level_cap 压到 P4 → final_level=P4，评分不变。
+    const capped = withScore(trace(), {
+      total: 72,
+      level: 'P4',
+      detail: llmDetail({
+        severity: 35, association: 30, source_credibility: 18, timeliness: 5, product_relevance: 5,
+        deterministic_level: 'P2',
+        llm_level: 'P1',
+        llm_confidence: 0.95,
+        llm_theta: 0.75,
+        llm_adopted: true,
+        llm_rationale: '建议按最高等级处置',
+        capped_level: 'P4',
+        final_level: 'P4',
+      }),
+      level_cap: 'country_only_max_p4',
+    });
+    capped.match = {match_type: 'country', match_reasons: [], match_evidence: []};
+    renderPipeline({trace: capped});
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-adopted', 'true');
+    expect(within(stage).getByTestId('rule-engine-pipeline-llm-level')).toHaveAttribute('data-level', 'P1');
+    // 采纳的是 P1，最终等级被封顶改写为 P4：两者必须各说各的，不能混为一谈
+    expect(screen.getByTestId('rule-engine-pipeline-level')).toHaveAttribute('data-level', 'P4');
+    expect(stage).toHaveTextContent('只能确认或提升严格度，不会降低确定性等级');
+  });
+
+  it('未采纳且置信度低于阈值：如实给出低于阈值的原因，不说 LLM 没有运行', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P2',
+          llm_confidence: 0.4,
+          llm_theta: 0.75,
+          llm_adopted: false,
+          llm_rationale: '仅行业层面关联',
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-adopted', 'false');
+    expect(stage).toHaveTextContent('建议未采纳');
+    expect(stage).toHaveTextContent('置信度 40% 低于采纳阈值 75%，未采纳。');
+    // 未采纳 ≠ 未运行：不得出现任何"没有 LLM 参与"的断言
+    expect(screen.queryByText(/未给出等级建议/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/暂无 LLM 建议记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/未运行|未调用模型|未执行/)).not.toBeInTheDocument();
+  });
+
+  it('未采纳但明细缺少置信度或阈值：说明无法核对原因，不编造未采纳理由', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P2',
+          llm_adopted: false,
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-adopted', 'false');
+    expect(stage).toHaveTextContent('判定为未采纳，但明细未记录置信度或采纳阈值，无法核对原因。');
+    expect(within(stage).getByText('建议置信度：—')).toBeInTheDocument();
+    expect(within(stage).getByText('采纳阈值 θ：—')).toBeInTheDocument();
+  });
+
+  it('建议等级不在 P1–P4 枚举内：按后端语义判定为不采纳并原样回显等级', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P0',
+          llm_confidence: 0.95,
+          llm_theta: 0.75,
+          llm_adopted: false,
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveTextContent('建议等级不在 P1–P4 枚举内，判定为不采纳。');
+    expect(within(stage).getByText('建议等级：P0（不在 P1–P4 枚举内）')).toBeInTheDocument();
+  });
+
+  it('llm_adopted 缺失或非布尔：只说未记录采纳结果，不推断采纳与否', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P1',
+          llm_confidence: 0.95,
+          llm_theta: 0.75,
+          llm_adopted: 'true',
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-adopted', '未记录');
+    expect(stage).toHaveTextContent('建议等级已记录 · 未记录采纳结果');
+    expect(stage).toHaveTextContent('llm_adopted 缺失或非布尔');
+    expect(screen.queryByText('建议已采纳')).not.toBeInTheDocument();
+    expect(screen.queryByText('建议未采纳')).not.toBeInTheDocument();
+  });
+
+  it('显式无建议（llm_level=null）：说「未给出等级建议」，不冒充「暂无记录」', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: null,
+          llm_confidence: 0.88,
+          llm_theta: 0.75,
+          llm_adopted: false,
+          llm_rationale: null,
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-state', 'none');
+    expect(stage).toHaveTextContent('未给出等级建议');
+    expect(stage).toHaveTextContent('最终等级不受 LLM 建议影响');
+    // 显式 null 是有记录的状态，不能退化成"暂无记录"
+    expect(screen.queryByText('暂无 LLM 建议记录')).not.toBeInTheDocument();
+  });
+
+  it('历史评分数据缺少 LLM 审计键：只说「暂无 LLM 建议记录」，绝不据此推断未参与', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        // 旧版明细只有五项分值与封顶/强制规则，没有任何 llm_* 键
+        detail: {severity: 28, association: 25, source_credibility: 14, timeliness: 5, product_relevance: 0},
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-state', 'absent');
+    expect(stage).toHaveTextContent('暂无 LLM 建议记录');
+    expect(stage).toHaveTextContent('无法判断本次 LLM 是否参与');
+    // 缺记录不得冒充"显式无建议"，也不得断言 LLM 没跑
+    expect(screen.queryByText(/未给出等级建议/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/未采纳/)).not.toBeInTheDocument();
+  });
+
+  it('llm_level 为非字符串脏数据：报格式异常，不猜测等级也不下采纳结论', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({llm_level: 42, llm_confidence: 0.95, llm_theta: 0.75, llm_adopted: true}),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-state', 'malformed');
+    expect(stage).toHaveTextContent('LLM 建议记录格式异常');
+    expect(screen.queryByText('建议已采纳')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('rule-engine-pipeline-llm-level')).not.toBeInTheDocument();
+  });
+
+  it('布尔置信度不当作 100%：与后端 coerce_llm_adopt_threshold 同样拒绝 bool', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P2',
+          llm_confidence: true,
+          llm_theta: 0.75,
+          llm_adopted: false,
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(within(stage).getByText('建议置信度：—')).toBeInTheDocument();
+    expect(screen.queryByText('建议置信度：100%')).not.toBeInTheDocument();
+  });
+
+  it('llm_rationale 缺失时明说未记录依据，不留空白也不编造理由', () => {
+    renderPipeline({
+      trace: withScore(trace(), {
+        total: 72,
+        level: 'P2',
+        detail: llmDetail({
+          deterministic_level: 'P2',
+          llm_level: 'P2',
+          llm_confidence: 0.9,
+          llm_theta: 0.75,
+          llm_adopted: true,
+        }),
+      }),
+    });
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(within(stage).getByText('建议依据：明细未记录建议依据')).toBeInTheDocument();
+    expect(screen.queryByText('建议依据：')).not.toBeInTheDocument();
+  });
+
+  it('score=null（无评分记录）时仍渲染 ⑥ 阶段并说明无审计记录', () => {
+    const noScore = trace();
+    noScore.score = null;
+    renderPipeline({trace: noScore});
+
+    const stage = screen.getByTestId('rule-engine-pipeline-llm');
+    expect(stage).toHaveAttribute('data-state', 'absent');
+    expect(stage).toHaveTextContent('暂无 LLM 建议记录');
+    expect(screen.queryByTestId('rule-engine-pipeline-llm-level')).not.toBeInTheDocument();
+  });
+
+  it('available=false 的无样本轨迹同样保留 ⑥ 阶段占位', () => {
+    renderPipeline({trace: emptyTrace()});
+
+    expect(screen.getByTestId('rule-engine-pipeline-stage-llm')).toBeInTheDocument();
+    expect(screen.getByTestId('rule-engine-pipeline-llm')).toHaveAttribute('data-state', 'absent');
+  });
+});
+
 describe('规则引擎观察态流水线：响应式、深色模式与减少动效', () => {
   it('窄屏结构：根容器 min-w-0，阶段区 overflow-x-auto，阶段正文可收缩', () => {
     const {container} = renderPipeline();
@@ -433,7 +732,7 @@ describe('规则引擎观察态流水线：响应式、深色模式与减少动�
     expect(screen.getByTestId('rule-engine-pipeline-gauge-scroll')).toHaveClass('overflow-x-auto');
 
     const stageBodies = container.querySelectorAll('[data-stage-body]');
-    expect(stageBodies.length).toBe(7);
+    expect(stageBodies.length).toBe(8);
     stageBodies.forEach((body) => expect(body).toHaveClass('min-w-0'));
   });
 
@@ -491,7 +790,7 @@ describe('规则引擎观察态流水线：响应式、深色模式与减少动�
 });
 
 describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独立卡）', () => {
-  it('embedded=true：无整卡描边/阴影/模糊，头部为「运行轨迹」+「7 阶段」块头，阶段语义不变', () => {
+  it('embedded=true：无整卡描边/阴影/模糊，头部为「运行轨迹」+「8 阶段」块头，阶段语义不变', () => {
     renderPipeline({embedded: true});
 
     const root = screen.getByTestId('rule-engine-pipeline');
@@ -502,9 +801,9 @@ describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独�
     expect(root.className).not.toContain('backdrop-blur-md');
     // demo 内嵌块头形态（原型 block-head + count-chip）
     expect(screen.getByText('运行轨迹')).toBeInTheDocument();
-    expect(screen.getByText('7 阶段')).toBeInTheDocument();
+    expect(screen.getByText('8 阶段')).toBeInTheDocument();
     expect(screen.queryByText('规则运行流水线')).not.toBeInTheDocument();
-    // 七阶段与真实数据全部保留（加载/错误/轨迹语义未被改变）
+    // 八阶段与真实数据全部保留（加载/错误/轨迹语义未被改变）
     for (const label of STAGE_LABELS) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -513,7 +812,7 @@ describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独�
     expect(screen.getByText('真实样本（最近一条）')).toBeInTheDocument();
   });
 
-  it('embedded=true 且 trace 不可用：保留无样本引导与七阶段占位，仍无整卡外壳', () => {
+  it('embedded=true 且 trace 不可用：保留无样本引导与八阶段占位，仍无整卡外壳', () => {
     renderPipeline({trace: emptyTrace(), embedded: true});
 
     const root = screen.getByTestId('rule-engine-pipeline');
@@ -533,6 +832,6 @@ describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独�
     expect(root.className).toContain('rounded-2xl');
     expect(root.className).toContain('shadow-sm');
     expect(screen.getByText('规则运行流水线')).toBeInTheDocument();
-    expect(screen.queryByText('7 阶段')).not.toBeInTheDocument();
+    expect(screen.queryByText('8 阶段')).not.toBeInTheDocument();
   });
 });

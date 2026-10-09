@@ -557,8 +557,8 @@ describe('方案 B 布局与位置契约（#1/#16/#17/#18/#19/#33）', () => {
     expect(screen.getByTestId('rule-engine-evidence-timeline')).toContainElement(pipeline);
     expect(pipeline).toHaveAttribute('data-embedded', 'true');
     expect(pipeline.className).not.toContain('rounded-2xl');
-    // 等待轨迹请求落地：嵌入块头（标题 + 「7 阶段」计数）出现；加载中分支同标题、无计数
-    expect(await screen.findByText('7 阶段')).toBeInTheDocument();
+    // 等待轨迹请求落地：嵌入块头（标题 + 「8 阶段」计数）出现；加载中分支同标题、无计数
+    expect(await screen.findByText('8 阶段')).toBeInTheDocument();
     expect(screen.getByText('运行轨迹')).toBeInTheDocument();
   });
 

@@ -8,6 +8,7 @@ from app.agent.budget import get_tyc_usage
 from app.agent.engine import AgentConfigurationError, AgentError, get_agent_llm
 from app.agent.models import AgentSession, SourceOnboardingDraft
 from app.agent.schemas import (
+    AgentRunStepsRead,
     AgentStatusRead,
     ChatRequest,
     ChatResponse,
@@ -15,6 +16,7 @@ from app.agent.schemas import (
     SourceOnboardingDraftBoxResponse,
 )
 from app.agent.service import AgentSessionAccessError, chat, chat_source_onboarding
+from app.agent.turn_tracker import get_run
 from app.auth.models import User
 from app.auth.security import (
     PERM_RISK_QUERY_USE,
@@ -47,6 +49,7 @@ async def chat_endpoint(
             payload.question,
             session_id=payload.session_id,
             owner_user_id=user.id,
+            run_token=payload.run_token,
         )
     except AgentSessionAccessError as exc:
         raise HTTPException(
@@ -63,6 +66,19 @@ async def chat_endpoint(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"风险查询助手暂时不可用：{exc}",
         ) from exc
+
+
+@router.get("/chat/steps/{run_token}", response_model=AgentRunStepsRead)
+async def chat_run_steps(run_token: str, user: RiskQueryUser) -> AgentRunStepsRead:
+    """查询某次运行的增量步骤；未知 token 或非本人运行时返回 unknown。
+
+    纯进程内内存读取，声明为 async 以始终停留在事件循环线程，与写入端共享
+    「单事件循环、普通 dict、无需锁」的并发前提。
+    """
+    snapshot = get_run(run_token, user.id)
+    if snapshot is None:
+        return AgentRunStepsRead(run_token=run_token, status="unknown", steps=[])
+    return snapshot
 
 
 @source_agent_router.post("/source-agent/chat", response_model=ChatResponse)

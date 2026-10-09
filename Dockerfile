@@ -4,7 +4,7 @@ WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm test
+RUN npm test -- --maxWorkers=1
 RUN npm run lint
 RUN npm run build
 

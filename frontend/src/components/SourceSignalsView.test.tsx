@@ -2,7 +2,7 @@ import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter, Route, Routes, useLocation} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
-import {api, ApiError, type SourceSignalDetailRead, type SourceSignalListResponse} from '../api';
+import {api, ApiError, type SourceSignalDetailRead, type SourceSignalListResponse, type ValidityAnchorSource, type ValidityReasonRead} from '../api';
 import {SourceSignalsView} from './SourceSignalsView';
 
 const longContent = '风险详情'.repeat(80);
@@ -91,6 +91,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** 只渲染一条记录并返回「有效期原因」文案，供参数化断言复用。 */
+const renderValidityReason = async (validityReason: ValidityReasonRead): Promise<string> => {
+  vi.spyOn(api, 'sourceSignals').mockResolvedValue({
+    ...populatedResponse,
+    items: [{...populatedResponse.items[0]!, validity_reason: validityReason}],
+    total: 1,
+    offset: 0,
+  });
+  renderView('/sources/17/signals?scope=all&page=1');
+  return (await screen.findByTestId('source-signal-reason-91')).textContent ?? '';
+};
+
 describe('信息源采集记录清单', () => {
   it('将缺失查询参数规范化为当前有效第一页', async () => {
     const request = vi.spyOn(api, 'sourceSignals').mockResolvedValue(emptyResponse);
@@ -174,5 +186,36 @@ describe('信息源采集记录清单', () => {
 
     expect(await screen.findByText('暂无当前有效记录')).toBeInTheDocument();
     expect(request).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('采集记录有效期原因显示', () => {
+  it('策略计算结果用业务语言说明所依据的时间', async () => {
+    expect(await renderValidityReason({code: 'policy_resolved', anchor_source: 'published_at', details: {}}))
+      .toBe('已按有效期规则计算（以发布时间为依据）');
+  });
+
+  it.each<{anchorSource: ValidityAnchorSource; expected: string}>([
+    {anchorSource: 'published_at', expected: '发布时间'},
+    {anchorSource: 'collected_at', expected: '采集时间'},
+    {anchorSource: 'official_valid_until', expected: '官方有效期截止时间'},
+    {anchorSource: 'event_end', expected: '事件结束时间'},
+  ])('时间依据 $anchorSource 显示为「以$expected为依据」', async ({anchorSource, expected}) => {
+    expect(await renderValidityReason({code: 'deadline_reached', anchor_source: anchorSource, details: {}}))
+      .toBe(`已到有效期截止（以${expected}为依据）`);
+  });
+
+  it('发布时间缺失的降级原因自带计算依据且不重复追加', async () => {
+    expect(await renderValidityReason({code: 'anchor_fallback', anchor_source: 'collected_at', details: {}}))
+      .toBe('未提供发布时间，改用采集时间计算');
+  });
+
+  it('旧版兼容记录只显示原因、不显示时间依据', async () => {
+    expect(await renderValidityReason({code: 'active', anchor_source: 'legacy', details: {}})).toBe('有效');
+  });
+
+  it('未知原因保留后端原文并照常标注时间依据', async () => {
+    expect(await renderValidityReason({code: 'brand_new_reason', anchor_source: 'published_at', details: {}}))
+      .toBe('brand_new_reason（以发布时间为依据）');
   });
 });

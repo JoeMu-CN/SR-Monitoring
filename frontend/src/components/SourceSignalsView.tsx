@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {ArrowLeft, ExternalLink, FileText} from 'lucide-react';
 import {Link, useParams, useSearchParams} from 'react-router-dom';
-import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse} from '../api';
+import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse, type ValidityAnchorSource, type ValidityReasonRead} from '../api';
 import {routePaths, type SourceSignalScope} from '../routes';
 import {SignalSummaryText} from './SignalSummaryText';
 import {SourceSignalReportModal, type ActiveSourceSignal} from './SourceSignalReportModal';
@@ -20,6 +20,32 @@ const formatDateTime = (value: string | null) => (
 const safeSourceUrl = (value: string | null) => (
   value !== null && /^https?:\/\//i.test(value) ? value : null
 );
+
+/* ── 局部中文映射：只覆盖常见枚举，未知值一律保留原文兜底 ─────────────── */
+
+const VALIDITY_REASON_LABELS: Record<string, string> = {
+  active: '有效',
+  effective_signal_support: '存在有效信号支撑', no_effective_signal_support: '无有效信号支撑',
+  deadline_reached: '已到有效期截止', classification_failed: '分类失败待复核',
+  classification_resolved: '分类已确认', pending_classification: '等待分类',
+  anchor_fallback: '未提供发布时间，改用采集时间计算', policy_resolved: '已按有效期规则计算',
+  superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
+  quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
+};
+
+/** legacy 不展示时间依据，因此这里只覆盖实际会渲染的四种时间依据。 */
+const ANCHOR_SOURCE_LABELS: Record<Exclude<ValidityAnchorSource, 'legacy'>, string> = {
+  published_at: '发布时间', collected_at: '采集时间',
+  official_valid_until: '官方有效期截止时间', event_end: '事件结束时间',
+};
+
+/** 常见原因取易懂中文，未知原因保留后端原文；时间依据统一说明“依据哪个时间算的”。 */
+const formatValidityReason = ({code, anchor_source}: ValidityReasonRead): string => {
+  const reason = VALIDITY_REASON_LABELS[code] ?? code;
+  // legacy 记录没有时间依据；anchor_fallback 文案已自带计算依据，重复追加会变成两句话说同一件事。
+  if (anchor_source === 'legacy' || code === 'anchor_fallback') return reason;
+  return `${reason}（以${ANCHOR_SOURCE_LABELS[anchor_source]}为依据）`;
+};
 
 export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
   const {sourceId = ''} = useParams();
@@ -181,7 +207,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
                     <div><dt className="font-bold">有效期截止</dt><dd>{formatDateTime(signal.valid_until)}</dd></div>
                     <div><dt className="font-bold">复核时间</dt><dd>{formatDateTime(signal.review_due_at)}</dd></div>
                     <div className="min-w-0"><dt className="font-bold">策略版本</dt><dd className="break-all font-mono">{signal.validity_policy_version ?? '未生成'}</dd></div>
-                    <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd className="break-words">{signal.validity_reason.code}{signal.validity_reason.anchor_source !== 'legacy' ? `（锚定 ${signal.validity_reason.anchor_source}）` : ''}</dd></div>
+                    <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd data-testid={`source-signal-reason-${signal.id}`} className="break-words">{formatValidityReason(signal.validity_reason)}</dd></div>
                   </dl>
                   {/* 主列表只呈现后端受控摘要；完整正文与结构化报告一律经弹窗按需查看。 */}
                   {/* 摘要按业务分隔符做语义换行：短标签整体不断行，长正文仍走 break-words。 */}

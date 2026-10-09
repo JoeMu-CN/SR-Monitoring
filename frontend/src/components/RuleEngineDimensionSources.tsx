@@ -60,15 +60,15 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
         {linkedSources.map((source) => {
           const enabled = source.enabled === true;
           return (
-            <div key={source.code} className="flex items-center justify-between gap-2 text-[11px]">
+            <div key={source.code} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
               <Link
                 to={sourceSignalsPath(source.code, 'valid')}
                 aria-label={`${source.name} 有效信号 ${source.validSignalCount ?? 0} 条`}
-                className="rounded-sm text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-300"
+                className="rounded-sm text-pretty text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-300"
               >
                 {source.name}
               </Link>
-              <span className="flex items-center gap-1.5">
+              <span className="flex shrink-0 items-center gap-1.5">
                 <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
                   enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-slate-200 text-[#424751] dark:bg-slate-800 dark:text-slate-300'
                 }`}>

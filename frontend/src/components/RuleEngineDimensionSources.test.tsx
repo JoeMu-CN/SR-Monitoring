@@ -187,6 +187,32 @@ describe('引用信息源：未接入信源默认折叠（迁移旧 106-128 / 16
   });
 });
 
+describe('信源行排版：空间不足时元数据组整体换行，不挤压中文名称产生单字孤行（视觉 QA 回归）', () => {
+  it('行容器允许换行、名称采用 text-pretty 防孤字、元数据组整体不收缩，状态/时间/条数仍完整', () => {
+    const longNameSource: DimensionSourceFixture = {
+      code: 'usgs-earthquake', name: '美国地质调查局 USGS 地震', status: 'planned', linked: true, enabled: false,
+      adapterStatus: 'builtin', lastCollectedAt: '2026-08-20T08:00:00Z', validSignalCount: 3,
+    };
+    renderSources(makeDimension({dataSources: [longNameSource]}), inputs({declared_total: 1, declared_linked: 1}));
+
+    const nameLink = screen.getByRole('link', {name: /美国地质调查局 USGS 地震 有效信号 3 条/});
+    const row = nameLink.closest('div') as HTMLElement;
+    const meta = nameLink.nextElementSibling as HTMLElement;
+
+    // 名称 + 元数据超过一行宽度时整行换行，元数据组整体落到下一行，而不是把中文名称压出单字孤行
+    expect(row).toHaveClass('flex-wrap');
+    expect(row.children).toHaveLength(2);
+    // 名称自身的 CJK 防孤字策略：名称不得不换行时避免过短的末行
+    expect(nameLink).toHaveClass('text-pretty');
+    expect(nameLink).toHaveTextContent('美国地质调查局 USGS 地震');
+    // 元数据组整体不收缩，状态、时间与条数保持完整可读
+    expect(meta).toHaveClass('shrink-0');
+    expect(within(meta).getByText('已停用')).toBeInTheDocument();
+    expect(within(meta).getByTitle('最近采集时间')).toBeInTheDocument();
+    expect(within(meta).getByText(/3 条/)).toBeInTheDocument();
+  });
+});
+
 describe('权威计数：折叠计数与零接入标注取 api.dimensionInputs，快照仅作接口缺失时的兜底', () => {
   it('快照仍有 2 个已接入项但接口 declared_linked=0：零接入标注按接口触发（不因快照漏报）', () => {
     // 维度快照（props）与接口计数来自各自独立的请求；接口可用时接口是唯一权威口径。
@@ -262,8 +288,8 @@ describe('输入健康度区块保留（两态共用的只读组件）', () => {
   });
 });
 
-describe('信息精简（壳层）：「具体监控内容」卡片移除，contentItems 改挂左栏维度项', () => {
-  it('观察态与配置态都不再出现「具体监控内容」标题；完整 contentItems 以悬浮/详情与文本保留', () => {
+describe('信息精简（壳层）：「具体监控内容」卡片移除，contentItems 改挂维度 chip 悬浮提示', () => {
+  it('观察态与配置态都不再出现「具体监控内容」标题；完整 contentItems 以 chip title 保留', () => {
     const dim = makeDimension({contentItems: ['地震', '台风', '海啸', '火山']});
     render(
       <MemoryRouter>
@@ -278,17 +304,17 @@ describe('信息精简（壳层）：「具体监控内容」卡片移除，cont
 
     // 观察态：原独立卡片标题不再出现
     expect(screen.queryByText('具体监控内容')).not.toBeInTheDocument();
-    // 左栏维度项保留完整清单（含原卡片才会显示的第 4 项），悬浮 title 与文本节点双重可访问
-    const contentLine = screen.getByTitle('地震 · 台风 · 海啸 · 火山');
-    expect(contentLine).toHaveTextContent('地震 · 台风 · 海啸 · 火山');
+    // #1 迁移：维度选择器改为 Tab 内 chips，完整清单（含原卡片才会显示的第 4 项）
+    // 以 chip 的悬浮 title 保留，值逐字不变
+    expect(screen.getByTestId('rule-engine-dimension-natural')).toHaveAttribute('title', '地震 · 台风 · 海啸 · 火山');
     // 信源区块为两态共用只读信息，照常渲染
     expect(screen.getByText('引用信息源')).toBeInTheDocument();
 
-    // 配置态（原卡片所在位置）：同样不再出现，且 contentItems 仍可访问
+    // 配置态（原卡片所在位置）：同样不再出现，chip 悬浮提示仍可访问
     fireEvent.click(screen.getByTestId('rule-engine-mode-toggle'));
     expect(screen.getByTestId('rule-engine-config')).toBeInTheDocument();
     expect(screen.queryByText('具体监控内容')).not.toBeInTheDocument();
-    expect(screen.getByTitle('地震 · 台风 · 海啸 · 火山')).toBeInTheDocument();
+    expect(screen.getByTestId('rule-engine-dimension-natural')).toHaveAttribute('title', '地震 · 台风 · 海啸 · 火山');
     expect(screen.getAllByText('引用信息源').length).toBeGreaterThan(0);
   });
 });

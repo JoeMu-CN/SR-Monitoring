@@ -940,7 +940,7 @@ describe('App 单源刷新联动监控健康', () => {
     vi.mocked(api.sourcesAdmin).mockResolvedValueOnce([sourceBackend]).mockImplementation(() => new Promise<never>(() => {}));
 
     renderApp('/sources');
-    expect(await screen.findByTestId('source-health-1', {}, {timeout: 5000})).toHaveTextContent('已超期');
+    expect(await screen.findByTestId('source-health-state-1', {}, {timeout: 5000})).toHaveTextContent('已超期');
     expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
 
     const user = userEvent.setup();
@@ -952,8 +952,8 @@ describe('App 单源刷新联动监控健康', () => {
     // 列表重载第 2 次调用仍未完成，健康请求并未等待 sources/collection-runs。
     expect(api.sourcesAdmin).toHaveBeenCalledTimes(2);
     // 来源行新鲜度即刻反映新结论：已超期 → 采集正常。
-    await waitFor(() => expect(screen.getByTestId('source-health-1')).toHaveTextContent('采集正常'));
-    expect(screen.getByTestId('source-health-1')).not.toHaveTextContent('已超期');
+    await waitFor(() => expect(screen.getByTestId('source-health-state-1')).toHaveTextContent('采集正常'));
+    expect(screen.getByTestId('source-health-state-1')).not.toHaveTextContent('已超期');
   });
 
   it('失败的单源刷新不触发诊断重取，行内错误保持且 monitoring-health 仍只有首次请求', async () => {

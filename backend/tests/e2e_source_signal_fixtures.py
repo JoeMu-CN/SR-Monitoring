@@ -18,9 +18,14 @@ def add_source_signal_fixtures(
     source_id: int,
     fixed_now: datetime,
 ) -> None:
-    """Add deterministic valid and expired records for source-list E2E coverage."""
-    for index in range(1, 24):
-        is_expired = index > 18
+    """Add deterministic valid and expired records for source-list E2E coverage.
+
+    规模契约：123 条有效 + 5 条已过期；叠加 seed_e2e 的 2 条证据信号后，
+    该来源为「有效 125 / 全部 130」。有效条数必须 ≥125，采集记录页按 100 条/页
+    切分时第二页才是真实的 offset=100（25 条），而不是永远只有一页的空验证。
+    """
+    for index in range(1, 129):
+        is_expired = index > 123
         occurred_at = (
             fixed_now - timedelta(days=20 + index)
             if is_expired

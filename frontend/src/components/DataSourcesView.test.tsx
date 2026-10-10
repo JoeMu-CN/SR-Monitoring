@@ -7,6 +7,12 @@ import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {DataSourcesView} from './DataSourcesView';
 
+// 六列桌面模板的期望字面量：这里刻意不复用组件内常量，改成硬编码期望值，
+// 这样任何一侧单独改动模板或间距都会让断言失败，而不是自洽地一起漂移。
+const SOURCE_LIST_DESKTOP_COLUMNS =
+  'xl:grid-cols-[minmax(260px,1.4fr)_120px_minmax(200px,1fr)_minmax(104px,0.5fr)_minmax(112px,0.6fr)_184px]';
+const SOURCE_LIST_DESKTOP_GAP = 'xl:gap-3';
+
 const source: DataSource = {
   id: '17',
   code: 'OFFICIAL-17',
@@ -184,7 +190,7 @@ describe('信息源采集记录入口', () => {
 
     const policyPrefix = screen.getByText('有效期:');
     expect(policyPrefix).toHaveClass(
-      'md:hidden',
+      'xl:hidden',
       'whitespace-nowrap',
       'text-xs',
       'font-sans',
@@ -737,8 +743,9 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
       </MemoryRouter>,
     );
 
+    const badge = screen.getByTestId('source-health-state-17');
+    expect(badge).toHaveTextContent('采集正常');
     const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('采集正常');
     expect(cell.textContent).toContain(`最近成功 ${expectedTime('2026-09-11T05:30:00Z')}`);
     expect(cell.textContent).toContain(`下次预期 ${expectedTime('2026-09-11T06:00:00Z')}`);
   });
@@ -762,10 +769,12 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
       </MemoryRouter>,
     );
 
+    const badge = screen.getByTestId('source-health-state-17');
+    expect(badge).toHaveTextContent('采集失败');
     const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('采集失败');
     expect(cell.textContent).toContain('last_attempt_failed');
-    expect(cell.textContent).not.toContain('采集正常');
+    expect(badge).not.toHaveTextContent('last_attempt_failed');
+    expect(badge).not.toHaveTextContent('采集正常');
   });
 
   it('停用与外部核查来源不出现红色故障标签', () => {
@@ -787,8 +796,8 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
       </MemoryRouter>,
     );
 
-    const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('已停用');
+    const badge = screen.getByTestId('source-health-state-17');
+    expect(badge).toHaveTextContent('已停用');
     expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
     expect(screen.queryByText('已超期')).not.toBeInTheDocument();
     view.unmount();
@@ -810,7 +819,7 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
         />
       </MemoryRouter>,
     );
-    expect(within(screen.getByTestId('source-health-17')).getByText('核查')).toBeInTheDocument();
+    expect(within(screen.getByTestId('source-health-state-17')).getByText('核查')).toBeInTheDocument();
   });
 
   it('天眼查 external_tool 行后端返回周度 ok 时，也只显示中性「按需核查」而非采集正常', () => {
@@ -844,10 +853,10 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
       </MemoryRouter>,
     );
 
-    const cell = screen.getByTestId('source-health-23');
-    expect(within(cell).getByText('按需核查')).toBeInTheDocument();
-    expect(cell.textContent).not.toContain('采集正常');
-    expect(cell.textContent).not.toContain('下次预期');
+    const badge = screen.getByTestId('source-health-state-23');
+    expect(within(badge).getByText('按需核查')).toBeInTheDocument();
+    expect(badge).not.toHaveTextContent('采集正常');
+    expect(screen.getByTestId('source-health-23')).not.toHaveTextContent('下次预期');
   });
 
   it('诊断 503（unknown/hidden）不渲染任何新鲜度占位，列表照常展示', () => {
@@ -980,7 +989,7 @@ describe('信息源列表信息架构与操作区', () => {
     expect(screen.queryByText('2026-09-01 09:00')).not.toBeInTheDocument();
     expect(screen.queryByText('运行正常')).not.toBeInTheDocument();
     expect(screen.getByTestId('source-connectivity-17')).toHaveTextContent('连通正常');
-    expect(screen.getByTestId('source-health-17')).toHaveTextContent('采集正常');
+    expect(screen.getByTestId('source-health-state-17')).toHaveTextContent('采集正常');
   });
 
   it('列表表头为「连通状态」，与名称下方的采集新鲜度区分职责', () => {
@@ -1045,6 +1054,47 @@ describe('信息源列表信息架构与操作区', () => {
     expect(idGroup).toHaveClass('whitespace-nowrap');
     // 冗长的「信息源 ID:」前缀已下线。
     expect(screen.queryByText(/信息源 ID/)).not.toBeInTheDocument();
+  });
+
+  // 名称块版面回归：左 LOGO、右侧「名称上 / 徽标下」两行。
+  // 对齐由 CSS 契约保证——右侧 column + justify-between 撑满 LOGO 高度（外层 items-stretch），
+  // 因此名称上缘压 LOGO 上缘、徽标下缘压 LOGO 下缘；LOGO 宽高必须由类显式固定，
+  // 否则图标字体缺失回落到 fallback 时「database/api」字面文本会撑宽盒子并错开对齐。
+  it('采集状态徽标进入名称正下方一格，LOGO 显式定宽高，ID 与时间行仍留在徽标下方', () => {
+    renderView([source], 'viewer', readyHealth);
+
+    const nameBlock = screen.getByTestId('source-name-block-17');
+    const icon = screen.getByTestId('source-icon-17');
+    const column = screen.getByTestId('source-name-17').parentElement;
+    const badge = screen.getByTestId('source-health-state-17');
+    const meta = screen.getByTestId('source-meta-17');
+    const times = screen.getByTestId('source-health-17');
+
+    // 外层拉伸对齐 + 右侧两行上下分布：名称在上、徽标在下。
+    expect(nameBlock.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'items-stretch']));
+    expect(column).toBe(nameBlock.lastElementChild);
+    expect(column?.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'flex-col', 'justify-between']));
+    expect(column?.firstElementChild).toBe(screen.getByTestId('source-name-17'));
+    expect(column?.lastElementChild).toBe(badge);
+    // LOGO 宽高由类固定，且不被内容（图标字体回落文本）撑开。
+    expect(icon.className.split(/\s+/)).toEqual(expect.arrayContaining(['h-10', 'w-10', 'shrink-0', 'overflow-hidden']));
+    // 徽标盒只有状态文案；ID/编码与两条时间行都在名称块之外，且顺序仍在徽标之下。
+    expect(badge.textContent).toBe('采集正常');
+    expect(nameBlock.contains(meta)).toBe(false);
+    expect(nameBlock.contains(times)).toBe(false);
+    expect(meta.compareDocumentPosition(times) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // 无诊断时既不渲染徽标也不渲染时间行，且不伪造任何采集状态文案。
+  it('无诊断数据时名称块只留名称与 LOGO，不伪造采集状态', () => {
+    renderView([source], 'viewer', {status: 'hidden'});
+
+    const column = screen.getByTestId('source-name-17').parentElement;
+    expect(column?.firstElementChild).toBe(screen.getByTestId('source-name-17'));
+    expect(column?.children).toHaveLength(1);
+    expect(screen.queryByTestId('source-health-state-17')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('source-health-17')).not.toBeInTheDocument();
+    expect(screen.getByTestId('source-name-block-17')).toHaveTextContent('官方风险源');
   });
 
   // 编码断行回归：长编码必须完整渲染（不截断、不隐藏），且「· 编码」是一个 nowrap 组，
@@ -1310,7 +1360,7 @@ describe('信息源列表信息架构与操作区', () => {
     );
 
     const health = screen.getByTestId('source-health-23');
-    expect(within(health).getByText('按需核查')).toBeInTheDocument();
+    expect(within(screen.getByTestId('source-health-state-23')).getByText('按需核查')).toBeInTheDocument();
     expect(health).toHaveTextContent(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
     expect(health).not.toHaveTextContent('下次预期');
     expect(screen.queryByText('已停用')).not.toBeInTheDocument();
@@ -1542,7 +1592,7 @@ describe('信息源列表退役来源可见性（迁移0050）', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(1);
 
     expect(screen.getByTestId('source-name-361')).toHaveTextContent('商务部实体名单详情');
-    expect(screen.getByTestId('source-health-361')).toHaveTextContent('采集正常');
+    expect(screen.getByTestId('source-health-state-361')).toHaveTextContent('采集正常');
   });
 
   it('概览卡只统计可见来源，退役来源不得进入接入数、异常数与累计数', () => {
@@ -1592,7 +1642,8 @@ describe('信息源列表退役来源可见性（迁移0050）', () => {
 });
 
 // 调度周期列回归：可见文本只渲染中文 label，原始 cron 仅进 title/aria-label 属性；
-// 表头与行网格当前为 17 列（14 列基础上把名称列从 3 加宽到 5、连通状态从 2 加宽到 3）。
+// 表头与行网格共用同一套六列语义化模板（连通状态收窄、调度周期加宽、名称保留弹性），
+// 不再使用等宽轨数 + col-span 均分。
 describe('信息源调度周期列', () => {
   const renderView = (dataSources: DataSource[]) => render(
     <MemoryRouter>
@@ -1608,7 +1659,7 @@ describe('信息源调度周期列', () => {
     </MemoryRouter>,
   );
 
-  it('表头新增「调度周期」，表头网格为 17 列且列跨度合计 17', () => {
+  it('表头新增「调度周期」，表头为六列语义化模板且不再有 col-span 分配', () => {
     const {container} = renderView([source]);
 
     expect(screen.getByText('调度周期')).toBeInTheDocument();
@@ -1616,41 +1667,79 @@ describe('信息源调度周期列', () => {
     const list = container.querySelector('[role="list"]');
     const headerRow = list?.firstElementChild;
     expect(headerRow).not.toBeNull();
-    expect(headerRow?.className).toContain('md:grid-cols-[repeat(17,minmax(0,1fr))]');
+    expect(headerRow?.className).toContain(SOURCE_LIST_DESKTOP_COLUMNS);
 
     const headerCells = Array.from(headerRow?.children ?? []);
     expect(headerCells).toHaveLength(6);
-    const spanSum = headerCells.reduce((sum, cell) => {
-      const match = /(?:^|\s)col-span-(\d+)(?:\s|$)/.exec(cell.className);
-      return sum + (match ? Number.parseInt(match[1] ?? '0', 10) : 0);
-    }, 0);
-    expect(spanSum).toBe(17);
+    expect(headerCells.map((cell) => cell.textContent)).toEqual([
+      '信息源名称', '连通状态', '调度周期', '有效期策略', '记录数（有效/累计）', '操作',
+    ]);
+    // 六列各占一个网格轨，列宽完全由共享模板决定；任何 col-span 都会把它重新钉死成均分。
+    headerCells.forEach((cell) => {
+      expect(cell.className).not.toMatch(/(?:^|\s)col-span-\d+(?:\s|$)/);
+    });
   });
 
-  // 名称列加宽回归：网格总列数 14→17 只用于让出名称列宽度，其余列跨度不变，
-  // 且表头与数据行必须逐列同栅格、同间距，否则表头与数据会错位。
-  it('名称列占 5/17，连通状态 3/17，其余列跨度不变，且行网格与表头同栅格', () => {
+  // 列宽回归：模板按内容需求分配（连通状态收窄、调度周期加宽、名称保留弹性），
+  // 且表头与数据行必须逐列同模板、同间距，否则表头与内容会错位。
+  it('表头与数据行共用同一六列模板与间距，各单元格在 xl 下各占一轨', () => {
     const {container} = renderView([source]);
 
     const list = container.querySelector('[role="list"]');
     const headerRow = list?.firstElementChild;
-    const headerCells = Array.from(headerRow?.children ?? []);
-    expect(headerCells[0]).toHaveTextContent('信息源名称');
-    expect(headerCells.map((cell) => /col-span-(\d+)/.exec(cell.className)?.[1])).toEqual([
-      '5', '3', '2', '2', '2', '3',
-    ]);
+    expect(headerRow?.className).toContain(SOURCE_LIST_DESKTOP_COLUMNS);
 
     const row = screen.getByTestId('source-name-17').closest('[role="listitem"]');
     const rowGrid = row?.firstElementChild;
-    expect(rowGrid?.className).toContain('md:grid-cols-[repeat(17,minmax(0,1fr))]');
-
-    const rowSpans = Array.from(rowGrid?.children ?? []).map((cell) =>
-      /(?:^|\s)md:col-span-(\d+)(?:\s|$)/.exec(cell.className)?.[1]);
-    expect(rowSpans).toEqual(['5', '3', '2', '2', '2', '3']);
+    expect(rowGrid?.className).toContain(SOURCE_LIST_DESKTOP_COLUMNS);
 
     // 表头与数据行的列间距必须一致，否则同一列的表头与内容会错位。
-    expect(headerRow?.className).toContain('md:gap-2.5');
-    expect(rowGrid?.className).toContain('md:gap-2.5');
+    expect(headerRow?.className).toContain(SOURCE_LIST_DESKTOP_GAP);
+    expect(rowGrid?.className).toContain(SOURCE_LIST_DESKTOP_GAP);
+
+    // 数据行的六格顺序必须与表头六列一一对应，且桌面态都回落为单轨。
+    const cells = Array.from(rowGrid?.children ?? []);
+    expect(cells).toHaveLength(6);
+    expect(cells.map((cell) => cell.getAttribute('data-testid'))).toEqual([
+      null,
+      null,
+      'source-schedule-17',
+      'source-validity-policy-17',
+      'source-record-count-17',
+      'source-actions-17',
+    ]);
+    cells.forEach((cell) => {
+      expect(cell.className.split(/\s+/)).toContain('xl:col-span-1');
+      expect(cell.className).not.toMatch(/(?:^|\s)md:col-span-\d+(?:\s|$)/);
+    });
+    // 名称格是唯一的整行格：窄屏占满 12 轨，桌面只占 1 轨。
+    expect(cells[0]?.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['col-span-12', 'xl:col-span-1']),
+    );
+  });
+
+  // 断点纪律：768px 塞不下六列（六个最小列宽之和 + 间距超出可用行宽），
+  // 因此六列表格只在 xl 起启用，窄屏沿用两列分组布局 + 移动端字段标签。
+  it('六列断点为 xl：表头窄屏隐藏、行窄屏走两列分组、字段标签窄屏才出现', () => {
+    const {container} = renderView([source]);
+
+    const list = container.querySelector('[role="list"]');
+    const headerRow = list?.firstElementChild;
+    const headerTokens = headerRow?.className.split(/\s+/);
+    expect(headerTokens).toContain('hidden');
+    expect(headerTokens).toContain('xl:grid');
+    expect(headerTokens).not.toContain('md:grid');
+
+    const rowGrid = screen.getByTestId('source-name-17')
+      .closest('[role="listitem"]')?.firstElementChild;
+    expect(rowGrid?.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['grid', 'grid-cols-12']),
+    );
+    expect(rowGrid?.className).not.toContain('md:grid-cols-[');
+
+    ['调度:', '有效期:', '记录:'].forEach((label) => {
+      expect(screen.getByText(label).className.split(/\s+/)).toContain('xl:hidden');
+    });
   });
 
   it('正常来源渲染中文 label，原始 cron 只出现在 title 与 aria-label', () => {
@@ -1687,7 +1776,7 @@ describe('信息源调度周期列', () => {
     expect(within(screen.getByTestId('source-schedule-34')).getByText('未单独配置')).toBeInTheDocument();
   });
 
-  it('值节点样式 token 齐全，移动端前缀以 md:hidden 在窄屏提示', () => {
+  it('值节点样式 token 齐全，移动端前缀以 xl:hidden 在窄屏提示', () => {
     renderView([source]);
 
     const cell = screen.getByTestId('source-schedule-17');
@@ -1695,7 +1784,7 @@ describe('信息源调度周期列', () => {
     ['whitespace-normal', 'text-xs', 'font-semibold', 'text-[#424751]', 'dark:text-slate-400'].forEach((token) => {
       expect(value.className.split(/\s+/)).toContain(token);
     });
-    expect(within(cell).getByText('调度:').className.split(/\s+/)).toContain('md:hidden');
+    expect(within(cell).getByText('调度:').className.split(/\s+/)).toContain('xl:hidden');
   });
 });
 
@@ -1723,7 +1812,7 @@ describe('信息源页不再承载调度器实况入口（已迁移独立 /sched
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // 列表与来源级新鲜度不受入口移除影响，页面照常渲染。
     expect(screen.getByRole('link', {name: '官方风险源 有效记录 7 条'})).toBeInTheDocument();
-    expect(screen.getByTestId('source-health-17')).toHaveTextContent('采集正常');
+    expect(screen.getByTestId('source-health-state-17')).toHaveTextContent('采集正常');
   });
 
   it('挂在信息源页也不触碰旧弹窗的会话面板测试标识', () => {

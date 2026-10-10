@@ -117,34 +117,77 @@ const FreshnessTimeRow = ({label, value, testId}: {
   </div>
 );
 
-/**
- * 信息源页每来源新鲜度：最后成功、下一预期与失败/超期原因。
- * 外部核查来源（onDemand 或服务端 state=on_demand）显示「核查 + 最近核查真实时间」，不显示下次预期；
- * 外部核查工具停用时后端归为 disabled，但业务语义仍是外部核查来源，不允许展示为「已停用」。
- * 停用与外部核查来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。
- * labelOverride 是只读且仅作用于 on_demand 语义的标签覆盖（天眼查在信息源页显示「按需核查」），
- * 其他状态与其他外部核查工具始终沿用默认「核查」。
- *
- * 版面：采集状态单独一行，「最近成功」「下次预期」各占一行，便于名称列加宽后仍能一屏读完；
- * 每行内标签与完整时间不拆行，也不使用「·」分隔符（换行语义已由分行承担）。
- * 唯一调用方是信息源页名称列，改动版面不影响总览页横幅语义。
- */
-export const MonitoringSourceFreshness = ({health, onDemand = false, labelOverride}: {
+interface SourceHealthProps {
   readonly health: MonitoringSourceHealth | undefined;
   readonly onDemand?: boolean;
   readonly labelOverride?: string;
-}) => {
-  if (health === undefined) return null;
+}
+
+/**
+ * 展示判定单一来源：徽标（MonitoringSourceStateBadge）与时间行（MonitoringSourceFreshness）
+ * 必须共用同一份推导结果，否则 onDemand 覆盖与 labelOverride 会在两处漂移、或重复计算状态。
+ * onDemand 把后端 disabled/failed 等状态改判为外部核查语义；labelOverride 只在 on_demand 下生效。
+ */
+interface SourceHealthPresentation {
+  readonly effectiveState: MonitoringSourceState;
+  readonly meta: (typeof SOURCE_STATE_META)[MonitoringSourceState];
+  readonly label: string;
+  readonly lastCheckAt: string | null;
+}
+
+const resolveSourceHealthPresentation = (
+  health: MonitoringSourceHealth,
+  onDemand: boolean,
+  labelOverride: string | undefined,
+): SourceHealthPresentation => {
   const effectiveState: MonitoringSourceState = onDemand ? 'on_demand' : health.state;
   const meta = SOURCE_STATE_META[effectiveState];
-  const label = effectiveState === 'on_demand' && labelOverride !== undefined ? labelOverride : meta.label;
-  const lastCheckAt = health.last_attempt_at ?? health.last_success_at;
+  return {
+    effectiveState,
+    meta,
+    label: effectiveState === 'on_demand' && labelOverride !== undefined ? labelOverride : meta.label,
+    lastCheckAt: health.last_attempt_at ?? health.last_success_at,
+  };
+};
+
+/**
+ * 采集状态徽标：信息源页名称块内占「名称正下方」一格，因此盒里只有徽标本身，
+ * 故障原因与时间都不并入（并入会把徽标盒撑高，破坏与 LOGO 下缘的对齐）。
+ * 无该来源诊断数据时不渲染，绝不伪造采集状态；语义与时间行完全同源。
+ * self-start：父级是 column flex，徽标按内容宽度贴左，不被拉成整行宽。
+ */
+export const MonitoringSourceStateBadge = ({health, onDemand = false, labelOverride}: SourceHealthProps) => {
+  if (health === undefined) return null;
+  const {meta, label} = resolveSourceHealthPresentation(health, onDemand, labelOverride);
+  return (
+    <span
+      data-testid={`source-health-state-${health.source_id}`}
+      className={`self-start shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold leading-tight ${SOURCE_TONE_CLASSES[meta.tone]}`}
+    >
+      {label}
+    </span>
+  );
+};
+
+/**
+ * 信息源页每来源新鲜度时间行：最后成功、下一预期与失败/超期原因（原因单独成行）。
+ * 外部核查来源（onDemand 或服务端 state=on_demand）显示「最近核查真实时间」，不显示下次预期；
+ * 外部核查工具停用时后端归为 disabled，但业务语义仍是外部核查来源，不允许展示为「已停用」。
+ * 停用与外部核查来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。
+ *
+ * 版面：每行内标签与完整时间不拆行，也不使用「·」分隔符（换行语义已由分行承担）。
+ * 唯一调用方是信息源页名称列（徽标已上移到名称块），改动版面不影响总览页横幅语义。
+ */
+export const MonitoringSourceFreshness = ({health, onDemand = false, labelOverride}: SourceHealthProps) => {
+  if (health === undefined) return null;
+  const {effectiveState, meta, lastCheckAt} = resolveSourceHealthPresentation(health, onDemand, labelOverride);
   return (
     <div data-testid={`source-health-${health.source_id}`} className="mt-1 space-y-0.5 text-[11px] leading-relaxed">
-      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{label}</span>
-        {meta.tone === 'fault' && <span className="whitespace-nowrap font-mono text-slate-400">原因 {health.reason_code}</span>}
-      </div>
+      {meta.tone === 'fault' && (
+        <div className="min-w-0 font-mono text-slate-400 dark:text-slate-400">
+          <span className="whitespace-nowrap">原因 {health.reason_code}</span>
+        </div>
+      )}
       {effectiveState === 'on_demand' ? (
         <FreshnessTimeRow
           testId={`source-health-last-check-${health.source_id}`}

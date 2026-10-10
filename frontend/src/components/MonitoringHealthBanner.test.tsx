@@ -1,8 +1,8 @@
-import {cleanup, render, screen, within} from '@testing-library/react';
+import {cleanup, render, screen} from '@testing-library/react';
 import {afterEach, describe, expect, it} from 'vitest';
 import type {MonitoringHealthRead} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
-import {MonitoringHealthBanner, MonitoringSourceFreshness} from './MonitoringHealthBanner';
+import {MonitoringHealthBanner, MonitoringSourceFreshness, MonitoringSourceStateBadge} from './MonitoringHealthBanner';
 
 const baseHealth: MonitoringHealthRead = {
   as_of: '2026-09-11T06:00:00Z',
@@ -45,6 +45,17 @@ const expectedTime = (value: string) => new Date(value).toLocaleString('zh-CN', 
 
 const renderBanner = (snapshot: MonitoringHealthSnapshot, hasCurrentRisks = false) => render(
   <MonitoringHealthBanner snapshot={snapshot} hasCurrentRisks={hasCurrentRisks} />,
+);
+
+type SourceHealthProps = Parameters<typeof MonitoringSourceFreshness>[0];
+
+// 与信息源页实际组合一致：名称块内「名称 / 徽标」两行 + 徽标下方的 ID 与时间块。
+// 徽标与时间行共用同一 props，才能验证两处判定同源（onDemand 覆盖不会只在一边生效）。
+const renderSourceHealth = (props: SourceHealthProps) => render(
+  <>
+    <MonitoringSourceStateBadge {...props} />
+    <MonitoringSourceFreshness {...props} />
+  </>,
 );
 
 afterEach(cleanup);
@@ -117,27 +128,31 @@ describe('MonitoringHealthBanner 诊断不可用', () => {
   });
 });
 
-describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
-  it('ok 来源显示最近成功与下次预期时间', () => {
-    render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
+describe('信息源页每来源采集状态徽标与新鲜度时间', () => {
+  it('ok 来源徽标显示「采集正常」，时间块显示最近成功与下次预期', () => {
+    renderSourceHealth({health: baseHealth.sources[0]});
+
+    expect(screen.getByTestId('source-health-state-17')).toHaveTextContent('采集正常');
     const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('采集正常');
     expect(cell.textContent).toContain(`最近成功 ${expectedTime('2026-09-11T05:30:00Z')}`);
     expect(cell.textContent).toContain(`下次预期 ${expectedTime('2026-09-11T06:00:00Z')}`);
+    // 徽标与时间块是两个独立容器：状态已上移到名称块，不再与时间挤在同一格。
+    expect(cell.contains(screen.getByTestId('source-health-state-17'))).toBe(false);
   });
 
-  // 版面回归：采集状态独占一行，「最近成功」「下次预期」各占一行，且每行是
-  // 「标签 + 完整时间」的单个 nowrap 组——只有行与行之间换行，时间戳自身永不拆断。
-  it('采集状态单独一行，最近成功与下次预期各占一行', () => {
-    render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
-    const cell = screen.getByTestId('source-health-17');
+  // 版面回归：徽标独占名称块下一格，盒里只有状态文案。原因与时间都不并入该盒——
+  // 并入会撑高徽标盒，破坏徽标下缘与 LOGO 下缘的对齐。
+  it('徽标盒只承载状态文案，原因与时间都不并入', () => {
+    renderSourceHealth({health: baseHealth.sources[0]});
 
-    const statusRow = cell.querySelector('.rounded-full')?.parentElement;
-    expect(statusRow).not.toBeNull();
-    expect(within(statusRow as HTMLElement).getByText('采集正常')).toBeInTheDocument();
-    // 状态行不得混入任何时间文本。
-    expect(statusRow?.textContent).not.toContain('最近成功');
-    expect(statusRow?.textContent).not.toContain('下次预期');
+    const badge = screen.getByTestId('source-health-state-17');
+    expect(badge.textContent).toBe('采集正常');
+    expect(badge.textContent).not.toContain('最近成功');
+    expect(badge.textContent).not.toContain('下次预期');
+    expect(badge.textContent).not.toContain('原因');
+    expect(badge).toHaveClass('rounded-full');
+    // column flex 内按内容宽度贴左，不被拉成整行宽。
+    expect(badge).toHaveClass('self-start');
 
     const lastSuccessRow = screen.getByTestId('source-health-last-success-17');
     const nextExpectedRow = screen.getByTestId('source-health-next-expected-17');
@@ -197,72 +212,62 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
     expect(lastSuccess.textContent).toContain(expectedTime(longStamp));
   });
 
-  it('failed 来源显示失败标签与脱敏 reason_code', () => {
-    render(
-      <MonitoringSourceFreshness
-        health={{...baseHealth.sources[0], state: 'failed', reason_code: 'last_attempt_failed', next_expected_at: null}}
-      />,
-    );
-    const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('采集失败');
-    expect(cell.textContent).toContain('last_attempt_failed');
-  });
+    it('failed 来源徽标显示失败标签，原因码在时间块单独成行、不并入徽标盒', () => {
+      renderSourceHealth({health: {...baseHealth.sources[0], state: 'failed', reason_code: 'last_attempt_failed', next_expected_at: null}});
 
-  it('overdue 来源显示超期标签，不得显示为正常', () => {
-    render(
-      <MonitoringSourceFreshness
-        health={{...baseHealth.sources[0], state: 'overdue', reason_code: 'missed_expected_trigger'}}
-      />,
-    );
-    const cell = screen.getByTestId('source-health-17');
-    expect(cell.textContent).toContain('已超期');
-    expect(cell.textContent).not.toContain('采集正常');
-  });
+      const badge = screen.getByTestId('source-health-state-17');
+      expect(badge.textContent).toBe('采集失败');
+      expect(badge.textContent).not.toContain('last_attempt_failed');
+      expect(screen.getByTestId('source-health-17').textContent).toContain('last_attempt_failed');
+    });
 
-  it('停用与外部核查来源以中性语义展示，不出现红色故障标签', () => {
-    const disabled = render(
-      <MonitoringSourceFreshness
-        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
-      />,
-    );
-    expect(screen.getByTestId('source-health-17').textContent).toContain('已停用');
-    expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
-    expect(screen.queryByText('已超期')).not.toBeInTheDocument();
-    disabled.unmount();
+    it('overdue 来源徽标显示超期标签，不得显示为正常', () => {
+      renderSourceHealth({health: {...baseHealth.sources[0], state: 'overdue', reason_code: 'missed_expected_trigger'}});
 
-    render(
-      <MonitoringSourceFreshness
-        health={{...baseHealth.sources[0], source_id: 18, state: 'on_demand', reason_code: 'on_demand', next_expected_at: null}}
-      />,
-    );
-    expect(within(screen.getByTestId('source-health-18')).getByText('核查')).toBeInTheDocument();
-    expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
-  });
+      const badge = screen.getByTestId('source-health-state-17');
+      expect(badge.textContent).toBe('已超期');
+      expect(badge.textContent).not.toContain('采集正常');
+    });
 
-  it('健康快照中没有该来源时不渲染任何占位', () => {
-    render(<MonitoringSourceFreshness health={undefined} />);
-    expect(screen.queryByTestId(/^source-health-/)).not.toBeInTheDocument();
-  });
+    it('停用与外部核查来源以中性语义展示，不出现红色故障标签', () => {
+      const disabled = renderSourceHealth({
+        health: {...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null},
+      });
+      expect(screen.getByTestId('source-health-state-17').textContent).toBe('已停用');
+      expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
+      expect(screen.queryByText('已超期')).not.toBeInTheDocument();
+      disabled.unmount();
 
-  it('on_demand 来源显示「核查 + 最近核查真实时间」，不显示下次预期与最近成功', () => {
-    render(
-      <MonitoringSourceFreshness
-        health={{
+      renderSourceHealth({
+        health: {...baseHealth.sources[0], source_id: 18, state: 'on_demand', reason_code: 'on_demand', next_expected_at: null},
+      });
+      expect(screen.getByTestId('source-health-state-18').textContent).toBe('核查');
+      expect(screen.queryByText('采集失败')).not.toBeInTheDocument();
+    });
+
+    it('健康快照中没有该来源时徽标与时间块都不渲染任何占位', () => {
+      renderSourceHealth({health: undefined});
+      expect(screen.queryByTestId(/^source-health-/)).not.toBeInTheDocument();
+    });
+
+    it('on_demand 来源显示「核查 + 最近核查真实时间」，不显示下次预期与最近成功', () => {
+      renderSourceHealth({
+        health: {
           ...baseHealth.sources[0],
           state: 'on_demand',
           reason_code: 'on_demand',
           next_expected_at: null,
           last_success_at: null,
           last_attempt_at: '2026-09-10T03:00:00Z',
-        }}
-      />,
-    );
-    const cell = screen.getByTestId('source-health-17');
-    expect(within(cell).getByText('核查')).toBeInTheDocument();
-    expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
-    expect(cell.textContent).not.toContain('下次预期');
-    expect(cell.textContent).not.toContain('最近成功');
-  });
+        },
+      });
+
+      expect(screen.getByTestId('source-health-state-17').textContent).toBe('核查');
+      const cell = screen.getByTestId('source-health-17');
+      expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
+      expect(cell.textContent).not.toContain('下次预期');
+      expect(cell.textContent).not.toContain('最近成功');
+    });
 
   it('on_demand 分支同样把「最近核查」标签与时间戳放在同一个 nowrap 组内', () => {
     render(
@@ -289,67 +294,58 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
   });
 
   it('onDemand 覆盖后端 disabled：外部核查工具停用时显示核查而非已停用', () => {
-    render(
-      <MonitoringSourceFreshness
-        onDemand
-        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
-      />,
-    );
-    const cell = screen.getByTestId('source-health-17');
-    expect(within(cell).getByText('核查')).toBeInTheDocument();
-    expect(cell.textContent).not.toContain('已停用');
-    expect(cell.textContent).not.toContain('下次预期');
+    renderSourceHealth({
+      onDemand: true,
+      health: {...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null},
+    });
+
+    expect(screen.getByTestId('source-health-state-17').textContent).toBe('核查');
+    expect(screen.getByTestId('source-health-17').textContent).not.toContain('下次预期');
   });
 
   it('labelOverride 仅在 on_demand 语义下覆盖标签，默认仍为「核查」且不影响其他状态', () => {
-    const overridden = render(
-      <MonitoringSourceFreshness
-        onDemand
-        labelOverride="按需核查"
-        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
-      />,
-    );
-    expect(within(screen.getByTestId('source-health-17')).getByText('按需核查')).toBeInTheDocument();
+    const overridden = renderSourceHealth({
+      onDemand: true,
+      labelOverride: '按需核查',
+      health: {...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null},
+    });
+    expect(screen.getByTestId('source-health-state-17').textContent).toBe('按需核查');
     overridden.unmount();
 
     // 未传覆盖时保持默认「核查」；非 on_demand 状态即便传入覆盖也不改变。
-    const defaultLabel = render(
-      <MonitoringSourceFreshness
-        onDemand
-        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
-      />,
-    );
-    expect(within(screen.getByTestId('source-health-17')).getByText('核查')).toBeInTheDocument();
+    const defaultLabel = renderSourceHealth({
+      onDemand: true,
+      health: {...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null},
+    });
+    expect(screen.getByTestId('source-health-state-17').textContent).toBe('核查');
     defaultLabel.unmount();
 
-    render(
-      <MonitoringSourceFreshness
-        labelOverride="按需核查"
-        health={{...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null}}
-      />,
-    );
-    expect(within(screen.getByTestId('source-health-17')).getByText('已停用')).toBeInTheDocument();
+    renderSourceHealth({
+      labelOverride: '按需核查',
+      health: {...baseHealth.sources[0], state: 'disabled', reason_code: 'disabled', next_expected_at: null},
+    });
+    expect(screen.getByTestId('source-health-state-17').textContent).toBe('已停用');
     expect(screen.queryByText('按需核查')).not.toBeInTheDocument();
   });
 
   it('外部核查来源即使后端返回周度 ok 状态，仍以中性「核查」展示且不显示下次预期', () => {
-    render(
-      <MonitoringSourceFreshness
-        onDemand
-        health={{
-          ...baseHealth.sources[0],
-          state: 'ok',
-          reason_code: 'success_observed',
-          last_success_at: '2026-09-06T22:30:00Z',
-          last_attempt_at: '2026-09-06T22:30:00Z',
-          next_expected_at: '2026-09-12T22:00:00Z',
-        }}
-      />,
-    );
-    const cell = screen.getByTestId('source-health-17');
-    expect(within(cell).getByText('核查')).toBeInTheDocument();
+    renderSourceHealth({
+      onDemand: true,
+      health: {
+        ...baseHealth.sources[0],
+        state: 'ok',
+        reason_code: 'success_observed',
+        last_success_at: '2026-09-06T22:30:00Z',
+        last_attempt_at: '2026-09-06T22:30:00Z',
+        next_expected_at: '2026-09-12T22:00:00Z',
+      },
+    });
+
+    const badge = screen.getByTestId('source-health-state-17');
+    expect(badge.textContent).toBe('核查');
     // 外部核查来源不得因后端周度 ok 就展示「采集正常」或泄露下次预期。
-    expect(cell.textContent).not.toContain('采集正常');
+    expect(badge.textContent).not.toContain('采集正常');
+    const cell = screen.getByTestId('source-health-17');
     expect(cell.textContent).not.toContain('下次预期');
     expect(cell.textContent).toContain(`最近核查 ${expectedTime('2026-09-06T22:30:00Z')}`);
   });

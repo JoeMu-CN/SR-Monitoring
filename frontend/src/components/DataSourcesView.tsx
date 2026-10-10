@@ -7,7 +7,7 @@ import {sourceSignalsPath} from '../routes';
 import {describeSourceSchedule} from '../sourceSchedule';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
-import {MonitoringSourceFreshness} from './MonitoringHealthBanner';
+import {MonitoringSourceFreshness, MonitoringSourceStateBadge} from './MonitoringHealthBanner';
 
 /**
  * 列表重载的最窄副作用意图：单来源刷新/核查 2xx 后，监控健康（monitoring-health）
@@ -145,6 +145,25 @@ const TYC_SOURCE_CODE = 'tianyancha';
 // 迁移 0050 退役来源：mofcom-entity-control（业务库 ID 4）已停用并取消调度，
 // 唯一入口收敛到 mofcom-entity-detail（业务库 ID 361）；控制台只隐藏不删除其行。
 const RETIRED_SOURCE_CODE = 'mofcom-entity-control';
+
+// 六列桌面布局模板：表头与数据行必须引用同一个常量，任一侧单独改动都会造成列错位。
+//
+// 列宽按内容需求分配，而不是把固定轨数等宽均分（等宽均分会让「连通状态」这类只承载
+// 一个 nowrap 胶囊的列占掉大块留白，同时把「调度周期」压到装不下长中文周期）：
+//   名称        minmax(260px, 1.4fr) 左 LOGO 40px + 名称 + ID/编码 + 完整时间戳同行，保留弹性
+//   连通状态    120px                最长标签「间隔保护中/请求执行中」胶囊所需宽度，不需要更多
+//   调度周期    minmax(200px, 1fr)   容纳「每周日、周一 06:00（分片）」这类最长中文周期
+//   有效期策略  minmax(104px, 0.5fr) 容纳「固定天数 30 天」与表头，取合理下限
+//   记录数      minmax(112px, 0.6fr) 容纳「72,341 / 251,234 条」与两行表头，取合理下限
+//   操作        184px                按刷新/编辑/停用三个按钮实测宽度（72+44+44+2×8=176）分配
+//
+// 断点用 xl（1280px）而不是 md：768px 塞六列会同时挤爆连通胶囊与调度文本；即便 1024px，
+// 六个最小列宽之和（980px）加 5×12px 间距仍超出该宽度下的可用行宽（936px），必然横向溢出。
+// 因此低于 xl 一律退回已有的两列分组布局 + 移动端字段标签，不在窄屏强塞六列。
+const SOURCE_LIST_DESKTOP_COLUMNS =
+  'xl:grid-cols-[minmax(260px,1.4fr)_120px_minmax(200px,1fr)_minmax(104px,0.5fr)_minmax(112px,0.6fr)_184px]';
+// 表头与数据行的列间距共用同一常量，否则同一列的表头与内容会横向错位。
+const SOURCE_LIST_DESKTOP_GAP = 'xl:gap-3';
 
 // 单来源刷新的业务化禁用原因；null 表示当前可触发采集。
 const refreshBlockedReason = (
@@ -518,23 +537,20 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         role="list"
         aria-label="信息源列表"
       >
-        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-[repeat(17,minmax(0,1fr))] md:gap-2.5">
-          {/* 名称列是信息源识别主键，需要容纳标题、ID/编码与新鲜度三段文字，因此从 3/14 加宽到 5/17；
-              「连通状态」是 nowrap 胶囊，2 轨在 768px 下只有 71px 装不下 78px 的标签，
-              故从 2 提到 3；调度周期/有效期/记录数/操作四列跨度保持 2/2/2/3 不变。
-              md 间距取 gap-2.5（10px）而非 gap-4：17 轨 + 16px 间距会让 768px 下的
-              「连通状态」胶囊与「下次预期 + 完整时间戳」行双双超出各自单元格。 */}
-          <div className="col-span-5">信息源名称</div>
-          <div className="col-span-3">连通状态</div>
-          <div className="col-span-2">调度周期</div>
-          <div className="col-span-2">有效期策略</div>
-          {/* 768px CJK 回归：表头曾把「累计」从中间断开。拆为两个不可拆语义短语，
-              md 下有意分行，lg 起恢复同行；DOM 顺序保持可访问文本为「记录数（有效/累计）」。 */}
-          <div className="col-span-2 flex flex-col lg:block">
+        <div className={`hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 xl:grid ${SOURCE_LIST_DESKTOP_COLUMNS} ${SOURCE_LIST_DESKTOP_GAP}`}>
+          {/* 表头与数据行共用 SOURCE_LIST_DESKTOP_COLUMNS / GAP：这里不再出现 col-span，
+              六列各占一个网格轨，列宽完全由共享模板按内容需求决定。 */}
+          <div>信息源名称</div>
+          <div>连通状态</div>
+          <div>调度周期</div>
+          <div>有效期策略</div>
+          {/* 「累计」不能从中间断开：拆为两个不可拆语义短语，窄于阈值时分行、xl 起同行，
+              DOM 顺序保持可访问文本为「记录数（有效/累计）」。 */}
+          <div className="flex flex-col xl:block">
             <span className="whitespace-nowrap">记录数</span>
             <span className="whitespace-nowrap">（有效/累计）</span>
           </div>
-          <div className="col-span-3 text-right">操作</div>
+          <div className="text-right">操作</div>
         </div>
         <div className="divide-y divide-[#c2c6d2]/50 dark:divide-slate-800">
           {visibleSources.length === 0 && (
@@ -571,31 +587,45 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                 role="listitem"
                 className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${statusStyle.row}`}
               >
-                <div className="grid grid-cols-12 gap-3 md:grid-cols-[repeat(17,minmax(0,1fr))] md:gap-2.5 items-center">
-                  <div className="col-span-12 md:col-span-5 min-w-0">
-                    {/* 图标只与标题同行（不缩进后续行）：ID/编码与两条新鲜度时间行因此可用整个单元格宽度，
-                        「下次预期 + 完整时间戳」这一 nowrap 行在 768px 下也不会被裁切。 */}
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div data-testid={`source-icon-${source.id}`} className={`p-2.5 shrink-0 rounded-lg flex items-center justify-center ${statusStyle.icon}`}>
-                        <span className="material-symbols-outlined text-[20px]">
+                {/* 与表头共用同一套六列模板与间距；窄于 xl 时退回两列分组布局，
+                    因此单元格保留 col-span-6/12 的窄屏跨度，并在 xl 覆盖为单轨。 */}
+                <div className={`grid grid-cols-12 gap-3 ${SOURCE_LIST_DESKTOP_COLUMNS} ${SOURCE_LIST_DESKTOP_GAP} items-center`}>
+                  <div className="col-span-12 xl:col-span-1 min-w-0">
+                    {/* 名称块：左 LOGO + 右侧「名称上 / 徽标下」两行。
+                        右侧 flex-col justify-between 撑满 LOGO 高度（外层 items-stretch），
+                        因此名称文本上缘与 LOGO 上缘齐平、徽标下缘与 LOGO 下缘齐平；
+                        LOGO 宽高由 h-10 w-10 显式固定，图标字体缺失回落到 fallback 时
+                        「database/api」字面文本既撑不宽盒子（overflow-hidden）也不改盒高（leading-none）。 */}
+                    <div data-testid={`source-name-block-${source.id}`} className="flex items-stretch gap-3 min-w-0">
+                      <div data-testid={`source-icon-${source.id}`} className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg p-2 ${statusStyle.icon}`}>
+                        <span className="material-symbols-outlined text-[20px] leading-none">
                           {source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}
                         </span>
                       </div>
-                      {/* 标题独占一行：不再与任何徽标争宽度，极长时按 truncate 省略并由 title 兜底。 */}
-                      <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate min-w-0">{displayName}</h3>
+                      {/* 两行容器：名称独占上行（不再与徽标争宽度，极长时按 truncate 省略并由 title 兜底），
+                          徽标独占下行；徽标缺失（无诊断）时该格不渲染，不伪造状态。 */}
+                      <div className="flex min-w-0 flex-1 flex-col justify-between">
+                        <h3 data-testid={`source-name-${source.id}`} title={displayName} className="truncate min-w-0 font-bold text-[14px] leading-tight text-[#101d28] dark:text-white">{displayName}</h3>
+                        <MonitoringSourceStateBadge
+                          health={healthBySource?.get(Number(source.id))}
+                          onDemand={isExternalTool}
+                          labelOverride={isTycSource ? '按需核查' : undefined}
+                        />
+                      </div>
                     </div>
-                    {/* ID 与「· 编码」各自是一个 nowrap 组：换行只发生在组边界，编码自身不拆行、不隐藏。 */}
+                    {/* ID 与「· 编码」各自是一个 nowrap 组：换行只发生在组边界，编码自身不拆行、不隐藏。
+                        两行已完整落在徽标之下，可继续使用整个单元格宽度。 */}
                     <p data-testid={`source-meta-${source.id}`} className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-[11px] text-slate-500 dark:text-slate-400">
                       <span data-testid={`source-id-${source.id}`} className="whitespace-nowrap">ID: <span className="font-mono font-bold">{source.id}</span></span>
                       <span data-testid={`source-code-${source.id}`} className="whitespace-nowrap" title={source.code}>· 编码: <span className="font-mono">{source.code}</span></span>
                     </p>
-                      <MonitoringSourceFreshness
+                    <MonitoringSourceFreshness
                       health={healthBySource?.get(Number(source.id))}
                       onDemand={isExternalTool}
                       labelOverride={isTycSource ? '按需核查' : undefined}
                     />
                   </div>
-                  <div className="col-span-6 md:col-span-3 flex items-center gap-2">
+                  <div className="col-span-6 xl:col-span-1 flex items-center gap-2">
                     <span
                       data-testid={`source-connectivity-${source.id}`}
                       title={sourceNodeHint(source)}
@@ -613,8 +643,8 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                       {connectivityLabel}
                     </span>
                   </div>
-                  <div data-testid={`source-schedule-${source.id}`} className="col-span-6 md:col-span-2 min-w-0 text-[13px]">
-                    <span className="md:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">调度:</span>
+                  <div data-testid={`source-schedule-${source.id}`} className="col-span-6 xl:col-span-1 min-w-0 text-[13px]">
+                    <span className="xl:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">调度:</span>
                     <span
                       className="whitespace-normal text-xs font-semibold text-[#424751] dark:text-slate-400"
                       title={scheduleDisplay.title}
@@ -625,11 +655,11 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   </div>
                   <div
                     data-testid={`source-validity-policy-${source.id}`}
-                    className="col-span-6 md:col-span-2 flex flex-wrap items-baseline gap-x-1 text-[13px]"
+                    className="col-span-6 xl:col-span-1 flex flex-wrap items-baseline gap-x-1 text-[13px]"
                   >
                     {source.validityPolicy && (
                       <>
-                        <span className="md:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">有效期:</span>
+                        <span className="xl:hidden whitespace-nowrap text-xs font-sans font-semibold text-[#424751] dark:text-slate-400 mr-0.5">有效期:</span>
                         <span className="whitespace-nowrap text-xs font-semibold text-[#424751] dark:text-slate-400">
                           {VALIDITY_MODE_LABELS[source.validityPolicy.mode] ?? source.validityPolicy.mode}
                           {source.validityPolicy.fixed_days != null ? ` ${source.validityPolicy.fixed_days} 天` : ''}
@@ -639,9 +669,9 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                   </div>
                   <div
                     data-testid={`source-record-count-${source.id}`}
-                    className="col-span-6 md:col-span-2 flex flex-wrap items-baseline gap-x-1 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400"
+                    className="col-span-6 xl:col-span-1 flex flex-wrap items-baseline gap-x-1 text-[13px] font-mono font-bold text-[#004782] dark:text-blue-400"
                   >
-                    <span className="md:hidden text-slate-400 text-[11px] font-sans font-normal mr-0.5">记录:</span>
+                    <span className="xl:hidden text-slate-400 text-[11px] font-sans font-normal mr-0.5">记录:</span>
                     <Link
                       to={sourceSignalsPath(source.id, 'valid')}
                       aria-label={`${displayName} 有效记录 ${source.validSignalCount} 条`}
@@ -662,7 +692,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                     </Link>
                     <span className="text-[11px] font-normal text-slate-500">条</span>
                   </div>
-                  <div data-testid={`source-actions-${source.id}`} className="col-span-12 md:col-span-3 flex flex-wrap items-center justify-end gap-2 text-right">
+                  <div data-testid={`source-actions-${source.id}`} className="col-span-12 xl:col-span-1 flex flex-wrap items-center justify-end gap-2 text-right">
                     {/* 天眼查手动核查入口已收敛到供应商查询助手：动作区不渲染通用刷新。 */}
                     {!isTycSource && (
                       <span title={runTitle} className="inline-flex">

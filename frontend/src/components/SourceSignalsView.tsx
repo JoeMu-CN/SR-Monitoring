@@ -1,51 +1,16 @@
 import {useEffect, useRef, useState} from 'react';
-import {ArrowLeft, ExternalLink, FileText} from 'lucide-react';
+import {ArrowLeft} from 'lucide-react';
 import {Link, useParams, useSearchParams} from 'react-router-dom';
-import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse, type ValidityAnchorSource, type ValidityReasonRead} from '../api';
+import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse} from '../api';
 import {routePaths, type SourceSignalScope} from '../routes';
-import {SignalSummaryText} from './SignalSummaryText';
+import {SourceSignalsTable} from './SourceSignalsTable';
 import {SourceSignalReportModal, type ActiveSourceSignal} from './SourceSignalReportModal';
-import {ValidityStateBadge} from './ValidityStateBadge';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 100;
 
 interface SourceSignalsViewProps {
   readonly onRequestError: (error: ApiError) => void;
 }
-
-const formatDateTime = (value: string | null) => (
-  value ? new Date(value).toLocaleString('zh-CN', {hour12: false}) : '未提供'
-);
-
-const safeSourceUrl = (value: string | null) => (
-  value !== null && /^https?:\/\//i.test(value) ? value : null
-);
-
-/* ── 局部中文映射：只覆盖常见枚举，未知值一律保留原文兜底 ─────────────── */
-
-const VALIDITY_REASON_LABELS: Record<string, string> = {
-  active: '有效',
-  effective_signal_support: '存在有效信号支撑', no_effective_signal_support: '无有效信号支撑',
-  deadline_reached: '已到有效期截止', classification_failed: '分类失败待复核',
-  classification_resolved: '分类已确认', pending_classification: '等待分类',
-  anchor_fallback: '未提供发布时间，改用采集时间计算', policy_resolved: '已按有效期规则计算',
-  superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
-  quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
-};
-
-/** legacy 不展示时间依据，因此这里只覆盖实际会渲染的四种时间依据。 */
-const ANCHOR_SOURCE_LABELS: Record<Exclude<ValidityAnchorSource, 'legacy'>, string> = {
-  published_at: '发布时间', collected_at: '采集时间',
-  official_valid_until: '官方有效期截止时间', event_end: '事件结束时间',
-};
-
-/** 常见原因取易懂中文，未知原因保留后端原文；时间依据统一说明“依据哪个时间算的”。 */
-const formatValidityReason = ({code, anchor_source}: ValidityReasonRead): string => {
-  const reason = VALIDITY_REASON_LABELS[code] ?? code;
-  // legacy 记录没有时间依据；anchor_fallback 文案已自带计算依据，重复追加会变成两句话说同一件事。
-  if (anchor_source === 'legacy' || code === 'anchor_fallback') return reason;
-  return `${reason}（以${ANCHOR_SOURCE_LABELS[anchor_source]}为依据）`;
-};
 
 export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
   const {sourceId = ''} = useParams();
@@ -83,7 +48,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
       return;
     }
 
-    void api.sourceSignals(numericSourceId, scope, (page - 1) * PAGE_SIZE)
+    void api.sourceSignals(numericSourceId, scope, (page - 1) * PAGE_SIZE, PAGE_SIZE)
       .then((response) => {
         if (requestSequence.current !== sequence) return;
         setData(response);
@@ -183,49 +148,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{scope === 'valid' ? '可切换到全部历史，查看已过期的留存记录。' : '该信息源尚未采集到记录。'}</p>
           </div>
         ) : (
-          <div role="list" className="divide-y divide-slate-200 dark:divide-slate-700">
-            {data.items.map((signal) => {
-              const sourceUrl = safeSourceUrl(signal.url);
-              const summary = signal.summary.trim() ? signal.summary : '暂无摘要';
-              return (
-                <article key={signal.id} role="listitem" className="space-y-3 p-4 sm:p-5">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <h2 className="min-w-0 text-sm font-bold leading-relaxed text-slate-900 dark:text-white">{signal.title}</h2>
-                      <ValidityStateBadge state={signal.validity_state} />
-                    </div>
-                    {sourceUrl && (
-                      <a href={sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 shrink-0 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300">
-                        查看原文<ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
-                      </a>
-                    )}
-                  </div>
-                  <dl className="grid gap-2 text-xs text-slate-600 sm:grid-cols-3 dark:text-slate-400">
-                    <div><dt className="font-bold">发布时间</dt><dd>{formatDateTime(signal.published_at)}</dd></div>
-                    <div><dt className="font-bold">采集时间</dt><dd>{formatDateTime(signal.collected_at)}</dd></div>
-                    <div className="min-w-0"><dt className="font-bold">外部编号</dt><dd className="break-all font-mono">{signal.external_id ?? '未提供'}</dd></div>
-                    <div><dt className="font-bold">有效期截止</dt><dd>{formatDateTime(signal.valid_until)}</dd></div>
-                    <div><dt className="font-bold">复核时间</dt><dd>{formatDateTime(signal.review_due_at)}</dd></div>
-                    <div className="min-w-0"><dt className="font-bold">策略版本</dt><dd className="break-all font-mono">{signal.validity_policy_version ?? '未生成'}</dd></div>
-                    <div className="min-w-0 sm:col-span-3"><dt className="font-bold">有效期原因</dt><dd data-testid={`source-signal-reason-${signal.id}`} className="break-words">{formatValidityReason(signal.validity_reason)}</dd></div>
-                  </dl>
-                  {/* 主列表只呈现后端受控摘要；完整正文与结构化报告一律经弹窗按需查看。 */}
-                  {/* 摘要按业务分隔符做语义换行：短标签整体不断行，长正文仍走 break-words。 */}
-                  <p data-testid={`source-signal-summary-${signal.id}`} className="max-w-[75ch] whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300">
-                    <SignalSummaryText text={summary} />
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setActiveSignal({id: signal.id, title: signal.title})}
-                    aria-label={`查看完整报告：${signal.title}`}
-                    className="inline-flex min-h-11 items-center gap-1 text-xs font-bold text-blue-700 hover:underline dark:text-blue-300"
-                  >
-                    <FileText aria-hidden="true" className="h-4 w-4" />查看完整报告
-                  </button>
-                </article>
-              );
-            })}
-          </div>
+          <SourceSignalsTable source={data.source} items={data.items} offset={data.offset} onOpenReport={setActiveSignal} />
         )}
 
         <nav aria-label="采集记录分页" className="flex items-center justify-between border-t border-slate-200 p-4 dark:border-slate-700">

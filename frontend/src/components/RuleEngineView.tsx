@@ -716,7 +716,12 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
               aria-label={`${selectedDim.name} 维度概览（只读）`}
               className="mb-2 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60"
             >
-              <div className="grid grid-cols-1 gap-x-8 gap-y-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+              {/* 左右分栏比例 1fr / 1.6fr（原型 dim-layout 同构）：右侧三块 stats 需要横向空间。
+                  旧 1.2fr/1fr 在 1440 桌面只给 stats 约 490px，内层三卡各剩 155px，「启用匹配柱」
+                  只能排成三行（主体·地点·产品 / ·国家/区域 / ·行业/原材料）。实测两行所需的内容盒
+                  下限是 152px（5 柱 · 13px 字号），把右栏抬到 1.6fr 后 1440 下三卡各约 213px、
+                  内容盒约 186px，稳定两行；左栏仍有 415px 容纳 22px 维度名与事件类型 chips 换行。 */}
+              <div className="grid grid-cols-1 gap-x-8 gap-y-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[11px] font-semibold tracking-wide text-slate-500 dark:text-slate-400">
@@ -777,8 +782,12 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                   </div>
                 </div>
 
-                {/* 右侧三块 stats：内层小卡与原型 .dim-stat 同构（10.5px 标签 + 13px 值 + mono 备注行） */}
-                <dl className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(140px,1fr))] content-start gap-3">
+                {/* 右侧三块 stats：内层小卡与原型 .dim-stat 同构（10.5px 标签 + 13px 值 + mono 备注行）。
+                    等宽契约：auto-fit + 1fr 轨道让三张卡各占恰好一条等宽轨道（列数随宽度自动 3→2→1，
+                    但每列宽度始终相同），匹配柱卡因此不会比输入状态/引用信源更宽或更窄。
+                    最小轨道 200px：低于该值 auto-fit 会排出装不下 5 柱两行的窄列（实测内容盒
+                    需 ≥152px，旧 140px 下限在部分桌面宽度会退化成三行），200px 给足余量。 */}
+                <dl className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(200px,1fr))] content-start gap-3">
                   <div className="min-w-0 rounded-xl border border-slate-200/80 bg-[#f8fafc] p-3 dark:border-slate-700 dark:bg-slate-900/40">
                     <dt className="text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">输入状态</dt>
                     <dd className="mt-1 text-[13px] font-bold text-[#101d28] dark:text-white">
@@ -810,11 +819,22 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                       {selectedDim.dataSources.filter((source) => source.linked).length} / {selectedDim.dataSources.length} 已接入
                     </dd>
                   </div>
-                  {/* 启用匹配柱：value → 中文标签（SUMMARY_MATCH_COLUMN_LABELS），· 连接（原型 :642） */}
+                  {/* 启用匹配柱：value → 中文标签（SUMMARY_MATCH_COLUMN_LABELS），· 连接（原型 :642）。
+                      为什么逐项 nowrap 而不是给整行加 nowrap：窄卡里 5 根柱必须能在「名称之间」换行，
+                      整行 nowrap 会横向溢出；父级仍保留 break-words 作为单根超长柱的兜底。
+                      为什么分隔符并进同一片段：`国家/区域`、`行业/原材料` 必须在同一行，
+                      断在 `·` 之后会出现行首孤立分隔符，所以 `·` 与前置间距一起放进后一项的不换行片段。 */}
                   <div className="min-w-0 rounded-xl border border-slate-200/80 bg-[#f8fafc] p-3 dark:border-slate-700 dark:bg-slate-900/40">
                     <dt className="text-[10.5px] font-bold tracking-wide text-slate-500 dark:text-slate-400">启用匹配柱</dt>
                     <dd data-testid="rule-engine-dim-match-columns" className="mt-1 break-words text-[13px] font-bold text-[#101d28] dark:text-white">
-                      {selectedDim.matchColumns.map((column) => SUMMARY_MATCH_COLUMN_LABELS[column] ?? column).join(' · ') || '—'}
+                      {selectedDim.matchColumns.length === 0
+                        ? '—'
+                        : selectedDim.matchColumns.map((column, index) => (
+                            <span key={column} className="inline-block whitespace-nowrap">
+                              {index > 0 && <span className="mx-1" aria-hidden="true">·</span>}
+                              {SUMMARY_MATCH_COLUMN_LABELS[column] ?? column}
+                            </span>
+                          ))}
                     </dd>
                   </div>
                 </dl>

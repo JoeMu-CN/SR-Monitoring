@@ -634,3 +634,73 @@ describe('方案 B 布局与位置契约（#1/#16/#17/#18/#19/#33）', () => {
     expect(sampleChip.className).not.toContain('rounded-md');
   });
 });
+
+/**
+ * 维度概览「启用匹配柱」窄卡换行回归（名称词内换行缺陷）：
+ * 国家/区域、行业/原材料这类长中文名必须各自完整占一行，名称之间仍可换行。
+ * 断言只锁定机器可读的结构契约（不换行片段 + 分隔符归属），不断言像素布局。
+ */
+describe('维度概览启用匹配柱：名称不拆行', () => {
+  const renderDim = (dim: MonitoringDimension) =>
+    renderWithRouter(
+      <RuleEngineView dimensions={[dim]} onToggleDimension={vi.fn()} onUpdateDimension={vi.fn()} role="viewer" />,
+    );
+
+  it('每个柱名（含国家/区域、行业/原材料）各自被 inline-block whitespace-nowrap 包裹，且前置 · 与名称同片段', () => {
+    renderDim(dimension({matchColumns: ['entity', 'location', 'product', 'country', 'industry']}));
+
+    const summary = screen.getByTestId('rule-engine-dim-match-columns');
+    // 整行不设 nowrap：容器仍允许在「柱名之间」换行（窄卡内不横向溢出）
+    expect(summary.className).not.toContain('whitespace-nowrap');
+
+    for (const label of ['主体', '地点', '产品', '国家/区域', '行业/原材料']) {
+      const chip = within(summary).getByText(label);
+      expect(chip.tagName).toBe('SPAN');
+      expect(chip.className).toContain('inline-block');
+      expect(chip.className).toContain('whitespace-nowrap');
+    }
+
+    // 首项无前置分隔符；其余项的 · 必须落在名称所在的不换行片段内，避免行首孤立分隔符
+    expect(within(summary).getByText('主体').textContent).toBe('主体');
+    for (const label of ['国家/区域', '行业/原材料']) {
+      expect(within(summary).getByText(label).textContent).toContain('·');
+    }
+  });
+
+  it('未启用任何匹配柱时回退显示 —', () => {
+    renderDim(dimension({matchColumns: []}));
+
+    const summary = screen.getByTestId('rule-engine-dim-match-columns');
+    expect(summary.textContent).toBe('—');
+    expect(summary.querySelector('span')).toBeNull();
+  });
+
+  /**
+   * 桌面三行 → 两行的布局回归（1440 桌面下匹配柱曾排成三行）：
+   * 只锁定机器可读的布局契约——三卡同属一个 auto-fit + 1fr 网格容器（因此等宽）、
+   * 最小轨道宽度不小于实测的「5 柱两行」下限、stats 分栏拿到更多横向空间。
+   * 像素级行数由浏览器局部渲染实测（1280/1366/1440/1536/1920/1024/834/390 全部 ≤2 行），
+   * jsdom 不做布局计算，故此处不断言行数。
+   */
+  it('三张概览卡同属一个 1fr 等宽网格容器，且最小轨道宽度够 5 柱排两行', () => {
+    renderDim(dimension({matchColumns: ['entity', 'location', 'product', 'country', 'industry']}));
+
+    const matchCard = screen.getByTestId('rule-engine-dim-match-columns').parentElement as HTMLElement;
+    const statsGrid = matchCard.parentElement as HTMLElement;
+
+    // 三卡同父 → 同一网格容器、同层，不存在「只给匹配柱增宽」的独立轨道
+    expect(statsGrid.tagName).toBe('DL');
+    expect((within(statsGrid).getByText('引用信源').closest('div') as HTMLElement).parentElement).toBe(statsGrid);
+    expect((within(statsGrid).getByText('输入状态').closest('div') as HTMLElement).parentElement).toBe(statsGrid);
+
+    // auto-fit + 1fr：列数随宽度 3→2→1，但每条轨道等宽 ⇒ 三卡始终等宽
+    const tracks = /grid-cols-\[repeat\(auto-fit,minmax\((\d+)px,1fr\)\)\]/.exec(statsGrid.className);
+    expect(tracks).not.toBeNull();
+    // 实测：5 柱排两行需内容盒 ≥152px；卡 padding 12*2 + border 1*2 = 26px ⇒ 轨道下限 ≥178px
+    expect(Number(tracks?.[1])).toBeGreaterThanOrEqual(178);
+
+    // 头卡左右分栏：右侧 stats 分到更多横向空间（旧值 1.2fr/1fr 会挤出窄列）
+    const splitGrid = statsGrid.parentElement as HTMLElement;
+    expect(splitGrid.className).toContain('xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]');
+  });
+});

@@ -922,34 +922,26 @@ describe('信息源列表信息架构与操作区', () => {
     lastSyncTime: '调用',
   };
 
-  it('分类标签使用中文业务类别，未识别编码回退中文兜底', () => {
+  // 分类徽标已下线：按编码猜出来的类别会误导业务判断（未知编码还会回退到来源类型），
+// 且与标题争抢名称列宽度。这里断言徽标彻底消失，而不是"换个类别规则"。
+  it('不再渲染任何猜测式分类徽标，名称列只保留标题', () => {
     renderView([
       {...source, id: '1', code: 'tianyancha', type: 'external_tool'},
       {...source, id: '2', code: 'nmc-weather'},
       {...source, id: '3', code: 'ofac-sdn'},
-      {...source, id: '4', code: 'uflpa-entity-list'},
-      {...source, id: '5', code: 'bis-entity-list'},
-      {...source, id: '6', code: 'commodity-futures'},
-      {...source, id: '7', code: 'pbc-lpr'},
-      {...source, id: '8', code: 'wto-news'},
       {...source, id: '9', code: 'unknown-code-x'},
       {...source, id: '10', code: 'usgs-earthquake-day'},
-      {...source, id: '11', code: 'mem-incident-bulletin'},
     ]);
 
-    expect(screen.getByTestId('source-category-1')).toHaveTextContent('主体核查');
-    expect(screen.getByTestId('source-category-2')).toHaveTextContent('天气预警');
-    expect(screen.getByTestId('source-category-3')).toHaveTextContent('制裁合规');
-    expect(screen.getByTestId('source-category-4')).toHaveTextContent('制裁合规');
-    expect(screen.getByTestId('source-category-5')).toHaveTextContent('制裁合规');
-    expect(screen.getByTestId('source-category-6')).toHaveTextContent('宏观市场');
-    expect(screen.getByTestId('source-category-7')).toHaveTextContent('宏观市场');
-    expect(screen.getByTestId('source-category-8')).toHaveTextContent('政策法规');
-    expect(screen.getByTestId('source-category-9')).toHaveTextContent('官方接口');
-    // USGS 地震速报（source_type=official_api）须命中 code 关键词规则，不再回退“官方接口”。
-    expect(screen.getByTestId('source-category-10')).toHaveTextContent('自然灾害');
-    // 规则顺序回归：自然灾害规则插入后，mem- 编码仍命中政策法规规则。
-    expect(screen.getByTestId('source-category-11')).toHaveTextContent('政策法规');
+    for (const id of ['1', '2', '3', '9', '10']) {
+      expect(screen.queryByTestId(`source-category-${id}`)).not.toBeInTheDocument();
+    }
+    // 类别文案不得以任何形式残留在列表行内。
+    const list = document.querySelector('[role="list"]');
+    expect(list?.textContent).not.toContain('制裁合规');
+    expect(list?.textContent).not.toContain('天气预警');
+    expect(list?.textContent).not.toContain('主体核查');
+    expect(list?.textContent).not.toContain('自然灾害');
   });
 
   it('记录数列标题为“记录数（有效/累计）”，两个数字分别链接到对应范围', () => {
@@ -1037,17 +1029,45 @@ describe('信息源列表信息架构与操作区', () => {
     expect(screen.getByText('tianyancha')).toBeInTheDocument();
   });
 
-  // 类别标签必须始终留在标题右侧同一行：标题行不换行，标题可截断，
-  // 标签不参与压缩；完整名称由 title 兜底。
-  it('类别标签与标题保持同一行且标题以 title 暴露完整名称', () => {
+  // 标题独占一行：不再与任何徽标争宽度，可截断且完整名称由 title 兜底。
+  it('标题独占一行并以 title 暴露完整名称，ID 简化为「ID:」', () => {
     renderView([source]);
 
     const nameNode = screen.getByTestId('source-name-17');
     expect(nameNode).toHaveAttribute('title', '官方风险源');
-    expect(nameNode.parentElement).toHaveClass('flex-nowrap');
     expect(nameNode).toHaveClass('truncate');
     expect(nameNode).toHaveClass('min-w-0');
-    expect(screen.getByTestId('source-category-17')).toHaveClass('shrink-0');
+    // 标题父级不再是「标题 + 徽标」同行容器。
+    expect(nameNode.parentElement).not.toHaveClass('flex-nowrap');
+
+    const idGroup = screen.getByTestId('source-id-17');
+    expect(idGroup).toHaveTextContent('ID: 17');
+    expect(idGroup).toHaveClass('whitespace-nowrap');
+    // 冗长的「信息源 ID:」前缀已下线。
+    expect(screen.queryByText(/信息源 ID/)).not.toBeInTheDocument();
+  });
+
+  // 编码断行回归：长编码必须完整渲染（不截断、不隐藏），且「· 编码」是一个 nowrap 组，
+  // 换行只允许发生在 ID 组与编码组之间，编码自身永不拆行。
+  it('长编码完整渲染且不可拆行：ID 与编码各自为一个 nowrap 组', () => {
+    const longCode = 'mofcom-export-control-entity-list-registry';
+    renderView([{...source, code: longCode}]);
+
+    const codeGroup = screen.getByTestId('source-code-17');
+    expect(codeGroup).toHaveClass('whitespace-nowrap');
+    expect(codeGroup).toHaveTextContent(`编码: ${longCode}`);
+    // 编码组不得带截断类：截断即隐藏编码，违反「不隐藏编码」。
+    expect(codeGroup).not.toHaveClass('truncate');
+    expect(codeGroup).not.toHaveClass('overflow-hidden');
+    expect(codeGroup).toHaveAttribute('title', longCode);
+
+    const meta = screen.getByTestId('source-meta-17');
+    expect(meta).toHaveClass('flex-wrap');
+    const groups = Array.from(meta.children);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((group) => group.classList.contains('whitespace-nowrap'))).toBe(true);
+    expect(groups[0]).toBe(screen.getByTestId('source-id-17'));
+    expect(groups[1]).toBe(codeGroup);
   });
 
   it('操作按刷新、编辑、停用/启用排列，按钮均带明确 aria-label 与 title', () => {
@@ -1572,7 +1592,7 @@ describe('信息源列表退役来源可见性（迁移0050）', () => {
 });
 
 // 调度周期列回归：可见文本只渲染中文 label，原始 cron 仅进 title/aria-label 属性；
-// 表头与行网格同步从 12 列扩展为 14 列。
+// 表头与行网格当前为 17 列（14 列基础上把名称列从 3 加宽到 5、连通状态从 2 加宽到 3）。
 describe('信息源调度周期列', () => {
   const renderView = (dataSources: DataSource[]) => render(
     <MemoryRouter>
@@ -1588,7 +1608,7 @@ describe('信息源调度周期列', () => {
     </MemoryRouter>,
   );
 
-  it('表头新增「调度周期」，表头网格为 14 列且列跨度合计 14', () => {
+  it('表头新增「调度周期」，表头网格为 17 列且列跨度合计 17', () => {
     const {container} = renderView([source]);
 
     expect(screen.getByText('调度周期')).toBeInTheDocument();
@@ -1596,7 +1616,7 @@ describe('信息源调度周期列', () => {
     const list = container.querySelector('[role="list"]');
     const headerRow = list?.firstElementChild;
     expect(headerRow).not.toBeNull();
-    expect(headerRow?.className).toContain('md:grid-cols-[repeat(14,minmax(0,1fr))]');
+    expect(headerRow?.className).toContain('md:grid-cols-[repeat(17,minmax(0,1fr))]');
 
     const headerCells = Array.from(headerRow?.children ?? []);
     expect(headerCells).toHaveLength(6);
@@ -1604,7 +1624,33 @@ describe('信息源调度周期列', () => {
       const match = /(?:^|\s)col-span-(\d+)(?:\s|$)/.exec(cell.className);
       return sum + (match ? Number.parseInt(match[1] ?? '0', 10) : 0);
     }, 0);
-    expect(spanSum).toBe(14);
+    expect(spanSum).toBe(17);
+  });
+
+  // 名称列加宽回归：网格总列数 14→17 只用于让出名称列宽度，其余列跨度不变，
+  // 且表头与数据行必须逐列同栅格、同间距，否则表头与数据会错位。
+  it('名称列占 5/17，连通状态 3/17，其余列跨度不变，且行网格与表头同栅格', () => {
+    const {container} = renderView([source]);
+
+    const list = container.querySelector('[role="list"]');
+    const headerRow = list?.firstElementChild;
+    const headerCells = Array.from(headerRow?.children ?? []);
+    expect(headerCells[0]).toHaveTextContent('信息源名称');
+    expect(headerCells.map((cell) => /col-span-(\d+)/.exec(cell.className)?.[1])).toEqual([
+      '5', '3', '2', '2', '2', '3',
+    ]);
+
+    const row = screen.getByTestId('source-name-17').closest('[role="listitem"]');
+    const rowGrid = row?.firstElementChild;
+    expect(rowGrid?.className).toContain('md:grid-cols-[repeat(17,minmax(0,1fr))]');
+
+    const rowSpans = Array.from(rowGrid?.children ?? []).map((cell) =>
+      /(?:^|\s)md:col-span-(\d+)(?:\s|$)/.exec(cell.className)?.[1]);
+    expect(rowSpans).toEqual(['5', '3', '2', '2', '2', '3']);
+
+    // 表头与数据行的列间距必须一致，否则同一列的表头与内容会错位。
+    expect(headerRow?.className).toContain('md:gap-2.5');
+    expect(rowGrid?.className).toContain('md:gap-2.5');
   });
 
   it('正常来源渲染中文 label，原始 cron 只出现在 title 与 aria-label', () => {

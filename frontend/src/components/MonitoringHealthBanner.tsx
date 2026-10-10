@@ -103,12 +103,31 @@ const SOURCE_TONE_CLASSES: Record<(typeof SOURCE_STATE_META)[keyof typeof SOURCE
 };
 
 /**
+ * 新鲜度时间行：标签与完整时间戳同属一个 nowrap 组，整行永不折行、时间戳永不拆断。
+ * 单行组在信息源名称列的宽度预算内（最宽的「下次预期 + 时间戳」远小于列宽），
+ * 因此不需要靠换行或截断来规避溢出——只允许「行」与「行」之间换行。
+ */
+const FreshnessTimeRow = ({label, value, testId}: {
+  readonly label: string;
+  readonly value: string;
+  readonly testId: string;
+}) => (
+  <div data-testid={testId} className="min-w-0 font-mono text-slate-500 dark:text-slate-400">
+    <span className="whitespace-nowrap">{label} {value}</span>
+  </div>
+);
+
+/**
  * 信息源页每来源新鲜度：最后成功、下一预期与失败/超期原因。
  * 外部核查来源（onDemand 或服务端 state=on_demand）显示「核查 + 最近核查真实时间」，不显示下次预期；
  * 外部核查工具停用时后端归为 disabled，但业务语义仍是外部核查来源，不允许展示为「已停用」。
  * 停用与外部核查来源使用中性语义，不出现红色故障；无该来源诊断数据时不渲染。
  * labelOverride 是只读且仅作用于 on_demand 语义的标签覆盖（天眼查在信息源页显示「按需核查」），
  * 其他状态与其他外部核查工具始终沿用默认「核查」。
+ *
+ * 版面：采集状态单独一行，「最近成功」「下次预期」各占一行，便于名称列加宽后仍能一屏读完；
+ * 每行内标签与完整时间不拆行，也不使用「·」分隔符（换行语义已由分行承担）。
+ * 唯一调用方是信息源页名称列，改动版面不影响总览页横幅语义。
  */
 export const MonitoringSourceFreshness = ({health, onDemand = false, labelOverride}: {
   readonly health: MonitoringSourceHealth | undefined;
@@ -121,32 +140,31 @@ export const MonitoringSourceFreshness = ({health, onDemand = false, labelOverri
   const label = effectiveState === 'on_demand' && labelOverride !== undefined ? labelOverride : meta.label;
   const lastCheckAt = health.last_attempt_at ?? health.last_success_at;
   return (
-    <p
-      data-testid={`source-health-${health.source_id}`}
-      className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-relaxed"
-    >
-      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{label}</span>
-      <span className="flex min-w-0 flex-wrap items-center gap-x-2 font-mono text-slate-500 dark:text-slate-400">
-        {/* 标签与时间拆成独立 nowrap token：窄列只在标签-时间边界换行，时间戳自身不可拆。 */}
-        {effectiveState === 'on_demand' ? (
-          <>
-            <span className="whitespace-nowrap">最近核查</span>
-            {' '}
-            <span className="whitespace-nowrap">{lastCheckAt === null ? '—' : formatHealthTime(lastCheckAt)}</span>
-          </>
-        ) : (
-          <>
-            <span className="whitespace-nowrap">最近成功</span>
-            {' '}
-            <span className="whitespace-nowrap">{health.last_success_at === null ? '—' : formatHealthTime(health.last_success_at)}</span>
-            {/* 分隔符并入「下次预期」组：窄列换行时「·」不得单独成行。 */}
-            <span className="whitespace-nowrap">· 下次预期</span>
-            {' '}
-            <span className="whitespace-nowrap">{health.next_expected_at === null ? '—' : formatHealthTime(health.next_expected_at)}</span>
-          </>
-        )}
-      </span>
-      {meta.tone === 'fault' && <span className="font-mono text-slate-400">原因 {health.reason_code}</span>}
-    </p>
+    <div data-testid={`source-health-${health.source_id}`} className="mt-1 space-y-0.5 text-[11px] leading-relaxed">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_TONE_CLASSES[meta.tone]}`}>{label}</span>
+        {meta.tone === 'fault' && <span className="whitespace-nowrap font-mono text-slate-400">原因 {health.reason_code}</span>}
+      </div>
+      {effectiveState === 'on_demand' ? (
+        <FreshnessTimeRow
+          testId={`source-health-last-check-${health.source_id}`}
+          label="最近核查"
+          value={lastCheckAt === null ? '—' : formatHealthTime(lastCheckAt)}
+        />
+      ) : (
+        <>
+          <FreshnessTimeRow
+            testId={`source-health-last-success-${health.source_id}`}
+            label="最近成功"
+            value={health.last_success_at === null ? '—' : formatHealthTime(health.last_success_at)}
+          />
+          <FreshnessTimeRow
+            testId={`source-health-next-expected-${health.source_id}`}
+            label="下次预期"
+            value={health.next_expected_at === null ? '—' : formatHealthTime(health.next_expected_at)}
+          />
+        </>
+      )}
+    </div>
   );
 };

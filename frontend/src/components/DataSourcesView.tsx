@@ -51,37 +51,6 @@ const displaySourceName = (name: string): string => {
   return stripped || name;
 };
 
-// 中文业务分类：按来源编码关键词优先匹配，未知编码回退来源类型或通用兜底。
-const SOURCE_CODE_CATEGORY_RULES: ReadonlyArray<readonly [readonly string[], string]> = [
-  [['tianyancha'], '主体核查'],
-  [['weather', 'nmc'], '天气预警'],
-  [['ofac', 'uflpa', 'bis', 'sanction', 'compliance', 'un-consolidated', 'mofcom'], '制裁合规'],
-  [['commodity', 'pbc', 'stats', 'fx', 'shipping'], '宏观市场'],
-  // 自然灾害类（USGS 地震速报、中国地震台网 CENC）：须先于政策法规规则匹配，
-  // 保证地震速报编码不会落入其他关键词组，未被 code 命中时仍回退 source_type。
-  [['usgs', 'earthquake', 'cenc'], '自然灾害'],
-  [['journal', 'announcement', 'notice', 'press', 'bulletin', 'customs', 'fmprc', 'wto', 'mem-', 'mee-', 'policy'], '政策法规'],
-  [['manual'], '人工录入'],
-];
-
-const SOURCE_TYPE_CATEGORY: Record<string, string> = {
-  official_api: '官方接口',
-  external_tool: '外部核查',
-  sanctions: '制裁合规',
-  'export-control': '制裁合规',
-  policy: '政策法规',
-  incident: '突发事件',
-  manual: '人工录入',
-};
-
-const sourceCategory = (source: DataSource): string => {
-  const code = source.code.toLowerCase();
-  for (const [keywords, label] of SOURCE_CODE_CATEGORY_RULES) {
-    if (keywords.some((keyword) => code.includes(keyword))) return label;
-  }
-  return SOURCE_TYPE_CATEGORY[source.type] ?? '其他信源';
-};
-
 // 连通状态标签：与名称下方「采集正常/失败」的新鲜度状态区分职责，只描述连通与访问能力。
 // 徽标的文案与配色必须同源：先判定连通变体，再由变体唯一决定标签与色调，
 // 避免文案取自访问语义、颜色却沿用采集状态（如「连通正常」被染成采集失败的红色）。
@@ -549,9 +518,14 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
         role="list"
         aria-label="信息源列表"
       >
-        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-[repeat(14,minmax(0,1fr))] md:gap-4">
-          <div className="col-span-3">信息源名称与类别</div>
-          <div className="col-span-2">连通状态</div>
+        <div className="hidden border-b border-slate-200/80 bg-slate-100/70 px-5 py-3 text-[12px] font-bold text-slate-600 dark:border-slate-800 dark:bg-slate-800/80 dark:text-slate-300 md:grid md:grid-cols-[repeat(17,minmax(0,1fr))] md:gap-2.5">
+          {/* 名称列是信息源识别主键，需要容纳标题、ID/编码与新鲜度三段文字，因此从 3/14 加宽到 5/17；
+              「连通状态」是 nowrap 胶囊，2 轨在 768px 下只有 71px 装不下 78px 的标签，
+              故从 2 提到 3；调度周期/有效期/记录数/操作四列跨度保持 2/2/2/3 不变。
+              md 间距取 gap-2.5（10px）而非 gap-4：17 轨 + 16px 间距会让 768px 下的
+              「连通状态」胶囊与「下次预期 + 完整时间戳」行双双超出各自单元格。 */}
+          <div className="col-span-5">信息源名称</div>
+          <div className="col-span-3">连通状态</div>
           <div className="col-span-2">调度周期</div>
           <div className="col-span-2">有效期策略</div>
           {/* 768px CJK 回归：表头曾把「累计」从中间断开。拆为两个不可拆语义短语，
@@ -597,31 +571,31 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                 role="listitem"
                 className={`p-4 transition-colors sm:px-5 hover:bg-[#185fa5]/5 dark:hover:bg-slate-800/50 ${statusStyle.row}`}
               >
-                <div className="grid grid-cols-12 gap-3 md:grid-cols-[repeat(14,minmax(0,1fr))] md:gap-4 items-center">
-                  <div className="col-span-12 md:col-span-3 flex items-center gap-3 min-w-0">
-                    <div data-testid={`source-icon-${source.id}`} className={`p-2.5 rounded-lg flex items-center justify-center shrink-0 ${statusStyle.icon}`}>
-                      <span className="material-symbols-outlined text-[20px]">
-                        {source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}
-                      </span>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex flex-nowrap items-center gap-2 min-w-0">
-                        <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate min-w-0">{displayName}</h3>
-                        <span data-testid={`source-category-${source.id}`} className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                          {sourceCategory(source)}
+                <div className="grid grid-cols-12 gap-3 md:grid-cols-[repeat(17,minmax(0,1fr))] md:gap-2.5 items-center">
+                  <div className="col-span-12 md:col-span-5 min-w-0">
+                    {/* 图标只与标题同行（不缩进后续行）：ID/编码与两条新鲜度时间行因此可用整个单元格宽度，
+                        「下次预期 + 完整时间戳」这一 nowrap 行在 768px 下也不会被裁切。 */}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div data-testid={`source-icon-${source.id}`} className={`p-2.5 shrink-0 rounded-lg flex items-center justify-center ${statusStyle.icon}`}>
+                        <span className="material-symbols-outlined text-[20px]">
+                          {source.type.includes('api') || source.type.includes('API') || source.type.includes('接口') ? 'api' : 'database'}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        信息源 ID: <span className="font-mono font-bold">{source.id}</span> · 编码: <span className="font-mono">{source.code}</span>
-                      </p>
-                      <MonitoringSourceFreshness
-                        health={healthBySource?.get(Number(source.id))}
-                        onDemand={isExternalTool}
-                        labelOverride={isTycSource ? '按需核查' : undefined}
-                      />
+                      {/* 标题独占一行：不再与任何徽标争宽度，极长时按 truncate 省略并由 title 兜底。 */}
+                      <h3 data-testid={`source-name-${source.id}`} title={displayName} className="font-bold text-[14px] text-[#101d28] dark:text-white truncate min-w-0">{displayName}</h3>
                     </div>
+                    {/* ID 与「· 编码」各自是一个 nowrap 组：换行只发生在组边界，编码自身不拆行、不隐藏。 */}
+                    <p data-testid={`source-meta-${source.id}`} className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      <span data-testid={`source-id-${source.id}`} className="whitespace-nowrap">ID: <span className="font-mono font-bold">{source.id}</span></span>
+                      <span data-testid={`source-code-${source.id}`} className="whitespace-nowrap" title={source.code}>· 编码: <span className="font-mono">{source.code}</span></span>
+                    </p>
+                      <MonitoringSourceFreshness
+                      health={healthBySource?.get(Number(source.id))}
+                      onDemand={isExternalTool}
+                      labelOverride={isTycSource ? '按需核查' : undefined}
+                    />
                   </div>
-                  <div className="col-span-6 md:col-span-2 flex items-center gap-2">
+                  <div className="col-span-6 md:col-span-3 flex items-center gap-2">
                     <span
                       data-testid={`source-connectivity-${source.id}`}
                       title={sourceNodeHint(source)}

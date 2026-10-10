@@ -126,29 +126,75 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
     expect(cell.textContent).toContain(`下次预期 ${expectedTime('2026-09-11T06:00:00Z')}`);
   });
 
-  it('标签与完整时间戳各自为独立 nowrap token：仅 token 边界允许换行，时间戳不得拆断', () => {
+  // 版面回归：采集状态独占一行，「最近成功」「下次预期」各占一行，且每行是
+  // 「标签 + 完整时间」的单个 nowrap 组——只有行与行之间换行，时间戳自身永不拆断。
+  it('采集状态单独一行，最近成功与下次预期各占一行', () => {
     render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
     const cell = screen.getByTestId('source-health-17');
-    const nowrapTexts = Array.from(cell.querySelectorAll('.whitespace-nowrap')).map((el) => el.textContent ?? '');
-    // 标签与时间不能合并在同一 token：合并组会把 768px 窄列的 scrollWidth 撑到 clientWidth 之上。
-    expect(nowrapTexts).toContain('最近成功');
-    expect(nowrapTexts).toContain(expectedTime('2026-09-11T05:30:00Z'));
-    // 分隔符必须与「下次预期」同 token：否则 768px 窄列下「·」会单独占一行。
-    expect(nowrapTexts).toContain('· 下次预期');
-    expect(nowrapTexts).toContain(expectedTime('2026-09-11T06:00:00Z'));
-    // 时间组只包含 token 元素子节点，且每个都是 nowrap：换行只发生在 token 之间。
-    const tokenElements = Array.from(cell.querySelector('.min-w-0')?.children ?? []);
-    expect(tokenElements).toHaveLength(4);
-    expect(tokenElements.every((token) => token.classList.contains('whitespace-nowrap'))).toBe(true);
+
+    const statusRow = cell.querySelector('.rounded-full')?.parentElement;
+    expect(statusRow).not.toBeNull();
+    expect(within(statusRow as HTMLElement).getByText('采集正常')).toBeInTheDocument();
+    // 状态行不得混入任何时间文本。
+    expect(statusRow?.textContent).not.toContain('最近成功');
+    expect(statusRow?.textContent).not.toContain('下次预期');
+
+    const lastSuccessRow = screen.getByTestId('source-health-last-success-17');
+    const nextExpectedRow = screen.getByTestId('source-health-next-expected-17');
+    expect(lastSuccessRow).not.toBe(nextExpectedRow);
+    expect(lastSuccessRow.textContent).toBe(`最近成功 ${expectedTime('2026-09-11T05:30:00Z')}`);
+    expect(nextExpectedRow.textContent).toBe(`下次预期 ${expectedTime('2026-09-11T06:00:00Z')}`);
   });
 
-  it('时间组容器启用 min-w-0，窄列内允许收缩而不是把 nowrap 组撑成不可收缩整体', () => {
+  it('每个时间行是单个 nowrap 组（标签与完整时间同行不拆），且不再使用「·」前缀', () => {
     render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
     const cell = screen.getByTestId('source-health-17');
-    const timeGroups = cell.querySelector('.min-w-0');
-    expect(timeGroups).not.toBeNull();
-    expect(timeGroups?.textContent).toContain('最近成功');
-    expect(timeGroups?.textContent).toContain('下次预期');
+
+    for (const row of [screen.getByTestId('source-health-last-success-17'), screen.getByTestId('source-health-next-expected-17')]) {
+      const nowrapTokens = Array.from(row.querySelectorAll('.whitespace-nowrap'));
+      // 标签与时间必须同属一个 nowrap 组：拆成两个可换行 token 会让时间戳掉到下一行。
+      expect(nowrapTokens).toHaveLength(1);
+      expect(row.textContent).toBe(nowrapTokens[0]?.textContent);
+    }
+
+    // 「·」分隔符已由分行取代，不得残留为独立前缀。
+    expect(cell.textContent).not.toContain('·');
+    expect(cell.textContent).toContain('下次预期 ');
+  });
+
+  it('时间行容器启用 min-w-0，窄列内允许收缩而不是把 nowrap 组撑成不可收缩整体', () => {
+    render(<MonitoringSourceFreshness health={baseHealth.sources[0]} />);
+    const cell = screen.getByTestId('source-health-17');
+    const firstRow = cell.querySelector('.min-w-0');
+    expect(firstRow).not.toBeNull();
+    expect(firstRow?.textContent).toContain('最近成功');
+    expect(firstRow?.classList.contains('min-w-0')).toBe(true);
+  });
+
+  // 回归：单 nowrap 组契约与时间文本长度无关。跨年时间戳（比常规值多出年份位宽）
+// 仍必须完整落在同一个 nowrap 组内，既不截断也不拆行。
+  it('跨年长时间戳同样完整落在单个 nowrap 组内，不截断、不拆行', () => {
+    render(
+      <MonitoringSourceFreshness
+        health={{
+          ...baseHealth.sources[0],
+          last_success_at: '2026-12-31T23:59:59Z',
+          next_expected_at: '2027-01-01T00:00:00Z',
+        }}
+      />,
+    );
+    const lastSuccess = screen.getByTestId('source-health-last-success-17');
+    const nextExpected = screen.getByTestId('source-health-next-expected-17');
+    const longStamp = '2026-12-31T23:59:59Z';
+    const nextStamp = '2027-01-01T00:00:00Z';
+
+    expect(lastSuccess.textContent).toBe(`最近成功 ${expectedTime(longStamp)}`);
+    expect(nextExpected.textContent).toBe(`下次预期 ${expectedTime(nextStamp)}`);
+    for (const row of [lastSuccess, nextExpected]) {
+      expect(row.querySelectorAll('.whitespace-nowrap')).toHaveLength(1);
+      expect(row.querySelector('.whitespace-nowrap')?.textContent).toBe(row.textContent);
+    }
+    expect(lastSuccess.textContent).toContain(expectedTime(longStamp));
   });
 
   it('failed 来源显示失败标签与脱敏 reason_code', () => {
@@ -218,7 +264,7 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
     expect(cell.textContent).not.toContain('最近成功');
   });
 
-  it('on_demand 分支同样拆分「最近核查」标签与时间戳为独立 nowrap token', () => {
+  it('on_demand 分支同样把「最近核查」标签与时间戳放在同一个 nowrap 组内', () => {
     render(
       <MonitoringSourceFreshness
         health={{
@@ -232,13 +278,14 @@ describe('MonitoringSourceFreshness 信息源页每来源新鲜度', () => {
       />,
     );
     const cell = screen.getByTestId('source-health-17');
-    const nowrapTexts = Array.from(cell.querySelectorAll('.whitespace-nowrap')).map((el) => el.textContent ?? '');
-    expect(nowrapTexts).toContain('最近核查');
-    expect(nowrapTexts).toContain(expectedTime('2026-09-10T03:00:00Z'));
-    // on_demand 只有「标签 + 时间」两个 token，时间戳必须自身不可拆。
-    const tokenElements = Array.from(cell.querySelector('.min-w-0')?.children ?? []);
-    expect(tokenElements).toHaveLength(2);
-    expect(tokenElements.every((token) => token.classList.contains('whitespace-nowrap'))).toBe(true);
+    const checkRow = screen.getByTestId('source-health-last-check-17');
+    const nowrapTokens = Array.from(checkRow.querySelectorAll('.whitespace-nowrap'));
+    expect(nowrapTokens).toHaveLength(1);
+    expect(nowrapTokens[0]?.textContent).toBe(checkRow.textContent);
+    expect(checkRow.textContent).toBe(`最近核查 ${expectedTime('2026-09-10T03:00:00Z')}`);
+    // on_demand 只有「最近核查」一行时间组，不存在下次预期行。
+    expect(cell.querySelector('[data-testid="source-health-next-expected-17"]')).toBeNull();
+    expect(cell.querySelector('[data-testid="source-health-last-success-17"]')).toBeNull();
   });
 
   it('onDemand 覆盖后端 disabled：外部核查工具停用时显示核查而非已停用', () => {

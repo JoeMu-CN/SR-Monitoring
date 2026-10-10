@@ -38,6 +38,59 @@ SENTINEL = "RAW_DATA_SENTINEL_9f3c"
 GENERATED_AT = datetime(2026, 9, 29, 4, 30, tzinfo=UTC)
 FORMAL_ROLES = ("viewer", "risk_analyst", "risk_admin", "platform_admin")
 
+# 采集记录列表截图对应的报告：总览只有过程性说明，司法/开庭维度才是具体风险事实。
+_OVERVIEW_PROCEDURAL_SUMMARY = (
+    "已返回风险总览摘要；摘要行数、上游计数与企业简介数字可能属于不同口径。"
+)
+_JUDICIAL_SUMMARY = "明细（9条）：提供劳务者受害责任纠纷、买卖合同纠纷"
+_HEARING_SUMMARY = "该查询实体共有6条开庭公告"
+# 历史行里已经落库的旧正文（过程性说明排在最前、抢占具体事实）。
+STALE_CONTENT = (
+    "重点命中：风险总览（警示）：已返回风险总览摘要；"
+    "摘要行数、上游计数与企业简介数字可能属于不同口径"
+)
+# 修复后由 raw_data 实时派生出的列表摘要：具体事实在前，总览在后且如实说明。
+EXPECTED_DERIVED_SUMMARY = (
+    "重点命中：司法解析：明细（9条）：提供劳务者受害责任纠纷、买卖合同纠纷；"
+    "开庭公告：该查询实体共有6条开庭公告；"
+    "风险总览（警示）：摘要行数、上游计数与企业简介数字可能属于不同口径"
+)
+
+
+def _historical_report() -> TycRiskReport:
+    return TycRiskReport(
+        company_name="测试企业有限公司",
+        supplier_code="SUP-0001",
+        credit_code=None,
+        reg_status="存续",
+        generated_at=GENERATED_AT,
+        period_key="tyc:SUP-0001:2026-W40",
+        dimensions=[
+            DimensionFinding(
+                key="get_risk_overview",
+                name="风险总览",
+                status=DimensionStatus.SUCCESS,
+                risk_level=RiskLevel.ALERT,
+                hit=True,
+                summary=_OVERVIEW_PROCEDURAL_SUMMARY,
+            ),
+            DimensionFinding(
+                key="get_judicial_case",
+                name="司法解析",
+                status=DimensionStatus.SUCCESS,
+                hit=True,
+                summary=_JUDICIAL_SUMMARY,
+            ),
+            DimensionFinding(
+                key="get_hearing_notice",
+                name="开庭公告",
+                status=DimensionStatus.SUCCESS,
+                hit=True,
+                summary=_HEARING_SUMMARY,
+            ),
+        ],
+    )
+
 
 def _source(session: Session, code: str, validity_days: int | None) -> DataSource:
     source = DataSource(
@@ -177,6 +230,46 @@ def test_list_summary_falls_back_to_content_and_stable_placeholder(
     empty_summary = items[empty_signal.id]["summary"]
     assert empty_summary.strip() != ""
     assert len(empty_summary) <= SUMMARY_MAX
+
+
+def test_list_summary_derived_live_for_existing_report(
+    client: TestClient, db_session: Session
+) -> None:
+    """历史报告不回溯入库正文，但列表摘要从 raw_data 实时派生，立即用上新规则。"""
+    source = _source(db_session, "historical-source", None)
+    signal = _signal(
+        db_session,
+        source,
+        1,
+        content=STALE_CONTENT,
+        raw_data=_historical_report().model_dump(mode="json"),
+    )
+    db_session.commit()
+
+    response = client.get(f"/api/v1/sources/{source.id}/signals?scope=all")
+    detail = client.get(f"/api/v1/sources/{source.id}/signals/{signal.id}")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["summary"] == EXPECTED_DERIVED_SUMMARY
+    # 派生只发生在响应层：详情正文仍是入库原文，content/raw_data 均未被改写。
+    assert detail.status_code == 200
+    assert detail.json()["content"] == STALE_CONTENT
+    assert detail.json()["report"]["dimensions"][0]["summary"] == _OVERVIEW_PROCEDURAL_SUMMARY
+
+
+def test_list_summary_non_report_signal_keeps_content_verbatim(
+    client: TestClient, db_session: Session
+) -> None:
+    """非天眼查报告信号不做过程性剥离：摘要仍是受控截断后的 content 原文。"""
+    source = _source(db_session, "plain-source", None)
+    content = "已返回上游摘要；口径以公告为准：实际披露行政处罚 1 项"
+    _signal(db_session, source, 1, content=content, raw_data={"kind": "rss", "note": "x"})
+    db_session.commit()
+
+    response = client.get(f"/api/v1/sources/{source.id}/signals?scope=all")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["summary"] == content
 
 
 def test_list_does_not_leak_raw_data(

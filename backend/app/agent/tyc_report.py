@@ -156,29 +156,89 @@ _RISK_LEVEL_ORDER: dict[RiskLevel, int] = {
 # 案号（含全角/半角圆括号与方括号）：摘要里只保留案件性质与状态，不堆案号。
 _CASE_NO_RE = re.compile(r"[（(〔]\s*\d{4}\s*[）)〕][\u4e00-\u9fa5A-Za-z0-9]{0,24}号")
 _SEPARATOR_RUN_RE = re.compile(r"[、；，,]{2,}")
+# 风险总览是汇总维度：固定排在具体维度之后，避免其等级较高时抢占具体风险事实。
+_OVERVIEW_TOOL_KEY = "get_risk_overview"
+# 命中维度剥离过程性说明后没有事实时的如实提示：不谎称无风险，也不静默丢弃维度。
+_NO_FACT_HINT = "有风险记录，具体信息未披露"
+# 已取得结论（成功或确认为空）的状态；其余状态一律视为「未取得结果」。
+_SETTLED_STATUSES: frozenset[DimensionStatus] = frozenset(
+    {DimensionStatus.SUCCESS, DimensionStatus.EMPTY}
+)
+# 分句边界：摘要内的分句即过程性说明与真实事实的分界。
+_CLAUSE_SPLIT_RE = re.compile(r"[；;。]+")
+# 过程性说明与口径提示的标记词。
+_PROCESS_MARKER_RE = re.compile(
+    r"已(?:返回|获取|生成|同步|完成|抓取|输出)|详见|见上|如下|以上|口径|为准|请以"
+)
+# 真实事实标记：数量/金额单位，或欠税、失信、处罚、制裁、诉讼、开庭等具体风险事实词。
+_FACT_MARKER_RE = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:条|起|项|笔|万|亿|元|次|家|人|户|年|月|日|号)"
+    r"|欠税|被执行|失信|处罚|制裁|禁入|冻结|违法|诉讼|开庭|法院|公告|纠纷"
+)
 
 
 def render_key_summary(report: TycRiskReport) -> str:
     """生成列表与正文用的中文重点摘要（确定性、可重复）。
 
-    命中维度按风险等级排序并在名称后标注等级；摘要去除案号堆砌并压缩重复分隔符，
-    突出风险性质、金额与状态。``content`` 在入库时固定，故本改动只对新采集的
-    信号生效，历史信号正文不回溯。
+    命中维度按风险等级排序并在名称后标注等级；风险总览作为汇总维度固定排在具体
+    维度之后，使「司法解析/开庭公告」等具体事实不被总览的过程性文字抢占，具体维度
+    之间仍按等级排序。摘要去除案号堆砌、压缩重复分隔符，并剥离「已返回…」
+    等过程性说明；必要口径提示保留在维度事实之后，同句里的真实事实
+    原样保留。命中维度剥离后没有事实时给如实提示，不谎称无风险；无命中时单列未取得
+    结果的维度数量，空/失败维度不算作已排除风险。
+
+    ``content`` 在入库时固定，故只对新采集的信号生效；采集记录列表由
+    ``signals.tyc_report_views.derive_summary`` 从历史 ``raw_data`` 实时派生，因此本
+    规则同样立即作用于既有报告的列表摘要（不改写已落库的 ``content``/``raw_data``）。
     """
     hits = [finding for finding in report.dimensions if finding.hit]
     if not hits:
-        return f"未发现重点风险命中（共核查 {len(report.dimensions)} 个维度）"
-    ordered = sorted(hits, key=lambda item: _RISK_LEVEL_ORDER.get(item.risk_level, 4))
-    parts = []
-    for finding in ordered:
-        label = (
-            f"{finding.name}（{finding.risk_level.value}）"
-            if finding.risk_level is not None
-            else finding.name
-        )
-        summary = _strip_case_numbers(finding.summary)
-        parts.append(f"{label}：{summary}" if summary else label)
+        return _no_hit_summary(report)
+    concrete = sorted(
+        (finding for finding in hits if finding.key != _OVERVIEW_TOOL_KEY),
+        key=lambda item: _RISK_LEVEL_ORDER.get(item.risk_level, 4),
+    )
+    overviews = [finding for finding in hits if finding.key == _OVERVIEW_TOOL_KEY]
+    parts = [_dimension_part(finding) for finding in concrete + overviews]
     return _clip("重点命中：" + "；".join(parts), 600)
+
+
+def _dimension_part(finding: DimensionFinding) -> str:
+    """单个维度的摘要片段：``名称（等级）`` 加剥离过程性说明后的事实。"""
+    label = (
+        f"{finding.name}（{finding.risk_level.value}）"
+        if finding.risk_level is not None
+        else finding.name
+    )
+    facts = _drop_procedural(_strip_case_numbers(finding.summary))
+    return f"{label}：{facts or _NO_FACT_HINT}"
+
+
+def _no_hit_summary(report: TycRiskReport) -> str:
+    """无命中时的如实措辞：未取得结果的维度单列，不并入「未发现风险」的覆盖面。"""
+    incomplete = sum(
+        1 for finding in report.dimensions if finding.status not in _SETTLED_STATUSES
+    )
+    tail = f"，另有 {incomplete} 个维度未取得结果" if incomplete else ""
+    return f"未发现重点风险命中（共核查 {len(report.dimensions)} 个维度{tail}）"
+
+
+def _drop_procedural(summary: str) -> str:
+    """剥离纯过程性说明，事实在前、去重后的口径提示在后。"""
+    clauses = [clause.strip(" 、；，,:：") for clause in _CLAUSE_SPLIT_RE.split(summary)]
+    kept = [
+        clause for clause in clauses if "口径" not in clause and _states_fact(clause)
+    ]
+    kept.extend(dict.fromkeys(clause for clause in clauses if "口径" in clause))
+    return "；".join(kept)
+
+
+def _states_fact(clause: str) -> bool:
+    """分句是否陈述事实：无过程性标记，或同时带有数量/金额/风险事实标记。"""
+    text = clause.strip()
+    if not text:
+        return False
+    return not _PROCESS_MARKER_RE.search(text) or bool(_FACT_MARKER_RE.search(text))
 
 
 def _strip_case_numbers(summary: str) -> str:

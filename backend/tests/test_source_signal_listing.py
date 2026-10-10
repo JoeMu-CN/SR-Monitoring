@@ -189,10 +189,112 @@ def test_source_signals_all_scope_is_stably_paginated_and_source_isolated(
     first_payload = first.json()
     second_payload = second.json()
     assert first_payload["total"] == second_payload["total"] == overflow.json()["total"] == 23
+    # 未传 limit 时保持既有默认 20，兼容历史调用方。
+    assert first_payload["limit"] == second_payload["limit"] == 20
     returned = [item["id"] for item in first_payload["items"] + second_payload["items"]]
     assert returned == expected
     assert len(returned) == len(set(returned)) == 23
     assert overflow.json()["items"] == []
+
+
+def test_source_signals_orders_by_collected_at_then_id_desc_ignoring_published_at(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """采集时间必须压过发布时间定序，同采集时间按 id 倒序，分页无重无漏。"""
+    now = datetime.now(UTC)
+    source = _source(db_session, "order-source", None)
+    # published_at 与 collected_at 顺序刻意相反：发布时间最新者采集时间最早，
+    # 采集时间最新者发布时间最旧；中间两条采集时间相同，只能靠 id 倒序定序。
+    newest_collected = _signal(
+        db_session,
+        source,
+        1,
+        published_at=now - timedelta(days=30),
+        collected_at=now,
+    )
+    tie_lower_id = _signal(
+        db_session,
+        source,
+        2,
+        published_at=now,
+        collected_at=now - timedelta(hours=1),
+    )
+    tie_higher_id = _signal(
+        db_session,
+        source,
+        3,
+        published_at=None,
+        collected_at=now - timedelta(hours=1),
+    )
+    stale_collected = _signal(
+        db_session,
+        source,
+        4,
+        published_at=now,
+        collected_at=now - timedelta(hours=3),
+    )
+    db_session.commit()
+
+    first = client.get(f"/api/v1/sources/{source.id}/signals?scope=all&limit=2&offset=0")
+    second = client.get(f"/api/v1/sources/{source.id}/signals?scope=all&limit=2&offset=2")
+
+    assert first.status_code == second.status_code == 200
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["total"] == second_payload["total"] == 4
+    assert [item["id"] for item in first_payload["items"]] == [
+        newest_collected.id,
+        tie_higher_id.id,
+    ]
+    assert [item["id"] for item in second_payload["items"]] == [
+        tie_lower_id.id,
+        stale_collected.id,
+    ]
+    returned = [item["id"] for item in first_payload["items"] + second_payload["items"]]
+    assert len(returned) == len(set(returned)) == 4
+
+
+def test_source_signals_explicit_limit_returns_hundred_rows_and_offset_100_has_no_gap(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    now = datetime.now(UTC)
+    source = _source(db_session, "hundred-source", None)
+    expected: list[int] = []
+    for index in range(150):
+        signal = _signal(
+            db_session,
+            source,
+            index,
+            published_at=now - timedelta(hours=index // 2),
+            collected_at=now - timedelta(minutes=index),
+        )
+        expected.append(signal.id)
+    db_session.commit()
+
+    first = client.get(f"/api/v1/sources/{source.id}/signals?scope=all&limit=100&offset=0")
+    second = client.get(
+        f"/api/v1/sources/{source.id}/signals?scope=all&limit=100&offset=100"
+    )
+
+    assert first.status_code == second.status_code == 200
+    first_payload = first.json()
+    second_payload = second.json()
+    assert first_payload["limit"] == second_payload["limit"] == 100
+    assert first_payload["total"] == second_payload["total"] == 150
+    assert len(first_payload["items"]) == 100
+    assert len(second_payload["items"]) == 50
+    returned = [item["id"] for item in first_payload["items"] + second_payload["items"]]
+    assert returned == expected
+    assert len(returned) == len(set(returned)) == 150
+
+
+def test_source_signals_rejects_limit_below_one_or_above_hundred(
+    client: TestClient,
+) -> None:
+    assert client.get("/api/v1/sources/1/signals?limit=101").status_code == 422
+    assert client.get("/api/v1/sources/1/signals?limit=0").status_code == 422
 
 
 def test_source_signals_returns_404_and_rejects_invalid_query(

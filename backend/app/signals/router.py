@@ -447,6 +447,7 @@ def list_source_signals(
     _user: SourceStatusView,
     scope: Annotated[Literal["valid", "all"], Query()] = "valid",
     offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = SOURCE_SIGNAL_PAGE_SIZE,
 ) -> SourceSignalListResponse:
     now_utc = datetime.now(UTC)
     source = session.get(DataSource, source_id)
@@ -468,11 +469,10 @@ def list_source_signals(
             select(RawSignal)
             .where(*filters)
             .order_by(
-                RawSignal.published_at.desc().nulls_last(),
                 RawSignal.collected_at.desc(),
                 RawSignal.id.desc(),
             )
-            .limit(SOURCE_SIGNAL_PAGE_SIZE)
+            .limit(limit)
             .offset(offset)
         )
     )
@@ -480,7 +480,7 @@ def list_source_signals(
         source=SourceSignalSourceRead.model_validate(source),
         items=[_signal_list_read(signal) for signal in signals],
         total=int(total),
-        limit=SOURCE_SIGNAL_PAGE_SIZE,
+        limit=limit,
         offset=offset,
     )
 

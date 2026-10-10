@@ -163,7 +163,7 @@ describe('统一 API 错误格式化', () => {
 });
 
 describe('信息源采集记录 API 请求契约', () => {
-  it('只发送范围与偏移量且不发送可变 limit', async () => {
+  it('未显式指定条数时只发送范围与偏移量，沿用服务端默认 limit', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
     vi.stubGlobal('fetch', fetchMock);
 
@@ -174,6 +174,19 @@ describe('信息源采集记录 API 请求契约', () => {
       expect.objectContaining({credentials: 'include'}),
     );
     expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('limit=');
+    vi.unstubAllGlobals();
+  });
+
+  it('显式指定每页条数时把 limit 与 offset 一起发送', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ok: true, status: 200, json: async () => ({items: []})});
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.sourceSignals(17, 'all', 100, 100);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/sources/17/signals?scope=all&offset=100&limit=100',
+      expect.objectContaining({credentials: 'include'}),
+    );
     vi.unstubAllGlobals();
   });
 

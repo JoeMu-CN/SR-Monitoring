@@ -1163,8 +1163,9 @@ export const api = {
   },
   sources: () => request<DataSourceRead[]>('/api/v1/sources'),
   sourcesAdmin: () => request<DataSourceRead[]>('/api/v1/sources/admin'),
-  sourceSignals: (sourceId: number, scope: 'valid' | 'all', offset: number) => request<SourceSignalListResponse>(
-    `/api/v1/sources/${sourceId}/signals?scope=${scope}&offset=${offset}`,
+  // limit 省略时不下发该参数，沿用服务端默认页大小；需要整页拉取时显式指定。
+  sourceSignals: (sourceId: number, scope: 'valid' | 'all', offset: number, limit?: number) => request<SourceSignalListResponse>(
+    `/api/v1/sources/${sourceId}/signals?scope=${scope}&offset=${offset}${limit === undefined ? '' : `&limit=${limit}`}`,
   ),
   // 单条采集记录详情：按需返回完整 content 与结构化报告（report 为 null 表示非报告记录）。
   sourceSignalDetail: (sourceId: number, signalId: number, signal?: AbortSignal) => request<SourceSignalDetailRead>(

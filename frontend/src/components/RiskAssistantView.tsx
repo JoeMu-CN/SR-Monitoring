@@ -18,6 +18,15 @@ const NO_RISK_BADGE = {
   className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
 };
 
+// 额度徽标复用与 RISK_LEVEL_BADGE 相同的「状态 → 文案 + 样式」映射模式。
+// 文案与颜色统一由 quotaCard.status 驱动，避免右上角写死绿色「额度充裕」而与真实额度脱节。
+// normal=充裕（绿）、warning=不足（琥珀，仅当数据源已给出该状态）、exceeded=耗尽（红）。
+const QUOTA_STATUS_BADGE: Record<TianYanChaQuota['status'], {label: string; className: string}> = {
+  normal: {label: '额度充裕', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'},
+  warning: {label: '额度不足', className: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'},
+  exceeded: {label: '额度已耗尽', className: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'},
+};
+
 interface RiskAssistantViewProps {
   riskItems: RiskItem[];
   suppliers: Supplier[];
@@ -209,9 +218,19 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
       .flatMap((call) => asRecords(call.result.items))
       .map((item) => String(item.id)));
     const verifyResult = calls.find((call) => call.name === 'verify_company')?.result;
-    const usageResult = calls.find((call) => call.name === 'get_budget')?.result
-      ?? asRecord(verifyResult?.usage);
-    const nextQuota = usageResult ? mapQuota(usageResult) : null;
+    // 额度快照必须取「时间上最后一次」提供额度的调用：同一轮里 Agent 往往先调
+    // get_budget 查额度、再调 verify_company 核查，而核查会消耗额度。若固定取第一个
+    // get_budget，卡片会把核查前的过期余量画进去，与报告叙述的核查后额度对不上。
+    // engine.run_agent 按时间顺序保留全部工具调用，故反向扫描取最新可用快照。
+    const quotaSnapshots = calls
+      .filter((call) => call.name === 'get_budget' || call.name === 'verify_company')
+      .map((call) => (call.name === 'get_budget' ? call.result : asRecord(call.result.usage)));
+    let nextQuota: TianYanChaQuota | null = null;
+    for (let index = quotaSnapshots.length - 1; index >= 0; index -= 1) {
+      const snapshot = quotaSnapshots[index];
+      nextQuota = snapshot ? mapQuota(snapshot) : null;
+      if (nextQuota) break;
+    }
     if (nextQuota) setQuota(nextQuota);
     return {
       id: `asst-${Date.now()}`,
@@ -645,8 +664,12 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                               天眼查 API 接口调用配额
                             </span>
                           </div>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            额度充裕
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              QUOTA_STATUS_BADGE[msg.data.quotaCard.status].className
+                            }`}
+                          >
+                            {QUOTA_STATUS_BADGE[msg.data.quotaCard.status].label}
                           </span>
                         </div>
 

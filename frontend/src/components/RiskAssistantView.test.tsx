@@ -148,6 +148,105 @@ describe('RiskAssistantView 库内已采集核查结果映射', () => {
   });
 });
 
+// 缺陷回归：额度卡片此前固定取「第一个」get_budget 快照。同一轮里 Agent 常先查额度
+// 再核查，而核查会消耗额度；取核查前的旧快照会让卡片余量与报告叙述的核查后额度对不上。
+// 修复后应按时间顺序取最后一次额度快照（get_budget 顶层或 verify_company.usage）。
+describe('RiskAssistantView 额度卡片取最新快照', () => {
+  it('先 get_budget 后 verify_company 时显示核查后额度而非过期快照', async () => {
+    vi.mocked(api.chat).mockResolvedValue({
+      session_id: 41,
+      answer: '已完成核查，额度见卡片。',
+      tool_calls: [
+        {
+          name: 'get_budget',
+          arguments: {},
+          result: {daily_used: 0, daily_limit: 1000, monthly_used: 81, monthly_limit: 10000},
+        },
+        {
+          name: 'verify_company',
+          arguments: {company_name: '示例精密电子有限公司'},
+          result: {
+            status: 'completed',
+            company_name: '示例精密电子有限公司',
+            usage: {daily_used: 12, daily_limit: 1000, monthly_used: 93, monthly_limit: 10000},
+          },
+        },
+      ],
+    });
+    renderAssistant();
+
+    const user = userEvent.setup();
+    await user.type(queryInput(), '核查示例精密电子有限公司');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+
+    await screen.findByText('已完成核查，额度见卡片。');
+    const cardText = document.body.textContent ?? '';
+    // 核查后额度必须生效，核查前的过期快照不得出现。
+    expect(cardText).toContain('12 / 1000');
+    expect(cardText).toContain('93 / 10000');
+    expect(cardText).not.toContain('0 / 1000');
+    expect(cardText).not.toContain('81 / 10000');
+  });
+});
+
+// 缺陷回归：额度卡片右上角此前写死绿色「额度充裕」，不读 quotaCard.status，
+// 导致 daily/monthly 额度已耗尽时仍显示绿色充裕。修复后文案与颜色统一由
+// mapQuota 判定的 status 驱动：正常绿色「额度充裕」，任一维度耗尽红色「额度已耗尽」。
+describe('RiskAssistantView 额度卡片右上角状态标签随 quotaCard.status 变化', () => {
+  const quotaResponse = (usage: Record<string, number>): ChatResponse => ({
+    session_id: 51,
+    answer: '额度查询完成。',
+    tool_calls: [
+      {
+        name: 'get_budget',
+        arguments: {},
+        result: {status: 'success', ...usage},
+      },
+    ],
+  });
+
+  const askQuota = async (usage: Record<string, number>) => {
+    vi.mocked(api.chat).mockResolvedValue(quotaResponse(usage));
+    const user = userEvent.setup();
+    renderAssistant();
+    await user.type(queryInput(), '查询天眼查 API 今日和本月调用额度');
+    await user.click(screen.getByRole('button', {name: /发送/}));
+    return screen.findByText('额度查询完成。');
+  };
+
+  it('未耗尽时显示绿色「额度充裕」', async () => {
+    await askQuota({daily_used: 12, daily_limit: 1000, monthly_used: 93, monthly_limit: 10000});
+
+    const badge = screen.getByText('额度充裕');
+    expect(badge.className).toContain('bg-emerald-100');
+    expect(screen.queryByText('额度已耗尽')).toBeNull();
+  });
+
+  it('日额度正好耗尽时显示红色「额度已耗尽」，不再出现绿色充裕', async () => {
+    await askQuota({daily_used: 1000, daily_limit: 1000, monthly_used: 93, monthly_limit: 10000});
+
+    const badge = screen.getByText('额度已耗尽');
+    expect(badge.className).toContain('bg-red-100');
+    expect(screen.queryByText('额度充裕')).toBeNull();
+  });
+
+  it('月额度耗尽时显示红色「额度已耗尽」', async () => {
+    await askQuota({daily_used: 12, daily_limit: 1000, monthly_used: 10000, monthly_limit: 10000});
+
+    const badge = screen.getByText('额度已耗尽');
+    expect(badge.className).toContain('bg-red-100');
+    expect(screen.queryByText('额度充裕')).toBeNull();
+  });
+
+  it('额度超过上限（已用大于上限）时同样显示红色「额度已耗尽」', async () => {
+    await askQuota({daily_used: 1005, daily_limit: 1000, monthly_used: 10001, monthly_limit: 10000});
+
+    const badge = screen.getByText('额度已耗尽');
+    expect(badge.className).toContain('bg-red-100');
+    expect(screen.queryByText('额度充裕')).toBeNull();
+  });
+});
+
 // 回归：monitoringStatus='high_risk' 只表示「存在任意当前风险(P1–P4)」，
 // 卡片却一律显示「高危预警」，使已降级为 P2 的供应商仍被标成最高级。
 describe('RiskAssistantView 供应商卡片风险标识按真实等级显示', () => {

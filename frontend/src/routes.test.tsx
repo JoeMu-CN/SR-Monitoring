@@ -17,6 +17,7 @@ import {
 const routeViews: RouteViews = {
   overview: <div>总览页面</div>,
   risks: <div>风险页面</div>,
+  intelligence: <div>情报页面</div>,
   riskDetail: <div>风险详情页面</div>,
   assistant: <div>助手页面</div>,
   suppliers: <div>供应商页面</div>,
@@ -59,6 +60,7 @@ describe('显式路由白名单', () => {
   it.each([
     ['/overview', '总览页面'],
     ['/risks', '风险页面'],
+    ['/intelligence', '情报页面'],
     ['/risks/42', '风险详情页面'],
     ['/assistant', '助手页面'],
     ['/suppliers', '供应商页面'],
@@ -89,6 +91,7 @@ describe('显式路由白名单', () => {
 
   it.each([
     ['/risks', ['supplier_view']],
+    ['/intelligence', ['supplier_view']],
     ['/suppliers', ['risk_view']],
     ['/sources', ['rule_summary_view']],
     ['/sources/17/signals?scope=all&page=2', ['rule_summary_view']],
@@ -153,6 +156,7 @@ describe('路由元数据', () => {
     expect(routeDefinitions.map((route) => route.path)).toEqual([
       '/overview',
       '/risks',
+      '/intelligence',
       '/risks/:alertId',
       '/assistant',
       '/suppliers',

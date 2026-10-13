@@ -4,8 +4,8 @@
 - entity    主体：注册号 / 法人全称 / 别名（强关联，复用现有确定性逻辑）
 - location  地点：区县行政区名称精确匹配，不使用经纬度与影响半径；无法解析区县的事件地点不匹配
 - product   产品：受影响产品关键词 vs 供应产品
-- country   国家：事件国家 vs 供应商国别/生产地国别（宏观维度，弱关联）
-- industry  行业：受影响产品 vs 供应商行业标签/关键原材料（宏观维度）
+- country   国家：事件受影响国家（affected_countries）vs 供应商国别/生产地国别（宏观维度，弱关联）
+- industry  行业：受影响行业 vs 供应商行业标签/关键原材料（宏观维度，单向包含）
 
 同一供应商被多根柱命中时按 MatchCandidate 合并（取最高分、并理由与证据）。
 """
@@ -240,12 +240,13 @@ def match_locations(
                 )
 
 
-def _product_term_matches(term: str, affected: str) -> bool:
-    """单个供应产品词是否命中单个事件受影响产品词。
+def _supplier_term_matches(term: str, affected: str) -> bool:
+    """单个供应商侧词是否命中单个事件侧受影响词。
 
-    精确相等始终命中；否则只接受"供应词被事件词包含"这一单向包含，事件词必须是
-    更具体的表述。禁止反向包含（事件泛化词是供应词的前缀，例如事件"电梯"命中
-    供应"电梯配件"）——那会把无关供应商按产品拉进匹配。空白词永不命中。
+    精确相等始终命中；否则只接受"供应商词被事件词包含"这一单向包含，事件词必须是
+    更具体的表述。禁止反向包含（事件泛化词是供应商词的前缀，例如事件"电梯"命中
+    供应"电梯配件"、事件"机械"命中行业"机械设备制造"）——那会把无关供应商按产品
+    或行业拉进匹配。空白词永不命中。产品柱与行业柱共用这条规则。
     """
     if not term or not affected:
         return False
@@ -261,7 +262,7 @@ def match_products(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """产品柱：受影响产品关键词 vs 供应产品名称/关键词（单向包含，见 _product_term_matches）。"""
+    """产品柱：受影响产品关键词 vs 供应产品名称/关键词（单向包含，见 _supplier_term_matches）。"""
     del session  # 保持 MatcherFn 签名兼容，产品柱不访问数据库
     affected_products = [
         value for value in map(normalize_alias, result.affected_products) if value
@@ -274,7 +275,7 @@ def match_products(
                     term
                     for term in terms
                     for affected in affected_products
-                    if _product_term_matches(term, affected)
+                    if _supplier_term_matches(term, affected)
                 ),
                 None,
             )
@@ -299,14 +300,16 @@ def match_countries(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """国家柱（宏观维度）：事件国家 vs 供应商国别/生产地国别。
+    """国家柱（宏观维度）：事件的受影响国家范围 vs 供应商国别/生产地国别。
 
-    弱关联，仅用于宏观事件（制裁/关税/战争）的国别传导；
-    单独命中不应触发高等级，由维度配置的强关联柱集合与强制规则约束。
+    来源只有 AI 判定的 ``affected_countries``，即"该国供应链整体受影响"的国家级
+    系统性风险（全境制裁、战争、封锁、全国性动荡）。不再读 ``locations[].country_code``：
+    事件发生地或公告涉及国几乎等于该国供应商的国别，会把同国供应商批量拉进匹配。
+
+    弱关联，仅用于宏观事件的国别传导；单独命中不应触发高等级，由维度配置的强关联柱
+    集合与强制规则约束。
     """
-    country_codes = {
-        loc.country_code for loc in result.locations if loc.country_code
-    }
+    country_codes = {code.strip().upper() for code in result.affected_countries if code.strip()}
     if not country_codes:
         return
     for supplier in suppliers:
@@ -316,7 +319,7 @@ def match_countries(
             _candidate(matches, supplier).add(
                 "country",
                 assoc.get("country", 8),
-                f"事件涉及国家与供应商国别/生产地一致：{code}",
+                f"事件受影响国家范围与供应商国别/生产地一致：{code}",
                 {
                     "object_type": "country",
                     "supplier_id": supplier.id,
@@ -332,7 +335,11 @@ def match_industries(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """行业柱（宏观维度）：受影响产品/行业 vs 供应商行业标签与关键原材料。"""
+    """行业柱（宏观维度）：受影响行业 vs 供应商行业标签与关键原材料。
+
+    匹配为单向包含（见 ``_supplier_term_matches``）：供应商词可以被更具体的
+    事件行业词包含，但事件侧泛化词不得反吞供应商的宽口径行业标签。
+    """
     affected = [normalize_alias(item) for item in result.affected_industries]
     if not affected:
         return
@@ -352,7 +359,7 @@ def match_industries(
                 term
                 for term in industry_terms
                 for item in affected
-                if len(term) >= 2 and (term in item or item in term)
+                if _supplier_term_matches(term, item)
             ),
             None,
         )

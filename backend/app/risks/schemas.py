@@ -56,6 +56,17 @@ class LevelCount(BaseModel):
     count: int
 
 
+class RiskAlertSummary(BaseModel):
+    """当前提醒全量分级计数：与列表分页无关，供概览口径直接展示。
+
+    level_counts 恒含 P1-P4 四档且顺序固定；total_current 为各档之和，
+    与 /dashboard/summary 的当前统计共用同一判活条件。
+    """
+
+    level_counts: list[LevelCount]
+    total_current: int
+
+
 class EventTypeCount(BaseModel):
     event_type: str
     count: int

@@ -1,6 +1,7 @@
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import type {RiskAlertSummary} from '../api';
 import type {RiskItem} from '../types';
 import {CurrentRisksView} from './CurrentRisksView';
 
@@ -23,6 +24,16 @@ const baseItem = (overrides: Partial<RiskItem> = {}): RiskItem => ({
   ...overrides,
 });
 
+const summaryFixture = (counts: Readonly<Record<'P1' | 'P2' | 'P3' | 'P4', number>>): RiskAlertSummary => ({
+  level_counts: [
+    {level: 'P1', count: counts.P1},
+    {level: 'P2', count: counts.P2},
+    {level: 'P3', count: counts.P3},
+    {level: 'P4', count: counts.P4},
+  ],
+  total_current: counts.P1 + counts.P2 + counts.P3 + counts.P4,
+});
+
 afterEach(cleanup);
 
 describe('当前风险列表有效期状态展示', () => {
@@ -37,7 +48,7 @@ describe('当前风险列表有效期状态展示', () => {
       baseItem({id: '6', companyName: '旧版供应商', validityState: 'legacy', status: 'invalid'}),
     ];
 
-    render(<CurrentRisksView riskItems={items} onSelectRisk={vi.fn()} />);
+    render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
 
     expect(screen.getByText('有效')).toBeInTheDocument();
     await user.click(screen.getByRole('button', {name: '已失效'}));
@@ -52,6 +63,7 @@ describe('当前风险列表有效期状态展示', () => {
     render(
       <CurrentRisksView
         riskItems={[baseItem({validityReason: {code: 'effective_signal_support', anchor_source: 'published_at', details: {}}})]}
+        summary={null}
         onSelectRisk={vi.fn()}
       />,
     );
@@ -73,6 +85,7 @@ describe('当前风险列表有效期状态展示', () => {
           companyName: '未知原因供应商',
           validityReason: {code: 'brand_new_reason', anchor_source: 'published_at', details: {}},
         })]}
+        summary={null}
         onSelectRisk={vi.fn()}
       />,
     );
@@ -88,7 +101,7 @@ describe('当前风险列表有效期状态展示', () => {
       baseItem({id: '2', companyName: '过期供应商', validityState: 'expired', status: 'invalid'}),
     ];
 
-    render(<CurrentRisksView riskItems={items} onSelectRisk={vi.fn()} />);
+    render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
 
     expect(screen.getByText('示例供应商')).toBeInTheDocument();
     expect(screen.queryByText('过期供应商')).not.toBeInTheDocument();
@@ -96,5 +109,59 @@ describe('当前风险列表有效期状态展示', () => {
     await user.click(screen.getByRole('button', {name: '已失效'}));
     expect(screen.getByText('过期供应商')).toBeInTheDocument();
     expect(screen.queryByText('示例供应商')).not.toBeInTheDocument();
+  });
+});
+
+describe('当前风险概览：全库计数与单页列表口径分离', () => {
+  it('概览卡与总计使用全库汇总，列表文案明确标注本页/已加载口径', () => {
+    // Given 已加载 2 行（其中 1 行 P4），服务端全库汇总为 94 条
+    const items: RiskItem[] = [
+      baseItem({id: '1', level: 'P2'}),
+      baseItem({id: '2', level: 'P4', companyName: '低风险供应商'}),
+    ];
+    const summary = summaryFixture({P1: 0, P2: 1, P3: 0, P4: 93});
+
+    // When
+    render(<CurrentRisksView riskItems={items} summary={summary} onSelectRisk={vi.fn()} />);
+
+    // Then 概览卡取全库口径：总计 94，P1-P4 分别为 0/1/0/93，而非本页的 0/1/0/1
+    const overviewCard = screen.getByText('当前风险概览').closest('section');
+    if (overviewCard === null) throw new Error('当前风险概览卡片未渲染');
+    expect(within(overviewCard).getByText('共 94 条（全库当前）')).toBeInTheDocument();
+    const p4Cell = within(overviewCard).getByText('P4 轻微').parentElement;
+    if (p4Cell === null) throw new Error('P4 概览单元未渲染');
+    expect(within(p4Cell).getByText('93')).toBeInTheDocument();
+    // 页脚同时给出两个口径，不再用单页条数冒充全库总量
+    expect(screen.getByText('本页显示 2 条（已加载 2 条），全库当前共 94 条')).toBeInTheDocument();
+  });
+
+  it('等级筛选下概览卡仍为全库口径，页脚反映筛选后的本页条数', async () => {
+    const user = userEvent.setup();
+    const items: RiskItem[] = [
+      baseItem({id: '1', level: 'P2'}),
+      baseItem({id: '2', level: 'P4', companyName: '低风险供应商'}),
+    ];
+    const summary = summaryFixture({P1: 3, P2: 7, P3: 11, P4: 93});
+
+    render(<CurrentRisksView riskItems={items} summary={summary} onSelectRisk={vi.fn()} />);
+
+    // When 按等级筛选只保留本页 P4 行
+    await user.selectOptions(screen.getByRole('combobox'), 'P4');
+
+    // Then 本页只剩 1 条，但概览卡总数仍是全库的 114
+    expect(screen.getByText('本页显示 1 条（已加载 2 条），全库当前共 114 条')).toBeInTheDocument();
+    expect(screen.getByText('共 114 条（全库当前）')).toBeInTheDocument();
+  });
+
+  it('汇总不可用时回落本页计数，并在文案中声明全库计数暂不可用', () => {
+    const items: RiskItem[] = [
+      baseItem({id: '1', level: 'P2'}),
+      baseItem({id: '2', level: 'P4', companyName: '低风险供应商'}),
+    ];
+
+    render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
+
+    expect(screen.getByText('共 2 条（本页已加载）')).toBeInTheDocument();
+    expect(screen.getByText('本页显示 2 条，已加载 2 条（全库当前计数暂不可用）')).toBeInTheDocument();
   });
 });

@@ -1,26 +1,42 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
-import {formatValidityReasonLabel, VALIDITY_STATE_LABELS} from '../api';
+import {formatValidityReasonLabel, VALIDITY_STATE_LABELS, type RiskAlertSummary} from '../api';
 import type {RiskItem} from '../types';
+
+const RISK_LEVELS = ['P1', 'P2', 'P3', 'P4'] as const;
 
 interface CurrentRisksViewProps {
   riskItems: RiskItem[];
+  /**
+   * 当前提醒全量计数（服务端聚合，不受列表 limit=100 的单页截断影响）。
+   * null 表示汇总不可用：概览卡回落已加载页计数，并显式标注该口径不是全量。
+   */
+  summary: RiskAlertSummary | null;
   onSelectRisk: (item: RiskItem) => void;
 }
 
-export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProps) => {
+const countByLevel = (levels: readonly {readonly level: string; readonly count: number}[]) =>
+  Object.fromEntries(RISK_LEVELS.map((level) => [
+    level,
+    levels.find((entry) => entry.level === level)?.count ?? 0,
+  ])) as Record<(typeof RISK_LEVELS)[number], number>;
+
+export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisksViewProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLevel, setSelectedLevel] = useState('all');
   const [selectedSource, setSelectedSource] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'valid' | 'invalid'>('valid');
 
-  const counts = useMemo(
-    () => Object.fromEntries(
-      ['P1', 'P2', 'P3', 'P4'].map((level) => [level, riskItems.filter((item) => item.level === level).length]),
-    ) as Record<string, number>,
+  // 已加载单页的分级计数：仅作为汇总不可用时的降级口径。
+  const loadedCounts = useMemo(
+    () => countByLevel(RISK_LEVELS.map((level) => ({level, count: riskItems.filter((item) => item.level === level).length}))),
     [riskItems],
   );
+
+  // 概览卡一律优先使用全量口径，与风险总览保持一致；无汇总时才用本页计数。
+  const overviewCounts = summary === null ? loadedCounts : countByLevel(summary.level_counts);
+  const totalCurrent = summary?.total_current ?? riskItems.length;
 
   const sourceOptions = useMemo(
     () => Array.from(new Set(riskItems.map((item) => item.source).filter((s): s is string => Boolean(s)))).sort((a, b) => a.localeCompare(b, 'zh-CN')),
@@ -91,7 +107,7 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
                 onChange={(event) => setSelectedSource(event.target.value)}
                 className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"
               >
-                <option value="all">全部信源（{riskItems.length}）</option>
+                <option value="all">全部信源（已加载 {riskItems.length}）</option>
                 {sourceOptions.map((source) => (
                   <option key={source} value={source}>
                     {source}（{riskItems.filter((item) => item.source === source).length}）
@@ -118,13 +134,13 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
       <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
           <span className="text-[13px] font-semibold text-slate-600 dark:text-slate-300">当前风险概览</span>
-          <span className="font-mono text-[13px] font-bold text-[#185fa5]">共 {riskItems.length} 条</span>
+          <span className="font-mono text-[13px] font-bold text-[#185fa5]">共 {totalCurrent} 条{summary === null ? '（本页已加载）' : '（全库当前）'}</span>
         </div>
         <div className="grid grid-cols-2 divide-x pt-3 dark:divide-slate-800 sm:grid-cols-4">
-          <LevelSummary label="P1 严重" value={counts.P1} color="text-[#C92A2A]" />
-          <LevelSummary label="P2 高风险" value={counts.P2} color="text-[#D97706]" />
-          <LevelSummary label="P3 中度" value={counts.P3} color="text-[#2563EB]" />
-          <LevelSummary label="P4 轻微" value={counts.P4} color="text-[#64748B]" />
+          <LevelSummary label="P1 严重" value={overviewCounts.P1} color="text-[#C92A2A]" />
+          <LevelSummary label="P2 高风险" value={overviewCounts.P2} color="text-[#D97706]" />
+          <LevelSummary label="P3 中度" value={overviewCounts.P3} color="text-[#2563EB]" />
+          <LevelSummary label="P4 轻微" value={overviewCounts.P4} color="text-[#64748B]" />
         </div>
       </section>
 
@@ -192,7 +208,9 @@ export const CurrentRisksView = ({riskItems, onSelectRisk}: CurrentRisksViewProp
       </AnimatePresence>
 
       <div className="border-t border-slate-200/80 pt-3 text-[12px] text-slate-500 dark:border-slate-800">
-        显示 {filtered.length} 条，共 {riskItems.length} 条已加载结果
+        {summary === null
+          ? `本页显示 ${filtered.length} 条，已加载 ${riskItems.length} 条（全库当前计数暂不可用）`
+          : `本页显示 ${filtered.length} 条（已加载 ${riskItems.length} 条），全库当前共 ${summary.total_current} 条`}
       </div>
     </div>
   );

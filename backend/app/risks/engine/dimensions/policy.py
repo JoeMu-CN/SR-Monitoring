@@ -11,6 +11,11 @@ trade_policy），因此本维度声明 ``event_types=()`` 且 ``enabled=False``
 eu-official-journal、eu-compliance、uflpa-entity-list、mee-announcement）产出
 的信号按 source_code 直接归属本维度，不受 AI 粗事件类型影响。归属策略只决定
 "由哪个维度评分"，不会让无相关性的信号凭空产生风险提醒。
+
+本维度启用行业柱、产品柱与国家柱：国家柱不再以事件发生地为准，而是以 AI 判定的
+``affected_countries``（国家级系统性供应链风险，如全境制裁、战争、封锁）为门控，
+因此国内例行政策公告不会因为"公告国家=供应商国别"就把全部同国供应商拉进匹配；
+只有确实把该国供应链整体列为受影响范围的事件才会命中国家柱。
 """
 
 from app.risks.engine.config import (

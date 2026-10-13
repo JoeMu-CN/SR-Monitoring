@@ -251,6 +251,8 @@ def get_notification_settings() -> NotificationSettings:
 SCHEDULER_COLLECT_CRON = os.getenv("SCHEDULER_COLLECT_CRON", "*/30 * * * *").strip()
 SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()
 SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip()
+# 情报聚合（政策/行业报告）默认在整点后第 15 分钟生成，避开整点的采集与提醒失效任务。
+SCHEDULER_INTELLIGENCE_CRON = os.getenv("SCHEDULER_INTELLIGENCE_CRON", "15 * * * *").strip()
 # 研究轨发布开关：本地默认开启以保留开发/测试能力，生产发布候选必须显式关闭。
 RESEARCH_TRACK_ENABLED = os.getenv("RESEARCH_TRACK_ENABLED", "true").strip().lower() in {
     "1",
@@ -314,6 +316,15 @@ SIGNAL_ANALYZE_BATCH = _int_env(
 SIGNAL_RELEVANCE_FILTER_ENABLED = os.getenv(
     "SIGNAL_RELEVANCE_FILTER_ENABLED", "true"
 ).strip().lower() in {"1", "true", "yes", "on"}
+# SIGNAL_ANALYZE_BATCH 同款口径：每次定时任务生成的情报报告条数（每条事件一次独立 LLM 调用）
+INTELLIGENCE_REPORT_BATCH = _int_env(
+    "INTELLIGENCE_REPORT_BATCH", 10, minimum=1, maximum=100
+)
+# 生成失败（status='failed'）的情报报告在该冷却期后允许再次生成，避免临时模型故障
+# 永久留下空洞，也避免每轮调度反复消耗模型额度。
+INTELLIGENCE_RETRY_COOLDOWN_HOURS = _int_env(
+    "INTELLIGENCE_RETRY_COOLDOWN_HOURS", 24, minimum=1, maximum=720
+)
 # 海外供应链重点关注国家（ISO 3166-1 alpha-2，逗号分隔）。
 # 即使供应商清单尚未导入该国供应商，命中这些国家的事件也不被相关性过滤
 # 跳过（避免误滤海外供应链风险信号），并在放行理由中标记。

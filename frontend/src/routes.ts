@@ -11,10 +11,10 @@ export const routePermissions = {
 } as const;
 
 export type RoutePermission = typeof routePermissions[keyof typeof routePermissions];
-export type RouteId = 'overview' | 'risks' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'scheduler' | 'rules' | 'userSettings';
+export type RouteId = 'overview' | 'risks' | 'intelligence' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'scheduler' | 'rules' | 'userSettings';
 export type NavigationSurface = 'desktop' | 'mobile';
 export type NavigationSection = 'main' | 'system';
-export type NavigationIcon = 'overview' | 'risks' | 'assistant' | 'suppliers' | 'sources' | 'scheduler' | 'rules' | 'userSettings';
+export type NavigationIcon = 'overview' | 'risks' | 'intelligence' | 'assistant' | 'suppliers' | 'sources' | 'scheduler' | 'rules' | 'userSettings';
 
 interface NavigationMetadata {
   readonly surfaces: readonly NavigationSurface[];
@@ -39,6 +39,7 @@ export interface NavigationRoute extends RouteDefinition {
 export const routePaths = {
   overview: '/overview',
   risks: '/risks',
+  intelligence: '/intelligence',
   riskDetail: '/risks/:alertId',
   assistant: '/assistant',
   suppliers: '/suppliers',
@@ -61,6 +62,14 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     path: routePaths.risks,
     permission: routePermissions.riskView,
     navigation: {surfaces: ['desktop', 'mobile'], section: 'main', desktopLabel: '当前风险监控', mobileLabel: '风险', icon: 'risks', end: false},
+  },
+  {
+    // 情报聚合：政策/行业维度的宏观报告页。两个 Tab 是页内状态，不是独立路径，
+    // 因此 end=true 且只进入桌面主导航（移动底栏维持现有 7 个入口）。
+    id: 'intelligence',
+    path: routePaths.intelligence,
+    permission: routePermissions.riskView,
+    navigation: {surfaces: ['desktop'], section: 'main', desktopLabel: '情报聚合', mobileLabel: '情报', icon: 'intelligence', end: true},
   },
   {id: 'riskDetail', path: routePaths.riskDetail, permission: routePermissions.riskView},
   {

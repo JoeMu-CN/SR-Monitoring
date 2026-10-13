@@ -1,7 +1,7 @@
 import type {ReactNode} from 'react';
 import {motion} from 'motion/react';
 import {NavLink} from 'react-router-dom';
-import {Activity, AlertTriangle, Bot, Building2, Database, LayoutDashboard, SlidersHorizontal, Users} from 'lucide-react';
+import {Activity, AlertTriangle, Bot, Building2, Database, LayoutDashboard, Newspaper, SlidersHorizontal, Users} from 'lucide-react';
 import {visibleNavigationRoutes, type NavigationIcon, type NavigationRoute} from '../routes';
 
 interface MobileNavProps {
@@ -12,6 +12,8 @@ interface MobileNavProps {
 const icons = {
   overview: <LayoutDashboard className="h-5 w-5" />,
   risks: <AlertTriangle className="h-5 w-5" />,
+  // 情报聚合仅在桌面导航暴露（surfaces: ['desktop']）；此图标仅为 NavigationIcon 穷举映射完整。
+  intelligence: <Newspaper className="h-5 w-5" />,
   assistant: <Bot className="h-5 w-5" />,
   suppliers: <Building2 className="h-5 w-5" />,
   sources: <Database className="h-5 w-5" />,

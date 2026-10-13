@@ -257,6 +257,54 @@ export interface EventDetailRead {
 
 interface RiskAlertListResponse { items: RiskAlertRead[]; total: number }
 
+/**
+ * 当前提醒全量分级计数（GET /api/v1/risk-alerts/summary）。
+ *
+ * 与列表接口的区别：列表只返回单页（前端固定 limit=100）行数，本接口按全库当前
+ * 口径聚合，不受分页影响；与 /dashboard/summary 的当前统计共用同一判活条件。
+ */
+export interface RiskAlertSummary {
+  /** 当前有效快照下的 P1–P4 计数，恒含四档、顺序固定。 */
+  readonly level_counts: readonly DashboardLevelCount[];
+  /** 当前有效提醒总数，等于 level_counts 之和。 */
+  readonly total_current: number;
+}
+
+/* ── 情报聚合契约（GET /api/v1/intelligence?tab=policy|industry） ──────────── */
+
+/** 情报分类：policy=政策情报，industry=行业情报；与后端维度键一一对应。 */
+export type IntelligenceCategory = 'policy' | 'industry';
+
+export interface IntelligenceReportRead {
+  id: number;
+  event_id: number;
+  category: IntelligenceCategory;
+  status: 'ready' | 'failed';
+  title: string;
+  event_summary: string;
+  event_type: string;
+  event_subtype: string | null;
+  event_start_at: string | null;
+  source_code: string;
+  source_name: string;
+  source_url: string | null;
+  published_at: string | null;
+  report_zh: string | null;
+  suggestions: string[];
+  provider: string;
+  model: string;
+  prompt_version: string;
+  error: string | null;
+  generated_at: string | null;
+}
+
+export interface IntelligenceReportListResponse {
+  items: IntelligenceReportRead[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /* ── 总览汇总契约（任务 4 后端 GET /dashboard/summary?days=7|30|90） ───────── */
 
 export type DashboardWindowDays = 7 | 30 | 90;
@@ -1141,9 +1189,15 @@ export const api = {
     }),
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
+  // 当前提醒全量计数：概览口径专用，不受上面列表 limit=100 的单页截断影响。
+  alertSummary: () => request<RiskAlertSummary>('/api/v1/risk-alerts/summary'),
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
   dashboardSummary: (days: DashboardWindowDays) => request<DashboardSummary>(`/api/v1/dashboard/summary?days=${days}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
+  intelligence: (tab: IntelligenceCategory, limit = 20, offset = 0) => request<IntelligenceReportListResponse>(
+    `/api/v1/intelligence?tab=${tab}&limit=${limit}&offset=${offset}`,
+  ),
+  intelligenceReport: (id: number) => request<IntelligenceReportRead>(`/api/v1/intelligence/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
   /**
    * 名录单页展示：按后端单次上限逐页拉取并聚合，直到取满同一筛选口径的 total。

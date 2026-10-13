@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from time import perf_counter
 
+from sqlalchemy import Text, and_, cast, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.agent.tyc_analysis_context import (
     load_analysis_context,
@@ -12,6 +14,36 @@ from app.ai.providers import PROMPT_VERSION, AIProviderError, get_ai_provider
 from app.ai.schemas import SignalAnalysisInput
 from app.config import get_ai_settings
 from app.signals.models import RawSignal
+
+
+def usable_analysis_result() -> ColumnElement[bool]:
+    """``result`` 是否携带可复用的真实分析结果（SQL 非 NULL 且不是 JSON null）。
+
+    ``result`` 是无 ``none_as_null`` 的 JSONB 列，显式 ``None`` 落库为 JSON null
+    而非 SQL NULL，因此 ``is_(None)`` / ``is_not(None)`` 无法区分空结果与真实对象。
+    用 ``CAST(result AS TEXT)`` 做跨方言（Postgres JSONB 与 SQLite）判定：
+    真实对象渲染为 ``{...}`` 永不等于 ``null``；SQL NULL 行已被首个条件排除，
+    三值逻辑下整表达式不会为 UNKNOWN。
+    """
+    return and_(
+        AIAnalysisRecord.result.is_not(None),
+        cast(AIAnalysisRecord.result, Text) != "null",
+    )
+
+
+def latest_reusable_analysis(
+    session: Session, signal_id: int
+) -> AIAnalysisRecord | None:
+    """该信号最近一次可复用的成功分析；确定性过滤等空结果记录不算。"""
+    return session.scalar(
+        select(AIAnalysisRecord)
+        .where(
+            AIAnalysisRecord.signal_id == signal_id,
+            AIAnalysisRecord.status == "succeeded",
+            usable_analysis_result(),
+        )
+        .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
+    )
 
 
 def analysis_content(signal: RawSignal) -> str:

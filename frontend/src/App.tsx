@@ -14,6 +14,7 @@ import {
   type AuthUser,
   type AgentStatusRead,
   type MonitoringHealthRead,
+  type RiskAlertSummary,
   type SupplierDeletionImpactRead,
   type SupplierRead,
   type SystemHealth,
@@ -36,6 +37,7 @@ import {DataSourcesView, type RefreshSourcesIntent} from './components/DataSourc
 import {SourceSignalsView} from './components/SourceSignalsView';
 import {SupplierImportModal} from './components/SupplierImportModal';
 import {OverviewView} from './components/OverviewView';
+import {PolicyIntelligenceView} from './components/PolicyIntelligenceView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
 import {SchedulerLiveView} from './components/SchedulerLiveView';
@@ -55,6 +57,9 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const [riskItems, setRiskItems] = useState<RiskItem[]>([]);
+  // 当前提醒全量计数：与 riskItems 的单页（limit=100）列表口径分离，供风险监控页概览卡展示。
+  // null 表示汇总尚不可用，视图据此回落已加载页计数。
+  const [riskAlertSummary, setRiskAlertSummary] = useState<RiskAlertSummary | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [dimensions, setDimensions] = useState<MonitoringDimension[]>([]);
@@ -122,6 +127,9 @@ export function App() {
 
   const loadData = useCallback(async () => {
     setError(null);
+    // 当前提醒全量汇总与核心主数据同批发起，但独立降级：失败只让风险监控页概览卡
+    // 回落已加载页计数，不得把整页降级为错误横幅，也不得清空上一次可用口径。
+    const summaryPromise = api.alertSummary().catch(() => null);
     try {
       // 核心主数据聚合：这些才是页面主体依赖的真正数据，任一失败都属于数据加载失败，统一进入全局错误横幅。
       const [alertsResponse, suppliersResponse, sourcesResponse, runsResponse, dimensionResponse, healthResponse] = await Promise.all([
@@ -143,6 +151,9 @@ export function App() {
     } finally {
       setLoading(false);
     }
+
+    const summaryResponse = await summaryPromise;
+    if (summaryResponse) setRiskAlertSummary(summaryResponse);
 
     // agentStatus 是独立、非核心的请求：/api/v1/agent/status 需要 risk_query_use 权限，
     // viewer 等只读角色按后端设计会被 403 拒绝，属预期而非错误。此接口失败不得阻塞上方
@@ -306,6 +317,7 @@ export function App() {
     setAuth(null);
     setAuthError(null);
     setRiskItems([]);
+    setRiskAlertSummary(null);
     setSuppliers([]);
     setDataSources([]);
     setDimensions([]);
@@ -325,6 +337,12 @@ export function App() {
   const refreshRiskAlerts = useCallback(async () => {
     const alertsResponse = await api.alerts();
     setRiskItems(alertsResponse.items.map(mapRiskAlert));
+    // 全量汇总与列表同批刷新，但失败保留上一次可用口径，绝不把概览卡清空或回落成本页条数。
+    try {
+      setRiskAlertSummary(await api.alertSummary());
+    } catch {
+      /* 保留既有口径，视图继续按全量计数展示 */
+    }
   }, []);
 
   const handleAskAssistant = (query: string) => {
@@ -553,11 +571,12 @@ export function App() {
     refreshIntervalMs: monitoringHealthRefreshMsForPath(location.pathname),
     onRequestError: handleDetailRequestError,
   });
-  const riskRouteView = <RiskRouteView riskItems={riskItems} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
+  const riskRouteView = <RiskRouteView riskItems={riskItems} summary={riskAlertSummary} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
   const routeViews: RouteViews = {
     overview: <OverviewView onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} onRequestError={handleDetailRequestError} monitoringHealth={monitoringHealth} />,
     risks: riskRouteView,
     riskDetail: riskRouteView,
+    intelligence: <PolicyIntelligenceView />,
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} onAlertsChanged={refreshRiskAlerts} />,
     suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} monitoringHealth={monitoringHealth} />,

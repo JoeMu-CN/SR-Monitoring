@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.ai.models import AIAnalysisRecord
 from app.ai.providers import AIConfigurationError, AIProviderError
-from app.ai.service import analyze_raw_signal
+from app.ai.service import analyze_raw_signal, latest_reusable_analysis
 from app.auth.models import User
 from app.auth.security import (
     PERM_ANALYSIS_RUN,
@@ -17,7 +16,7 @@ from app.auth.security import (
     verify_csrf,
 )
 from app.database import get_session
-from app.risks.dashboard import build_dashboard_aggregate
+from app.risks.dashboard import CURRENT_LEVELS, build_dashboard_aggregate
 from app.risks.models import (
     EventEntity,
     EventLocation,
@@ -31,8 +30,10 @@ from app.risks.schemas import (
     DashboardSummary,
     EventDetailRead,
     EventSignalEvidence,
+    LevelCount,
     RiskAlertListResponse,
     RiskAlertRead,
+    RiskAlertSummary,
     RiskProcessResult,
     SourceHealthRead,
 )
@@ -123,15 +124,7 @@ async def process_signal(
     signal = session.get(RawSignal, signal_id)
     if signal is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险信号不存在")
-    analysis = session.scalar(
-        select(AIAnalysisRecord)
-        .where(
-            AIAnalysisRecord.signal_id == signal_id,
-            AIAnalysisRecord.status == "succeeded",
-            AIAnalysisRecord.result.is_not(None),
-        )
-        .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
-    )
+    analysis = latest_reusable_analysis(session, signal_id)
     if analysis is None:
         try:
             analysis = await analyze_raw_signal(session, signal)
@@ -183,6 +176,31 @@ def list_risk_alerts(
     ).all()
     items = _build_alert_reads(session, rows)
     return RiskAlertListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/risk-alerts/summary", response_model=RiskAlertSummary)
+def risk_alert_summary(session: SessionDependency, _user: RiskView) -> RiskAlertSummary:
+    """当前提醒全量分级计数：不受列表分页限制。
+
+    与 /dashboard/summary 的当前统计共用同一 current_alert_condition 与
+    P1-P4 固定四档口径；列表接口只返回单页行数，不得用它的条数冒充当前总量。
+
+    必须声明在 /risk-alerts/{alert_id} 之前：否则 "summary" 会被 int 路径参数
+    抢先匹配并以 422 拒绝。
+    """
+    level_rows = session.execute(
+        select(RiskAlert.level, func.count())
+        .where(current_alert_condition(datetime.now(UTC)))
+        .group_by(RiskAlert.level)
+    ).all()
+    level_map = {level: count for level, count in level_rows}
+    return RiskAlertSummary(
+        level_counts=[
+            LevelCount(level=level, count=level_map.get(level, 0))
+            for level in CURRENT_LEVELS
+        ],
+        total_current=sum(level_map.values()),
+    )
 
 
 @router.get("/risk-alerts/{alert_id}", response_model=RiskAlertRead)

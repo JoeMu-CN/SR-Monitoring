@@ -32,7 +32,11 @@ from app.agent.tyc_batch import (
 from app.agent.tyc_batch_models import SHARD_COUNT
 from app.agent.tyc_gateway import TYC_SOURCE_CODE
 from app.ai.models import AIAnalysisRecord
-from app.ai.service import analyze_raw_signal
+from app.ai.service import (
+    analyze_raw_signal,
+    latest_reusable_analysis,
+    usable_analysis_result,
+)
 from app.auth.models import User
 from app.auth.security import write_audit
 from app.config import (
@@ -61,6 +65,7 @@ from app.research.service import (
     create_task,
     reconcile_stale_tool_runs,
 )
+from app.risks.intelligence_batch import generate_pending_intelligence_reports
 from app.risks.models import RiskEventSignal
 from app.risks.service import expire_alerts, process_analysis
 from app.risks.validity import expire_signal_if_due, is_raw_signal_effective
@@ -287,15 +292,7 @@ def _process_pending_signals(
                     continue
                 # 处理前登记当前信号（独立短事务；写失败不影响业务）。
                 runtime.record_pending_signal_started(signal.id, now=now)
-                analysis = session.scalar(
-                    select(AIAnalysisRecord)
-                    .where(
-                        AIAnalysisRecord.signal_id == signal.id,
-                        AIAnalysisRecord.status == "succeeded",
-                        AIAnalysisRecord.result.is_not(None),
-                    )
-                    .order_by(AIAnalysisRecord.started_at.desc(), AIAnalysisRecord.id.desc())
-                )
+                analysis = latest_reusable_analysis(session, signal.id)
                 if analysis is None and SIGNAL_RELEVANCE_FILTER_ENABLED:
                     decision = assess_signal_relevance(
                         session, signal.title, signal.content
@@ -417,9 +414,10 @@ def _risk_processed_signal_ids() -> Select[tuple[int]]:
 
 
 def _terminal_filtered_signal_ids() -> Select[tuple[int]]:
+    """终态过滤信号：成功但结果为空（SQL NULL 或 JSON null，含确定性预过滤）。"""
     return select(AIAnalysisRecord.signal_id).where(
         AIAnalysisRecord.status == "succeeded",
-        AIAnalysisRecord.result.is_(None),
+        ~usable_analysis_result(),
     )
 
 
@@ -853,6 +851,20 @@ def create_weekly_research_batch_job(*, now: datetime | None = None) -> int | No
             budget_snapshot=_merge_research_budget(config.budget_template),
             now=current,
         )
+
+
+def intelligence_report_job() -> None:
+    """为政策/行业维度的风险事件批量生成情报报告（简要报告 + 风险提醒建议）。
+
+    与提醒链路完全解耦：只读事件，不做供应商匹配、不评分、不推送。批次大小由
+    INTELLIGENCE_REPORT_BATCH 控制，单条失败不终止整批（错误由服务层落 failed 行）。
+    """
+    try:
+        generated = generate_pending_intelligence_reports()
+        if generated:
+            logger.info("情报报告生成完成: %d 条", generated)
+    except Exception as exc:
+        logger.exception("情报报告任务异常: %s", exc)
 
 
 def expire_job() -> None:

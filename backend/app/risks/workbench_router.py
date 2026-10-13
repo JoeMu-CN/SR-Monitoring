@@ -901,6 +901,7 @@ def sandbox_test(
         locations=payload.locations,
         affected_products=payload.affected_products,
         affected_industries=payload.affected_industries,
+        affected_countries=payload.affected_countries,
         summary_zh=payload.summary,
         evidence_sentences=[payload.summary],
         confidence=1.0,

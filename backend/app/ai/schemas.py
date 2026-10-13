@@ -4,6 +4,8 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+# ISO 3166-1 alpha-2，与 LocationReference.country_code 使用同一约束。
+CountryCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
 EventType = Literal[
     "weather",
     "geological",
@@ -89,6 +91,7 @@ class SignalAnalysisResult(BaseModel):
     affected_activities: list[AffectedActivity] = Field(default_factory=list)
     affected_products: list[str] = Field(default_factory=list)
     affected_industries: list[str] = Field(default_factory=list)
+    affected_countries: list[CountryCode] = Field(default_factory=list)
     start_at: datetime | None = None
     end_at: datetime | None = None
     summary_zh: NonEmptyText

@@ -1,7 +1,7 @@
 import type {ReactNode} from 'react';
 import {motion} from 'motion/react';
 import {NavLink} from 'react-router-dom';
-import {Activity, Building2, Bot, Database, HelpCircle, LayoutDashboard, Settings, ShieldAlert, SlidersHorizontal, Users} from 'lucide-react';
+import {Activity, Building2, Bot, Database, HelpCircle, LayoutDashboard, Newspaper, Settings, ShieldAlert, SlidersHorizontal, Users} from 'lucide-react';
 import {visibleNavigationRoutes, type NavigationIcon, type NavigationRoute} from '../routes';
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ interface SidebarProps {
 const icons = {
   overview: <LayoutDashboard className="h-[18px] w-[18px]" />,
   risks: <ShieldAlert className="h-[18px] w-[18px]" />,
+  intelligence: <Newspaper className="h-[18px] w-[18px]" />,
   assistant: <Bot className="h-[18px] w-[18px]" />,
   suppliers: <Building2 className="h-[18px] w-[18px]" />,
   sources: <Database className="h-[18px] w-[18px]" />,

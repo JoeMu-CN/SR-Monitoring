@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.ai import service as ai_service
 from app.ai.schemas import SignalAnalysisResult
+from app.risks.engine.matching import match_industries
 from app.risks.models import RiskAlert, RuleDimensionConfig, SupplierEventMatch
 from app.signals.models import RawSignal
 from app.suppliers.models import Supplier, SupplierProduct, SupplierSite
@@ -168,6 +169,7 @@ def test_dimension_dispatch_geopolitical(
             event_type="geopolitical",
             event_subtype="political_instability",
             locations=[{"name": "中国", "country_code": "CN"}],
+            affected_countries=["CN"],
         ),
         "ENG-DISPATCH-2",
     )
@@ -192,6 +194,7 @@ def test_geopolitical_country_only_is_weak_not_p1(
             event_subtype="political_instability",
             suggested_severity="low",
             locations=[{"name": "中国", "country_code": "CN"}],
+            affected_countries=["CN"],
         ),
         "ENG-GEO-COUNTRY",
     )
@@ -200,6 +203,60 @@ def test_geopolitical_country_only_is_weak_not_p1(
     match = db_session.scalar(select(SupplierEventMatch))
     assert match is not None
     assert "country" in match.match_type
+
+
+def test_country_column_matches_event_affected_country(
+    client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """Given 事件受影响国家范围含供应商国别，When 引擎跑国家柱，Then 命中（弱关联）。"""
+    _add_supplier(
+        db_session, code="B1-AFFECTED", name="受影响国供应商", country="CN", city="上海市"
+    )
+    alerts = _run(
+        client,
+        db_session,
+        monkeypatch,
+        _result(
+            event_type="geopolitical",
+            event_subtype="political_instability",
+            suggested_severity="low",
+            locations=[{"name": "中国", "country_code": "CN"}],
+            affected_countries=["CN"],
+        ),
+        "ENG-GEO-AFFECTED-COUNTRY",
+    )
+    assert alerts
+    assert all(a.level == "P4" for a in alerts)
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert "country" in match.match_type
+
+
+def test_country_column_ignores_event_location_country(
+    client: TestClient, db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    """Given 事件只有发生地国别（affected_countries 为空），When 跑国家柱，Then 不命中。
+
+    回归缺陷：国家柱曾直接读 locations[].country_code，使国内例行公告把全部同国
+    供应商拉进匹配（30 事件 × 33 供应商）。国家柱现在只认 AI 的受影响国家范围。
+    """
+    _add_supplier(
+        db_session, code="B1-LOC-ONLY", name="仅地点同国供应商", country="CN", city="上海市"
+    )
+    alerts = _run(
+        client,
+        db_session,
+        monkeypatch,
+        _result(
+            event_type="geopolitical",
+            event_subtype="political_instability",
+            suggested_severity="low",
+            locations=[{"name": "中国", "country_code": "CN"}],
+        ),
+        "ENG-GEO-LOCATION-ONLY",
+    )
+    assert alerts == []
+    assert list(db_session.scalars(select(SupplierEventMatch))) == []
 
 
 def test_geopolitical_entity_hit_forces_p1(
@@ -286,6 +343,49 @@ def test_industry_column_matches_supplier_industry(
     )
     assert len(alerts) == 1
     assert alerts[0].score_detail["dimension"] == "industry"
+
+
+def _industry_matches(
+    industry: str | None, raw_materials: list[str], affected: list[str]
+) -> bool:
+    """行业柱单元口径：供应商行业标签/关键原材料 vs 事件受影响行业。"""
+    supplier = Supplier(
+        supplier_code="UNIT-IND",
+        legal_name="单元行业供应商",
+        country_code="CN",
+        enabled=True,
+        industry=industry,
+        raw_materials=raw_materials,
+    )
+    matches: dict[int, object] = {}
+    match_industries(
+        None,  # type: ignore[arg-type]  # 行业柱不访问数据库
+        _result(affected_industries=affected),
+        [supplier],
+        {"industry": 12},
+        matches,  # type: ignore[arg-type]
+    )
+    return bool(matches)
+
+
+def test_generic_event_industry_does_not_match_broad_supplier_industry() -> None:
+    """Given 事件泛化行业"机械"，When 供应商行业"机械设备制造"，Then 不命中（禁止反向包含）。"""
+    assert _industry_matches("机械设备制造", [], ["机械"]) is False
+
+
+def test_generic_event_industry_does_not_match_broad_raw_material() -> None:
+    """Given 事件泛化行业"钢"，When 关键原材料"特殊钢"，Then 不命中（禁止反向包含）。"""
+    assert _industry_matches(None, ["特殊钢"], ["钢"]) is False
+
+
+def test_exact_industry_term_still_matches() -> None:
+    """Given 事件与供应商行业完全相等，When 精确相等，Then 命中。"""
+    assert _industry_matches("稀土永磁材料", [], ["稀土永磁材料"]) is True
+
+
+def test_specific_event_industry_still_matches_supplier_term() -> None:
+    """Given 事件"稀土永磁材料"，When 关键原材料"稀土永磁"，Then 单向包含仍然命中。"""
+    assert _industry_matches(None, ["稀土永磁"], ["稀土永磁材料"]) is True
 
 
 # ── 热插拔与热更新 ────────────────────────────────────────────────────
@@ -550,6 +650,7 @@ def test_sandbox_geopolitical_country_weak(
             "event_type": "geopolitical",
             "severity": "low",
             "locations": [{"name": "中国", "country_code": "CN"}],
+            "affected_countries": ["CN"],
         },
     )
     assert response.status_code == 200

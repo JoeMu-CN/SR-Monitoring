@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.agent.tyc_report import DimensionFinding, DimensionStatus, RiskLevel, TycRiskReport
 from app.agent.tyc_report_storage import store_tyc_report_signal
 from app.ai.models import AIAnalysisRecord
+from app.ai.providers import PROMPT_VERSION
 from app.ai.schemas import SignalAnalysisResult
 from app.database import SessionLocal
 from app.risks.engine.event_identity import (
@@ -169,7 +170,7 @@ def _process(
         signal_id=signal.id,
         provider="static-test",
         model="static-v1",
-        prompt_version="signal-analysis-v3",
+        prompt_version=PROMPT_VERSION,
         status="succeeded",
         started_at=signal.collected_at,
         finished_at=signal.collected_at,
@@ -904,7 +905,7 @@ def test_blank_or_missing_supplier_code_fails_without_merge(
         signal_id=signal.id,
         provider="static-test",
         model="static-v1",
-        prompt_version="signal-analysis-v3",
+        prompt_version=PROMPT_VERSION,
         status="succeeded",
         started_at=_WEEK_1,
         finished_at=_WEEK_1,

@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
+from app.ai.providers import PROMPT_VERSION
 from app.ai.schemas import LocationReference, SignalAnalysisResult
 from app.risks.engine.config import DimensionDataSource
 from app.risks.engine.processing import (
@@ -157,7 +158,7 @@ def _analysis(
         signal_id=signal.id,
         provider="static-test",
         model="static-v1",
-        prompt_version="signal-analysis-v3",
+        prompt_version=PROMPT_VERSION,
         status="succeeded",
         started_at=signal.collected_at,
         finished_at=signal.collected_at,
@@ -178,14 +179,22 @@ def _policy_result() -> SignalAnalysisResult:
         locations=[LocationReference(name="中国", country_code="CN")],
         affected_activities=["operations"],
         affected_products=[],
+        affected_industries=["钢铁"],
         summary_zh="海关政策公告测试",
         evidence_sentences=["政策公告测试证据。"],
         confidence=0.8,
     )
 
 
-def _add_supplier(session: Session, code: str, name: str) -> Supplier:
-    supplier = Supplier(supplier_code=code, legal_name=name, country_code="CN")
+def _add_supplier(
+    session: Session, code: str, name: str, *, industry: str | None = None
+) -> Supplier:
+    supplier = Supplier(
+        supplier_code=code,
+        legal_name=name,
+        country_code="CN",
+        industry=industry,
+    )
     session.add(supplier)
     session.flush()
     return supplier
@@ -294,7 +303,7 @@ def test_process_event_routes_policy_signal_by_source(db_session: Session) -> No
     """policy DB 启用后，政策信源经真实 process_event 得到 policy 维度评分。"""
     _enable_policy(db_session)
     source = _source(db_session, "customs-announcement")
-    _add_supplier(db_session, "SUP-POLICY-1", "政策测试供应商")
+    _add_supplier(db_session, "SUP-POLICY-1", "政策测试供应商", industry="钢铁")
     signal = _active_signal(db_session, source, "policy-routing-1")
     analysis = _analysis(db_session, signal, _policy_result())
 

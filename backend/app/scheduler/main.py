@@ -26,6 +26,7 @@ from app.config import (
     SCHEDULER_CLEANUP_CRON,
     SCHEDULER_COLLECT_CRON,
     SCHEDULER_EXPIRE_CRON,
+    SCHEDULER_INTELLIGENCE_CRON,
     get_notification_settings,
 )
 from app.database import SessionLocal
@@ -42,6 +43,7 @@ from app.scheduler.jobs import (
     create_monthly_research_batch_job,
     create_research_task_job,
     create_weekly_research_batch_job,
+    intelligence_report_job,
     recover_capacity_blocked_research_batches_job,
 )
 from app.scheduler.runtime import (
@@ -274,6 +276,12 @@ def main() -> None:
     scheduler.add_job(
         cleanup_job, _trigger(SCHEDULER_CLEANUP_CRON), id="cleanup", name="保留清理"
     )
+    scheduler.add_job(
+        intelligence_report_job,
+        _trigger(SCHEDULER_INTELLIGENCE_CRON),
+        id="intelligence",
+        name="政策与行业情报报告生成",
+    )
     if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_DAILY_TOPIC:
         scheduler.add_job(
             create_research_task_job,
@@ -295,11 +303,12 @@ def main() -> None:
             name="创建月报批次",
         )
     logger.info(
-        "Scheduler 启动: collect=%s expire=%s cleanup=%s research_daily=%s "
+        "Scheduler 启动: collect=%s expire=%s cleanup=%s intelligence=%s research_daily=%s "
         "research_weekly=%s research_monthly=%s notify=%s",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
+        SCHEDULER_INTELLIGENCE_CRON,
         (
             RESEARCH_DAILY_CRON
             if RESEARCH_TRACK_ENABLED and RESEARCH_SCHEDULE_OWNER_USERNAME and RESEARCH_DAILY_TOPIC

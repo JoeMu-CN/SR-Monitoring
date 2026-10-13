@@ -73,7 +73,7 @@ const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetai
 const renderAt = (path: string, onRequestError = vi.fn()) => render(
   <MemoryRouter initialEntries={[path]}>
     <Routes>
-      <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={onRequestError} />} />
+      <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} summary={null} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={onRequestError} />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -84,7 +84,7 @@ const RouteSwitch = () => {
     <>
       <button type="button" onClick={() => navigate('/risks/2')}>切换提醒</button>
       <Routes>
-        <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={vi.fn()} />} />
+        <Route path="/risks/:alertId" element={<RiskRouteView riskItems={[]} summary={null} onAskAssistant={vi.fn()} onCloseDetail={vi.fn()} onExportReport={vi.fn()} onSelectRisk={vi.fn()} onRequestError={vi.fn()} />} />
       </Routes>
     </>
   );

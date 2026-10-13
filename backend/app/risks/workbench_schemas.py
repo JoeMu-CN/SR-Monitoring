@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 from app.ai.schemas import (
+    CountryCode,
     EventSubtype,
     EventType,
     LocationReference,
@@ -320,6 +321,7 @@ class SandboxRequest(BaseModel):
     locations: list[LocationReference] = Field(default_factory=list)
     affected_products: list[str] = Field(default_factory=list)
     affected_industries: list[str] = Field(default_factory=list)
+    affected_countries: list[CountryCode] = Field(default_factory=list)
     summary: str = "沙箱测试事件"
     credibility: int = Field(default=80, ge=0, le=100)
     has_published_at: bool = True

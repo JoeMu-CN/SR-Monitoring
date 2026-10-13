@@ -15,7 +15,7 @@ from app.research.reporting import (
     ResearchReportGenerationInput,
 )
 
-PROMPT_VERSION = "signal-analysis-v4"
+PROMPT_VERSION = "signal-analysis-v5"
 
 
 class AIProviderError(RuntimeError):
@@ -67,6 +67,7 @@ class FakeAIProvider:
             affected_activities=["operations"],
             affected_products=[],
             affected_industries=[],
+            affected_countries=[],
             summary_zh=value.title,
             evidence_sentences=[evidence],
             confidence=0.5,
@@ -314,6 +315,12 @@ _BASE_PROMPT_RULES = (
     "compliance→compliance_violation 或 sanctions，other→other；"
     "没有明确证据支持细类时 event_subtype 必须为 null。"
     "affected_products 与 affected_industries 必须分别提取，不得混用。"
+    "affected_industries 只列出供应链受到实质性影响的对象所属行业，"
+    "不得因为事件属于某行业或提及某行业就列入，避免过度填充。"
+    "affected_countries 只在事件构成国家级系统性供应链风险时才填写，"
+    "例如对某国全面或全境的制裁、战争、封锁、全国性动荡；"
+    "不得把事件发生地或公告涉及的国家本身当作受影响国家，不确定时留空。"
+    "affected_countries 每项使用 ISO 3166-1 alpha-2 大写二字代码（如 RU、IR）。"
     "locations 中应尽量分别填写 country_code、region、city、district；"
     "district 仅在原文明确支持区、县、旗或同级行政区时填写，不得根据城市名称猜测。"
     "start_at 与 end_at 必须使用带时区的 ISO 8601 格式（如 2026-07-15T10:08:00Z 或带偏移）。"

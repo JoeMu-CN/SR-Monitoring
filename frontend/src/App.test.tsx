@@ -17,6 +17,7 @@ import type {
   MonitoringHealthRead,
   MonitoringSourceHealth,
   MonitoringSourceState,
+  RiskAlertSummary,
   RuleEngineOptions,
   RiskAlertRead,
   SupplierListItem,
@@ -43,6 +44,7 @@ vi.mock('./api', async (importOriginal) => {
         resetPassword: vi.fn(),
       },
       alerts: vi.fn(),
+      alertSummary: vi.fn(),
       dashboardSummary: vi.fn(),
       chat: vi.fn(),
       chatSteps: vi.fn(),
@@ -204,6 +206,18 @@ const dashboardSummaryOk: DashboardSummary = {
   source_distribution: [{source_id: 1, code: 'ofac-sdn', name: 'OFAC SDN', count: 1}],
   retention_window_days: 90,
   history_may_be_partial: false,
+};
+
+// 当前提醒全量汇总夹具：故意远大于 alerts 单页返回的 1 行，锁定「概览卡取全量口径、
+// 列表仍是 limit=100 的单页」这一区分，正是总览与风险监控页数字曾经矛盾的根因。
+const alertSummaryOk: RiskAlertSummary = {
+  level_counts: [
+    {level: 'P1', count: 1},
+    {level: 'P2', count: 0},
+    {level: 'P3', count: 0},
+    {level: 'P4', count: 93},
+  ],
+  total_current: 94,
 };
 
 const supplierBackend: SupplierListItem = {
@@ -409,6 +423,7 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.auth.login).mockResolvedValue(user);
   vi.mocked(api.auth.logout).mockResolvedValue({detail: 'ok'});
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
+  vi.mocked(api.alertSummary).mockResolvedValue(alertSummaryOk);
   // 助手运行期步骤轮询：默认返回空快照，未发送消息的用例不会被定时器干扰。
   vi.mocked(api.chatSteps).mockResolvedValue({run_token: 'test-run', status: 'done', steps: []});
   vi.mocked(api.dashboardSummary).mockResolvedValue(dashboardSummaryOk);
@@ -751,6 +766,29 @@ describe('App 供应商编辑：删除影响展示', () => {
     await user.type(legalInput, '仍可编辑有限公司');
     expect(screen.getByDisplayValue('仍可编辑有限公司')).toBeInTheDocument();
     // 无全局错误横幅（横幅内含「重新加载」按钮；此处不应出现）
+    expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();
+  });
+});
+
+describe('App 当前风险监控：概览卡使用全量汇总，与单页列表口径分离', () => {
+  it('加载后概览卡显示全库 94 条，页脚标明本页只显示已加载的 1 条', async () => {
+    defaultMocks();
+    renderApp('/risks');
+
+    expect(await screen.findByText('共 94 条（全库当前）')).toBeInTheDocument();
+    expect(screen.getByText('本页显示 1 条（已加载 1 条），全库当前共 94 条')).toBeInTheDocument();
+    expect(api.alertSummary).toHaveBeenCalled();
+  });
+
+  it('全量汇总请求失败不阻塞页面：无全局错误横幅，概览卡显式回落本页口径', async () => {
+    defaultMocks();
+    vi.mocked(api.alertSummary).mockRejectedValue(new ApiError(503, '当前风险汇总服务不可用'));
+    renderApp('/risks');
+
+    expect(await screen.findByText('全网风险监控中心')).toBeInTheDocument();
+    expect(screen.getByText('共 1 条（本页已加载）')).toBeInTheDocument();
+    expect(screen.getByText('本页显示 1 条，已加载 1 条（全库当前计数暂不可用）')).toBeInTheDocument();
+    // 独立降级：不得触发全局错误横幅
     expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();
   });
 });

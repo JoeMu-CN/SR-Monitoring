@@ -323,6 +323,19 @@ describe('OverviewView 来源分布', () => {
     expect(within(section).getByText('8 条')).toBeInTheDocument();
   });
 
+  it('来源分布信源名称去掉括号及内容，与信息源列表页展示一致', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({
+      source_distribution: [
+        {source_id: 1, code: 'mee-notice', name: '生态环境部公告（P1 行业监管）', count: 5},
+      ],
+    }));
+    renderOverview();
+
+    const section = await screen.findByTestId('overview-source-distribution');
+    expect(within(section).getByText('生态环境部公告')).toBeInTheDocument();
+    expect(within(section).queryByText(/P1 行业监管/)).not.toBeInTheDocument();
+  });
+
   it('来源分布为空（zero distribution）时展示占位而不画非零比例', async () => {
     vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({source_distribution: []}));
     renderOverview();

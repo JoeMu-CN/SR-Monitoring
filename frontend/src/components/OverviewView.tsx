@@ -3,6 +3,7 @@ import {useSearchParams} from 'react-router-dom';
 import {AlertTriangle} from 'lucide-react';
 import {motion} from 'motion/react';
 import {api, ApiError, mapRiskAlert, type DashboardSummary, type DashboardWindowDays} from '../api';
+import {displaySourceName} from '../sourceDisplay';
 import type {RiskItem, RiskLevel} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {MonitoringHealthBanner} from './MonitoringHealthBanner';
@@ -188,7 +189,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
           ) : sourceRows.map((row, index) => (
             <div key={row.source_id}>
               <div className="mb-1 flex items-center gap-2 text-[12px] font-medium">
-                <span className="min-w-0 flex-1 truncate">{row.name}</span>
+                <span className="min-w-0 flex-1 truncate">{displaySourceName(row.name)}</span>
                 <span className="shrink-0 font-mono font-bold text-[#185fa5]">{row.count} 条</span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">

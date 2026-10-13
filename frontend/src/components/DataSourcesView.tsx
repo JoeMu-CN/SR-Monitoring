@@ -4,6 +4,7 @@ import {AlertTriangle, X} from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {api, VALIDITY_MODE_LABELS, type DataSourceWritePayload, type SourceValidityPolicy, type ValidityMode} from '../api';
 import {sourceSignalsPath} from '../routes';
+import {displaySourceName} from '../sourceDisplay';
 import {describeSourceSchedule} from '../sourceSchedule';
 import type {DataSource} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
@@ -44,12 +45,6 @@ const AUTH_TYPE_OPTIONS: ReadonlyArray<{value: 'none' | 'api_key'; label: string
 ];
 
 // —— 展示层工具（只影响页面呈现，不改变后端存储值） ——
-
-// 来源名称展示规范化：去掉半角/全角括号及其内容，避免括号里的技术标识挤占名称位置。
-const displaySourceName = (name: string): string => {
-  const stripped = name.replace(/[（(][^）)]*[）)]/g, '').replace(/\s+/g, ' ').trim();
-  return stripped || name;
-};
 
 // 连通状态标签：与名称下方「采集正常/失败」的新鲜度状态区分职责，只描述连通与访问能力。
 // 徽标的文案与配色必须同源：先判定连通变体，再由变体唯一决定标签与色调，

@@ -364,17 +364,21 @@ def test_dimension_hits_identify_risk_dimensions_only() -> None:
         "get_judicial_case",
         "get_hearing_notice",
         "get_court_notice",
+        "get_change_records",
     ]
     assert findings["get_default_event_info"].status is DimensionStatus.EMPTY
     assert findings["get_default_event_info"].hit is False
     assert findings["get_shell_company_check"].hit is False
     assert findings["get_administrative_license"].hit is False
     assert findings["get_administrative_license"].status is DimensionStatus.SUCCESS
+    # 历史变更记录是风险相关维度：有记录即命中，并给出具体变更事实而非条数。
+    assert findings["get_change_records"].hit is True
+    assert "章程备案（2026-01-09）" in findings["get_change_records"].summary
+    assert "共有21条变更记录" not in findings["get_change_records"].summary
     for key in (
         "get_random_check",
         "get_spot_check_info",
         "get_credit_evaluation",
-        "get_change_records",
         "get_actual_controller",
     ):
         assert findings[key].status is DimensionStatus.SUCCESS
@@ -393,10 +397,140 @@ def test_risk_level_extracted_from_overview_only() -> None:
 def test_key_summary_contains_required_risk_hits() -> None:
     summary = render_key_summary(_build())
 
-    for word in ("重点命中", "历史欠税公告", "开庭公告", "法院公告", "周边风险"):
+    for word in (
+        "重点命中",
+        "历史欠税公告",
+        "开庭公告",
+        "法院公告",
+        "周边风险",
+        "历史变更记录",
+        "章程备案（2026-01-09）",
+    ):
         assert word in summary
     for word in ("招聘", "竞品", "专利"):
         assert word not in summary
+
+
+def test_key_summary_puts_change_records_before_concrete_risk_dimensions() -> None:
+    """变更记录是主体身份底账，固定排在司法解析/开庭公告等具体风险维度之前。"""
+    summary = render_key_summary(_build())
+
+    change_at = summary.index("历史变更记录")
+    for word in ("司法解析", "开庭公告", "法院公告", "风险总览"):
+        assert change_at < summary.index(word)
+
+
+def test_change_records_summary_uses_facts_not_abstract_count() -> None:
+    """变更记录摘要取具体变更事实，不取「共有 N 条变更记录」这类条数 abstract。"""
+    findings = _findings_by_key(_build())
+    summary = findings["get_change_records"].summary
+
+    assert "共有21条变更记录" not in summary
+    assert "本次展示20条" not in summary
+    for fact in (
+        "章程备案（2026-01-09）",
+        "名称变更（字号名称、集团名称等）（2018-10-16）",
+        "地址变更（住所地址、经营场所、驻在地址等变更）（2017-12-25）",
+    ):
+        assert fact in summary
+    assert len(summary) <= 200
+
+
+# 用户截图中的 5 列返回格式：序号 + 变更日期 + 变更项目 + 变更前 + 变更后。
+RAW_CHANGE_RECORDS_BEFORE_AFTER = "\n".join(
+    [
+        "# 变更记录：宁波鸿腾精密制造股份有限公司",
+        "",
+        "- tool: `get_change_records`",
+        "",
+        "> 摘要：该查询实体共有21条变更记录。本次展示20条。",
+        "",
+        "### 变更记录（20 条）",
+        "",
+        "| 序号 | 变更日期 | 变更项目 | 变更前 | 变更后 |",
+        "|---|---|---|---|---|",
+        "| 1 | 2026-07-14 | 负责人变更 | 张弛 | 姜云富 |",
+        "| 2 | 2026-03-02 | 注册资本变更 | 500万元 | 1000万元 |",
+        "| 3 | 2026-01-09 | 章程备案 | - | - |",
+        "",
+    ]
+)
+
+
+def _build_change_records(raw: str) -> DimensionFinding:
+    report = _build(_minimal_results({"get_change_records": _entry("success", raw)}))
+    return report.dimensions[0]
+
+
+def test_change_records_parse_before_after_format_with_dates() -> None:
+    """5 列格式：按列名包含关系识别，不依赖固定列序，组合出「前值 → 后值（日期）」。"""
+    finding = _build_change_records(RAW_CHANGE_RECORDS_BEFORE_AFTER)
+
+    assert finding.hit is True
+    assert finding.name == "历史变更记录"
+    assert finding.summary == (
+        "负责人变更：张弛 → 姜云富（2026-07-14）；"
+        "注册资本变更：500万元 → 1000万元（2026-03-02）；"
+        "章程备案（2026-01-09）"
+    )
+    # 具体事实同样进证据引用，便于前端报告弹窗引用。
+    assert "负责人变更：张弛 → 姜云富（2026-07-14）" in finding.evidence_refs
+
+
+def test_change_records_three_column_format_stays_compatible() -> None:
+    """3 列格式（``# | 变更事项 | 变更日期``）无前/后值，退化为「项目（日期）」。"""
+    finding = _build_change_records(RAW_CHANGE_RECORDS)
+
+    assert finding.hit is True
+    assert finding.summary == (
+        "章程备案（2026-01-09）；"
+        "名称变更（字号名称、集团名称等）（2018-10-16）；"
+        "地址变更（住所地址、经营场所、驻在地址等变更）（2017-12-25）"
+    )
+
+
+def test_change_records_keep_parenthetical_project_note_intact() -> None:
+    """项目列里的括号说明文字原样保留，不在括号处误截断。"""
+    project = "负责人变更（法定代表人、负责人、首席代表、合伙事务执行人等变更）"
+    raw = "\n".join(
+        [
+            "# 变更记录：宁波鸿腾精密制造股份有限公司",
+            "",
+            "| 序号 | 变更日期 | 变更项目 | 变更前 | 变更后 |",
+            "|---|---|---|---|---|",
+            f"| 1 | 2026-07-14 | {project} | 张弛 | 姜云富 |",
+            "",
+        ]
+    )
+
+    finding = _build_change_records(raw)
+
+    assert f"{project}：张弛 → 姜云富（2026-07-14）" in finding.summary
+
+
+def test_change_records_without_date_column_omits_date_fragment() -> None:
+    """没有日期列时省略日期片段，不臆造时间。"""
+    raw = "\n".join(
+        [
+            "# 变更记录：宁波鸿腾精密制造股份有限公司",
+            "",
+            "| 变更项目 | 变更前 | 变更后 |",
+            "|---|---|---|",
+            "| 股东变更 | 张弛 | 姜云富 |",
+            "",
+        ]
+    )
+
+    finding = _build_change_records(raw)
+
+    assert finding.summary == "股东变更：张弛 → 姜云富"
+
+
+def test_non_change_table_falls_back_to_preferred_column() -> None:
+    """表头未命中变更列时回退通用列选取，司法解析等维度解析不受影响。"""
+    finding = _findings_by_key(_build())["get_judicial_case"]
+
+    assert finding.summary == "明细（4 条）：买卖合同纠纷、劳动合同纠纷、劳动争议"
 
 
 def test_report_excludes_recruitment_competitor_patent_content() -> None:

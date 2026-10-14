@@ -30,6 +30,8 @@ _MAX_SUMMARY_CHARS = 200
 _MAX_EVIDENCE_ITEMS = 5
 _MAX_ITEM_CHARS = 40
 _SHELL_TOOL = "get_shell_company_check"
+# 变更记录维度：摘要要给出具体变更事实而不是「共有 N 条」，故单列工具名做专门处理。
+_CHANGE_TOOL = "get_change_records"
 
 # 展示脱敏：手机号 / 座机 / 证件号（18 位或 15 位）；前后数字边界避免误伤长编号。
 _SENSITIVE_PATTERNS = (
@@ -78,7 +80,9 @@ _DIMENSION_SPECS: dict[str, _DimensionSpec] = {
     "get_spot_check_info": _DimensionSpec("抽查检查", False),
     "get_credit_evaluation": _DimensionSpec("信用评价（税务）", False),
     _SHELL_TOOL: _DimensionSpec("空壳公司识别", False),
-    "get_change_records": _DimensionSpec("历史变更记录", False),
+    # 历史变更记录是风险画像的关键事实（法定代表人/负责人、股东、注册资本、地址等），
+    # 标为风险相关后才能进入重点摘要与前端「命中风险」分组。
+    _CHANGE_TOOL: _DimensionSpec("历史变更记录", True),
     "get_actual_controller": _DimensionSpec("实际控制人", False),
     "get_beneficial_owners": _DimensionSpec("受益所有人", False),
     "get_external_investments": _DimensionSpec("对外投资", False),
@@ -182,8 +186,9 @@ def render_key_summary(report: TycRiskReport) -> str:
     """生成列表与正文用的中文重点摘要（确定性、可重复）。
 
     命中维度按风险等级排序并在名称后标注等级；风险总览作为汇总维度固定排在具体
-    维度之后，使「司法解析/开庭公告」等具体事实不被总览的过程性文字抢占，具体维度
-    之间仍按等级排序。摘要去除案号堆砌、压缩重复分隔符，并剥离「已返回…」
+    维度之后，使「司法解析/开庭公告」等具体事实不被总览的过程性文字抢占；历史变更
+    记录是主体身份与经营要素变化的底账，再固定排到具体风险维度之前，使其在摘要里
+    最先被读到。摘要去除案号堆砌、压缩重复分隔符，并剥离「已返回…」
     等过程性说明；必要口径提示保留在维度事实之后，同句里的真实事实
     原样保留。命中维度剥离后没有事实时给如实提示，不谎称无风险；无命中时单列未取得
     结果的维度数量，空/失败维度不算作已排除风险。
@@ -197,7 +202,10 @@ def render_key_summary(report: TycRiskReport) -> str:
         return _no_hit_summary(report)
     concrete = sorted(
         (finding for finding in hits if finding.key != _OVERVIEW_TOOL_KEY),
-        key=lambda item: _RISK_LEVEL_ORDER.get(item.risk_level, 4),
+        key=lambda item: (
+            0 if item.key == _CHANGE_TOOL else 1,
+            _RISK_LEVEL_ORDER.get(item.risk_level, 4),
+        ),
     )
     overviews = [finding for finding in hits if finding.key == _OVERVIEW_TOOL_KEY]
     parts = [_dimension_part(finding) for finding in concrete + overviews]
@@ -267,6 +275,9 @@ def _build_finding(
                 hit = tag_count is not None and tag_count > 0
                 if tag_count is not None:
                     summary = f"空壳识别标签 {tag_count} 项"
+            elif key == _CHANGE_TOOL:
+                # 「共有 N 条变更记录」只说条数，不说变了什么；改用解析出的具体事实。
+                summary = _change_summary(facts) or summary
             return DimensionFinding(
                 key=key,
                 name=spec.name,
@@ -317,6 +328,12 @@ def _parse_facts(raw: str) -> _Facts:
             elif header[0] != "字段" and not all(
                 re.fullmatch(r":?-{2,}:?", cell) for cell in cells
             ):
+                # 变更记录表先按列名组合「项目：前值 → 后值（日期）」；表头未命中变更列
+                # 时返回 None，回退通用列选取，不影响其他维度的表格解析。
+                change = _change_record_cell(header, cells)
+                if change:
+                    _append_fact(items, change)
+                    continue
                 value = _label_cell(header, cells)
                 if value:
                     _append_unique(items, value)
@@ -354,12 +371,73 @@ def _summarize(facts: _Facts) -> str:
     return _clip(mask_sensitive(text), _MAX_SUMMARY_CHARS)
 
 
+def _change_summary(facts: _Facts) -> str:
+    """变更记录摘要：用具体变更事实，不使用「共有 N 条变更记录」这类条数摘要。
+
+    条数只说明查到了多少记录，不说明主体发生了什么变化；AI 与运营需要的是
+    「项目：变更前 → 变更后（变更日期）」这样的可直接引用的事实。
+    """
+    items = [item for _, group in facts.groups for item in group]
+    if not items:
+        return ""
+    return _clip(mask_sensitive("；".join(items)), _MAX_SUMMARY_CHARS)
+
+
 def _risk_level(raw: str) -> RiskLevel | None:
     return next((level for level in RiskLevel if level.value in raw), None)
 
 
 # 表格证据优先取这些列（按优先级），使摘要与证据突出案由/身份/金额/状态而非案号。
 _PREFERRED_COLUMNS = ("案由", "案件身份", "金额", "标的", "状态")
+
+# 变更记录表按**列名包含关系**识别，不依赖固定列序：真实返回既可能是
+# 「序号|变更日期|变更项目|变更前|变更后」，也可能是「#|变更事项|变更日期」。
+_CHANGE_ITEM_COLUMNS = ("变更项目", "变更事项", "变更内容", "变更类型")
+_CHANGE_BEFORE_COLUMNS = ("变更前",)
+_CHANGE_AFTER_COLUMNS = ("变更后",)
+_CHANGE_DATE_COLUMNS = ("变更日期", "变更时间", "日期")
+
+
+def _match_column(header: list[str], wanted: tuple[str, ...]) -> int | None:
+    """按列名包含关系取首个命中列的位置；``wanted`` 按优先级排列。"""
+    for name in wanted:
+        position = next(
+            (index for index, column in enumerate(header) if name in column), None
+        )
+        if position is not None:
+            return position
+    return None
+
+
+def _change_record_cell(header: list[str], cells: list[str]) -> str | None:
+    """变更记录行 → ``项目：变更前 → 变更后（变更日期）``。
+
+    表头未命中变更项目列时返回 None，调用方回退通用列选取，因此只影响变更记录类
+    表格；缺少前值/后值/日期列时自动省略对应片段，不臆造内容。``项目`` 里的括号
+    说明文字（如「负责人变更（法定代表人、负责人等变更）」）原样保留。
+    """
+    item_index = _match_column(header, _CHANGE_ITEM_COLUMNS)
+    if item_index is None:
+        return None
+    item = _cell_text(cells, item_index)
+    before = _cell_text(cells, _match_column(header, _CHANGE_BEFORE_COLUMNS))
+    after = _cell_text(cells, _match_column(header, _CHANGE_AFTER_COLUMNS))
+    date = _cell_text(cells, _match_column(header, _CHANGE_DATE_COLUMNS))
+    changed = f"{before} → {after}" if before and after else (before or after)
+    text = f"{item}：{changed}" if item and changed else (changed or item or "")
+    if not text:
+        return None
+    return f"{text}（{date}）" if date else text
+
+
+def _cell_text(cells: list[str], index: int | None) -> str | None:
+    """取单元格文本：保留日期与数值形态（``2026-07-14`` 不是纯数字序号），只剔除空值与 ``-``。"""
+    if index is None or index >= len(cells):
+        return None
+    value = mask_sensitive(_WHITESPACE_RE.sub(" ", cells[index]).strip())
+    if not value or value == "-":
+        return None
+    return _bounded_item(value)
 
 
 def _label_cell(header: list[str], cells: list[str]) -> str | None:
@@ -385,6 +463,17 @@ def _clean_cell(text: str) -> str | None:
 
 def _append_unique(items: list[str], value: str) -> None:
     clean = _bounded_item(mask_sensitive(value))
+    if clean and clean not in items and len(items) < _MAX_EVIDENCE_ITEMS:
+        items.append(clean)
+
+
+def _append_fact(items: list[str], value: str) -> None:
+    """追加已组合的变更事实：沿用去重与条目数上限，但不再按单元格上限二次截断。
+
+    各片段已由 ``_cell_text`` 按 ``_MAX_ITEM_CHARS`` 有界；组合串若再按 40 字截断，
+    会把「变更后」与变更日期整段切掉，恰好丢掉最有价值的部分。
+    """
+    clean = mask_sensitive(value)
     if clean and clean not in items and len(items) < _MAX_EVIDENCE_ITEMS:
         items.append(clean)
 

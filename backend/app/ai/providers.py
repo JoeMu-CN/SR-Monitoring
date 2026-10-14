@@ -15,7 +15,7 @@ from app.research.reporting import (
     ResearchReportGenerationInput,
 )
 
-PROMPT_VERSION = "signal-analysis-v5"
+PROMPT_VERSION = "signal-analysis-v6"
 
 
 class AIProviderError(RuntimeError):
@@ -340,6 +340,10 @@ _PROFILE_CONTEXT_RULES = (
     "sampled、或维度数量与证据口径不一致时，只能说明本次核查不完整或存在口径差异，"
     "绝不能据此推断该供应商无风险、已结清或无诉讼。"
     "不得推断偿付能力、资金链或交付履约风险：上下文没有这类证据时不要提及。"
+    "dimensions 含历史变更记录（key 为 get_change_records）且有记录时，"
+    "summary_zh 必须优先陈述与风险相关的关键变更：法定代表人/负责人、股东、"
+    "实际控制人、注册资本、注册地址、企业名称、经营范围等；"
+    "使用「变更前 → 变更后」的写法并标注变更时间，不得罗列全部变更流水，只挑关键项。"
     "summary_zh 控制在 2 至 3 句，只陈述证据支持的事实。"
 )
 

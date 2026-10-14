@@ -349,7 +349,7 @@ API Key 不以明文写入数据库，仅保存 SHA-256 指纹和末四位；实
 
 ### LLM 建议等级与阈值采纳
 
-- AI 分析提示版本为 `signal-analysis-v5`，输出的 `suggested_level`（P1 至 P4 或 null）仅作规则引擎参考。
+- AI 分析提示版本为 `signal-analysis-v6`，输出的 `suggested_level`（P1 至 P4 或 null）仅作规则引擎参考。
 - 最终风险等级与提醒始终由确定性规则引擎决定，`suggested_level` 不直接生成提醒；阈值采纳规则以规则引擎生效配置为准。
 
 ### 监控健康语义
@@ -370,7 +370,7 @@ rg -F "每工具 1 次" README.md
 rg -F "1000" README.md
 rg -F "10000" README.md
 rg -F "周度" README.md
-rg -F "signal-analysis-v5" README.md
+rg -F "signal-analysis-v6" README.md
 rg -F "suggested_level" README.md
 rg -F "白名单" README.md
 $legacySchedule = "每天" + "北京时间 06:00"

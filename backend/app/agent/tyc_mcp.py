@@ -56,7 +56,8 @@ def parse_candidates_table(markdown_text: str) -> list[dict[str, object]]:
     """解析 search_companies 返回的 Markdown 候选表。
 
     表头行含「企业名称」「统一社会信用代码」「登记状态」等列；
-    按列名定位索引，避免列顺序变化导致的解析错误。
+    按列名定位索引，避免列顺序变化导致的解析错误。数据行列数少于表头
+    （上游返回结构不齐）时该列按缺失处理为 None，不越界。
     """
     lines = [line for line in markdown_text.splitlines() if line.strip().startswith("|")]
     header = split_table_row(lines[0]) if lines else []
@@ -77,17 +78,20 @@ def parse_candidates_table(markdown_text: str) -> list[dict[str, object]]:
         candidates.append(
             {
                 "name": name,
-                "credit_code": cells[credit_idx].strip()
-                if credit_idx is not None
-                else None,
-                "reg_status": cells[status_idx].strip()
-                if status_idx is not None
-                else None,
+                "credit_code": _cell_text(cells, credit_idx),
+                "reg_status": _cell_text(cells, status_idx),
             }
         )
         if len(candidates) >= MAX_CANDIDATES:
             break
     return candidates
+
+
+def _cell_text(cells: list[str], index: int | None) -> str | None:
+    """按列索引安全取值：列名缺失或该行缺列时返回 None（不越界）。"""
+    if index is None or index >= len(cells):
+        return None
+    return cells[index].strip()
 
 
 def split_table_row(line: str) -> list[str]:

@@ -159,9 +159,20 @@ async def _process_fetch_result(
     base = _base_result(supplier, usage)
     dimensions = _dimension_entries(results)
     if not dimensions and results.get("status") != "success":
-        return _anchor_failure(base, results)
+        failure = _anchor_failure(base, results)
+        # 实时核查失败此前不留应用日志，运维侧无从追查；此处补齐。
+        logger.warning(
+            "天眼查实时核查锚定未完成：供应商=%s 状态=%s 原因=%s",
+            supplier.legal_name,
+            failure.status,
+            failure.message,
+        )
+        return failure
     company_name = _resolved_company_name(results)
     if company_name is None:
+        logger.warning(
+            "天眼查实时核查锚定成功但未解析出主体名：供应商=%s", supplier.legal_name
+        )
         return replace(base, status="error", message=_DEFAULT_ANCHOR_FAILURE[1])
     return await _persist_and_analyze(
         session,
@@ -286,12 +297,16 @@ def _anchor_failure(
     base: ManualVerificationResult, results: Mapping[str, object]
 ) -> ManualVerificationResult:
     raw_status = results.get("status")
-    status, message = (
-        _ANCHOR_FAILURE[raw_status]
-        if isinstance(raw_status, str) and raw_status in _ANCHOR_FAILURE
-        else _DEFAULT_ANCHOR_FAILURE
-    )
-    return replace(base, status=status, message=message)
+    if isinstance(raw_status, str) and raw_status in _ANCHOR_FAILURE:
+        status, message = _ANCHOR_FAILURE[raw_status]
+        return replace(base, status=status, message=message)
+    # 未知/error 锚定失败：默认文案最模糊，附加执行器给出的真实原因便于定位，
+    # 不再只暴露「主体锚定失败」这一无法追查的通用结论。
+    message = _DEFAULT_ANCHOR_FAILURE[1]
+    detail = results.get("message")
+    if isinstance(detail, str) and detail.strip():
+        message = f"{message}：{detail.strip()}"
+    return replace(base, status=_DEFAULT_ANCHOR_FAILURE[0], message=message)
 
 
 def _dimension_entries(results: Mapping[str, object]) -> Mapping[str, object]:

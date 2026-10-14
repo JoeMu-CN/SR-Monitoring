@@ -160,7 +160,9 @@ async def execute_tyc_tool_with_quota(
             payload = await remote_call()
         except Exception as exc:  # noqa: BLE001 —— 远程异常转为「不计费 error」结果
             message = f"天眼查调用失败：{exc}"[:500]
-            logger.warning("天眼查工具 %s 调用失败：%s", tool_name, exc)
+            logger.warning(
+                "天眼查工具 %s 调用失败：%s", tool_name, exc, exc_info=True
+            )
             record_tyc_usage(
                 session,
                 tool_name=tool_name,

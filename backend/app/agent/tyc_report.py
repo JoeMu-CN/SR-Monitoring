@@ -3,7 +3,8 @@
 输入合同（与 Todo 5 ``fetch_dimensions`` 对齐，不依赖其具体类）::
 
     {"status": "success|empty|error|quota_exhausted|busy|not_configured",
-     # 顶层锚定结果，不写入报告
+     # 顶层锚定结果，不写入报告；锚定失败时附带 "message"（真实失败原因），
+     # 锚定成功时无此键
      "company_name": str, "credit_code": str | None, "reg_status": str | None,
      "dimensions": {"<tool>": {"status": ..., "raw": str | None, "message": str | None}}}
 

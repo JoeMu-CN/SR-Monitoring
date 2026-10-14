@@ -208,8 +208,9 @@ async def fetch_tyc_dimensions(
 
     返回 ``{"status", "company_name", "credit_code", "reg_status", "dimensions"}``；
     顶层 ``status`` 描述主体锚定结果（``success``/``empty``/``error``/
-    ``quota_exhausted``/``busy``），锚定失败时 ``dimensions`` 为空。锚定成功后逐维执行，
-    单维 error/empty 被隔离在 ``dimensions[tool_name]["status"]``，不中断其余维度。
+    ``quota_exhausted``/``busy``），锚定失败时 ``dimensions`` 为空并附带 ``message``
+    （执行器给出的真实失败原因，供上游如实展示）。锚定成功后逐维执行，单维
+    error/empty 被隔离在 ``dimensions[tool_name]["status"]``，不中断其余维度。
     """
     anchor = await execute_tyc_tool_with_quota(
         deps.anchor_tool_name, company_name, deps.anchor_call
@@ -223,6 +224,7 @@ async def fetch_tyc_dimensions(
     if anchor_payload is None:
         return {
             "status": _STATUS_BY_OUTCOME[anchor.outcome],
+            "message": anchor.message,
             "company_name": company_name,
             "credit_code": None,
             "reg_status": None,

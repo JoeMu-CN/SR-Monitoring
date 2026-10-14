@@ -269,6 +269,7 @@ class UnconfiguredTycGateway:
     async def fetch_dimensions(self, company_name: str) -> dict[str, object]:
         return {
             "status": "not_configured",
+            "message": "天眼查网关未配置：请在信息源控制台配置运行密钥",
             "company_name": company_name,
             "credit_code": None,
             "reg_status": None,

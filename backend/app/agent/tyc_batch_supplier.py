@@ -112,7 +112,12 @@ class SupplierRunner:
                 accumulator.empty_count += 1
             else:  # error / busy：远程失败或额度锁繁忙
                 accumulator.failed_count += 1
-            logger.warning("天眼查核查 %s 未产生报告：%s", supplier.legal_name, status)
+            logger.warning(
+                "天眼查核查 %s 未产生报告：%s（%s）",
+                supplier.legal_name,
+                status,
+                results.get("message"),
+            )
             return
         accumulator.attempted_count += 1
         outcome = self._write_report(supplier, results)

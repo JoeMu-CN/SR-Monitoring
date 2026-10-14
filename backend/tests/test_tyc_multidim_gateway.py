@@ -474,6 +474,34 @@ def test_mcp_gateway_search_companies_parses_candidates_locked() -> None:
     ]
 
 
+def test_mcp_gateway_search_companies_tolerates_ragged_rows() -> None:
+    """回归：数据行列数少于表头时按缺失列处理，不得越界（曾致锚定 IndexError）。"""
+    ragged = (
+        "| # | 企业名称 | 统一社会信用代码 | 登记状态 | 法定代表人 |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 1 | 上海航菱航空科技发展有限公司 |\n"
+        "| 2 | 完整列科技有限公司 | 91310000OK000001 | 存续 | 王五 |\n"
+    )
+    stub = _MCPToolStub(candidates_text=ragged)
+
+    candidates = asyncio.run(
+        _gateway(stub).search_companies("上海航菱航空科技发展有限公司")
+    )
+
+    assert candidates == [
+        {
+            "name": "上海航菱航空科技发展有限公司",
+            "credit_code": None,
+            "reg_status": None,
+        },
+        {
+            "name": "完整列科技有限公司",
+            "credit_code": "91310000OK000001",
+            "reg_status": "存续",
+        },
+    ]
+
+
 def test_unconfigured_gateway_verify_locked() -> None:
     """基线：无可用密钥时 build_tyc_gateway 返回占位实现，verify 不发起调用。"""
     gateway = build_tyc_gateway()
@@ -835,6 +863,7 @@ def test_fetch_dimensions_revoked_before_anchor_returns_not_configured(
 
     assert result == {
         "status": "not_configured",
+        "message": NOT_CONFIGURED_MESSAGE,
         "company_name": "维度测试科技有限公司",
         "credit_code": None,
         "reg_status": None,
@@ -919,6 +948,7 @@ def test_fetch_dimensions_anchor_empty_skips_dimensions(committed_tyc_env: None)
 
     assert result == {
         "status": "empty",
+        "message": None,
         "company_name": "不存在的公司",
         "credit_code": None,
         "reg_status": None,
@@ -938,6 +968,7 @@ def test_fetch_dimensions_anchor_error_returns_error(committed_tyc_env: None) ->
 
     assert result == {
         "status": "error",
+        "message": "天眼查调用失败：天眼查工具调用失败",
         "company_name": "测试公司",
         "credit_code": None,
         "reg_status": None,
@@ -993,6 +1024,7 @@ def test_unconfigured_gateway_fetch_dimensions_returns_not_configured() -> None:
     result = asyncio.run(gateway.fetch_dimensions("测试公司"))
     assert result == {
         "status": "not_configured",
+        "message": "天眼查网关未配置：请在信息源控制台配置运行密钥",
         "company_name": "测试公司",
         "credit_code": None,
         "reg_status": None,

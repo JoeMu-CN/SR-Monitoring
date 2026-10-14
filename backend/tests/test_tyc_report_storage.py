@@ -47,9 +47,9 @@ from app.agent.tyc_report_storage import (
 )
 from app.ai.schemas import SignalAnalysisResult
 from app.database import SessionLocal
-from app.signals.tyc_report_views import extract_report
 from app.risks.engine.event_identity import event_dedup_key
 from app.signals.models import DataSource, RawSignal
+from app.signals.tyc_report_views import extract_report
 from app.suppliers.models import Supplier
 
 _DIMS = ["get_risk_overview", "get_judicial_case"]
@@ -367,7 +367,9 @@ def test_persisted_report_excludes_raw_payload_and_sensitive_fields(
             "get_risk_overview": _entry("success", raw_markdown),
             # 非白名单维度：即使调用方误传也不得进入落库报告。
             "get_recruitment_info": _entry(
-                "success", "# 招聘信息：最小化持久化测试有限公司\n\n| # | 标题 |\n|---|---|\n| 1 | 仓库主管 |"
+                "success",
+                "# 招聘信息：最小化持久化测试有限公司\n\n"
+                "| # | 标题 |\n|---|---|\n| 1 | 仓库主管 |",
             ),
         },
     }

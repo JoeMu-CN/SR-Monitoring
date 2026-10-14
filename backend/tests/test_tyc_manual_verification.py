@@ -62,7 +62,12 @@ _LATER = _NOW + timedelta(hours=2)
 
 
 class _JudicialProvider(FakeAIProvider):
-    """固定 judicial 分析结果：触发主体强匹配 → 强制 P1。"""
+    """固定 judicial 分析结果：主体强匹配走常规评分（legal_name 命中 → P2）。
+
+    普通 judicial_case 不是制裁子类型，按风险引擎设计不得被 sanctions_entity_hit
+    强制提升为 P1（见 test_profile_event_targeting 的 judicial 负例）；本 provider
+    未给 suggested_level，最终等级即常规评分结果。
+    """
 
     def __init__(self) -> None:
         super().__init__(
@@ -188,7 +193,7 @@ def test_manual_verification_writes_signal_and_creates_formal_alert(
     assert event is not None
     alerts = _current_alerts(db_session)
     assert [alert.id for alert in alerts] == list(result.alert_ids)
-    assert alerts[0].level == "P1"
+    assert alerts[0].level == "P2"
     assert {call for call, _tool in stub.calls} == {supplier.legal_name}
 
 
@@ -206,7 +211,7 @@ def test_manual_verification_returns_real_alert_ids_in_db(
         alert = db_session.get(RiskAlert, alert_id)
         assert alert is not None
         assert alert.status == "current"
-        assert alert.level == "P1"
+        assert alert.level == "P2"
 
 
 # ── 同周重复实时核查：新证据不被吞掉，且不重复有效告警 ──────────────────

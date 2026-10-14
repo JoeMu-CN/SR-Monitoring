@@ -79,7 +79,8 @@ def test_summary_counts_every_current_alert_beyond_the_list_page_limit(
     assert summary["total_current"] == 105
     # 与风险总览的当前统计完全一致（两个页面不得再互相矛盾）
     assert dashboard_response.status_code == 200, dashboard_response.text
-    assert _level_counts(dashboard_response.json()["level_counts"]) == _level_counts(summary["level_counts"])
+    dashboard_levels = _level_counts(dashboard_response.json()["level_counts"])
+    assert dashboard_levels == _level_counts(summary["level_counts"])
     assert dashboard_response.json()["total_current"] == summary["total_current"]
 
 

@@ -884,6 +884,7 @@ async def import_signals(
                     source=source,
                     signal=signal,
                     fingerprint=adapter.fingerprint(signal),
+                    dedup_key=adapter.dedup_key(signal),
                     collected_at=collected_at,
                     authority=LifecycleAuthority(user.role, str(user.id)),
                 )

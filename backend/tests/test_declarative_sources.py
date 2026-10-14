@@ -271,6 +271,48 @@ def test_private_network_and_secret_static_headers_are_rejected() -> None:
         )
 
 
+def _spec_payload(fingerprint_fields: list[str]) -> dict[str, object]:
+    return {
+        "format": "json",
+        "request": {"url": "https://official.example/events"},
+        "items_path": "data.items",
+        "mapping": {
+            "external_id": "id",
+            "title": "title",
+            "content": "description",
+        },
+        "fingerprint_fields": fingerprint_fields,
+    }
+
+
+def test_volatile_fingerprint_fields_still_accepted_for_backcompat() -> None:
+    """既有已发布配置可能含 content 等字段；为兼容存量不拒绝，按缺失参与身份。"""
+    spec = AdapterSpec.model_validate(_spec_payload(["external_id", "content", "url"]))
+    assert spec.fingerprint_fields == ["external_id", "content", "url"]
+
+
+def test_fingerprint_fields_require_identity_anchor() -> None:
+    """没有 external_id / url 锚点时整条信号只能靠正文区分，必然产生重复。"""
+    with pytest.raises(ValidationError, match="身份锚点"):
+        AdapterSpec.model_validate(_spec_payload(["title", "published_at"]))
+    # 含锚点的稳定字段集合仍然允许。
+    assert AdapterSpec.model_validate(
+        _spec_payload(["external_id", "title", "published_at"])
+    ).fingerprint_fields == ["external_id", "title", "published_at"]
+    assert AdapterSpec.model_validate(_spec_payload(["url"])).fingerprint_fields == ["url"]
+
+
+def test_default_fingerprint_fields_satisfy_anchor_rule() -> None:
+    payload = _spec_payload(["external_id", "title", "published_at"])
+    payload.pop("fingerprint_fields")
+    spec = AdapterSpec.model_validate(payload)
+    assert DeclarativeSourceAdapter("official-events", spec).dedup_fields == (
+        "external_id",
+        "title",
+        "published_at",
+    )
+
+
 def test_http_requires_allow_http_hosts_whitelist() -> None:
     """HTTP 明文信息源必须显式加入 allow_http_hosts 白名单。"""
     # 默认拒绝 HTTP

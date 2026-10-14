@@ -77,7 +77,7 @@ def insert_supersession(
                     insert(RawSignal)
                     .values(row)
                     .on_conflict_do_nothing(
-                        index_elements=[RawSignal.source_id, RawSignal.fingerprint]
+                        index_elements=[RawSignal.source_id, RawSignal.dedup_key]
                     )
                     .returning(RawSignal.id)
                 )

@@ -15,7 +15,9 @@ raw_signals」的持久化，不查远程、不改信源配置。
 - 手动路径额外返回真实 ``signal_id``（按唯一键 ``(source_id, fingerprint)`` 取回），
   供调用方继续对该信号做 AI 解析与规则判定；定时路径不需要该 id，故不额外查询；
 - 空报告（无任何维度条目）不落库并返回 ``empty``，由批次计入 empty；维度条目全部
-  失败的非空报告仍如实落库（与 Todo 7 的部分报告契约一致）。
+  失败的非空报告仍如实落库（与 Todo 7 的部分报告契约一致）；
+- 采集去重身份 ``dedup_key`` 只由既有稳定 ``external_id`` 决定（报告正文、生成
+  时间与标题变化不影响），与 ``fingerprint`` 并存：后者仍是同权威时间胜负判定口径。
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.agent.supplier_tyc import TYC_SOURCE_CODE, tyc_source
 from app.agent.tyc_analysis_context import PRIVATE_RAW_FIELD, TycAnalysisContext
 from app.agent.tyc_report import TycRiskReport, render_key_summary
+from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
@@ -146,6 +149,7 @@ def store_tyc_report_signal(
     if analysis_context is not None:
         # 私有上下文只作为附加键落库：根报告既有字段保持不变，指纹口径也不含它。
         raw_data[PRIVATE_RAW_FIELD] = analysis_context.model_dump(mode="json")
+    title = f"天眼查多维度核查：{supplier.legal_name}"
     created = persist_signal_ingestions(
         session,
         [
@@ -153,13 +157,22 @@ def store_tyc_report_signal(
                 source=source,
                 signal=ManualSignalInput(
                     external_id=external_id,
-                    title=f"天眼查多维度核查：{supplier.legal_name}",
+                    title=title,
                     content=render_key_summary(report),
                     validity_profile=ValidityProfile.ADVERSE_REGISTRY,
                     validity_key=validity_key,
                     lifecycle_action=LifecycleAction.ASSERT,
                 ),
                 fingerprint=fingerprint,
+                # 天眼查 external_id 已含供应商 + 周期（或观察 token），是既有
+                # 稳定锚点；用它作去重身份，报告正文与标题变化不会改变去重口径。
+                dedup_key=compute_dedup_key(
+                    TYC_SOURCE_CODE,
+                    external_id=external_id,
+                    url=None,
+                    title=title,
+                    fields=("external_id",),
+                ),
                 collected_at=report.generated_at,
                 authority=LifecycleAuthority("adapter", TYC_SOURCE_CODE),
                 anchor_fallback_source=TYC_SOURCE_CODE,

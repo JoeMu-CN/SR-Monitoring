@@ -27,6 +27,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.signals.identity import IDENTITY_ANCHOR_FIELDS
 from app.signals.request_control import PinnedIPTransport, SourceRequestFailed, controlled_get
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError, SourceHealth
@@ -47,6 +48,10 @@ _ENDPOINT_HINT = re.compile(
     re.IGNORECASE,
 )
 _MAX_ENDPOINT_HINTS = 12
+# 指纹/去重字段口径保持既有全集：既有已发布配置（如 mem-incident-bulletin）使用
+# content 等字段，收紧会使其加载校验失败、打断已启用信源。稳定身份由 built-in
+# 信源的 DEDUP_FIELDS 与 dedup_key 承担；compute_dedup_key 对未声明为身份的字段
+# 按缺失处理，故 content 实际不参与身份。
 FingerprintField = Literal[
     "external_id",
     "title",
@@ -149,6 +154,8 @@ class AdapterSpec(BaseModel):
             raise ValueError("HTML 信息源必须配置 items_selector")
         if len(set(self.fingerprint_fields)) != len(self.fingerprint_fields):
             raise ValueError("fingerprint_fields 不得重复")
+        if not IDENTITY_ANCHOR_FIELDS & set(self.fingerprint_fields):
+            raise ValueError("fingerprint_fields 必须包含 external_id 或 url 作为身份锚点")
         return self
 
 
@@ -176,6 +183,11 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
         self.login_config = login_config or {}
         self._transport = transport
         self._item_limit = min(item_limit or spec.max_items, spec.max_items)
+
+    @property
+    def dedup_fields(self) -> tuple[str, ...]:
+        """采集去重使用的稳定字段子集；与迁移 0060 回填读取的口径一致。"""
+        return tuple(self.spec.fingerprint_fields)
 
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         del cursor

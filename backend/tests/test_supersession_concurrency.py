@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from app.database import SessionLocal
+from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
@@ -71,6 +72,12 @@ def _ingestion(source: DataSource, candidate: _Candidate) -> SignalIngestion:
             validity_key=VALIDITY_KEY,
         ),
         fingerprint=candidate.fingerprint,
+        dedup_key=compute_dedup_key(
+            source.code,
+            external_id=candidate.external_id,
+            url=None,
+            title=f"PMI {candidate.external_id}",
+        ),
         collected_at=candidate.collected_at,
         authority=LifecycleAuthority("adapter", "concurrency-test"),
     )

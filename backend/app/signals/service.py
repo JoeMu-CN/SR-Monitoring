@@ -1,7 +1,8 @@
 """通用风险信号采集服务。
 
 供 API 手动触发（POST /sources/{id}/run）和 Scheduler 定时任务共用：
-    fetch -> normalize -> fingerprint -> 写入 raw_signals（指纹去重）-> 记录 collection_runs
+    fetch -> normalize -> fingerprint + dedup_key -> 写入 raw_signals（按 dedup_key 去重）
+    -> 记录 collection_runs
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
@@ -63,7 +65,9 @@ async def collect_source_async(
 ) -> CollectionRun:
     """执行一次拉取式采集，写入新信号并返回本次运行记录。
 
-    指纹相同的信号通过唯一约束去重（on_conflict_do_nothing）。
+    dedup_key 相同的信号通过唯一约束去重（on_conflict_do_nothing）；dedup_key 只
+    由稳定字段子集决定（见 app.signals.identity），因此价格漂移、标题修订或
+    http/https 切换不会把同一条逻辑信号重新写成新行。
     """
     run = CollectionRun(source_id=source.id, status="running")
     session.add(run)
@@ -92,6 +96,13 @@ async def collect_source_async(
                     source=source,
                     signal=signal,
                     fingerprint=adapter.fingerprint(signal),
+                    dedup_key=compute_dedup_key(
+                        source.code,
+                        external_id=signal.external_id,
+                        url=str(signal.url) if signal.url else None,
+                        title=signal.title,
+                        fields=getattr(adapter, "dedup_fields", None),
+                    ),
                     collected_at=collected_at,
                     authority=LifecycleAuthority("adapter", adapter.source_code),
                 )

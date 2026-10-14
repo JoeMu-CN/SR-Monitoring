@@ -27,6 +27,7 @@ from urllib.parse import urljoin
 import httpx
 from pydantic import HttpUrl, ValidationError
 
+from app.signals.identity import canonicalize_url
 from app.signals.request_control import (
     SourceRequestFailed,
     classify_response,
@@ -1983,10 +1984,15 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
         for entity_name in _extract_entities_from_detail(markdown):
             if len(items) >= self._MAX_ENTITIES:
                 break
+            # 身份只由「规范化详情 URL + 实体名」决定：官网在 HTTP/HTTPS 与结尾
+            # 斜杠之间切换时 external_id 不变，公告标题措辞修订也不影响去重。
+            canonical_detail_url = canonicalize_url(detail_url) or detail_url
             items.append(
                 RawSourceItem(
                     external_id="mofcom-entity-"
-                    + hashlib.sha256(f"{detail_url}|{entity_name}".encode()).hexdigest()[:16],
+                    + hashlib.sha256(
+                        f"{canonical_detail_url}|{entity_name}".encode()
+                    ).hexdigest()[:16],
                     title=f"出口管制名单新增：{entity_name}",
                     content=f"来源公告：{announcement_title}；原文：{detail_url}",
                     url=detail_url,

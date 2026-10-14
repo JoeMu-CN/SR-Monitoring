@@ -10,6 +10,7 @@ from app.risks.validity import (
     expire_alerts,
     refresh_event_support,
 )
+from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
@@ -17,10 +18,20 @@ from app.signals.ingestion import (
     persist_signal_ingestions,
 )
 from app.signals.lifecycle import apply_lifecycle_action
+from app.signals.models import DataSource
 from app.signals.schemas import ManualSignalInput
 from app.signals.validity import LifecycleAction, ValidityProfile
 
 NOW_UTC = datetime(2026, 9, 6, 12, tzinfo=UTC)
+
+
+def _dedup_key(source: DataSource, signal: ManualSignalInput) -> str:
+    return compute_dedup_key(
+        source.code,
+        external_id=signal.external_id,
+        url=None,
+        title=signal.title,
+    )
 
 
 def test_event_and_alert_deadline_falls_back_as_support_is_revoked(
@@ -139,6 +150,7 @@ def test_confirm_and_revoke_refresh_event_and_alert_in_same_transaction(
         risk.source,
         action,
         "confirm-reviewed",
+        _dedup_key(risk.source, action),
         NOW_UTC,
         LifecycleAuthority("adapter", "task-8"),
     )
@@ -175,6 +187,12 @@ def test_confirm_and_revoke_refresh_event_and_alert_in_same_transaction(
             lifecycle_reason="已撤销",
         ),
         "revoke-reviewed",
+        _dedup_key(
+            risk.source,
+            ManualSignalInput(
+                external_id="revoke-reviewed", title="撤销", content="撤销"
+            ),
+        ),
         NOW_UTC,
         LifecycleAuthority("adapter", "task-8"),
     )
@@ -213,6 +231,10 @@ def test_supersession_refreshes_old_event_and_alert_in_same_transaction(
             validity_key="monthly-index",
         ),
         "new-version",
+        _dedup_key(
+            risk.source,
+            ManualSignalInput(external_id="new-version", title="新版本", content="新版本"),
+        ),
         NOW_UTC + timedelta(days=1),
         LifecycleAuthority("adapter", "task-8"),
     )

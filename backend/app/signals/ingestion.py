@@ -56,6 +56,7 @@ class SignalIngestion:
     source: DataSource
     signal: ManualSignalInput
     fingerprint: str
+    dedup_key: str
     collected_at: datetime
     authority: LifecycleAuthority
     anchor_fallback_source: str | None = None
@@ -95,7 +96,7 @@ def persist_signal_ingestions(
             insert(RawSignal)
             .values(rows[start : start + _INSERT_BATCH_SIZE])
             .on_conflict_do_nothing(
-                index_elements=[RawSignal.source_id, RawSignal.fingerprint]
+                index_elements=[RawSignal.source_id, RawSignal.dedup_key]
             )
             .returning(RawSignal.id)
         )
@@ -260,6 +261,7 @@ def _signal_row(
         "published_at": signal.published_at,
         "collected_at": ingestion.collected_at,
         "fingerprint": ingestion.fingerprint,
+        "dedup_key": ingestion.dedup_key,
         "raw_data": (
             ingestion.raw_data
             if ingestion.raw_data is not None

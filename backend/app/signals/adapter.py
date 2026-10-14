@@ -4,6 +4,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
+from app.signals.identity import compute_dedup_key
 from app.signals.schemas import ManualSignalDocument, ManualSignalInput
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -21,6 +22,8 @@ class SourceAdapter(Protocol):
     def parse(self, data: bytes) -> list[ManualSignalInput]: ...
 
     def fingerprint(self, signal: ManualSignalInput) -> str: ...
+
+    def dedup_key(self, signal: ManualSignalInput) -> str: ...
 
 
 class ManualJsonAdapter:
@@ -68,3 +71,20 @@ class ManualJsonAdapter:
             separators=(",", ":"),
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def dedup_key(self, signal: ManualSignalInput) -> str:
+        """手工 JSON 信源的去重身份。
+
+        有 external_id 时只用它（同一外部标识即同一逻辑信号，标题/正文修订、
+        URL 写法变化都不应重新落库）；缺 external_id 时回落到整模型哈希，
+        与既有 :meth:`fingerprint` 口径一致，避免改变历史去重行为。
+        """
+        if signal.external_id:
+            return compute_dedup_key(
+                self.source_code,
+                external_id=signal.external_id,
+                url=str(signal.url) if signal.url else None,
+                title=signal.title,
+                fields=("external_id",),
+            )
+        return self.fingerprint(signal)

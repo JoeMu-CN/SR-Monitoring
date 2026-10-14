@@ -13,11 +13,12 @@ from sqlalchemy import (
     SmallInteger,
     Text,
     UniqueConstraint,
+    event,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, Mapper, mapped_column, relationship
 
 from app.database import Base
 
@@ -307,6 +308,12 @@ class RawSignal(Base):
         UniqueConstraint(
             "source_id", "fingerprint", name="uq_raw_signals_source_fingerprint"
         ),
+        # 去重身份：只由稳定字段子集决定（见 app.signals.identity），与 fingerprint
+        # 并存。fingerprint 保留整模型口径，供 supersession 胜负判定与天眼查报告
+        # 写入路径按唯一键取回行使用；采集去重以 dedup_key 为准。
+        UniqueConstraint(
+            "source_id", "dedup_key", name="uq_raw_signals_source_dedup_key"
+        ),
         Index("ix_raw_signals_source_published", "source_id", "published_at"),
         CheckConstraint(
             "validity_profile IS NULL OR validity_profile IN "
@@ -396,6 +403,9 @@ class RawSignal(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     fingerprint: Mapped[str] = mapped_column(Text)
+    # 稳定去重身份：迁移 0060 回填历史并加 NOT NULL + 唯一约束；所有入库路径
+    # 必须显式提供（见 app.signals.identity.compute_dedup_key）。
+    dedup_key: Mapped[str] = mapped_column(Text)
     raw_data: Mapped[dict[str, object]] = mapped_column(JSONB)
     validity_profile: Mapped[str | None] = mapped_column(Text)
     validity_state: Mapped[str] = mapped_column(
@@ -413,3 +423,17 @@ class RawSignal(Base):
     )
 
     source: Mapped[DataSource] = relationship(back_populates="signals")
+
+
+@event.listens_for(RawSignal, "before_insert", propagate=False)
+def _fill_legacy_dedup_key(
+    _mapper: Mapper[RawSignal], _connection: object, target: RawSignal
+) -> None:
+    """未显式给 dedup_key 的直接 ORM 构造回落到旧 fingerprint 口径。
+
+    ``fingerprint`` 本来就受 ``uq_raw_signals_source_fingerprint`` 唯一约束保护，
+    因此回落值同样在信源内唯一，不会制造重复；这样历史脚本与测试夹具保持原有
+    去重语义，正式采集/导入/天眼查写入路径则一律显式传稳定 dedup_key。
+    """
+    if getattr(target, "dedup_key", None) is None:
+        target.dedup_key = target.fingerprint

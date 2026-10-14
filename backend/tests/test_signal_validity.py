@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
@@ -395,6 +396,12 @@ def _supersession_ingestion(
         source=source,
         signal=signal,
         fingerprint=fingerprint,
+        dedup_key=compute_dedup_key(
+            source.code,
+            external_id=signal.external_id,
+            url=None,
+            title=signal.title,
+        ),
         collected_at=collected_at,
         authority=LifecycleAuthority("adapter", "test-adapter"),
     )

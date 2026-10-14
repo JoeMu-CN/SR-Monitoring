@@ -11,12 +11,13 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
 from app.config import MonitorCrawl4AISettings, get_monitor_crawl4ai_settings
 from app.signals.declarative import validate_public_https_url
-from app.signals.request_control import SourceRequestFailed
+from app.signals.request_control import SourceRequestFailed, clear_transient_host_error
 from app.signals.sources import SourceFetchError
 
 logger = logging.getLogger(__name__)
@@ -115,5 +116,10 @@ async def read_public_page_with_crawl4ai_for_monitor(
             "监控轨 Crawl4AI 返回空 Markdown",
             error_kind="crawler_unavailable",
         )
+    # 回退能取到正文即证明目标域名可达：清除其瞬时错误标记，避免连通徽标
+    # 因单次网络抖动长期误报「连通异常」。
+    target_host = (urlparse(url).hostname or "").rstrip(".").lower()
+    if target_host:
+        clear_transient_host_error(target_host)
     logger.warning("mem-incident-bulletin fallback path used url=%s", url)
     return markdown

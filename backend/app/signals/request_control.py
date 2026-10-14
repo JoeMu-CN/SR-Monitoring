@@ -364,6 +364,33 @@ def release_host_lease(lease: HostLease) -> None:
         session.commit()
 
 
+# 回退抓取成功后允许清除的瞬时错误：目标可达即不再残留红标。
+# access_blocked / rate_limited / authentication_required 表示源站主动拒绝，
+# 必须保留冷却，绝不因回退成功而误清。
+TRANSIENT_HOST_ERROR_KINDS = frozenset({"network_error", "upstream_error"})
+
+
+def clear_transient_host_error(hostname: str) -> None:
+    """目标 host 经回退成功抓取后清除瞬时错误标记（best-effort、no-op 安全）。
+
+    Crawl4AI 回退链路能取到正文即证明该域名此刻可达：清掉 network_error /
+    upstream_error 与失败计数、冷却，避免「采集正常 + 连通异常」的自相矛盾；
+    真封锁/限流/需认证等需要保持冷却的信号不动。
+    """
+    normalized = (hostname or "").rstrip(".").lower()
+    if not normalized:
+        return
+    with SessionLocal() as session:
+        state = session.get(SourceHostAccess, normalized, with_for_update=True)
+        if state is None or state.last_error_kind not in TRANSIENT_HOST_ERROR_KINDS:
+            return
+        state.last_error_kind = None
+        state.last_error = None
+        state.consecutive_failures = 0
+        state.cooldown_until = None
+        session.commit()
+
+
 def _hostname(url: str) -> str:
     hostname = (urlparse(url).hostname or "").rstrip(".").lower()
     if not hostname:

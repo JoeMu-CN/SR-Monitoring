@@ -123,6 +123,55 @@ def test_host_lease_blocks_concurrency_and_persists_cooldown(
     assert state.cooldown_until == now + ACCESS_BLOCK_COOLDOWN
 
 
+def test_clear_transient_host_error_clears_transient_only(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回退成功后清除瞬时错误；access_blocked 等真封锁必须保持不动。"""
+
+    def session_factory() -> Session:
+        return Session(
+            bind=db_session.connection(),
+            join_transaction_mode="create_savepoint",
+        )
+
+    monkeypatch.setattr(request_control, "SessionLocal", session_factory)
+    now = datetime(2026, 8, 9, 13, 0, tzinfo=UTC)
+    db_session.add(
+        SourceHostAccess(
+            hostname="transient.example",
+            last_error_kind="network_error",
+            last_error="网络连接异常",
+            consecutive_failures=3,
+            cooldown_until=now + timedelta(minutes=10),
+        )
+    )
+    db_session.add(
+        SourceHostAccess(
+            hostname="blocked.example",
+            last_http_status=403,
+            last_error_kind="access_blocked",
+            consecutive_failures=2,
+        )
+    )
+    db_session.flush()
+
+    request_control.clear_transient_host_error("transient.example")
+    request_control.clear_transient_host_error("blocked.example")
+    request_control.clear_transient_host_error("missing.example")
+    db_session.expire_all()
+
+    transient = db_session.get(SourceHostAccess, "transient.example")
+    blocked = db_session.get(SourceHostAccess, "blocked.example")
+    assert transient is not None
+    assert transient.last_error_kind is None
+    assert transient.last_error is None
+    assert transient.consecutive_failures == 0
+    assert transient.cooldown_until is None
+    assert blocked is not None
+    assert blocked.last_error_kind == "access_blocked"
+    assert blocked.consecutive_failures == 2
+
+
 def test_pinned_transport_keeps_url_and_delegates() -> None:
     """PinnedIPTransport 应保持 URL/Host 头不变（SNI 正确），仅委托内层 transport。"""
     captured: dict[str, httpx.Request] = {}

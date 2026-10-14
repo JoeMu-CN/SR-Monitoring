@@ -57,6 +57,7 @@ class ValidityState(StrEnum):
     SUPERSEDED = "superseded"
     REVOKED = "revoked"
     CONFLICTED = "conflicted"
+    IRRELEVANT = "irrelevant"
     LEGACY = "legacy"
 
 

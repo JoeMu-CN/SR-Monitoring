@@ -4,7 +4,7 @@ import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} fro
 
 export type ValidityMode = 'fixed_days' | 'until_superseded' | 'until_revoked' | 'event_end_plus_grace' | 'indefinite';
 
-export type ValidityState = 'pending_classification' | 'active' | 'expired' | 'superseded' | 'revoked' | 'conflicted' | 'legacy';
+export type ValidityState = 'pending_classification' | 'active' | 'expired' | 'superseded' | 'revoked' | 'conflicted' | 'legacy' | 'irrelevant';
 
 export type LifecycleAction = 'assert' | 'confirm' | 'revoke' | 'supersede';
 
@@ -42,6 +42,8 @@ export const VALIDITY_STATE_LABELS: Record<ValidityState, string> = {
   revoked: '已撤销',
   conflicted: '冲突',
   legacy: '旧版兼容',
+  /** 终态：被确定性预筛判为不相关，不计入有效信号，也不出现在 scope=valid。 */
+  irrelevant: '不相关',
 };
 
 /** 有效期原因码中文映射；覆盖后端 risks/signals 实际写入的全部原因码。 */
@@ -60,10 +62,14 @@ export const VALIDITY_REASON_LABELS: Record<string, string> = {
   quarantine_promoted: '隔离后恢复采集',
   two_consecutive_misses: '连续两次未命中',
   legacy_unmigrated: '历史数据未迁移',
+  filtered_out: '预筛不相关',
 };
 
 /** 未知原因码不裸露英文码，统一回落到中文说明。 */
 export const formatValidityReasonLabel = (code: string): string => VALIDITY_REASON_LABELS[code] ?? '其他原因';
+
+/** 未知有效期状态不裸露英文码，统一回落到中文说明；与原因码兜底同一原则。 */
+export const formatValidityState = (state: string): string => VALIDITY_STATE_LABELS[state as ValidityState] ?? '其他状态';
 
 export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
 export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';

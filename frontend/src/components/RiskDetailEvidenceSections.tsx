@@ -1,5 +1,5 @@
 import {Building2, CalendarDays, FileText, MapPin, ShieldCheck, Signal, Target} from 'lucide-react';
-import {VALIDITY_STATE_LABELS, type EventDetailRead, type EventLocationEvidence, type RiskAlertRead, type ValidityReasonRead} from '../api';
+import {formatValidityState, type EventDetailRead, type EventLocationEvidence, type RiskAlertRead, type ValidityReasonRead} from '../api';
 import {ValidityStateBadge} from './ValidityStateBadge';
 
 interface RiskDetailEvidenceSectionsProps {
@@ -48,6 +48,7 @@ const VALIDITY_REASON_LABELS: Record<string, string> = {
   anchor_fallback: '时间锚点降级', policy_resolved: '策略已解析',
   superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
   quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
+  filtered_out: '预筛不相关',
 };
 
 const ANCHOR_LABELS: Record<string, string> = {
@@ -99,8 +100,6 @@ const formatValidityReason = (reason: ValidityReasonRead): string => {
   const anchor = label(ANCHOR_LABELS, reason.anchor_source);
   return reason.anchor_source === 'legacy' ? code : `${code}（锚定${anchor}）`;
 };
-
-const formatValidityState = (state: string): string => VALIDITY_STATE_LABELS[state as keyof typeof VALIDITY_STATE_LABELS] ?? state;
 
 /** title 与 content 只在归一化空白后完全相等时视为同一段文本；否则正文完整保留换行。 */
 const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();

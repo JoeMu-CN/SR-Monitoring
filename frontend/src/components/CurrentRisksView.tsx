@@ -1,7 +1,7 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
-import {formatValidityReasonLabel, VALIDITY_STATE_LABELS, type RiskAlertSummary} from '../api';
+import {formatValidityReasonLabel, formatValidityState, type RiskAlertSummary} from '../api';
 import type {RiskItem} from '../types';
 
 const RISK_LEVELS = ['P1', 'P2', 'P3', 'P4'] as const;
@@ -246,14 +246,14 @@ const VALIDITY_BADGE_CLASS: Record<string, string> = {
   superseded: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
   conflicted: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   legacy: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  irrelevant: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-300',
 };
 
 const ValidityBadge = ({state}: {state: string | undefined}) => {
   if (!state) return null;
-  const label = VALIDITY_STATE_LABELS[state as keyof typeof VALIDITY_STATE_LABELS] ?? state;
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${VALIDITY_BADGE_CLASS[state] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
-      {label}
+      {formatValidityState(state)}
     </span>
   );
 };

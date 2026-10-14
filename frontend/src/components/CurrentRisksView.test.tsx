@@ -37,7 +37,7 @@ const summaryFixture = (counts: Readonly<Record<'P1' | 'P2' | 'P3' | 'P4', numbe
 afterEach(cleanup);
 
 describe('当前风险列表有效期状态展示', () => {
-  it('以文本展示 active/expired/revoked/superseded/conflicted/legacy 状态而不只靠颜色', async () => {
+  it('以文本展示 active/expired/revoked/superseded/conflicted/legacy/irrelevant 状态而不只靠颜色', async () => {
     const user = userEvent.setup();
     const items: RiskItem[] = [
       baseItem({id: '1', validityState: 'active'}),
@@ -46,6 +46,7 @@ describe('当前风险列表有效期状态展示', () => {
       baseItem({id: '4', companyName: '替代供应商', validityState: 'superseded', status: 'invalid'}),
       baseItem({id: '5', companyName: '冲突供应商', validityState: 'conflicted', status: 'invalid'}),
       baseItem({id: '6', companyName: '旧版供应商', validityState: 'legacy', status: 'invalid'}),
+      baseItem({id: '7', companyName: '不相关供应商', validityState: 'irrelevant', status: 'invalid'}),
     ];
 
     render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
@@ -57,6 +58,7 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.getByText('已替代')).toBeInTheDocument();
     expect(screen.getByText('冲突')).toBeInTheDocument();
     expect(screen.getByText('旧版兼容')).toBeInTheDocument();
+    expect(screen.getByText('不相关')).toBeInTheDocument();
   });
 
   it('展示截止时间、复核时间与中文原因，且不暴露策略版本', () => {
@@ -92,6 +94,27 @@ describe('当前风险列表有效期状态展示', () => {
 
     expect(screen.getByText('其他原因')).toBeInTheDocument();
     expect(screen.queryByText('brand_new_reason')).not.toBeInTheDocument();
+  });
+
+  it('未知有效期状态回落到中文说明，不裸露英文码', () => {
+    render(
+      <CurrentRisksView
+        riskItems={[baseItem({
+          id: '3',
+          companyName: '未知状态供应商',
+          validityState: 'brand_new_state',
+          validityReason: {code: 'filtered_out', anchor_source: 'published_at', details: {}},
+        })]}
+        summary={null}
+        onSelectRisk={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('其他状态')).toBeInTheDocument();
+    expect(screen.queryByText('brand_new_state')).not.toBeInTheDocument();
+    // 新增的 filtered_out 原因码同样必须有中文，不回落到英文原码
+    expect(screen.getByText('预筛不相关')).toBeInTheDocument();
+    expect(screen.queryByText('filtered_out')).not.toBeInTheDocument();
   });
 
   it('当前/历史可切换：默认只显示当前有效，切换到已失效显示历史', async () => {

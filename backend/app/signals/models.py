@@ -320,9 +320,13 @@ class RawSignal(Base):
             "'reputation_event','supplier_performance_incident','other')",
             name="ck_raw_signals_validity_profile",
         ),
+        # irrelevant 为确定性预筛的显式终态（不计有效、不再进入分析队列），与
+        # pending_classification / legacy 同属「无需策略快照与截止时间」豁免集。
+        # 三条约束文本必须与 alembic/versions/0059_signal_irrelevant_state.py 一致；
+        # 测试 test_signal_irrelevant_migration.py 做等价性断言。
         CheckConstraint(
             "validity_state IN ('pending_classification','active','expired','superseded',"
-            "'revoked','conflicted','legacy')",
+            "'revoked','conflicted','irrelevant','legacy')",
             name="ck_raw_signals_validity_state",
         ),
         CheckConstraint(
@@ -335,13 +339,13 @@ class RawSignal(Base):
             name="ck_raw_signals_lifecycle_action",
         ),
         CheckConstraint(
-            "validity_state IN ('pending_classification','legacy') OR "
+            "validity_state IN ('pending_classification','irrelevant','legacy') OR "
             "(validity_profile IS NOT NULL AND validity_mode IS NOT NULL "
             "AND valid_from IS NOT NULL AND validity_policy_version IS NOT NULL)",
             name="ck_raw_signals_policy_snapshot",
         ),
         CheckConstraint(
-            "validity_state IN ('pending_classification','legacy') OR "
+            "validity_state IN ('pending_classification','irrelevant','legacy') OR "
             "(validity_mode IN ('fixed_days','until_superseded','event_end_plus_grace') "
             "AND valid_until IS NOT NULL) OR validity_mode IN ('until_revoked','indefinite')",
             name="ck_raw_signals_deadline_mode",

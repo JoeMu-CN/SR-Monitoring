@@ -18,7 +18,7 @@ export interface RiskItem {
   status: 'valid' | 'invalid';
 
   // 有效期派生状态（来自提醒/事件/信号的有效期字段）
-  validityState?: string; // active|expired|revoked|superseded|conflicted|legacy
+  validityState?: string; // pending_classification|active|expired|revoked|superseded|conflicted|legacy|irrelevant
   validUntil?: string | null; // 截止时间
   reviewDueAt?: string | null; // 复核时间
   validityReason?: {code: string; anchor_source: string; details: Record<string, unknown>};

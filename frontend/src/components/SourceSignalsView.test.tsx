@@ -74,6 +74,23 @@ const tianyanchaResponse: SourceSignalListResponse = {
   offset: 0,
 };
 
+/** 预筛判定为不相关的终态记录：状态标签比「有效」更长，用于验证状态列收到最小宽度时同样不换行不溢出。 */
+const irrelevantSignalResponse: SourceSignalListResponse = {
+  ...tianyanchaResponse,
+  items: [
+    populatedResponse.items[0]!,
+    {
+      ...populatedResponse.items[0]!,
+      id: 93,
+      external_id: 'EXT-93',
+      title: '预筛判定不相关的记录',
+      validity_state: 'irrelevant',
+      validity_reason: {code: 'filtered_out', anchor_source: 'published_at', details: {}},
+    },
+  ],
+  total: 2,
+};
+
 const detailFixture: SourceSignalDetailRead = {
   ...populatedResponse.items[0]!,
   report: null,
@@ -382,7 +399,7 @@ describe('采集记录单元格完整内容浮层', () => {
 
   it('状态、原文与报告单元格收到最小列宽时也不换行、不溢出', async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, 'sourceSignals').mockResolvedValue(tianyanchaResponse);
+    vi.spyOn(api, 'sourceSignals').mockResolvedValue(irrelevantSignalResponse);
     renderView('/sources/18/signals?scope=all&page=1');
     await screen.findByText('供应链运输中断');
 
@@ -390,6 +407,8 @@ describe('采集记录单元格完整内容浮层', () => {
     singleLine(within(screen.getAllByRole('row')[1]!).getByText('有效').parentElement);
     singleLine(within(screen.getAllByRole('row')[1]!).getByRole('link', {name: '原文'}).parentElement);
     singleLine(within(screen.getAllByRole('row')[1]!).getByRole('button', {name: /查看完整报告/}).parentElement);
+    // 「不相关」标签比「有效」多一个字，同样受 truncate 约束，不换行不溢出
+    singleLine(within(screen.getAllByRole('row')[2]!).getByText('不相关').parentElement);
 
     const statusHandle = screen.getByRole('separator', {name: '调整「状态」列宽'});
     statusHandle.focus();
@@ -397,6 +416,7 @@ describe('采集记录单元格完整内容浮层', () => {
 
     await waitFor(() => expect(statusHandle).toHaveAttribute('aria-valuenow', '80'));
     singleLine(within(screen.getAllByRole('row')[1]!).getByText('有效').parentElement);
+    singleLine(within(screen.getAllByRole('row')[2]!).getByText('不相关').parentElement);
   });
 });
 
@@ -645,6 +665,11 @@ describe('采集记录有效期原因显示', () => {
 
   it('旧版兼容记录只显示原因、不显示时间依据', async () => {
     expect(await renderValidityReason({code: 'active', anchor_source: 'legacy', details: {}})).toBe('有效');
+  });
+
+  it('预筛不相关原因显示为中文，不露出英文原因码', async () => {
+    expect(await renderValidityReason({code: 'filtered_out', anchor_source: 'collected_at', details: {}}))
+      .toBe('预筛不相关（以采集时间为依据）');
   });
 
   it('未知原因保留后端原文并照常标注时间依据', async () => {

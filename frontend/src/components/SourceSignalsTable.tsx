@@ -58,6 +58,7 @@ const VALIDITY_REASON_LABELS: Record<string, string> = {
   anchor_fallback: '未提供发布时间，改用采集时间计算', policy_resolved: '已按有效期规则计算',
   superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
   quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
+  filtered_out: '预筛不相关',
 };
 
 /** legacy 不展示时间依据，因此这里只覆盖实际会渲染的四种时间依据。 */

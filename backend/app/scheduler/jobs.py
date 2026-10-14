@@ -79,6 +79,7 @@ from app.signals.relevance import (
 )
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionDeferred, CollectionFailed, collect_source
+from app.signals.validity import AnchorSource, ValidityState
 from app.suppliers.models import Supplier
 from app.suppliers.schemas import normalize_alias
 
@@ -101,6 +102,33 @@ def _matches_any_supplier(session: Session, text: str) -> bool:
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 # ponytail: 当前生产仅单 Scheduler 进程；扩为多副本前改用数据库级原子领取或 advisory lock。
 _pending_signal_processing_lock = Lock()
+
+# 确定性预筛三类过滤器的 details.filter 取值（与 AIAnalysisRecord.prompt_version 对应可追溯）。
+RELEVANCE_FILTER_KIND = "relevance"
+ENTITY_LIST_FILTER_KIND = "entity_list"
+STRUCTURED_GRADE_FILTER_KIND = "structured_grade"
+
+
+def _mark_signal_irrelevant(
+    signal: RawSignal, *, filter_kind: str, reason: str
+) -> None:
+    """把被确定性预筛判定为不相关的信号置为显式终态 irrelevant。
+
+    与过滤记录（AIAnalysisRecord status=succeeded 且结果为空）同一事务写入，使信号
+    不再以 pending_classification 长期滞留、也不被队列谓词反复捞取；计数为 0 的
+    irrelevant 不计有效信号，判活谓词 valid_signal_condition 的 ACTIVE/LEGACY
+    allow-list 天然排除。调用方负责 commit。
+    """
+    signal.validity_state = ValidityState.IRRELEVANT
+    signal.validity_reason = {
+        "code": "filtered_out",
+        "anchor_source": (
+            AnchorSource.PUBLISHED_AT
+            if signal.published_at is not None
+            else AnchorSource.COLLECTED_AT
+        ),
+        "details": {"filter": filter_kind, "reason": reason},
+    }
 
 
 def _collect_enabled_sources(
@@ -313,6 +341,11 @@ def _process_pending_signals(
                                 review_reason=f"预过滤结果待复核：{decision.reason}",
                             )
                         )
+                        _mark_signal_irrelevant(
+                            signal,
+                            filter_kind=RELEVANCE_FILTER_KIND,
+                            reason=decision.reason,
+                        )
                         session.commit()
                         filtered += 1
                         continue
@@ -342,6 +375,11 @@ def _process_pending_signals(
                             review_reason="实体清单未命中任何供应商，跳过 LLM",
                         )
                     )
+                    _mark_signal_irrelevant(
+                        signal,
+                        filter_kind=ENTITY_LIST_FILTER_KIND,
+                        reason="清单类信号未命中任何供应商",
+                    )
                     session.commit()
                     filtered += 1
                     continue
@@ -369,6 +407,11 @@ def _process_pending_signals(
                             needs_review=True,
                             review_reason=f"结构化分级跳过：{grade_reason}",
                         )
+                    )
+                    _mark_signal_irrelevant(
+                        signal,
+                        filter_kind=STRUCTURED_GRADE_FILTER_KIND,
+                        reason=grade_reason,
                     )
                     session.commit()
                     filtered += 1

@@ -16,10 +16,10 @@ from app.signals import fallback as fallback_module
 from app.signals import sources as sources_module
 from app.signals.request_control import ControlledResponse, SourceRequestFailed
 
-HOMEPAGE_URL = "http://aqygzj.mofcom.gov.cn/"
-QUALIFYING_DETAIL_URL = "http://aqygzj.mofcom.gov.cn/art/2026/07/24/art_30.html"
-SECOND_QUALIFYING_DETAIL_URL = "http://aqygzj.mofcom.gov.cn/art/2026/07/24/art_31.html"
-NON_QUALIFYING_DETAIL_URL = "http://aqygzj.mofcom.gov.cn/art/2026/07/20/art_28.html"
+HOMEPAGE_URL = "https://aqygzj.mofcom.gov.cn/"
+QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/24/art_30.html"
+SECOND_QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/24/art_31.html"
+NON_QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/20/art_28.html"
 
 QUALIFYING_TITLE = "商务部公告2026年第30号 公布将14家欧盟实体列入出口管制管控名单"
 SECOND_QUALIFYING_TITLE = "商务部公告2026年第29号 将2家欧盟实体列入不可靠实体清单"

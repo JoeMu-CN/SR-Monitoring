@@ -171,7 +171,7 @@ def test_parse_announcement_links_html_supports_quotes_nested_tags_and_entities(
 def test_parse_announcement_links_markdown_supports_optional_title() -> None:
     """真实首页 Markdown 链接带可选标题：](url "title") 与 ](url) 都要解析。
 
-    现场证据：http://aqygzj.mofcom.gov.cn/ 的 Crawl4AI Markdown 输出中，
+    现场证据：https://aqygzj.mofcom.gov.cn/ 的 Crawl4AI Markdown 输出中，
     公告链接尾部带可选引号标题（``](url "title")`` 形态）；旧正则要求 URL
     后紧跟 ``)``，因而整条链接漏解析、回退时报“未解析到合格公告链接”。
     """
@@ -189,12 +189,12 @@ def test_parse_announcement_links_markdown_supports_optional_title() -> None:
     assert links == [
         (
             QUALIFYING_TITLE,
-            "http://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
+            "https://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
             "art_cddc4316cde145edb878144b2772719d.html",
         ),
         (
             NON_QUALIFYING_TITLE,
-            "http://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
+            "https://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/art/2026/"
             "art_cddc4316cde145edb878144b2772719e.html",
         ),
     ]
@@ -341,7 +341,7 @@ def test_fetch_keeps_partial_items_when_some_details_fail(monkeypatch) -> None:
 def test_fetch_caps_detail_pages_at_eight(monkeypatch) -> None:
     """详情候选超过 8 条时只抓前 8 条。"""
     detail_urls = [
-        f"http://aqygzj.mofcom.gov.cn/art/2026/07/24/art_{index}.html"
+        f"https://aqygzj.mofcom.gov.cn/art/2026/07/24/art_{index}.html"
         for index in range(10)
     ]
     env = controlled_env(

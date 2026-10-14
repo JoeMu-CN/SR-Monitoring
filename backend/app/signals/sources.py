@@ -1845,7 +1845,12 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
     """
 
     source_code = "mofcom-entity-detail"
-    _LIST_URL = "http://aqygzj.mofcom.gov.cn/"
+    # 首页直连改用 HTTPS：该子站 HTTPS 端点稳定可用，而 HTTP 明文端点会被网关
+    # 间歇拦成 502，把 upstream_error 写进域名访问状态，导致连通徽标长期误报
+    # “连通异常”。首页链接均为相对路径，urljoin 后详情页同样走 HTTPS。
+    _LIST_URL = "https://aqygzj.mofcom.gov.cn/"
+    # HTTP 白名单仅作回退保险：该站历史上曾 TLS 握手失败，若 HTTPS 再次不可用，
+    # Crawl4AI 回退仍允许以 HTTP 明文抓取同一域名。
     _HTTP_ALLOW_HOSTS = frozenset({"aqygzj.mofcom.gov.cn"})
     _MAX_ENTITIES = 200  # 单次采集实体信号上限（防爆炸）
     _MAX_DETAIL_PAGES = 8  # 每轮最多解析 8 条详情页

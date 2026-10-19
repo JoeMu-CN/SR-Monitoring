@@ -538,3 +538,4 @@ describe('RiskDetailView', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v1/risk-alerts/1', '/api/v1/risk-alerts/2', '/api/v1/events/20']);
   });
 });
+

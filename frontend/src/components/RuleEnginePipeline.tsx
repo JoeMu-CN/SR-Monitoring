@@ -41,6 +41,7 @@ const MATCH_COLUMN_LABELS: Record<string, string> = {
   product: '产品',
   country: '国家/区域',
   industry: '行业/原材料',
+  currency: '结算币种',
 };
 
 /**
@@ -63,6 +64,7 @@ const MATCH_TYPE_TO_COLUMN: Record<string, string> = {
   product: 'product',
   country: 'country',
   industry: 'industry',
+  currency: 'currency',
 };
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -74,6 +76,8 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   corporate: '企业经营',
   judicial: '司法',
   compliance: '合规',
+  market: '市场行情',
+  exchange_rate: '汇率波动',
   other: '其他',
 };
 
@@ -92,6 +96,9 @@ const EVENT_SUBTYPE_LABELS: Record<string, string> = {
   corporate_distress: '企业经营异常',
   judicial_case: '司法案件',
   compliance_violation: '合规违规',
+  commodity_price_move: '大宗商品价格异动',
+  industry_market_move: '行业行情异动',
+  fx_volatility: '汇率波动',
 };
 
 const SEVERITY_LABELS: Record<string, string> = {

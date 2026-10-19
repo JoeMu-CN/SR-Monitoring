@@ -18,6 +18,7 @@ export const ASSOCIATION_MAX = 30;
 export const DEFAULT_SEVERITY_SCORES: Record<string, number> = {critical: 35, high: 28, medium: 20, low: 10};
 export const DEFAULT_ASSOCIATION_SCORES: Record<string, number> = {
   registry_no: 30, legal_name: 25, alias: 25, site_distance: 20, site_text: 20, product: 12, country: 8, industry: 12,
+  currency: 15,
 };
 
 /** 当前选中维度的可编辑草稿（未保存）。 */

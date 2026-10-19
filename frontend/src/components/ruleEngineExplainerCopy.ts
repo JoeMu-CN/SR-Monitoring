@@ -3,7 +3,7 @@
  *
  * 说明层组件 `RuleEngineExplainers.tsx` 与信号过滤区块 `SignalFilterSection.tsx`
  * 都从这里取文案，便于维护与测试；文案必须与后端语义保持一致，对应关系：
- * - 匹配柱语义：`backend/app/risks/engine/config.py`（entity/location/product/country/industry）
+ * - 匹配柱语义：`backend/app/risks/engine/config.py`（entity/location/product/country/industry/currency）
  * - 事件类型互斥：`backend/app/risks/workbench_router.py`（占用冲突校验）
  * - 总分公式与两条封顶：`backend/app/risks/scoring.py`
  *   （compute_score / compute_level / apply_level_cap / apply_forced_rules）
@@ -32,7 +32,7 @@ export const RULE_ENGINE_EXPLAINERS: readonly RuleEngineExplainerEntry[] = [
     title: '匹配柱',
     definition: '事件与供应商建立关联时可用的证据通道；未启用的柱不参与匹配，至少保留一柱。',
     example: '只启用「主体」时，仅注册号 / 法人全称 / 别名命中的供应商会进入评分。',
-    current: '当前默认三柱：主体、地点、产品；「国家」「行业」用于宏观维度。',
+    current: '当前默认三柱：主体、地点、产品；「国家」「行业」用于宏观维度，「结算币种」用于经济与金融维度。',
   },
   {
     id: 'event-types',
@@ -53,7 +53,7 @@ export const RULE_ENGINE_EXPLAINERS: readonly RuleEngineExplainerEntry[] = [
     title: '关联类型分值',
     definition: '供应商与事件关联方式的强度分；同一供应商命中多种关联时取其中最高分计入。',
     example: '注册号精确匹配 30 分，高于产品关键词匹配 12 分。',
-    current: '当前默认：注册号 30、法人全称/别名 25、地点 20、产品 12、行业 12、国家 8；可调范围 0–30。',
+    current: '当前默认：注册号 30、法人全称/别名 25、地点 20、产品 12、行业 12、国家 8、结算币种 15；可调范围 0–30。',
   },
   {
     id: 'level-thresholds',

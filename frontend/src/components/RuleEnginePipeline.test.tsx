@@ -270,6 +270,55 @@ describe('规则引擎观察态流水线：八阶段渲染', () => {
     }
   });
 
+  it('match_type=currency 高亮「结算币种」柱（todo 19；柱清单需含 currency）', () => {
+    const mapped = trace();
+    const routing = mapped.routing!;
+    mapped.routing = {...routing, match_columns: [...routing.match_columns, 'currency']};
+    mapped.match = {match_type: 'currency', match_reasons: [], match_evidence: []};
+    renderPipeline({trace: mapped});
+
+    const currencyColumn = screen.getByTestId('rule-engine-pipeline-column-currency');
+    expect(currencyColumn).toHaveAttribute('data-hit', 'true');
+    expect(within(currencyColumn).getByText(/结算币种（命中）/)).toBeInTheDocument();
+    for (const other of ['entity', 'location', 'product', 'country', 'industry']) {
+      expect(screen.getByTestId(`rule-engine-pipeline-column-${other}`)).toHaveAttribute('data-hit', 'false');
+    }
+  });
+
+  it.each([
+    ['market', 'commodity_price_move', '市场行情', '大宗商品价格异动'],
+    ['market', 'industry_market_move', '市场行情', '行业行情异动'],
+    ['exchange_rate', 'fx_volatility', '汇率波动', '汇率波动'],
+  ] as const)(
+    '行情事件 event_type=%s / event_subtype=%s 显示「%s / %s」（todo 19）',
+    (eventType, subtype, typeLabel, subtypeLabel) => {
+      const marketTrace = trace();
+      marketTrace.event = {
+        ...marketTrace.event!,
+        event_type: eventType,
+        event_subtype: subtype,
+      };
+      renderPipeline({trace: marketTrace});
+
+      expect(screen.getByText(`${typeLabel} → 地缘政治与安全`)).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`事件类型代码：${eventType} / ${subtypeLabel}`))).toBeInTheDocument();
+    },
+  );
+
+  it('未知行情事件类型/细类回退原始枚举值（不臆造中文，todo 19 对抗）', () => {
+    const unknownTrace = trace();
+    unknownTrace.event = {
+      ...unknownTrace.event!,
+      event_type: 'market_exchange',
+      event_subtype: 'rate_shock',
+    };
+    renderPipeline({trace: unknownTrace});
+
+    // 后端新增但前端未收录的枚举：类型与细类都回退各自原文，绝不互相冒充或臆造中文
+    expect(screen.getByText(/事件类型代码：market_exchange \/ rate_shock/)).toBeInTheDocument();
+    expect(screen.queryByText(/市场行情|汇率波动|大宗商品价格异动|行业行情异动/)).not.toBeInTheDocument();
+  });
+
   it('level_cap 命中时封顶区块高亮并解释真实封顶语义', () => {
     renderPipeline();
 
@@ -816,3 +865,4 @@ describe('运行轨迹嵌入模式（#18：证据卡内嵌块，非第二张独�
     expect(screen.queryByText('8 阶段')).not.toBeInTheDocument();
   });
 });
+

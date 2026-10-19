@@ -369,6 +369,29 @@ describe('全局强制规则编辑器：对抗性输入（policy_industry_hit �
 });
 
 describe('全局强制规则编辑器：增删改与排序', () => {
+  it('匹配类型可选柱新增「结算币种」（currency）并可勾选提交（todo 19）', async () => {
+    await renderShell();
+
+    fireEvent.click(within(editorSection()).getByRole('button', {name: /新增规则/}));
+    const rows = allRows();
+    const newRow = rows[rows.length - 1]!; // 新增行默认展开
+    fireEvent.change(within(newRow).getByLabelText('名称'), {target: {value: 'currency_volatility_hit'}});
+    fireEvent.change(within(newRow).getByLabelText('原因'), {target: {value: '结算币种命中汇率波动事件，强制升级'}});
+    fireEvent.change(within(newRow).getByLabelText('强制等级'), {target: {value: 'P2'}});
+    fireEvent.click(checkboxIn(newRow, '事件类型', '地缘政治'));
+    // 展开表单的匹配类型选项包含「结算币种」（currency 已收录为可选柱）
+    expect(checkboxIn(newRow, '匹配类型', '结算币种')).not.toBeChecked();
+    fireEvent.click(checkboxIn(newRow, '匹配类型', '结算币种'));
+    expect(checkboxIn(newRow, '匹配类型', '结算币种')).toBeChecked();
+
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(api.globalConfig.update).toHaveBeenCalledTimes(1));
+    const rules = submittedRules();
+    const added = rules.find((rule) => rule.name === 'currency_volatility_hit');
+    expect(added?.match_types).toEqual(['currency']);
+  });
+
   it('新增规则后提交载荷包含该规则且字段完整，且只提交 forced_rules 字段', async () => {
     await renderShell();
 
@@ -884,6 +907,23 @@ describe('全局强制规则编辑器：全局配置未加载时的草稿门控�
     expect(updater({}).forced_rules?.map((rule) => rule.name)).toEqual([
       'sanctions_entity_hit', 'sanctions_geopolitical_entity_hit', 'sanctions_product_hit',
     ]);
+  });
+});
+
+/**
+ * todo 19 标签补齐：强制规则「匹配类型」可选组必须含 currency（结算币种）。
+ * 后端口径：`MatchType` 字面量含 currency（workbench_schemas.py:27），
+ * 强制规则按匹配类型收窄时不能缺少这个合法枚举。
+ */
+describe('全局强制规则编辑器：匹配类型可选组含结算币种（todo 19 标签补齐）', () => {
+  it('currency 以「结算币种」出现在匹配类型 chip 组，既有 8 项标签不受影响', () => {
+    renderEditorWithConfig(globalConfigRead());
+
+    const row = expandRow(allRows()[0]!);
+    expect(within(row).getByText('结算币种')).toBeInTheDocument();
+    for (const label of ['注册号', '法人全称', '别名', '地点距离', '地点文本', '产品', '国家', '行业']) {
+      expect(within(row).getByText(label)).toBeInTheDocument();
+    }
   });
 });
 

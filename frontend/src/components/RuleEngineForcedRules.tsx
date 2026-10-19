@@ -12,6 +12,7 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
   product: '产品',
   country: '国家',
   industry: '行业',
+  currency: '结算币种',
 };
 
 const MATCH_TYPE_OPTIONS = Object.keys(MATCH_TYPE_LABELS).map((value) => ({value, label: MATCH_TYPE_LABELS[value] ?? value}));

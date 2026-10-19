@@ -123,6 +123,13 @@ describe('规则引擎配置项语义说明层（todo 10）', () => {
     expect(productionPairs).toEqual(requiredPairs);
   });
 
+  it('匹配柱说明覆盖 currency（结算币种，经济与金融维度，todo 19）', () => {
+    render(<RuleEngineExplainers mode="observation" />);
+
+    const card = screen.getByTestId('rule-engine-explainer-match-columns');
+    expect(within(card).getByText(/结算币种/)).toBeInTheDocument();
+  });
+
   it('包含总分公式与两条封顶规则的关键词，公式默认值明确标注为「按当前配置/默认」', () => {
     render(<RuleEngineExplainers mode="observation" />);
 
@@ -164,6 +171,18 @@ describe('规则引擎配置项语义说明层（todo 10）', () => {
 
     const thresholdText = screen.getByTestId('rule-engine-explainer-level-thresholds').textContent ?? '';
     expect(thresholdText).toContain('85 / 65 / 40');
+  });
+
+  it('匹配柱说明覆盖 currency「结算币种」；关联类型说明含「结算币种 15」（todo 19 标签补齐）', () => {
+    render(<RuleEngineExplainers mode="observation" />);
+
+    // 匹配柱：后端 MatchColumn 已含 currency，说明文案不能漏掉这根经济/金融维度的柱
+    const matchColumns = screen.getByTestId('rule-engine-explainer-match-columns').textContent ?? '';
+    expect(matchColumns).toContain('结算币种');
+
+    // 关联类型：DEFAULT_ASSOCIATION_SCORES 已含 currency=15，文案必须如实标注该默认值
+    const association = screen.getByTestId('rule-engine-explainer-association-scores').textContent ?? '';
+    expect(association).toContain('结算币种 15');
   });
 
   it('信号过滤文案包含四个要点，viewer 观察态只读可读', async () => {

@@ -11,7 +11,8 @@ interface RiskDetailEvidenceSectionsProps {
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   weather: '天气', geological: '地质灾害', logistics: '物流', trade_policy: '贸易政策',
-  geopolitical: '地缘政治', corporate: '企业经营', judicial: '司法', compliance: '合规', other: '其他',
+  geopolitical: '地缘政治', corporate: '企业经营', judicial: '司法', compliance: '合规',
+  market: '市场行情', exchange_rate: '汇率波动', other: '其他',
 };
 
 const EVENT_SUBTYPE_LABELS: Record<string, string> = {
@@ -19,7 +20,9 @@ const EVENT_SUBTYPE_LABELS: Record<string, string> = {
   raw_material_shortage: '原材料短缺', trade_tariff: '贸易措施', export_control: '出口管制',
   sanctions: '制裁', regulatory_change: '监管变更', political_instability: '政治动荡',
   public_security: '公共安全', armed_conflict: '武装冲突', corporate_distress: '经营困难',
-  judicial_case: '司法案件', compliance_violation: '合规违规', other: '其他',
+  judicial_case: '司法案件', compliance_violation: '合规违规',
+  commodity_price_move: '大宗商品价格异动', industry_market_move: '行业行情异动', fx_volatility: '汇率波动',
+  other: '其他',
 };
 
 const SEVERITY_LABELS: Record<string, string> = {critical: '重大', high: '高', medium: '中', low: '低'};
@@ -27,6 +30,7 @@ const SEVERITY_LABELS: Record<string, string> = {critical: '重大', high: '高'
 const MATCH_TYPE_LABELS: Record<string, string> = {
   registry_no: '注册编号', legal_name: '法人全称', alias: '供应商别名', site_text: '生产地点文本',
   site_distance: '生产地点距离', product: '供应产品', industry: '供应行业', country: '国别',
+  currency: '结算币种',
 };
 
 const EVIDENCE_KEY_LABELS: Record<string, string> = {
@@ -34,11 +38,13 @@ const EVIDENCE_KEY_LABELS: Record<string, string> = {
   event_location: '事件地点', method: '匹配方式', district: '区县', precision: '匹配粒度',
   registry_no: '注册编号', legal_name: '法人全称', alias: '供应商别名', alias_id: '别名编号',
   product_id: '产品编号', product_name: '产品名称', keyword: '命中关键词', country_code: '国家代码',
+  currency: '币种',
 };
 
 const EVIDENCE_VALUE_LABELS: Record<string, string> = {
   supplier: '供应商', alias: '供应商别名', site: '生产地点', product: '产品',
   industry: '行业', country: '国家', text: '文本精确匹配', district: '区县级',
+  currency: '结算币种',
 };
 
 const VALIDITY_REASON_LABELS: Record<string, string> = {

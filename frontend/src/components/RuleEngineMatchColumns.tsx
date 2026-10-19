@@ -6,6 +6,7 @@ const MATCH_COLUMN_LABELS: Record<string, string> = {
   product: '产品',
   country: '国家/区域',
   industry: '行业/原材料',
+  currency: '结算币种',
 };
 
 interface RuleEngineMatchColumnsProps {

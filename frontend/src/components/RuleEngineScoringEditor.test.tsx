@@ -22,7 +22,7 @@ import {
   dimensionPatchFromDraft,
   validateDimensionDraft,
 } from './RuleEngineScoringEditor';
-import {RuleEngineContext, defaultSampleEvent} from './RuleEngineContext';
+import {DEFAULT_ASSOCIATION_SCORES, RuleEngineContext, defaultSampleEvent} from './RuleEngineContext';
 import type {RuleEngineContextValue} from './RuleEngineContext';
 import {RuleEngineView} from './RuleEngineView';
 
@@ -276,6 +276,28 @@ afterEach(() => {
 });
 
 describe('配置态评分与阈值可视化编辑（todo 7）', () => {
+  it('currency 关联类型显示「结算币种」标签，默认值口径与后端一致（todo 19）', () => {
+    const dim = geopoliticalDimension();
+    renderAdminConfig([{...dim, associationScores: {...dim.associationScores, currency: 15}}]);
+
+    const association = screen.getByTestId('rule-engine-association-editor');
+    expect(within(association).getByLabelText('关联类型 结算币种')).toHaveValue(15);
+    expect(within(association).getByLabelText('关联类型 结算币种 滑杆')).toHaveAttribute('max', '30');
+    expect(within(association).getByLabelText('关联类型 结算币种 滑杆')).toHaveAttribute('min', '0');
+    // 默认值口径对齐后端 matching.py: assoc.get("currency", 15)
+    expect(DEFAULT_ASSOCIATION_SCORES.currency).toBe(15);
+    // 默认值文案与既有关联类型一致
+    expect(within(association).getByText(/当前为默认值 15/)).toBeInTheDocument();
+  });
+
+  it('未知关联键回退原始枚举值，不臆造中文（todo 19 对抗）', () => {
+    const dim = geopoliticalDimension();
+    renderAdminConfig([{...dim, associationScores: {...dim.associationScores, currency_rate: 12}}]);
+
+    const association = screen.getByTestId('rule-engine-association-editor');
+    expect(within(association).getByLabelText('关联类型 currency_rate')).toBeInTheDocument();
+  });
+
   it('滑杆 + 步进覆盖全部严重程度与关联类型，且每项都给出对总分的影响说明', () => {
     renderAdminConfig([geopoliticalDimension()]);
 
@@ -853,6 +875,12 @@ describe('评分编辑器纯函数（确定性单元断言）', () => {
     expect(validateDimensionDraft(draft({thresholds: {p1: 100, p2: 65, p3: 0}})).thresholdOutOfRange).toEqual([]);
   });
 
+  it('validateDimensionDraft：currency 越界报「结算币种」而非裸键名（todo 19）', () => {
+    const outOfRange = validateDimensionDraft(draft({associationScores: {currency: 31}}));
+    expect(outOfRange.associationOutOfRange).toEqual(['结算币种']);
+    expect(outOfRange.messages.join('')).toMatch(/关联类型分值超出允许范围（0-30）：结算币种/);
+  });
+
   it('dimensionPatchFromDraft：无改动返回空 patch，改动只含该项（含阈值与匹配柱）', () => {
     const original = naturalDimension();
     expect(dimensionPatchFromDraft(original, {
@@ -892,5 +920,49 @@ describe('评分编辑器纯函数（确定性单元断言）', () => {
     expect(rows[1].preview?.supplier_id).toBe(1);
     expect(rows[2].current).toBeNull();
     expect(rows[2].preview?.supplier_id).toBe(3);
+  });
+});
+
+/**
+ * todo 19 标签补齐：经济/金融维度的 `currency` 关联分值渲染与提交。
+ *
+ * 后端口径：`MatchType` 字面量含 currency（workbench_schemas.py:27）；
+ * 经济/金融维度默认关联分值 currency=15（dimensions/economic.py:46，
+ * 覆盖全局默认 8）。渲染口径与 `ASSOCIATION_LABELS` 一致，未知键回退原文。
+ */
+describe('经济/金融维度 currency 关联分值（todo 19 标签补齐）', () => {
+  const economicDimension = (overrides: Partial<MonitoringDimension> = {}): MonitoringDimension => ({
+    ...naturalDimension(),
+    id: 'economic',
+    name: '经济与金融',
+    associationScores: {...naturalDimension().associationScores, country: 8, industry: 12, currency: 15},
+    ...overrides,
+  });
+
+  it('currency 关联分值渲染「结算币种」标签、滑杆（0–30）与默认值 15', () => {
+    renderAdminConfig([economicDimension()]);
+
+    const association = screen.getByTestId('rule-engine-association-editor');
+    expect(within(association).getByLabelText('关联类型 结算币种')).toBeInTheDocument();
+    expect(within(association).getByLabelText('关联类型 结算币种 滑杆')).toHaveAttribute('max', '30');
+    expect(within(association).getByLabelText('关联类型 结算币种')).toHaveValue(15);
+    const currencyCard = screen.getByLabelText('关联类型 结算币种').closest('div.min-w-0') as HTMLElement;
+    expect(within(currencyCard).getByText(/直接计入总分，最高 30 分/)).toBeInTheDocument();
+  });
+
+  it('只改 currency 一项时 patch 只含该项，保存走 api.updateDimension', async () => {
+    renderAdminConfig([economicDimension()]);
+
+    fireEvent.change(screen.getByLabelText('关联类型 结算币种'), {target: {value: '20'}});
+    fireEvent.click(screen.getByRole('button', {name: '保存配置'}));
+
+    await waitFor(() => expect(api.updateDimension).toHaveBeenCalledTimes(1));
+    expect(api.updateDimension).toHaveBeenCalledWith('economic', {association_scores: {currency: 20}});
+  });
+
+  it('未知关联键回退显示原文（不臆造中文）', () => {
+    renderAdminConfig([economicDimension({associationScores: {...naturalDimension().associationScores, some_future_key: 12}})]);
+
+    expect(screen.getByLabelText('关联类型 some_future_key')).toBeInTheDocument();
   });
 });

@@ -63,6 +63,7 @@ const SUMMARY_MATCH_COLUMN_LABELS: Record<string, string> = {
   product: '产品',
   country: '国家/区域',
   industry: '行业/原材料',
+  currency: '结算币种',
 };
 const SUMMARY_SEVERITY_LABELS: Record<string, string> = {critical: '严重', high: '高', medium: '中', low: '低'};
 const SUMMARY_SEVERITY_ORDER: ReadonlyArray<string> = ['critical', 'high', 'medium', 'low'];

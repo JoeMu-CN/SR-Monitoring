@@ -28,6 +28,7 @@ const ASSOCIATION_LABELS: Record<string, string> = {
   product: '产品',
   country: '国家',
   industry: '行业',
+  currency: '结算币种',
 };
 
 /**

@@ -646,14 +646,14 @@ describe('维度概览启用匹配柱：名称不拆行', () => {
       <RuleEngineView dimensions={[dim]} onToggleDimension={vi.fn()} onUpdateDimension={vi.fn()} role="viewer" />,
     );
 
-  it('每个柱名（含国家/区域、行业/原材料）各自被 inline-block whitespace-nowrap 包裹，且前置 · 与名称同片段', () => {
-    renderDim(dimension({matchColumns: ['entity', 'location', 'product', 'country', 'industry']}));
+  it('每个柱名（含国家/区域、行业/原材料、结算币种）各自被 inline-block whitespace-nowrap 包裹，且前置 · 与名称同片段', () => {
+    renderDim(dimension({matchColumns: ['entity', 'location', 'product', 'country', 'industry', 'currency']}));
 
     const summary = screen.getByTestId('rule-engine-dim-match-columns');
     // 整行不设 nowrap：容器仍允许在「柱名之间」换行（窄卡内不横向溢出）
     expect(summary.className).not.toContain('whitespace-nowrap');
 
-    for (const label of ['主体', '地点', '产品', '国家/区域', '行业/原材料']) {
+    for (const label of ['主体', '地点', '产品', '国家/区域', '行业/原材料', '结算币种']) {
       const chip = within(summary).getByText(label);
       expect(chip.tagName).toBe('SPAN');
       expect(chip.className).toContain('inline-block');
@@ -662,9 +662,17 @@ describe('维度概览启用匹配柱：名称不拆行', () => {
 
     // 首项无前置分隔符；其余项的 · 必须落在名称所在的不换行片段内，避免行首孤立分隔符
     expect(within(summary).getByText('主体').textContent).toBe('主体');
-    for (const label of ['国家/区域', '行业/原材料']) {
+    for (const label of ['国家/区域', '行业/原材料', '结算币种']) {
       expect(within(summary).getByText(label).textContent).toContain('·');
     }
+  });
+
+  it('未知匹配柱键回退原始枚举值，不臆造中文（todo 19 对抗）', () => {
+    renderDim(dimension({matchColumns: ['currency', 'not_a_real_column']}));
+
+    const summary = screen.getByTestId('rule-engine-dim-match-columns');
+    expect(within(summary).getByText('结算币种')).toBeInTheDocument();
+    expect(within(summary).getByText('not_a_real_column')).toBeInTheDocument();
   });
 
   it('未启用任何匹配柱时回退显示 —', () => {
@@ -703,4 +711,5 @@ describe('维度概览启用匹配柱：名称不拆行', () => {
     const splitGrid = statsGrid.parentElement as HTMLElement;
     expect(splitGrid.className).toContain('xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]');
   });
+
 });

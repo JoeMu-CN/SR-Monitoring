@@ -86,6 +86,8 @@ _EVENT_TYPE_LABELS = {
     "corporate": "企业经营",
     "judicial": "司法",
     "compliance": "合规",
+    "market": "市场行情",
+    "exchange_rate": "汇率波动",
     "other": "其他",
 }
 _EVENT_SUBTYPE_LABELS = {
@@ -103,6 +105,9 @@ _EVENT_SUBTYPE_LABELS = {
     "corporate_distress": "企业经营异常",
     "judicial_case": "司法案件",
     "compliance_violation": "合规违规",
+    "commodity_price_move": "大宗商品价格异动",
+    "industry_market_move": "行业行情异动",
+    "fx_volatility": "汇率波动",
     "other": "其他",
 }
 

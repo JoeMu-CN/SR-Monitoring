@@ -15,7 +15,7 @@ from app.research.reporting import (
     ResearchReportGenerationInput,
 )
 
-PROMPT_VERSION = "signal-analysis-v6"
+PROMPT_VERSION = "signal-analysis-v7"
 
 
 class AIProviderError(RuntimeError):
@@ -269,6 +269,8 @@ def _parse_analysis_result(content: str) -> SignalAnalysisResult:
         "corporate": {"corporate_distress"},
         "judicial": {"judicial_case"},
         "compliance": {"compliance_violation", "sanctions"},
+        "market": {"commodity_price_move", "industry_market_move"},
+        "exchange_rate": {"fx_volatility"},
         "other": {"other"},
     }
     if event_subtype is not None and event_subtype not in allowed_subtypes.get(
@@ -312,7 +314,9 @@ _BASE_PROMPT_RULES = (
     "trade_policy→sanctions、export_control、trade_tariff 或 regulatory_change，"
     "geopolitical→armed_conflict、sanctions、political_instability 或 public_security，"
     "corporate→corporate_distress，judicial→judicial_case，"
-    "compliance→compliance_violation 或 sanctions，other→other；"
+    "compliance→compliance_violation 或 sanctions，"
+    "market→commodity_price_move 或 industry_market_move，exchange_rate→fx_volatility，"
+    "other→other；"
     "没有明确证据支持细类时 event_subtype 必须为 null。"
     "affected_products 与 affected_industries 必须分别提取，不得混用。"
     "affected_industries 只列出供应链受到实质性影响的对象所属行业，"
@@ -321,6 +325,9 @@ _BASE_PROMPT_RULES = (
     "例如对某国全面或全境的制裁、战争、封锁、全国性动荡；"
     "不得把事件发生地或公告涉及的国家本身当作受影响国家，不确定时留空。"
     "affected_countries 每项使用 ISO 3166-1 alpha-2 大写二字代码（如 RU、IR）。"
+    "affected_currencies 只在文本明确涉及具体货币的汇率变动或外汇管制时填写，"
+    "每项使用 ISO 4217 三字母大写代码（如 USD、CNY、EUR、JPY）；"
+    "仅泛指行情、指数或大宗商品价格变动而未指向具体货币时必须留空。"
     "locations 中应尽量分别填写 country_code、region、city、district；"
     "district 仅在原文明确支持区、县、旗或同级行政区时填写，不得根据城市名称猜测。"
     "start_at 与 end_at 必须使用带时区的 ISO 8601 格式（如 2026-07-15T10:08:00Z 或带偏移）。"

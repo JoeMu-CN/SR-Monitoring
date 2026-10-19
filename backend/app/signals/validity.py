@@ -247,6 +247,9 @@ EVENT_SUBTYPE_PROFILES: Final[Mapping[EventSubtype, ValidityProfile]] = MappingP
         "corporate_distress": ValidityProfile.CORPORATE_DISTRESS,
         "judicial_case": ValidityProfile.JUDICIAL_CASE,
         "compliance_violation": ValidityProfile.COMPLIANCE_VIOLATION,
+        "commodity_price_move": ValidityProfile.MARKET_PRICE_POINT,
+        "industry_market_move": ValidityProfile.INDUSTRY_CAPACITY_SHIFT,
+        "fx_volatility": ValidityProfile.MARKET_PRICE_POINT,
         "other": ValidityProfile.OTHER,
     }
 )

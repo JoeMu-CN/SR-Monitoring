@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 # ISO 3166-1 alpha-2，与 LocationReference.country_code 使用同一约束。
 CountryCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+# ISO 4217 三字母货币代码，仅用于汇率类事件涉及的具体货币。
+CurrencyCode = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 EventType = Literal[
     "weather",
     "geological",
@@ -15,6 +17,8 @@ EventType = Literal[
     "corporate",
     "judicial",
     "compliance",
+    "market",
+    "exchange_rate",
     "other",
 ]
 EventSubtype = Literal[
@@ -32,6 +36,9 @@ EventSubtype = Literal[
     "corporate_distress",
     "judicial_case",
     "compliance_violation",
+    "commodity_price_move",
+    "industry_market_move",
+    "fx_volatility",
     "other",
 ]
 Severity = Literal["critical", "high", "medium", "low"]
@@ -39,6 +46,8 @@ SuggestedLevel = Literal["P1", "P2", "P3", "P4"]
 AffectedActivity = Literal[
     "production", "logistics", "trade", "operations", "judicial", "compliance"
 ]
+# 行情类事件大类：价格指数、大宗商品与汇率波动，供路由与解析侧统一判定。
+MARKET_EVENT_TYPES: Final[frozenset[str]] = frozenset({"market", "exchange_rate"})
 
 
 class SignalAnalysisInput(BaseModel):
@@ -92,6 +101,7 @@ class SignalAnalysisResult(BaseModel):
     affected_products: list[str] = Field(default_factory=list)
     affected_industries: list[str] = Field(default_factory=list)
     affected_countries: list[CountryCode] = Field(default_factory=list)
+    affected_currencies: list[CurrencyCode] = Field(default_factory=list)
     start_at: datetime | None = None
     end_at: datetime | None = None
     summary_zh: NonEmptyText
@@ -129,6 +139,8 @@ class SignalAnalysisResult(BaseModel):
             "corporate": {"corporate_distress"},
             "judicial": {"judicial_case"},
             "compliance": {"compliance_violation", "sanctions"},
+            "market": {"commodity_price_move", "industry_market_move"},
+            "exchange_rate": {"fx_volatility"},
             "other": {"other"},
         }
         if self.event_subtype and self.event_subtype not in allowed_subtypes[self.event_type]:

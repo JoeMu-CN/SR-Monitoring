@@ -88,11 +88,13 @@ def classify_pending_signal(
     *,
     now_utc: datetime,
 ) -> None:
-    """按 AI subtype 补齐策略快照；调用方事务同时决定是否创建事件。"""
+    """按 AI subtype 补齐策略快照；调用方事务同时决定是否创建事件。
+
+    profile 优先取 AI 细类映射；AI 不产出细类时回落到信源级显式
+    `validity_policy.profile`（指数/行情类信源由运营显式声明），两者都无
+    才判定分类失败并保留 pending 供人工复核。
+    """
     if signal.validity_state != ValidityState.PENDING_CLASSIFICATION:
-        return
-    if result.event_subtype is None:
-        mark_classification_failed(signal, analysis, "event_subtype_missing")
         return
     source = session.get(DataSource, signal.source_id)
     assert source is not None
@@ -102,7 +104,13 @@ def classify_pending_signal(
             if source.validity_policy is not None
             else None
         )
-        profile = EVENT_SUBTYPE_PROFILES[result.event_subtype]
+        if result.event_subtype is not None:
+            profile = EVENT_SUBTYPE_PROFILES[result.event_subtype]
+        elif source_config is not None and source_config.profile is not None:
+            profile = source_config.profile
+        else:
+            mark_classification_failed(signal, analysis, "event_subtype_missing")
+            return
         source_policy = source_config.to_policy(profile) if source_config is not None else None
         decision = resolve_policy(
             PolicyResolutionRequest(

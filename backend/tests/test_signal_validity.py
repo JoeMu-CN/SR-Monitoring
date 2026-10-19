@@ -6,6 +6,9 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.ai.models import AIAnalysisRecord
+from app.ai.schemas import SignalAnalysisResult
+from app.risks.signal_validity import classify_pending_signal
 from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
@@ -597,3 +600,190 @@ def test_supersession_when_duplicate_fingerprint_is_idempotent(
     )
     assert count == 1
     assert _active_count(db_session, source) == 1
+
+
+SSE_POLICY: dict[str, object] = {
+    "profile": "market_price_point",
+    "mode": "fixed_days",
+    "fixed_days": 14,
+}
+NEWS_POLICY: dict[str, object] = {"mode": "fixed_days", "fixed_days": 90}
+
+
+def _classification_source(
+    db_session: Session, code: str, validity_policy: dict[str, object] | None
+) -> DataSource:
+    source = DataSource(
+        code=code,
+        name=code,
+        source_type="api",
+        credibility=80,
+        enabled=True,
+        adapter_status="builtin",
+        adapter_version=0,
+        auth_type="none",
+        login_config={},
+        adapter_config={},
+        validity_policy=validity_policy,
+    )
+    db_session.add(source)
+    db_session.flush()
+    return source
+
+
+def _pending_signal(
+    db_session: Session, source: DataSource, suffix: str
+) -> RawSignal:
+    signal = RawSignal(
+        source_id=source.id,
+        external_id=f"ccfi-{suffix}",
+        title=f"CCFI 运价指数 {suffix}",
+        content="中国出口集装箱运价综合指数 1846.96，环比上行 0.4%。",
+        published_at=NOW_UTC - timedelta(days=4),
+        collected_at=NOW_UTC,
+        fingerprint=f"classify-{suffix}",
+        raw_data={},
+        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        validity_reason={
+            "code": "pending_classification",
+            "anchor_source": "published_at",
+            "details": {},
+        },
+        lifecycle_action=LifecycleAction.ASSERT,
+    )
+    db_session.add(signal)
+    db_session.flush()
+    return signal
+
+
+def _logistics_analysis(
+    db_session: Session, signal: RawSignal, *, event_subtype: str | None = None
+) -> AIAnalysisRecord:
+    result = SignalAnalysisResult(
+        event_type="logistics",
+        event_subtype=event_subtype,
+        suggested_severity="medium",
+        summary_zh="集装箱运价指数环比上行",
+        evidence_sentences=["中国出口集装箱运价综合指数 1846.96，环比上行 0.4%。"],
+        confidence=0.82,
+    )
+    record = AIAnalysisRecord(
+        signal_id=signal.id,
+        provider="classify-test",
+        model="classify-v1",
+        prompt_version="signal-analysis-v6",
+        status="succeeded",
+        finished_at=NOW_UTC,
+        result=result.model_dump(mode="json"),
+    )
+    db_session.add(record)
+    db_session.flush()
+    return record
+
+
+def _classify(db_session: Session, signal: RawSignal, analysis: AIAnalysisRecord) -> None:
+    classify_pending_signal(
+        db_session,
+        signal,
+        analysis,
+        SignalAnalysisResult.model_validate(analysis.result),
+        now_utc=NOW_UTC,
+    )
+    # flush 让数据库 check 约束真实参与校验（reason 三键齐全、类型正确）。
+    db_session.flush()
+
+
+def test_classify_pending_signal_when_source_has_explicit_profile_resolves_it(
+    db_session: Session,
+) -> None:
+    # Given：指数类信源，显式 profile=market_price_point，但 AI 只给出大类 logistics
+    source = _classification_source(db_session, "test-sse-profile", SSE_POLICY)
+    signal = _pending_signal(db_session, source, "with-profile")
+    analysis = _logistics_analysis(db_session, signal)
+
+    # When
+    _classify(db_session, signal, analysis)
+
+    # Then：不再卡死，按信源级显式 profile 算出有效期窗口
+    assert signal.validity_state == ValidityState.ACTIVE
+    assert signal.validity_reason["code"] == "classification_resolved"
+    assert signal.validity_reason["details"]["event_subtype"] is None
+    assert signal.validity_profile == ValidityProfile.MARKET_PRICE_POINT
+    assert signal.validity_mode == ValidityMode.FIXED_DAYS
+    assert signal.valid_from == signal.published_at
+    assert signal.valid_until == signal.published_at + timedelta(days=14)
+    assert signal.validity_policy_version is not None
+    assert analysis.needs_review is not True
+
+
+def test_classify_pending_signal_when_source_has_no_profile_still_fails(
+    db_session: Session,
+) -> None:
+    # Given：普通新闻信源，只有 mode/fixed_days，没有显式 profile
+    source = _classification_source(db_session, "test-news-no-profile", NEWS_POLICY)
+    signal = _pending_signal(db_session, source, "no-profile")
+    analysis = _logistics_analysis(db_session, signal)
+
+    # When
+    _classify(db_session, signal, analysis)
+
+    # Then：行为不变，仍停在待分类并标记分类失败
+    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    assert signal.validity_reason["code"] == "classification_failed"
+    assert signal.validity_reason["details"]["reason"] == "event_subtype_missing"
+    assert signal.validity_profile is None
+    assert signal.validity_policy_version is None
+    assert analysis.needs_review is True
+
+
+def test_classify_pending_signal_when_source_has_no_policy_at_all_still_fails(
+    db_session: Session,
+) -> None:
+    # Given：从未配置 validity_policy 的信源
+    source = _classification_source(db_session, "test-no-policy", None)
+    signal = _pending_signal(db_session, source, "no-policy")
+    analysis = _logistics_analysis(db_session, signal)
+
+    # When
+    _classify(db_session, signal, analysis)
+
+    # Then
+    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    assert signal.validity_reason["code"] == "classification_failed"
+    assert signal.validity_reason["details"]["reason"] == "event_subtype_missing"
+
+
+def test_classify_pending_signal_when_ai_subtype_exists_keeps_subtype_profile(
+    db_session: Session,
+) -> None:
+    # Given：AI 产出了细类，即使信源带显式 profile 也不再走 event_subtype_missing
+    source = _classification_source(db_session, "test-subtype-profile", SSE_POLICY)
+    signal = _pending_signal(db_session, source, "with-subtype")
+    analysis = _logistics_analysis(db_session, signal, event_subtype="transport_disruption")
+
+    # When
+    _classify(db_session, signal, analysis)
+
+    # Then：信源级 profile 仍是策略权威（SourceValidityPolicy.to_policy 语义）
+    assert signal.validity_state == ValidityState.ACTIVE
+    assert signal.validity_reason["code"] == "classification_resolved"
+    assert signal.validity_reason["details"]["event_subtype"] == "transport_disruption"
+    assert signal.validity_profile == ValidityProfile.MARKET_PRICE_POINT
+    assert analysis.needs_review is not True
+
+
+def test_classify_pending_signal_when_subtype_exists_without_source_profile_uses_matrix(
+    db_session: Session,
+) -> None:
+    # Given：无信源策略，但 AI 给出细类
+    source = _classification_source(db_session, "test-subtype-only", None)
+    signal = _pending_signal(db_session, source, "subtype-only")
+    analysis = _logistics_analysis(db_session, signal, event_subtype="transport_disruption")
+
+    # When
+    _classify(db_session, signal, analysis)
+
+    # Then：沿用 profile 默认矩阵，既有行为完全不变
+    assert signal.validity_state == ValidityState.ACTIVE
+    assert signal.validity_profile == ValidityProfile.TRANSPORT_DISRUPTION
+    assert signal.validity_mode == ValidityMode.EVENT_END_PLUS_GRACE

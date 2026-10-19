@@ -6,14 +6,14 @@
     本脚本只写 `data_sources.validity_policy` 并追加 `data_source_audit_logs`；
     不触碰 RawSignal、不采集、不发布、不重启任何服务、不重算历史信号，也不打印
     任何 .env / Token / 密码 / 连接串。默认 dry-run 只读比对；`--apply` 才在单事务
-    内写库；`--verify` 只读回读并校验 19 条目标策略与版本指纹。
+    内写库；`--verify` 只读回读并校验 20 条目标策略与版本指纹。
 
 二、「有效期」语义
     validity_policy 是系统判定「一条信号是否仍参与监控」的窗口：过期信号仅留库，
     不再计入有效记录、不再驱动提醒。它是监控口径，不是数据保留期（留库时长由保留
     清理单独决定），也不等于法规或公告的法定有效期。
 
-三、20 源策略表（19 条目标 + nmc-weather 只读核对，逐条理由）
+三、21 源策略表（20 条目标 + nmc-weather 只读核对，逐条理由）
     | code | 策略 | 理由 |
     |---|---|---|
     | nmc-weather | fixed_days 7 | 本次不改动：气象预警属短时效事件，保持既有 7 天（只读核对 signal_validity_days=7） |
@@ -34,6 +34,7 @@
     | fx-rates | until_superseded 3 | 汇率行情逐日更新；3 天覆盖周末容差（周末无新报价，避免周一误过期） |
     | commodity-futures | until_superseded 3 | 期货行情逐日更新；3 天覆盖周末容差，避免周末误过期 |
     | sse-shipping | fixed_days 14 | 该采集器不产出 validity_key，设 until_superseded 会导致后续入库失败，故固定 14 天 |
+    | semiconductor-index | until_superseded 3 | 半导体指数行情逐日更新；3 天覆盖周末容差 |
     | pbc-lpr | until_superseded 45 | LPR 月频发布；45 天覆盖发布周期容差，超期或被替代即失效 |
     | stats-pmi | until_superseded 45 | PMI 月频发布；45 天覆盖发布周期容差，超期或被替代即失效 |
 
@@ -45,7 +46,7 @@
     docker compose cp scripts/seed_source_validity_policies.py app:/tmp/seed_validity.py
     docker compose exec -T app python /tmp/seed_validity.py            # dry-run（默认）
     docker compose exec -T app python /tmp/seed_validity.py --apply    # 写入差异项并写审计
-    docker compose exec -T app python /tmp/seed_validity.py --verify   # 只读校验 19 条与指纹
+    docker compose exec -T app python /tmp/seed_validity.py --verify   # 只读校验 20 条与指纹
 """
 from __future__ import annotations
 
@@ -115,6 +116,7 @@ TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
     "fx-rates": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "commodity-futures": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "sse-shipping": PolicySpec(ValidityMode.FIXED_DAYS, 14),
+    "semiconductor-index": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "pbc-lpr": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 45),
     "stats-pmi": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 45),
 })

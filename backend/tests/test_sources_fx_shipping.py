@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
 
@@ -25,6 +26,28 @@ _SHIPPING_MD = """
 | 欧洲航线 (EUROPE SERVICE) | 2416.45 | 2392.90 | -1.0 |
 | 美西航线 (W/C AMERICA SERVICE) | 1494.58 | 1544.28 | 3.3 |
 """
+
+_SHIPPING_MD_NO_DATE = """
+| 航线 | 上期 | 本期 | 与上期比涨跌 (%) |
+| --- | --- | --- | --- |
+| 中国出口集装箱运价综合指数 | 1839.61 | 1846.96 | 0.4 |
+| 日本航线 (JAPAN SERVICE) | 941.44 | 896.71 | -4.8 |
+"""
+
+# Crawl4AI 渲染后的真实形态：表头按单元格折行，「本期」在上一行行尾、日期在下一行行首。
+_SHIPPING_MD_WRAPPED_HEADER = """
+中国出口集装箱运价指数 CHINA CONTAINERIZED FREIGHT INDEX
+| 航线  | 上期
+2026-09-30  | 本期
+2026-10-09  | 与上期比涨跌
+(%)  |
+| --- | --- | --- | --- |
+| 中国出口集装箱运价综合指数 | 1923.93  | 1912.38  | -0.6  |
+| 日本航线 (JAPAN SERVICE) | 1050.11  | 1043.62  | -0.6  |
+| 欧洲航线 (EUROPE SERVICE) | 2416.45  | 2392.90  | -1.0  |
+"""
+
+_SHIPPING_BEIJING = timezone(timedelta(hours=8))
 
 
 class TestFxRatesAdapter:
@@ -81,6 +104,73 @@ class TestSseShippingAdapter:
         assert "1839.61" in comp.content
         assert "1846.96" in comp.content
         assert comp.extra.get("route") == "中国出口集装箱运价综合指数"
+
+    def test_fetch_reads_current_period_date_from_header(self) -> None:
+        # Given
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=_SHIPPING_MD)
+
+        # When
+        items = asyncio.run(self._adapter(handler).fetch())
+
+        # Then：表头「本期 2026-08-14」按北京时间零点落到每一条
+        assert len(items) == 4
+        for item in items:
+            assert item.published_at == datetime(2026, 8, 14, tzinfo=_SHIPPING_BEIJING)
+
+    def test_normalize_converts_beijing_period_date_to_utc(self) -> None:
+        # Given
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=_SHIPPING_MD)
+
+        # When
+        adapter = self._adapter(handler)
+        signal = adapter.normalize(asyncio.run(adapter.fetch())[0])
+
+        # Then：北京 2026-08-14 00:00 转 UTC 后为前一日 16:00，不发生 8 小时错位
+        assert signal.published_at == datetime(2026, 8, 13, 16, tzinfo=UTC)
+
+    def test_fetch_when_header_has_no_date_leaves_published_at_empty(self) -> None:
+        # Given
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=_SHIPPING_MD_NO_DATE)
+
+        # When
+        adapter = self._adapter(handler)
+        items = asyncio.run(adapter.fetch())
+
+        # Then：解析不到日期不抛错，沿用 None 兜底
+        assert len(items) == 2
+        assert all(item.published_at is None for item in items)
+        assert adapter.normalize(items[0]).published_at is None
+
+    def test_fetch_reads_date_from_crawl4ai_wrapped_header(self) -> None:
+        # Given：真实渲染把表头折行，「本期」与日期不在同一行
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=_SHIPPING_MD_WRAPPED_HEADER)
+
+        # When
+        adapter = self._adapter(handler)
+        items = asyncio.run(adapter.fetch())
+
+        # Then：跨行命中「本期 2026-10-09」，每条都拿到北京时区零点
+        assert len(items) == 3
+        assert all(
+            item.published_at == datetime(2026, 10, 9, tzinfo=_SHIPPING_BEIJING)
+            for item in items
+        )
+
+    def test_normalize_converts_wrapped_header_date_to_utc(self) -> None:
+        # Given
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text=_SHIPPING_MD_WRAPPED_HEADER)
+
+        # When
+        adapter = self._adapter(handler)
+        signal = adapter.normalize(asyncio.run(adapter.fetch())[0])
+
+        # Then：北京 2026-10-09 00:00 转 UTC 后为前一日 16:00，不发生 8 小时错位
+        assert signal.published_at == datetime(2026, 10, 8, 16, tzinfo=UTC)
 
     def test_healthcheck_ok(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

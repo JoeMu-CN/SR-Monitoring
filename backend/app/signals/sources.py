@@ -40,6 +40,9 @@ DEFAULT_TIMEOUT_SECONDS = 15.0
 MAX_ITEMS_PER_FETCH = 100
 MAX_NMC_BYTES = 2 * 1024 * 1024
 MAX_OFAC_BYTES = 20 * 1024 * 1024
+# CCFI 表头「本期 YYYY-MM-DD」：周度指数发布日，按北京时间零点作为发布时刻。
+_SSE_CURRENT_PERIOD = re.compile(r"本期\s*(\d{4})-(\d{2})-(\d{2})")
+_SSE_TIMEZONE = timezone(timedelta(hours=8))
 
 
 class SourceFetchError(RuntimeError):
@@ -1780,6 +1783,24 @@ class SseShippingAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条指数信号")
 
 
+def _sse_published_at(markdown: str) -> datetime | None:
+    """从 CCFI 表头「本期 YYYY-MM-DD」取本期发布时刻。
+
+    单行形态：`| 航线 | 上期 2026-08-07 | 本期 2026-08-14 | 与上期比涨跌 (%) |`；
+    Crawl4AI 渲染后的真实形态会把表头按单元格折行，「本期」在上一行行尾、日期在下一行
+    行首（`... 上期  [换行] 2026-09-30  | 本期  [换行] 2026-10-09  | ...`），因此必须
+    对整篇文本匹配一次，靠正则里的空白通配跨过换行，且不能按行判断。
+    CCFI 是每周指数，取本期发布日北京时间零点作为有效期锚点。必须带时区：
+    `normalize` 的 `_to_utc` 对 naive 时间按 UTC 处理，不带时区会整体偏移 8 小时。
+    页面结构变化导致解析不到时返回 None，由采集侧沿用既有兜底。
+    """
+    match = _SSE_CURRENT_PERIOD.search(markdown)
+    if match is None:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    return datetime(year, month, day, tzinfo=_SSE_TIMEZONE)
+
+
 def _parse_sse_shipping(markdown: str, *, limit: int = 30) -> list[RawSourceItem]:
     """解析 CCFI markdown 表格（综合指数 + 分航线）。
 
@@ -1787,6 +1808,7 @@ def _parse_sse_shipping(markdown: str, *, limit: int = 30) -> list[RawSourceItem
         中国出口集装箱运价综合指数 | 1839.61 | 1846.96 | 0.4
         日本航线 (JAPAN SERVICE) | 941.44 | 896.71 | -4.8
     """
+    published_at = _sse_published_at(markdown)
     lines = [ln.strip() for ln in markdown.splitlines() if "|" in ln]
     items: list[RawSourceItem] = []
     for line in lines:
@@ -1815,6 +1837,7 @@ def _parse_sse_shipping(markdown: str, *, limit: int = 30) -> list[RawSourceItem
                 ),
                 url="https://www.sse.net.cn/index/singleIndex?indexType=ccfi",
                 extra={"route": name, "previous": prev, "current": curr, "change_pct": change},
+                published_at=published_at,
             )
         )
         if len(items) >= limit:

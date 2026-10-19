@@ -33,14 +33,21 @@
     | fmprc-press | fixed_days 30 | 外交表态 30 天关注窗口，超期退出监控 |
     | fx-rates | until_superseded 3 | 汇率行情逐日更新；3 天覆盖周末容差（周末无新报价，避免周一误过期） |
     | commodity-futures | until_superseded 3 | 期货行情逐日更新；3 天覆盖周末容差，避免周末误过期 |
-    | sse-shipping | fixed_days 14 | 该采集器不产出 validity_key，设 until_superseded 会导致后续入库失败，故固定 14 天 |
     | semiconductor-index | until_superseded 3 | 半导体指数行情逐日更新；3 天覆盖周末容差 |
+    | sse-shipping | fixed_days 14 + profile=market_price_point | 指数类信源，AI 不产细类 |
     | pbc-lpr | until_superseded 45 | LPR 月频发布；45 天覆盖发布周期容差，超期或被替代即失效 |
     | stats-pmi | until_superseded 45 | PMI 月频发布；45 天覆盖发布周期容差，超期或被替代即失效 |
 
+    sse-shipping 补充说明：CCFI 是每周指数行情，AI 只返回 `event_type=logistics` 而不
+    产出 `event_subtype`，因此由信源级显式 `profile=market_price_point` 补齐分类，使
+    `classify_pending_signal` 能完成分类而不是停在 classification_failed；仍保持
+    `fixed_days 14`，因为该采集器不产出 validity_key（until_superseded 会导致入库失败）。
+
 四、生效范围
     策略仅对之后新入库的信号生效（applies_to=new_signals_only）；存量信号不回溯、
-    不重算，历史 validity_state 保持不变。
+    不重算，历史 validity_state 保持不变。若需让存量信号按新策略补齐分类，先执行本
+    脚本 --apply，再按需运行 scripts/recover_source_signal_classification.py
+    （该脚本复用已存分析，不产生新的 AI 调用）。
 
 五、运行方式（先 dry-run，确认后再 --apply；--verify 可随时只读回读）
     docker compose cp scripts/seed_source_validity_policies.py app:/tmp/seed_validity.py
@@ -66,7 +73,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.signals.models import DataSource, DataSourceAuditLog
 from app.signals.schemas import DataSourceUpdate, SourceValidityPolicy
-from app.signals.validity import ValidityMode
+from app.signals.validity import ValidityMode, ValidityProfile
 
 RunMode = Literal["dry_run", "apply", "verify"]
 PolicyJSON = dict[str, object]
@@ -96,6 +103,7 @@ class SeedAbort(Exception):
 class PolicySpec:
     mode: ValidityMode
     fixed_days: int | None = None
+    profile: ValidityProfile | None = None
 
 
 TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
@@ -115,8 +123,10 @@ TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
     "fmprc-press": PolicySpec(ValidityMode.FIXED_DAYS, 30),
     "fx-rates": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "commodity-futures": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
-    "sse-shipping": PolicySpec(ValidityMode.FIXED_DAYS, 14),
     "semiconductor-index": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
+    "sse-shipping": PolicySpec(
+        ValidityMode.FIXED_DAYS, 14, profile=ValidityProfile.MARKET_PRICE_POINT
+    ),
     "pbc-lpr": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 45),
     "stats-pmi": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 45),
 })
@@ -139,7 +149,9 @@ def build_plans() -> dict[str, TargetPlan]:
     """用 SourceValidityPolicy + DataSourceUpdate 预校验每条目标策略。"""
     plans: dict[str, TargetPlan] = {}
     for code, spec in TARGET_POLICIES.items():
-        policy = SourceValidityPolicy(mode=spec.mode, fixed_days=spec.fixed_days)
+        policy = SourceValidityPolicy(
+            profile=spec.profile, mode=spec.mode, fixed_days=spec.fixed_days
+        )
         validated = DataSourceUpdate(validity_policy=policy).validity_policy
         if validated is None:
             raise SeedAbort("normalization_lost_policy", code)

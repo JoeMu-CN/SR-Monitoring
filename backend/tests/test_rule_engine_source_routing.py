@@ -1,11 +1,14 @@
 """信源优先（source-first）维度路由测试。
 
-锁定 19 个真实信源 code 与维度的确定性归属，并证明实际 ``process_event`` 按
+锁定 20 个真实信源 code 与维度的确定性归属，并证明实际 ``process_event`` 按
 信源 code 路由（而非仅 helper）：policy 维度保持 ``event_types=()`` +
 ``enabled=False`` 代码默认，仅靠 DB 启用即可接管其声明信源，无需新增 AI 事件类型。
 
 覆盖：
-- 19 个 code 全部按 owner 路由，且不受 AI 粗事件类型影响；
+- 20 个 code 全部按 owner 路由，且不受 AI 粗事件类型影响；
+- 大宗商品行情信源 commodity-futures 归 industry，汇率信源 fx-rates 归 economic；
+- 任何 code 都不被两个维度同时声明（重复声明会让 resolve_dimension 返回 None，
+  导致整条链路静默失效）；
 - policy 未启用时已知 owner 返回 None 且禁止 event_type 回退；
 - 未声明 code / 无 source_code 保留旧 event_type 逻辑；
 - 同一 code 被多维度重复声明时安全阻断并给出可诊断原因；
@@ -38,7 +41,7 @@ from app.suppliers.models import Supplier
 
 NOW = datetime(2026, 9, 6, 12, tzinfo=UTC)
 
-# 已定映射：19 个真实 code → 唯一 owner 维度。
+# 已定映射：20 个真实 code → 唯一 owner 维度。
 SOURCE_OWNER: dict[str, str] = {
     "nmc-weather": "natural",
     "usgs-earthquake-day": "natural",
@@ -47,7 +50,6 @@ SOURCE_OWNER: dict[str, str] = {
     "bis-entity-list": "geopolitical",
     "mofcom-entity-detail": "geopolitical",
     "fmprc-press": "geopolitical",
-    "commodity-futures": "economic",
     "fx-rates": "economic",
     "pbc-lpr": "economic",
     "stats-pmi": "economic",
@@ -58,6 +60,8 @@ SOURCE_OWNER: dict[str, str] = {
     "uflpa-entity-list": "policy",
     "mee-announcement": "policy",
     "sse-shipping": "industry",
+    "commodity-futures": "industry",
+    "semiconductor-index": "industry",
     "tianyancha": "corporate",
 }
 
@@ -70,7 +74,6 @@ EXPECTED_OWNERS: dict[str, list[str]] = {
         "fmprc-press",
     ],
     "economic": [
-        "commodity-futures",
         "fx-rates",
         "pbc-lpr",
         "stats-pmi",
@@ -83,7 +86,7 @@ EXPECTED_OWNERS: dict[str, list[str]] = {
         "uflpa-entity-list",
         "mee-announcement",
     ],
-    "industry": ["sse-shipping"],
+    "industry": ["sse-shipping", "commodity-futures", "semiconductor-index"],
     "corporate": ["tianyancha"],
 }
 
@@ -209,7 +212,7 @@ def _add_supplier(
 def test_source_first_routing_ignores_ai_event_type(
     db_session: Session, source_code: str, owner: str
 ) -> None:
-    """19 个 code 均按 owner 路由；探针事件类型指向其它维度也不受影响。"""
+    """20 个 code 均按 owner 路由；探针事件类型指向其它维度也不受影响。"""
     _enable_policy(db_session)
     dimensions = load_dimensions(db_session)
     # natural 的 owner 用 compliance 作探针（会命中 corporate），其余用 weather。
@@ -221,6 +224,47 @@ def test_source_first_routing_ignores_ai_event_type(
 
     assert resolved is not None, source_code
     assert resolved.key == owner
+
+
+def test_market_indicator_sources_route_to_expected_dimension(
+    db_session: Session,
+) -> None:
+    """行情类信源归属：大宗商品期货与半导体指数归 industry，汇率归 economic。"""
+    dimensions = load_dimensions(db_session)
+    # 探针用 weather：若按事件类型路由，industry/economic 都不会被命中，
+    # 因此只有 source_code 生效才能得到下面的断言结果。
+    probe = "weather"
+
+    commodity = resolve_dimension(
+        dimensions, probe, source_code="commodity-futures"
+    )
+    assert commodity is not None and commodity.key == "industry"
+
+    semiconductor = resolve_dimension(
+        dimensions, probe, source_code="semiconductor-index"
+    )
+    assert semiconductor is not None and semiconductor.key == "industry"
+
+    fx = resolve_dimension(dimensions, probe, source_code="fx-rates")
+    assert fx is not None and fx.key == "economic"
+
+
+def test_no_source_code_declared_by_two_dimensions(db_session: Session) -> None:
+    """任一 code 不得被两个维度同时声明（重复声明会让 resolve_dimension 返回 None）。
+
+    commodity-futures 迁移 economic → industry 时最容易踩这条：一旦两边都留，
+    整条大宗商品链路会静默失效（resolve_dimension 返回 None → 只写复核原因）。
+    """
+    dimensions = load_dimensions(db_session)
+    owners_by_code: dict[str, list[str]] = {}
+    for dimension in dimensions:
+        for source in dimension.config.data_sources:
+            owners_by_code.setdefault(source.code, []).append(dimension.key)
+
+    duplicated = {code: keys for code, keys in owners_by_code.items() if len(keys) > 1}
+    assert duplicated == {}
+    assert owners_by_code["commodity-futures"] == ["industry"]
+    assert owners_by_code["semiconductor-index"] == ["industry"]
 
 
 def test_policy_disabled_no_event_type_fallback(db_session: Session) -> None:

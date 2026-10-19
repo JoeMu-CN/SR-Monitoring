@@ -34,6 +34,7 @@ COLUMN_LOCATION = "location"    # 地点：文本 + PostGIS 空间半径
 COLUMN_PRODUCT = "product"      # 供应产品关键词
 COLUMN_COUNTRY = "country"      # 国家/区域（宏观维度）
 COLUMN_INDUSTRY = "industry"    # 行业/原材料（宏观维度）
+COLUMN_CURRENCY = "currency"    # 币种/结算货币（经济与金融维度）
 
 ALL_COLUMNS: tuple[str, ...] = (
     COLUMN_ENTITY,
@@ -41,6 +42,7 @@ ALL_COLUMNS: tuple[str, ...] = (
     COLUMN_PRODUCT,
     COLUMN_COUNTRY,
     COLUMN_INDUSTRY,
+    COLUMN_CURRENCY,
 )
 
 # 默认三柱（复现现状：所有事件类型均做主体+地点+产品匹配）

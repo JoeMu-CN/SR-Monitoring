@@ -1,12 +1,18 @@
 """C 经济与金融维度。
 
-宏观经济、汇率与外汇管制、大宗商品与原材料、货币政策、贸易摩擦。
-叠加国家柱与行业柱表达成本/市场传导。贸易管制命中供应商产品或行业时
-经 sanctions_product_hit 强制规则升级 P1（如出口管制直接禁售某类产品）。
+宏观经济、汇率与外汇管制、货币政策、贸易摩擦。叠加国家柱、行业柱与币种柱
+表达成本/汇率传导：币种柱匹配供应商结算货币与事件受影响币种，汇率波动
+（exchange_rate）由本维度接管。贸易管制命中供应商产品或行业时经
+sanctions_product_hit 强制规则升级 P1（如出口管制直接禁售某类产品）。
+
+大宗商品期货行情（commodity-futures）已迁往产业与供应市场维度：价格行情
+按"商品/行业价格 → 供应市场"传导，本维度只保留货币与贸易政策口径，避免
+同一信源被两个维度声明导致归属冲突。
 """
 
 from app.risks.engine.config import (
     COLUMN_COUNTRY,
+    COLUMN_CURRENCY,
     COLUMN_ENTITY,
     COLUMN_INDUSTRY,
     COLUMN_LOCATION,
@@ -20,10 +26,9 @@ DIMENSION = DimensionConfig(
     key="economic",
     label="经济与金融",
     description="宏观经济、汇率、大宗商品、货币政策、贸易摩擦与关税。",
-    event_types=("trade_policy",),
+    event_types=("trade_policy", "exchange_rate"),
     content_items=("宏观经济", "汇率与外汇管制", "大宗商品与原材料", "货币政策", "贸易摩擦与关税"),
     data_sources=(
-        DimensionDataSource("commodity-futures", "大宗商品期货行情", "connected"),
         DimensionDataSource("fx-rates", "国际汇率", "connected"),
         DimensionDataSource("pbc-lpr", "中国人民银行 LPR 报价", "connected"),
         DimensionDataSource("stats-pmi", "国家统计局制造业 PMI", "connected"),
@@ -35,8 +40,11 @@ DIMENSION = DimensionConfig(
         COLUMN_PRODUCT,
         COLUMN_COUNTRY,
         COLUMN_INDUSTRY,
+        COLUMN_CURRENCY,
     ),
-    scoring_overrides={"association_scores": {"country": 8, "industry": 12}},
+    scoring_overrides={
+        "association_scores": {"country": 8, "industry": 12, "currency": 15}
+    },
     forced_rules_add=(
         ForcedRule(
             name="sanctions_product_hit",

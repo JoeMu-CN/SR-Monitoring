@@ -190,6 +190,7 @@ def test_source_status_map_query_count_is_constant_regardless_of_code_count(
                 "ofac-sdn",
                 "commodity-futures",
                 "sse-shipping",
+                "semiconductor-index",
                 "mem-incident-bulletin",
                 "usgs-earthquake-day",
             ]

@@ -14,7 +14,7 @@ from app.ai.schemas import (
     Severity,
 )
 
-MatchColumn = Literal["entity", "location", "product", "country", "industry"]
+MatchColumn = Literal["entity", "location", "product", "country", "industry", "currency"]
 MatchType = Literal[
     "registry_no",
     "legal_name",
@@ -24,6 +24,7 @@ MatchType = Literal[
     "product",
     "country",
     "industry",
+    "currency",
 ]
 Level = Literal["P1", "P2", "P3", "P4"]
 Score = Annotated[int, Field(ge=0, le=100)]

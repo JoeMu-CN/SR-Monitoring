@@ -494,6 +494,111 @@ def test_dimensions_list_api(client: TestClient, db_session: Session) -> None:
     ]
 
 
+def test_match_columns_api_includes_currency(client: TestClient) -> None:
+    """匹配柱选项含 currency（GET /rule-engine/match-columns）。"""
+    response = client.get("/api/v1/rule-engine/match-columns")
+    assert response.status_code == 200
+    columns = response.json()["match_columns"]
+    assert "currency" in columns
+    # 既有五柱语义不得变动。
+    assert columns[:5] == ["entity", "location", "product", "country", "industry"]
+
+
+def test_economic_takes_exchange_rate_and_currency_column(
+    client: TestClient,
+) -> None:
+    """经济与金融维度接管 exchange_rate，并启用 currency 匹配柱与关联分。"""
+    response = client.get("/api/v1/rule-engine/dimensions/economic")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event_types"] == ["trade_policy", "exchange_rate"]
+    assert "currency" in body["match_columns"]
+    assert body["scoring"]["association_scores"]["currency"] == 15
+    # 大宗商品行情已迁往 industry，本维度不再声明。
+    assert "commodity-futures" not in {s["code"] for s in body["data_sources"]}
+
+
+def test_industry_takes_market_and_market_indicator_sources(
+    client: TestClient,
+) -> None:
+    """产业与供应市场维度接管 market，并接管大宗商品与半导体指数信源。"""
+    response = client.get("/api/v1/rule-engine/dimensions/industry")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event_types"] == ["logistics", "market"]
+    assert {s["code"] for s in body["data_sources"]} == {
+        "sse-shipping",
+        "commodity-futures",
+        "semiconductor-index",
+    }
+    assert "大宗商品价格" in "".join(body["content_items"])
+
+
+def test_economic_association_scores_currency_survives_get_put_roundtrip(
+    client: TestClient, db_session: Session
+) -> None:
+    """GET 回传的全量 associationScores（含 currency）原样 PUT 不得 422。
+
+    工作台前端会把 GET 回来的评分摘要整体回传；若 DimensionConfigPatch 的
+    association_scores 键类型不含 currency，既有规则引擎的保存路径会被 pydantic
+    直接拒绝（422），属于破坏既有功能的回归。
+    """
+    listed = client.get("/api/v1/rule-engine/dimensions")
+    assert listed.status_code == 200
+    economic = next(item for item in listed.json() if item["key"] == "economic")
+    association_scores = economic["scoring"]["association_scores"]
+    assert "currency" in association_scores
+
+    response = client.put(
+        "/api/v1/rule-engine/dimensions/economic",
+        json={
+            "config": {
+                "match_columns": economic["match_columns"],
+                "association_scores": association_scores,
+            }
+        },
+        headers={"X-User-Role": "admin"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["scoring"]["association_scores"]["currency"] == 15
+    assert "currency" in response.json()["match_columns"]
+
+    row = db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == "economic")
+    )
+    assert row is not None
+    assert row.config is not None
+    assert row.config["association_scores"]["currency"] == 15
+
+
+def test_sandbox_draft_preview_accepts_currency_association_score(
+    client: TestClient, db_session: Session
+) -> None:
+    """草稿预览路径同样接受 association_scores.currency（不落库、返回 200）。"""
+    _add_supplier(
+        db_session, code="D-FX", name="汇率供应商", registry_no="REG-D-FX"
+    )
+    response = client.post(
+        "/api/v1/rule-engine/test",
+        json={
+            "event_type": "exchange_rate",
+            "event_subtype": "fx_volatility",
+            "severity": "medium",
+            "organizations": [
+                {"name": "汇率供应商", "aliases": [], "registry_no": "REG-D-FX"}
+            ],
+            "dimension_key": "economic",
+            "draft_config": {"association_scores": {"currency": 15}},
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["dimension"]["key"] == "economic"
+    assert db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == "economic")
+    ) is None
+
+
 def test_dimension_toggle_api(client: TestClient, db_session: Session) -> None:
     response = client.post(
         "/api/v1/rule-engine/dimensions/natural/toggle",
@@ -616,7 +721,7 @@ def test_dimension_api_exposes_content_and_source_status(client: TestClient) -> 
         s for s in dimensions["corporate"]["data_sources"] if s["code"] == "tianyancha"
     )
     assert tyc["declared_status"] == "external_tool"
-    # policy 已按 19 个真实信源校正：声明 5 个已接入政策类信源（status=connected），
+    # policy 已按 20 个真实信源校正：声明 5 个已接入政策类信源（status=connected），
     # 但维度代码默认仍 event_types=() + enabled=False，靠 DB 启用后按信源归属接管。
     policy_sources = dimensions["policy"]["data_sources"]
     assert {s["code"] for s in policy_sources} == {

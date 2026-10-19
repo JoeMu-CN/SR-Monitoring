@@ -921,6 +921,162 @@ class CommodityFuturesAdapter(PullSourceAdapter):
         return SourceHealth(ok=True, message=f"返回 {len(items)} 个品种")
 
 
+async def _fetch_sina_gbk_body(
+    url: str,
+    *,
+    label: str,
+    transport: httpx.AsyncBaseTransport | None,
+    timeout_seconds: float,
+) -> str:
+    """受控取回新浪行情响应并按 GBK 解码。
+
+    与 :class:`CommodityFuturesAdapter` 同口径：新浪 hq 接口校验 Referer、只发 GBK，
+    并限制 2MB 响应体。测试传 ``transport`` 旁路域名租约；真实抓取走
+    ``controlled_get``（含租约/冷却/节流）。解码用 ``errors="ignore"``：GBK 下的
+    个别残留字节不应让整次采集失败。
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": "https://finance.sina.com.cn/",
+    }
+    if transport is not None:
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout_seconds, transport=transport
+            ) as client:
+                raw_response = await client.get(url, headers=headers)
+        except httpx.HTTPError as exc:
+            raise SourceFetchError(f"{label}网络请求失败") from exc
+        body_bytes = raw_response.content
+    else:
+        try:
+            controlled = await controlled_get(
+                url,
+                headers=headers,
+                timeout=timeout_seconds,
+                maximum_bytes=2 * 1024 * 1024,
+            )
+        except SourceRequestFailed as exc:
+            raise SourceFetchError(
+                f"{label}请求失败: {exc}",
+                error_kind=exc.error_kind,
+                http_status=exc.status_code,
+            ) from exc
+        body_bytes = controlled.content
+    try:
+        return body_bytes.decode("gbk", "ignore")
+    except Exception as exc:  # noqa: BLE001
+        raise SourceFetchError(f"{label}响应解码失败") from exc
+
+
+class SemiconductorIndexAdapter(PullSourceAdapter):
+    """国证半导体芯片指数（980017）行情（E2 半导体供应链景气）。
+
+    新浪简版行情接口（hq.sinajs.cn/list=s_sz980017，需 Referer、GBK 编码），字段序
+    为 ``名称,点位,涨跌,涨跌幅%,量,额``。每日一条信号，反映芯片板块景气与国产替代
+    周期，可匹配半导体材料/封测/设备类供应商的景气与产能风险。
+    external_id=semi-980017-{YYYY-MM-DD}（每日一条，点位漂移不改身份，指纹稳定可去重）。
+    """
+
+    source_code = "semiconductor-index"
+    endpoint = "https://hq.sinajs.cn/list=s_sz980017"
+    # 新浪变量名与指数代码分开：变量名用于定位响应片段，指数代码用于身份与展示。
+    _VARIABLE = "s_sz980017"
+    _INDEX_CODE = "980017"
+    _INDEX_NAME = "国证芯片"
+    # 名称/点位/涨跌/涨跌幅是标题、正文与 extra 的必需字段，量与额只做展示不参与解析
+    _MIN_FIELDS = 4
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        body = await _fetch_sina_gbk_body(
+            self.endpoint,
+            label="半导体指数行情",
+            transport=self._transport,
+            timeout_seconds=self._timeout_seconds,
+        )
+        match = re.search(rf'hq_str_{re.escape(self._VARIABLE)}="([^"]*)"', body)
+        # 新浪在无数据/停牌时返回空串，结构漂移时整行匹配不到：两者都不是行情。
+        if match is None or not match.group(1).strip():
+            return []
+        fields = match.group(1).split(",")
+        if len(fields) < self._MIN_FIELDS:
+            return []
+        name = fields[0].strip() or self._INDEX_NAME
+        try:
+            last_price = float(fields[1])
+            change = float(fields[2])
+            change_pct = float(fields[3])
+        except ValueError:
+            return []
+        # 点位 0 是未开盘/停牌时的占位回填，不是真实行情，不得落库
+        if last_price <= 0:
+            return []
+        today = datetime.now(UTC).date().isoformat()
+        return [
+            RawSourceItem(
+                external_id=f"semi-{self._INDEX_CODE}-{today}",
+                title=f"{name}指数 {last_price:.2f}（{change_pct:+.2f}%）",
+                content=(
+                    f"最新点位：{last_price:.2f}；涨跌：{change:+.2f}；"
+                    f"涨跌幅：{change_pct:+.2f}%；指数代码：{self._INDEX_CODE}"
+                ),
+                url=self.endpoint,
+                validity_profile=ValidityProfile.MARKET_PRICE_POINT,
+                validity_key=f"semi-{self._INDEX_CODE}",
+                extra={
+                    "index_code": self._INDEX_CODE,
+                    "last_price": last_price,
+                    "change_pct": round(change_pct, 2),
+                    "name": name,
+                },
+            )
+        ]
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        if not items:
+            return SourceHealth(ok=False, message="半导体指数行情为空")
+        return SourceHealth(ok=True, message=f"返回 {len(items)} 条指数行情")
+
+
 class PbcLprAdapter(PullSourceAdapter):
     """中国人民银行 LPR 报价（E4 货币政策：融资成本基准）。
 

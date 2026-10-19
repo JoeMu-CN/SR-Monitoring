@@ -50,6 +50,8 @@ DEFAULT_DEDUP_FIELDS: Final[tuple[str, ...]] = ("external_id",)
 #   适配器已把 external_id 定义为 sha256(规范化详情 URL | 实体名)，故直接用
 #   external_id——既区分同页多实体，又不受标题措辞与 scheme 变化影响。
 # - sse-shipping / usgs-earthquake-day：external_id 恒定稳定，标题/正文会漂移。
+# - semiconductor-index：点位/涨跌幅每分钟都在变，标题与正文随之漂移；身份只能落在
+#   每日一条的 external_id（与 sse-shipping 同口径）。
 DEDUP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     "mofcom-entity-detail": ("external_id",),
     "mee-announcement": ("url",),
@@ -57,6 +59,7 @@ DEDUP_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     "fmprc-press": ("url",),
     "usgs-earthquake-day": ("external_id",),
     "sse-shipping": ("external_id",),
+    "semiconductor-index": ("external_id",),
 }
 
 

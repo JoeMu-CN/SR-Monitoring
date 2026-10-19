@@ -103,6 +103,7 @@ from app.signals.sources import (
     OfacSdnAdapter,
     PbcLprAdapter,
     PullSourceAdapter,
+    SemiconductorIndexAdapter,
     SourceFetchError,
     SseShippingAdapter,
     StatsPmiAdapter,
@@ -322,6 +323,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
         return BisEntityListAdapter()
     if source_code == CommodityFuturesAdapter.source_code:
         return CommodityFuturesAdapter()
+    if source_code == SemiconductorIndexAdapter.source_code:
+        return SemiconductorIndexAdapter()
     if source_code == PbcLprAdapter.source_code:
         return PbcLprAdapter()
     if source_code == StatsPmiAdapter.source_code:

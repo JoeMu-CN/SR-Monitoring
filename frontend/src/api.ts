@@ -377,6 +377,8 @@ export interface SupplierRead {
   registry_no: string | null;
   registration_address: string | null;
   industry: string | null;
+  /** 结算币种（ISO 4217，如 USD/CNY）；历史数据可能未回填，按可空读取。 */
+  settlement_currency?: string | null;
   raw_materials: string[];
   enabled: boolean;
   updated_at: string;
@@ -1127,6 +1129,8 @@ export interface SupplierCreatePayload {
   registry_no: string | null;
   registration_address: string | null;
   industry: string | null;
+  /** 结算币种：显式传 null 表示清空，缺省表示不参与本次提交。 */
+  settlement_currency?: string | null;
   raw_materials: string[];
   enabled: boolean;
   aliases: Array<{alias: string; language: string | null}>;
@@ -1158,6 +1162,108 @@ export interface SupplierDeletionImpactRead {
   products_count: number;
   aliases_count: number;
   blocked_reason: string | null;
+}
+
+/* ── 行情指标（对齐 backend/app/market/schemas.py） ─────────────────── */
+
+export type MarketIndicatorStatus = 'tripped' | 'normal' | 'accumulating';
+export type MarketIndicatorDirection = 'up' | 'down' | 'both';
+export type MarketSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type MarketConfigSource = 'default' | 'configured';
+
+export interface MarketSeverityBand {
+  threshold_pct: number;
+  severity: MarketSeverity;
+}
+
+/** 指标判定口径：持续/冲击双条件 + 最小观察点数 + 方向 + 严重性分档。 */
+export interface MarketIndicatorThresholds {
+  sustained_change_pct: number;
+  sustained_window: number;
+  shock_change_pct: number;
+  shock_window: number;
+  min_observations: number;
+  direction: MarketIndicatorDirection;
+  episode_gap: number;
+  severity_bands: MarketSeverityBand[];
+}
+
+/** 最近一个观察点；无观察点时三项全空，不用 0 冒充现值。 */
+export interface MarketIndicatorLatest {
+  observed_at: string | null;
+  value: number | null;
+  change_pct: number | null;
+}
+
+/** 窗口统计：累计变动与方向符合设定范围内的单日最大变动绝对值。 */
+export interface MarketIndicatorStats {
+  observations: number;
+  sustained_change_pct: number | null;
+  shock_max_day_pct: number | null;
+}
+
+/** 序列上的一个观察点：只给时间与现值，不回传整条原始报文。 */
+export interface MarketIndicatorPoint {
+  observed_at: string;
+  value: number;
+}
+
+export interface MarketIndicatorItem {
+  code: string;
+  label: string;
+  source_code: string;
+  source_name: string | null;
+  unit: string;
+  latest: MarketIndicatorLatest;
+  stats: MarketIndicatorStats;
+  thresholds: MarketIndicatorThresholds;
+  status: MarketIndicatorStatus;
+  series: MarketIndicatorPoint[];
+  latest_alert_id: number | null;
+}
+
+export interface MarketIndicatorListResponse {
+  generated_at: string;
+  items: MarketIndicatorItem[];
+}
+
+export interface MarketConfigIndicator {
+  code: string;
+  label: string;
+  source_code: string;
+  unit: string;
+  enabled: boolean;
+  overridden: boolean;
+  effective: MarketIndicatorThresholds;
+  defaults: MarketIndicatorThresholds;
+}
+
+export interface MarketConfigRead {
+  key: string;
+  source: MarketConfigSource;
+  updated_at: string | null;
+  indicators: MarketConfigIndicator[];
+}
+
+/**
+ * 单指标覆盖补丁：只发送真正改动的字段（后端按 `exclude_unset` 合并），
+ * 未出现的字段沿用当前生效值。越界值与未知指标代码由后端 422 兜底。
+ */
+export interface MarketConfigIndicatorPatch {
+  enabled?: boolean;
+  label?: string;
+  direction?: MarketIndicatorDirection;
+  sustained_change_pct?: number;
+  sustained_window?: number;
+  shock_change_pct?: number;
+  shock_window?: number;
+  min_observations?: number;
+  episode_gap?: number;
+  severity_bands?: MarketSeverityBand[];
+}
+
+export interface MarketConfigUpdatePayload {
+  indicators: Record<string, MarketConfigIndicatorPatch>;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -1282,6 +1388,18 @@ export const api = {
     }),
     reset: () => request<void>('/api/v1/signals/filter-config', {method: 'DELETE'}),
   },
+  // 行情指标：只读视图走风险查看权限，配置读写走规则管理权限并要求 Origin + CSRF。
+  market: {
+    // 启用中的指标列表（停用视同未登记）；只读请求不携带 CSRF。
+    indicators: () => request<MarketIndicatorListResponse>('/api/v1/market/indicators'),
+    configGet: () => request<MarketConfigRead>('/api/v1/market/config'),
+    // 合并语义：只覆盖补丁里出现的字段，空补丁是 no-op，不清空既有覆盖。
+    configUpdate: (payload: MarketConfigUpdatePayload) => request<MarketConfigRead>('/api/v1/market/config', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    }),
+    // 删除配置行回退代码默认；204 无响应体。
+    configReset: () => request<void>('/api/v1/market/config', {method: 'DELETE'}),
+  },
   health: () => request<SystemHealth>('/api/v1/system/health'),
   monitoringHealth: (signal?: AbortSignal) => request<MonitoringHealthRead>(
     '/api/v1/system/monitoring-health', signal ? {signal} : {},
@@ -1343,9 +1461,13 @@ export const api = {
 };
 
 const levelNames: Record<RiskLevel, string> = {P1: '重大风险', P2: '高风险', P3: '中风险', P4: '低风险'};
+// 事件类型与事件细类共用同一张中文表（对齐后端 workbench_router 的标签口径）；
+// 未登记的值一律回落到原始码，不裸露空白。
 const eventLabels: Record<string, string> = {
   weather: '天气', geological: '地质灾害', logistics: '物流', trade_policy: '贸易政策',
   geopolitical: '地缘政治', corporate: '企业经营', judicial: '司法', compliance: '合规', other: '其他',
+  market: '市场行情', exchange_rate: '汇率波动',
+  commodity_price_move: '大宗商品价格异动', industry_market_move: '行业行情异动', fx_volatility: '汇率波动',
 };
 const scoreLabels: Record<string, [string, number]> = {
   severity: ['事件严重程度', 35], association: ['关联强度', 30],
@@ -1373,6 +1495,8 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     const score = Number(alert.score_detail[key] ?? 0);
     return {category, score, maxScore, weightPercent: maxScore, contribution: score};
   });
+  // 细类优先用细类中文名，未登记的细类回落到事件类型中文名，最后才回落原始码。
+  const eventCategoryRaw = alert.event_subtype ?? alert.event_type;
   return {
     id: String(alert.id), companyName: alert.supplier_name, vendorId: String(alert.supplier_id),
     level: alert.level, levelName: levelNames[alert.level], riskType: eventLabels[alert.event_type] ?? alert.event_type,
@@ -1386,7 +1510,7 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     reviewDueAt: alert.review_due_at,
     validityReason: alert.validity_reason,
     validityPolicyVersion: alert.validity_policy_version,
-    eventCategory: alert.event_subtype ?? alert.event_type, impactScope: evidenceText(alert.match_evidence),
+    eventCategory: eventLabels[eventCategoryRaw] ?? eventCategoryRaw, impactScope: evidenceText(alert.match_evidence),
     evidenceChain: {
       sourceName: alert.source_title || '来源未披露', sourceType: '风险信号', eventSummary: alert.event_summary,
       matchStatus: alert.match_reasons.join('；') || alert.match_type,

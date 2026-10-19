@@ -12,11 +12,17 @@ import {
   type DimensionRead,
   type DimensionTraceRead,
   type GlobalScoringConfigRead,
+  type MarketConfigRead,
+  type MarketConfigUpdatePayload,
+  type MarketIndicatorListResponse,
+  type MarketIndicatorThresholds,
   type RiskAlertRead,
   type SandboxRequest,
   type SandboxResult,
+  type SupplierCreatePayload,
   type SupplierListItem,
   type SupplierRead,
+  type SupplierUpdatePayload,
 } from './api';
 import type {MonitoringDimension} from './types';
 
@@ -771,5 +777,406 @@ describe('规则引擎全局配置与轨迹 API 请求契约', () => {
     expect(draftResult.dimension?.key).toBe('geopolitical');
     expect(draftResult.candidates[0]?.level).toBe('P1');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('行情指标只读视图与运行配置 API 请求契约', () => {
+  const okJson = (payload: unknown) => ({ok: true, status: 200, json: async () => payload});
+  const noContent = () => ({ok: true, status: 204, json: async () => { throw new Error('204 不应有响应体'); }});
+
+  const thresholdsFixture = {
+    sustained_change_pct: 8,
+    sustained_window: 20,
+    shock_change_pct: 3,
+    shock_window: 5,
+    min_observations: 10,
+    direction: 'both',
+    episode_gap: 5,
+    severity_bands: [
+      {threshold_pct: 12, severity: 'critical'},
+      {threshold_pct: 9, severity: 'high'},
+    ],
+  } satisfies MarketIndicatorThresholds;
+
+  /**
+   * 完整响应夹具，类型锚定 `api.ts` 导出的行情读模型：字段缺失、改名或类型不符
+   * 都会让 `npm run lint`（tsc --noEmit）失败，而不是悄悄退化成 `any`。
+   */
+  const indicatorListFixture = {
+    generated_at: '2026-10-18T08:00:00Z',
+    items: [
+      {
+        code: 'fut-CU',
+        label: '沪铜主力',
+        source_code: 'commodity-futures',
+        source_name: '新浪财经期货',
+        unit: '元/吨',
+        latest: {observed_at: '2026-10-18T07:00:00Z', value: 81230.5, change_pct: 3.4},
+        stats: {observations: 22, sustained_change_pct: 9.1, shock_max_day_pct: 3.4},
+        thresholds: thresholdsFixture,
+        status: 'tripped',
+        series: [
+          {observed_at: '2026-10-17T07:00:00Z', value: 80100},
+          {observed_at: '2026-10-18T07:00:00Z', value: 81230.5},
+        ],
+        latest_alert_id: 91,
+      },
+      {
+        code: 'fx-CNY',
+        label: '美元兑人民币汇率',
+        source_code: 'fx-rates',
+        source_name: null,
+        unit: '汇率',
+        latest: {observed_at: null, value: null, change_pct: null},
+        stats: {observations: 0, sustained_change_pct: null, shock_max_day_pct: null},
+        thresholds: {...thresholdsFixture, sustained_change_pct: 3, shock_change_pct: 1.5},
+        status: 'accumulating',
+        series: [],
+        latest_alert_id: null,
+      },
+    ],
+  } satisfies MarketIndicatorListResponse;
+
+  const marketConfigFixture = {
+    key: 'market-indicators',
+    source: 'configured',
+    updated_at: '2026-10-18T08:05:00Z',
+    indicators: [
+      {
+        code: 'semi-980017',
+        label: '国证半导体芯片指数',
+        source_code: 'semiconductor-index',
+        unit: '点位',
+        enabled: true,
+        overridden: true,
+        effective: {...thresholdsFixture, sustained_change_pct: 12, shock_change_pct: 4},
+        defaults: thresholdsFixture,
+      },
+      {
+        code: 'fut-RB',
+        label: '螺纹钢主力',
+        source_code: 'commodity-futures',
+        unit: '元/吨',
+        enabled: false,
+        overridden: true,
+        effective: thresholdsFixture,
+        defaults: thresholdsFixture,
+      },
+    ],
+  } satisfies MarketConfigRead;
+
+  it('GET /market/indicators 是只读请求：携带会话、不带 CSRF，并解析完整指标读模型', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(indicatorListFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    const indicators = await api.market.indicators();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/market/indicators',
+      expect.objectContaining({credentials: 'include'}),
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method ?? 'GET').toBe('GET');
+    expect(options.body).toBeUndefined();
+    expect(new Headers(options.headers).has('X-CSRF-Token')).toBe(false);
+
+    // 响应契约：generated_at + items 的 latest/stats/thresholds/status/series/latest_alert_id
+    expect(indicators.generated_at).toBe('2026-10-18T08:00:00Z');
+    expect(indicators.items).toHaveLength(2);
+    const [commodity, fx] = indicators.items;
+    expect(commodity?.code).toBe('fut-CU');
+    expect(commodity?.source_code).toBe('commodity-futures');
+    expect(commodity?.source_name).toBe('新浪财经期货');
+    expect(commodity?.unit).toBe('元/吨');
+    expect(commodity?.latest.value).toBe(81230.5);
+    expect(commodity?.latest.change_pct).toBe(3.4);
+    expect(commodity?.stats).toEqual({observations: 22, sustained_change_pct: 9.1, shock_max_day_pct: 3.4});
+    expect(commodity?.status).toBe('tripped');
+    expect(commodity?.thresholds.direction).toBe('both');
+    expect(commodity?.thresholds.severity_bands).toEqual([
+      {threshold_pct: 12, severity: 'critical'},
+      {threshold_pct: 9, severity: 'high'},
+    ]);
+    expect(commodity?.series.map((point) => point.value)).toEqual([80100, 81230.5]);
+    expect(commodity?.latest_alert_id).toBe(91);
+    // 无观察点时 latest 三项全空、序列为空、状态落在 accumulating，不可用 0 冒充现值
+    expect(fx?.latest).toEqual({observed_at: null, value: null, change_pct: null});
+    expect(fx?.series).toEqual([]);
+    expect(fx?.status).toBe('accumulating');
+    expect(fx?.latest_alert_id).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('GET /market/config 是只读请求：不带 CSRF，并解析生效值/默认值/覆盖标记', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(marketConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    const config = await api.market.configGet();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/market/config',
+      expect.objectContaining({credentials: 'include'}),
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method ?? 'GET').toBe('GET');
+    expect(new Headers(options.headers).has('X-CSRF-Token')).toBe(false);
+
+    expect(config.key).toBe('market-indicators');
+    expect(config.source).toBe('configured');
+    expect(config.updated_at).toBe('2026-10-18T08:05:00Z');
+    expect(config.indicators).toHaveLength(2);
+    const [semi, stopped] = config.indicators;
+    expect(semi?.code).toBe('semi-980017');
+    expect(semi?.enabled).toBe(true);
+    expect(semi?.overridden).toBe(true);
+    expect(semi?.effective.sustained_change_pct).toBe(12);
+    expect(semi?.effective.shock_change_pct).toBe(4);
+    expect(semi?.defaults.sustained_change_pct).toBe(8);
+    expect(stopped?.enabled).toBe(false);
+    expect(stopped?.overridden).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('PUT /market/config 原样发送补丁、带 CSRF 与 JSON 头，返回合并后的生效配置', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(marketConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    const payload: MarketConfigUpdatePayload = {
+      indicators: {
+        'semi-980017': {sustained_change_pct: 15, enabled: true},
+        'fut-RB': {enabled: false},
+      },
+    };
+    const config = await api.market.configUpdate(payload);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/market/config');
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method).toBe('PUT');
+    expect(new Headers(options.headers).get('Content-Type')).toBe('application/json');
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-market');
+    expect(JSON.parse(String(options.body))).toEqual({
+      indicators: {
+        'semi-980017': {sustained_change_pct: 15, enabled: true},
+        'fut-RB': {enabled: false},
+      },
+    });
+    expect(config.source).toBe('configured');
+    expect(config.indicators[0]?.effective.sustained_change_pct).toBe(12);
+    vi.unstubAllGlobals();
+  });
+
+  it('PUT /market/config 的完整分档补丁逐字段透传，不被前端裁剪', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(marketConfigFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    const payload: MarketConfigUpdatePayload = {
+      indicators: {
+        'fx-CNY': {
+          enabled: true,
+          label: '美元兑人民币（自定义）',
+          direction: 'up',
+          sustained_change_pct: 4,
+          sustained_window: 25,
+          shock_change_pct: 2,
+          shock_window: 6,
+          min_observations: 12,
+          episode_gap: 7,
+          severity_bands: [{threshold_pct: 6, severity: 'high'}],
+        },
+      },
+    };
+    await api.market.configUpdate(payload);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toEqual(payload);
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-market');
+    vi.unstubAllGlobals();
+  });
+
+  it('DELETE /market/config 携带 CSRF、无请求体，204 按 void 解析', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(noContent());
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    const result = await api.market.configReset();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/market/config',
+      expect.objectContaining({credentials: 'include', method: 'DELETE'}),
+    );
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.body).toBeUndefined();
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-market');
+    expect(result).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it('行情写接口的 422「未知行情指标代码」原样抛出，不吞成中文兜底', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 422, json: async () => ({detail: "未知行情指标代码：['unknown-1']"}),
+    }));
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-market'});
+
+    try {
+      await api.market.configUpdate({indicators: {'unknown-1': {enabled: false}}});
+      expect.unreachable('应抛出 ApiError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).status).toBe(422);
+      expect((error as ApiError).message).toBe("未知行情指标代码：['unknown-1']");
+    }
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('供应商结算币种载荷透传', () => {
+  const okJson = (payload: unknown) => ({ok: true, status: 200, json: async () => payload});
+
+  const supplierFixture = {
+    id: 3,
+    supplier_code: 'SUP-0003',
+    legal_name: '测试供应商',
+    country_code: 'CN',
+    registry_no: null,
+    registration_address: null,
+    industry: '电子元器件',
+    settlement_currency: 'USD',
+    raw_materials: [],
+    enabled: true,
+    updated_at: '2026-10-18T00:00:00Z',
+    aliases: [],
+    sites: [],
+    products: [],
+  } satisfies SupplierRead;
+
+  const createPayload: SupplierCreatePayload = {
+    supplier_code: 'SUP-0003',
+    legal_name: '测试供应商',
+    country_code: 'CN',
+    registry_no: null,
+    registration_address: null,
+    industry: '电子元器件',
+    settlement_currency: 'USD',
+    raw_materials: [],
+    enabled: true,
+    aliases: [],
+    sites: [],
+    products: [],
+  };
+
+  it('createSupplier 原样序列化 settlement_currency，响应读回同一币种', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(supplierFixture));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-supplier'});
+
+    const created = await api.createSupplier(createPayload);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method).toBe('POST');
+    const body = JSON.parse(String(options.body)) as Record<string, unknown>;
+    expect(body.settlement_currency).toBe('USD');
+    expect(body).toEqual({...createPayload});
+    expect(new Headers(options.headers).get('X-CSRF-Token')).toBe('csrf-supplier');
+    expect(created.settlement_currency).toBe('USD');
+    vi.unstubAllGlobals();
+  });
+
+  it('updateSupplier 允许显式置空 settlement_currency（null 透传而非丢字段）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({...supplierFixture, settlement_currency: null}));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('document', {cookie: 'srm_session_csrf=csrf-supplier'});
+
+    const {supplier_code: _code, ...updatePayloadBase} = createPayload;
+    const updatePayload: SupplierUpdatePayload = {...updatePayloadBase, settlement_currency: null};
+    const updated = await api.updateSupplier(3, updatePayload);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(options.method).toBe('PUT');
+    const body = JSON.parse(String(options.body)) as Record<string, unknown>;
+    expect('settlement_currency' in body).toBe(true);
+    expect(body.settlement_currency).toBeNull();
+    expect(updated.settlement_currency).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('历史供应商缺少该字段时读模型按可空处理，不要求调用方补齐', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({...supplierFixture, settlement_currency: undefined}));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const supplier = await api.getSupplier(3);
+
+    expect(supplier.settlement_currency ?? null).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('行情事件类型与细类中文标签', () => {
+  const marketAlert = (
+    eventType: string,
+    eventSubtype: string | null,
+  ): RiskAlertRead => ({
+    id: 7,
+    level: 'P2',
+    score: 72,
+    score_detail: {severity: 30, association: 20},
+    status: 'current',
+    supplier_id: 3,
+    supplier_name: '测试供应商',
+    event_id: 11,
+    event_type: eventType,
+    event_subtype: eventSubtype,
+    event_summary: '行情异动样例',
+    event_start_at: '2026-10-18T01:00:00Z',
+    event_end_at: null,
+    confidence: 0.9,
+    match_type: 'industry',
+    match_reasons: ['行业匹配'],
+    match_evidence: [{industry: '半导体'}],
+    source_title: '行情快照',
+    source_url: null,
+    published_at: '2026-10-18T01:00:00Z',
+    updated_at: '2026-10-18T02:00:00Z',
+    expires_at: null,
+    expiry_kind: 'none',
+    validity_state: 'active',
+    valid_until: null,
+    review_due_at: null,
+    validity_policy_version: 'v1',
+    validity_reason: {code: 'active', anchor_source: 'published_at', details: {}},
+  });
+
+  it('market 事件类型与大宗商品细类中文化', () => {
+    const mapped = mapRiskAlert(marketAlert('market', 'commodity_price_move'));
+
+    expect(mapped.riskType).toBe('市场行情');
+    expect(mapped.eventCategory).toBe('大宗商品价格异动');
+    expect(mapped.tags?.[0]).toBe('市场行情');
+  });
+
+  it('market 事件类型与行业行情细类中文化', () => {
+    expect(mapRiskAlert(marketAlert('market', 'industry_market_move')).eventCategory).toBe('行业行情异动');
+  });
+
+  it('exchange_rate 事件类型与汇率波动细类中文化', () => {
+    const mapped = mapRiskAlert(marketAlert('exchange_rate', 'fx_volatility'));
+
+    expect(mapped.riskType).toBe('汇率波动');
+    expect(mapped.eventCategory).toBe('汇率波动');
+  });
+
+  it('未知事件类型与细类回落到原始码，不裸露空白', () => {
+    const mapped = mapRiskAlert(marketAlert('brand_new_type', 'brand_new_subtype'));
+
+    expect(mapped.riskType).toBe('brand_new_type');
+    expect(mapped.eventCategory).toBe('brand_new_subtype');
+    expect(mapped.tags?.[0]).toBe('brand_new_type');
+  });
+
+  it('细类为空时按事件类型中文化', () => {
+    expect(mapRiskAlert(marketAlert('market', null)).eventCategory).toBe('市场行情');
   });
 });

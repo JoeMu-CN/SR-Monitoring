@@ -1,15 +1,24 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {AlertTriangle, Globe, Landmark, Lightbulb, Newspaper} from 'lucide-react';
 import {api, ApiError, type IntelligenceCategory, type IntelligenceReportListResponse} from '../api';
+import {MarketIndicatorPanel} from './MarketIndicatorPanel';
 
 /** 每页条数；「加载更多」逐页追加，服务端分页口径不变. */
 const PAGE_SIZE = 20;
 
+/** 情报报告分类：与后端 `GET /api/v1/intelligence?tab=` 的取值一一对应。 */
 type IntelligenceTab = IntelligenceCategory;
 
-const TAB_ITEMS: ReadonlyArray<{tab: IntelligenceTab; label: string; hint: string}> = [
+/**
+ * 页签类型与情报分类解耦：`market` 页签不是情报报告分类（它读行情指标接口），
+ * 若继续用 `IntelligenceTab` 承载第三个页签，会让 `api.intelligence(tab)` 拿到非法取值。
+ */
+type PageTab = IntelligenceTab | 'market';
+
+const TAB_ITEMS: ReadonlyArray<{tab: PageTab; label: string; hint: string}> = [
   {tab: 'policy', label: '政策情报', hint: '监管、进出口政策与供应链合规法规的宏观解读'},
   {tab: 'industry', label: '行业情报', hint: '原材料、产能、物流与劳动力市场的供需传导'},
+  {tab: 'market', label: '行情监控', hint: '行情越阈会生成供应商风险提醒，与情报报告不同'},
 ];
 
 const formatDateTime = (value: string | null) => (
@@ -130,8 +139,8 @@ const IntelligencePanel = ({tab, active}: {readonly tab: IntelligenceTab; readon
 };
 
 export const PolicyIntelligenceView = () => {
-  const [activeTab, setActiveTab] = useState<IntelligenceTab>('policy');
-  const tabRefs = useRef<Record<IntelligenceTab, HTMLButtonElement | null>>({policy: null, industry: null});
+  const [activeTab, setActiveTab] = useState<PageTab>('policy');
+  const tabRefs = useRef<Record<PageTab, HTMLButtonElement | null>>({policy: null, industry: null, market: null});
 
   const handleTabListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const currentIndex = Math.max(TAB_ITEMS.findIndex((item) => item.tab === activeTab), 0);
@@ -162,13 +171,13 @@ export const PolicyIntelligenceView = () => {
     <div className="space-y-3 pb-20 sm:space-y-5 lg:pb-8">
       <div>
         <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">情报聚合</h1>
-        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">政策与行业维度的宏观情报解读：简要报告与风险提醒建议</p>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">政策与行业维度的宏观情报解读，以及行情指标越阈监控：简要报告、风险提醒建议与指标触发状态</p>
       </div>
 
       <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
         <div
           role="tablist"
-          aria-label="情报分类切换"
+          aria-label="情报聚合内容切换"
           data-testid="intelligence-tabs"
           onKeyDown={handleTabListKeyDown}
           className="flex items-end gap-6 border-b border-slate-200/80 dark:border-slate-700/60"
@@ -202,6 +211,7 @@ export const PolicyIntelligenceView = () => {
         <div className="pt-3">
           <IntelligencePanel tab="policy" active={activeTab === 'policy'} />
           <IntelligencePanel tab="industry" active={activeTab === 'industry'} />
+          <MarketIndicatorPanel active={activeTab === 'market'} />
         </div>
       </section>
     </div>

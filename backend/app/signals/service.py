@@ -25,7 +25,8 @@ from app.signals.ingestion import (
 )
 from app.signals.membership_persistence import apply_membership_snapshot
 from app.signals.models import CollectionRun, DataSource
-from app.signals.sources import PullSourceAdapter, SourceFetchError
+from app.signals.schemas import ManualSignalInput
+from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError
 
 _T = TypeVar("_T")
 
@@ -105,6 +106,7 @@ async def collect_source_async(
                     ),
                     collected_at=collected_at,
                     authority=LifecycleAuthority("adapter", adapter.source_code),
+                    raw_data=_reading_raw_data(signal, item),
                 )
             )
         created = persist_signal_ingestions(session, ingestions)
@@ -141,6 +143,25 @@ async def collect_source_async(
     stored_run = session.get(CollectionRun, run.id)
     assert stored_run is not None
     return stored_run
+
+
+def _reading_raw_data(
+    signal: ManualSignalInput, item: RawSourceItem
+) -> dict[str, object] | None:
+    """行情类信源的结构化读数落库口径。
+
+    适配器把观察点（``symbol`` / ``last_price`` / ``change_pct`` 等）放在
+    ``RawSourceItem.extra``，这里原样写进 ``raw_data["source_extra"]``，
+    形成按指标可查询的观察点序列。信号模型本身保持 ``extra="forbid"``，
+    结构化读数绝不挂到信号字段上。
+
+    ``extra`` 为空（空 dict / None / 缺省）时返回 ``None``，走
+    ``persist_signal_ingestions`` 的默认 ``signal.model_dump(mode="json")``，
+    与本次改动前完全一致：不写空的 ``source_extra`` 键。
+    """
+    if not item.extra:
+        return None
+    return {**signal.model_dump(mode="json"), "source_extra": item.extra}
 
 
 def _discard_provisional_run(session: Session, run_id: int) -> None:

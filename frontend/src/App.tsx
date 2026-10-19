@@ -20,7 +20,7 @@ import {
   type SystemHealth,
 } from './api';
 import type {DataSource, MonitoringDimension, RiskItem, Supplier} from './types';
-import {buildEditPayload} from './supplierEdit';
+import {buildEditPayload, normalizeSettlementCurrencyInput, type SupplierFormSubmission} from './supplierEdit';
 import {AppRoutes, type RouteViews} from './AppRoutes';
 import {RiskRouteView} from './RiskRouteView';
 import {ExportReportModal} from './components/ExportReportModal';
@@ -382,6 +382,8 @@ export function App() {
     const countryCode = /^[A-Za-z]{2}$/.test(supplier.countryRegion ?? '')
       ? String(supplier.countryRegion).toUpperCase()
       : 'CN';
+    // 结算币种：表单留空 → null（显式不设置）；非空已由表单校验为三位大写
+    const settlementCurrency = normalizeSettlementCurrencyInput((supplier as SupplierFormSubmission).settlementCurrency);
     try {
       await api.createSupplier({
         supplier_code: supplier.code,
@@ -390,6 +392,7 @@ export function App() {
         registry_no: supplier.registrationNo || null,
         registration_address: supplier.registrationAddress?.trim() || null,
         industry: supplier.category || null,
+        settlement_currency: settlementCurrency,
         raw_materials: [],
         enabled: true,
         aliases: [],
@@ -455,12 +458,15 @@ export function App() {
       const countryCode = /^[A-Za-z]{2}$/.test(supplier.countryRegion ?? '')
         ? String(supplier.countryRegion).toUpperCase()
         : 'CN';
+      // 结算币种：表单值即用户意图，留空显式传 null（清空），非空已由表单校验为三位大写
+      const settlementCurrency = normalizeSettlementCurrencyInput((supplier as SupplierFormSubmission).settlementCurrency);
       const payload = buildEditPayload(editingDetail, {
         legal_name: supplier.legalName,
         country_code: countryCode,
         registry_no: supplier.registrationNo || null,
         registration_address: supplier.registrationAddress?.trim() || null,
         industry: supplier.category || null,
+        settlement_currency: settlementCurrency,
         // 地点仅回传表单中实际可编辑的四个字段；site_name/国家/坐标不由供应商字段推断：
         // 未编辑字段保留详情原值（不把供应商国家当生产地点国家，不静默清空坐标与地点名称）。
         site_overrides: {
@@ -645,6 +651,7 @@ export function App() {
         mode={editingSupplier ? 'edit' : 'create'} initialSupplier={editingSupplier ?? undefined}
         onSave={handleSaveSupplier} onDelete={handleDeleteSupplier}
         updatedAt={editingDetail?.updated_at}
+        initialSettlementCurrency={editingDetail ? editingDetail.settlement_currency ?? null : null}
         extraSiteCount={editingDetail ? Math.max(0, editingDetail.sites.length - 1) : 0}
         extraProductCount={editingDetail ? Math.max(0, editingDetail.products.length - 1) : 0}
         deletionImpact={deletionImpact}

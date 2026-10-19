@@ -1,6 +1,7 @@
 import {cleanup, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it, vi} from 'vitest';
+import type {SupplierFormSubmission} from '../supplierEdit';
 import type {Supplier} from '../types';
 import {NewSupplierModal} from './NewSupplierModal';
 
@@ -362,5 +363,146 @@ describe('NewSupplierModal — 面板视口高度约束与纵向滚动（防止�
     expect(panel).toHaveClass('overflow-y-auto');
     expect(panel).not.toHaveClass('overflow-hidden');
     expect(screen.getByRole('button', {name: '新增并开启监控'})).toBeInTheDocument();
+  });
+});
+
+describe('NewSupplierModal — 结算币种（ISO 4217，可空）', () => {
+  const currencyInput = () => screen.getByPlaceholderText('例如: USD');
+
+  /** 填齐新增模式必填项，使校验只可能由币种字段触发 */
+  const fillCreateRequired = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByPlaceholderText('例如: SUP-0001'), 'SUP-9001');
+    await user.type(screen.getByPlaceholderText(/杭州智芯半导体/), '币种测试电子有限公司');
+    await user.type(screen.getByPlaceholderText(/功率半导体, 光学镜片/), '功率半导体');
+  };
+
+  it('显示 ISO 4217 提示文案与标签，币种输入框非必填', () => {
+    render(<NewSupplierModal {...baseProps} mode="create" />);
+    expect(screen.getByText('结算币种')).toBeInTheDocument();
+    expect(screen.getByText(/ISO 4217/)).toBeInTheDocument();
+    expect(screen.getByText(/USD/)).toHaveTextContent('USD / JPY / EUR / CNY');
+    expect(currencyInput()).not.toHaveAttribute('required');
+  });
+
+  it('留空可提交，载荷携带 settlementCurrency: null', async () => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(<NewSupplierModal {...baseProps} mode="create" />);
+
+    expect(currencyInput()).toHaveValue('');
+    await fillCreateRequired(user);
+    await user.click(screen.getByRole('button', {name: '新增并开启监控'}));
+
+    expect(baseProps.onSave).toHaveBeenCalledTimes(1);
+    expect(baseProps.onSave).toHaveBeenCalledWith(expect.objectContaining({settlementCurrency: null}));
+  });
+
+  it('输入小写 jpy 自动大写为 JPY 并随载荷传出', async () => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(<NewSupplierModal {...baseProps} mode="create" />);
+
+    await fillCreateRequired(user);
+    await user.type(currencyInput(), 'jpy');
+    expect(currencyInput()).toHaveValue('JPY');
+
+    await user.click(screen.getByRole('button', {name: '新增并开启监控'}));
+
+    expect(baseProps.onSave).toHaveBeenCalledTimes(1);
+    expect(baseProps.onSave).toHaveBeenCalledWith(expect.objectContaining({settlementCurrency: 'JPY'}));
+  });
+
+  it.each([
+    ['含符号 jpy!', 'jpy!'],
+    ['仅两位 jy', 'jy'],
+    ['四位 JPYX', 'jpyx'],
+  ])('非法币种（%s）阻断提交并显示中文提示', async (_label, typed) => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(<NewSupplierModal {...baseProps} mode="create" />);
+
+    await fillCreateRequired(user);
+    await user.type(currencyInput(), typed);
+    await user.click(screen.getByRole('button', {name: '新增并开启监控'}));
+
+    expect(baseProps.onSave).not.toHaveBeenCalled();
+    expect(baseProps.onClose).not.toHaveBeenCalled();
+    expect(await screen.findByText(/结算币种必须为 ISO 4217 三位大写字母/)).toBeInTheDocument();
+  });
+
+  it('非法输入修正为合法币种后可提交', async () => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(<NewSupplierModal {...baseProps} mode="create" />);
+
+    await fillCreateRequired(user);
+    await user.type(currencyInput(), 'jpy!');
+    await user.click(screen.getByRole('button', {name: '新增并开启监控'}));
+    expect(baseProps.onSave).not.toHaveBeenCalled();
+
+    await user.clear(currencyInput());
+    await user.type(currencyInput(), 'cny');
+    await user.click(screen.getByRole('button', {name: '新增并开启监控'}));
+
+    expect(baseProps.onSave).toHaveBeenCalledWith(expect.objectContaining({settlementCurrency: 'CNY'}));
+  });
+
+  it('编辑态回填详情币种 initialSettlementCurrency', () => {
+    render(
+      <NewSupplierModal
+        {...baseProps}
+        mode="edit"
+        initialSupplier={multiSiteSupplier}
+        initialSettlementCurrency="JPY"
+      />,
+    );
+    expect(currencyInput()).toHaveValue('JPY');
+  });
+
+  it('编辑态缺省详情币种时回填 initialSupplier 上的币种', () => {
+    const supplierWithCurrency: SupplierFormSubmission = {
+      ...multiSiteSupplier,
+      settlementCurrency: 'usd',
+    };
+    render(<NewSupplierModal {...baseProps} mode="edit" initialSupplier={supplierWithCurrency} />);
+    expect(currencyInput()).toHaveValue('USD');
+  });
+
+  it('编辑态清空币种后提交显式传 null（原值不被静默保留）', async () => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(
+      <NewSupplierModal
+        {...baseProps}
+        mode="edit"
+        initialSupplier={multiSiteSupplier}
+        initialSettlementCurrency="JPY"
+      />,
+    );
+
+    expect(currencyInput()).toHaveValue('JPY');
+    await user.clear(currencyInput());
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+
+    expect(baseProps.onSave).toHaveBeenCalledWith(expect.objectContaining({settlementCurrency: null}));
+  });
+
+  it('编辑态未改动币种时原样回传，保持无损', async () => {
+    const user = userEvent.setup();
+    baseProps.onSave.mockResolvedValue(undefined);
+    render(
+      <NewSupplierModal
+        {...baseProps}
+        mode="edit"
+        initialSupplier={multiSiteSupplier}
+        initialSettlementCurrency="JPY"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+
+    expect(baseProps.onSave).toHaveBeenCalledWith(
+      expect.objectContaining({settlementCurrency: 'JPY', legalName: '测试电子有限公司'}),
+    );
   });
 });

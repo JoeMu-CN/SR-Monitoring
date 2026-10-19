@@ -1,5 +1,11 @@
 import React, {useEffect, useState} from 'react';
 import type {SupplierDeletionImpactRead} from '../api';
+import {
+  isValidSettlementCurrency,
+  normalizeSettlementCurrencyInput,
+  SETTLEMENT_CURRENCY_ERROR,
+  type SupplierFormSubmission,
+} from '../supplierEdit';
 import {Supplier} from '../types';
 
 interface SupplierModalProps {
@@ -12,6 +18,8 @@ interface SupplierModalProps {
   onDelete?: (supplierId: string) => Promise<void>;
   /** 编辑时从 GET /suppliers/{id} 获取的 updated_at 并发令牌 */
   updatedAt?: string;
+  /** 编辑时回填的结算币种（详情原值，ISO 4217 可空）；缺省时回退到 initialSupplier.settlementCurrency */
+  initialSettlementCurrency?: string | null;
   /** 编辑时首条地点以外的地点数量（只读，不修改） */
   extraSiteCount?: number;
   /** 编辑时首条产品以外的产品数量（只读，不修改） */
@@ -30,6 +38,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
   onSave,
   onDelete,
   updatedAt,
+  initialSettlementCurrency,
   extraSiteCount = 0,
   extraProductCount = 0,
   deletionImpact = null,
@@ -46,6 +55,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
   const [productionAddress, setProductionAddress] = useState('');
   const [category, setCategory] = useState('');
   const [suppliedProduct, setSuppliedProduct] = useState('');
+  const [settlementCurrency, setSettlementCurrency] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -65,6 +75,11 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
       setProductionAddress(initialSupplier.productionAddress ?? initialSupplier.productionLocation ?? '');
       setCategory(initialSupplier.category ?? '');
       setSuppliedProduct(initialSupplier.suppliedProduct ?? '');
+      // 结算币种：详情原值优先；显式 null 视为清空，缺省才回退到供应商对象上的字段
+      const currencySource = initialSettlementCurrency !== undefined
+        ? initialSettlementCurrency
+        : (initialSupplier as SupplierFormSubmission | undefined)?.settlementCurrency;
+      setSettlementCurrency(normalizeSettlementCurrencyInput(currencySource) ?? '');
     } else {
       setLegalName('');
       setSupplierCode('');
@@ -77,8 +92,9 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
       setProductionAddress('');
       setCategory('电子元器件');
       setSuppliedProduct('');
+      setSettlementCurrency('');
     }
-  }, [isOpen, mode, initialSupplier]);
+  }, [isOpen, mode, initialSupplier, initialSettlementCurrency]);
 
   if (!isOpen) return null;
 
@@ -99,8 +115,13 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
       setSubmitError('国家/地区代码必须为两位 ISO 代码，例如 CN、US、DE。');
       return;
     }
+    // 结算币种可空：留空提交 null；非空时必须是 ISO 4217 三位大写字母
+    if (!isValidSettlementCurrency(settlementCurrency)) {
+      setSubmitError(SETTLEMENT_CURRENCY_ERROR);
+      return;
+    }
 
-    const baseSupplier: Supplier = {
+    const baseSupplier: SupplierFormSubmission = {
       id: initialSupplier?.id ?? '',
       code: supplierCode.trim(),
       legalName: legalName.trim(),
@@ -117,6 +138,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
       suppliedProduct: suppliedProduct.trim(),
       monitoringStatus: initialSupplier?.monitoringStatus ?? 'normal',
       lastUpdated: isEdit ? '正在保存…' : '刚刚创建',
+      settlementCurrency: normalizeSettlementCurrencyInput(settlementCurrency),
     };
 
     setIsSaving(true);
@@ -313,6 +335,24 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                 onChange={(e) => setCategory(e.target.value)}
                 className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
               />
+            </div>
+
+            <div>
+              <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                结算币种
+              </label>
+              {/* 可空：留空表示不设置；不设 maxLength，非法输入交由提交校验拦截而非静默截断 */}
+              <input
+                type="text"
+                placeholder="例如: USD"
+                value={settlementCurrency}
+                onChange={(e) => setSettlementCurrency(e.target.value.toUpperCase())}
+                aria-describedby="settlement-currency-hint"
+                className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-mono text-[12px] uppercase focus:outline-none focus:ring-2 focus:ring-[#004782]"
+              />
+              <p id="settlement-currency-hint" className="mt-1 text-[10px] text-slate-400">
+                ISO 4217 三位大写字母，常见：USD / JPY / EUR / CNY；非必填，留空表示不设置。
+              </p>
             </div>
           </div>
 

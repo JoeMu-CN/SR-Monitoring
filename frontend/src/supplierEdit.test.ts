@@ -1,6 +1,11 @@
 import {describe, expect, it} from 'vitest';
 import type {SupplierRead, SupplierUpdatePayload} from './api';
-import {buildEditPayload, type EditableFields} from './supplierEdit';
+import {
+  buildEditPayload,
+  isValidSettlementCurrency,
+  normalizeSettlementCurrencyInput,
+  type EditableFields,
+} from './supplierEdit';
 
 /** 完整 SupplierRead，包含 2 地点、2 产品、别名、raw_materials、enabled=false */
 const fullDetail: SupplierRead = {
@@ -260,5 +265,94 @@ describe('buildEditPayload — 首条地点编辑保留 country/coordinates', ()
     expect(site.city).toBe('杭州市');
     expect(site.district).toBe('滨江区');
     expect(site.address).toBe('江陵路100号');
+  });
+});
+
+/* ── 结算币种 settlement_currency（ISO 4217，可空） ───────────────────── */
+
+describe('normalizeSettlementCurrencyInput', () => {
+  it('小写与空白归一为大写三字母', () => {
+    expect(normalizeSettlementCurrencyInput('jpy')).toBe('JPY');
+    expect(normalizeSettlementCurrencyInput('  eur  ')).toBe('EUR');
+  });
+
+  it('空串、仅空白、undefined、null 统一归一为 null', () => {
+    expect(normalizeSettlementCurrencyInput('')).toBeNull();
+    expect(normalizeSettlementCurrencyInput('   ')).toBeNull();
+    expect(normalizeSettlementCurrencyInput(undefined)).toBeNull();
+    expect(normalizeSettlementCurrencyInput(null)).toBeNull();
+  });
+
+  it('不吞掉非法字符：JPY! 归一后仍为 JPY!（交由校验拦截）', () => {
+    expect(normalizeSettlementCurrencyInput('jpy!')).toBe('JPY!');
+  });
+});
+
+describe('isValidSettlementCurrency', () => {
+  it('三位大写字母合法', () => {
+    expect(isValidSettlementCurrency('USD')).toBe(true);
+    expect(isValidSettlementCurrency('jpy')).toBe(true);
+  });
+
+  it('可空：空值视为合法', () => {
+    expect(isValidSettlementCurrency('')).toBe(true);
+    expect(isValidSettlementCurrency('   ')).toBe(true);
+    expect(isValidSettlementCurrency(undefined)).toBe(true);
+  });
+
+  it('非法：含符号、两位、四位均不合法', () => {
+    expect(isValidSettlementCurrency('jpy!')).toBe(false);
+    expect(isValidSettlementCurrency('jy')).toBe(false);
+    expect(isValidSettlementCurrency('JPYX')).toBe(false);
+    expect(isValidSettlementCurrency('US1')).toBe(false);
+  });
+});
+
+describe('buildEditPayload — 结算币种 settlement_currency', () => {
+  const detailWithCurrency: SupplierRead = {...fullDetail, settlement_currency: 'USD'};
+
+  it('editable 提供币种时写入 payload', () => {
+    const payload = buildEditPayload(fullDetail, {
+      legal_name: '测试电子有限公司',
+      country_code: 'CN',
+      settlement_currency: 'JPY',
+    });
+    expect(payload.settlement_currency).toBe('JPY');
+  });
+
+  it('editable 未提供币种时保留详情原值（无损编辑不丢字段）', () => {
+    const payload = buildEditPayload(detailWithCurrency, {
+      legal_name: '测试电子有限公司',
+      country_code: 'CN',
+    });
+    expect(payload.settlement_currency).toBe('USD');
+  });
+
+  it('传 null 显式清空，不回退详情原值', () => {
+    const payload = buildEditPayload(detailWithCurrency, {
+      legal_name: '测试电子有限公司',
+      country_code: 'CN',
+      settlement_currency: null,
+    });
+    expect(payload.settlement_currency).toBeNull();
+  });
+
+  it('详情无币种且 editable 未提供时为 null', () => {
+    const payload = buildEditPayload(fullDetail, {
+      legal_name: '测试电子有限公司',
+      country_code: 'CN',
+    });
+    expect(payload.settlement_currency).toBeNull();
+  });
+
+  it('编辑其它字段时结算币种保持不变', () => {
+    const payload = buildEditPayload(detailWithCurrency, {
+      legal_name: '更名后的主体',
+      country_code: 'JP',
+      site_overrides: {site_name: '东京工厂'},
+    });
+    expect(payload.settlement_currency).toBe('USD');
+    expect(payload.sites[0].site_name).toBe('东京工厂');
+    expect(payload.products[1]).toEqual({id: 31, name: '光学镜片', keywords: ['镜头']});
   });
 });

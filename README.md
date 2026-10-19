@@ -50,6 +50,9 @@ D8 前端页面、D9 真实信息源与独立调度器，以及 D10 验收收口
 - 监控健康聚合：`GET /api/v1/system/monitoring-health` 报告 Scheduler 心跳与每来源新鲜度/积压；`/api/v1/system/health` 保持数据库存活语义。
 - 通知可靠性：扫描结果显式提交、按 alert×channel 去重、摘要保留全部成员关联、详情链接指向 `/risks/{id}`；外部渠道重复窗口已如实披露。
 - 数据保留清理保护有效及保留期内提醒所引用的完整证据闭包，共享 match/event 不被级联误删。
+- 行情监控：20 个内置指标（15 个期货品种、4 个汇率、国证半导体芯片指数 980017）每日采集，按可配置阈值做确定性窗口判定（免 LLM）；越阈自动生成/复用事件，并分别经行业柱、币种柱关联供应商，形成 P1–P4 提醒。行情信源默认停用，需运营在信息源控制台启用。
+- 供应商结算币种：`settlement_currency`（ISO 4217 三字母、可空），用于汇率敞口匹配；创建、编辑、无损编辑与 Excel 导入全链路支持。
+- 行情监控 API 与页面：`GET /api/v1/market/indicators`、`GET|PUT|DELETE /api/v1/market/config`；「情报聚合」页新增「行情监控」子页签（读数、阈值状态、近 30 观察点走势、提醒入口）。
 
 ## 本地启动
 
@@ -349,7 +352,7 @@ API Key 不以明文写入数据库，仅保存 SHA-256 指纹和末四位；实
 
 ### LLM 建议等级与阈值采纳
 
-- AI 分析提示版本为 `signal-analysis-v6`，输出的 `suggested_level`（P1 至 P4 或 null）仅作规则引擎参考。
+- AI 分析提示版本为 `signal-analysis-v7`，输出的 `suggested_level`（P1 至 P4 或 null）仅作规则引擎参考。
 - 最终风险等级与提醒始终由确定性规则引擎决定，`suggested_level` 不直接生成提醒；阈值采纳规则以规则引擎生效配置为准。
 
 ### 监控健康语义
@@ -370,7 +373,7 @@ rg -F "每工具 1 次" README.md
 rg -F "1000" README.md
 rg -F "10000" README.md
 rg -F "周度" README.md
-rg -F "signal-analysis-v6" README.md
+rg -F "signal-analysis-v7" README.md
 rg -F "suggested_level" README.md
 rg -F "白名单" README.md
 $legacySchedule = "每天" + "北京时间 06:00"
@@ -389,6 +392,54 @@ docker compose build app
 
 ```powershell
 cd frontend; npm test
+```
+
+## 行情监控运行手册（2026-10-19）
+
+行情监控覆盖 20 个内置指标：15 个期货品种（沪铜/铝/锌/镍/锡/铅/金/银/原油/燃料油/螺纹钢/不锈钢/PTA/天然橡胶/棉花）、4 个汇率（USD/CNY、USD/JPY、USD/EUR、USD/GBP）与国证半导体芯片指数（980017）。判定全部为确定性窗口计算，**不调用大模型**；阈值、窗口与启停可通过 API 运行时覆盖。
+
+### 启用顺序（运营步骤）
+
+1. 应用迁移 `0061`（供应商结算币种）与 `0062`（行情信源播种）。迁移只播种信源，**默认停用**，不会自动开启采集。
+2. 在信息源控制台启用三个信源：`commodity-futures`、`fx-rates`、`semiconductor-index`。
+3. 在隔离测试栈内执行 `scripts/seed_source_validity_policies.py` 的 dry-run → `--apply` → `--verify`；预期 `校验通过: 20/20 条`，其中 `semiconductor-index` 为 `until_superseded` + 3 天（见 `.omo/evidence/task-14-market-indicator-monitoring.md`）。
+4. 采集到首批读数后，在「情报聚合 → 行情监控」查看读数与状态；不足 `min_observations`（默认 10 个观察点）时显示「数据积累中」。
+
+### 阈值与判定口径（默认值，可运行时覆盖）
+
+| 类别 | 持续偏离 | 单日冲击 | 严重性分档 |
+| --- | --- | --- | --- |
+| 期货 | 20 个观察点累计 8% | 5 个观察点内单日 3% | ≥15 critical / ≥10 high / ≥5 medium / else low |
+| 汇率 | 20 个观察点累计 3% | 5 个观察点内单日 1.5% | ≥8 critical / ≥5 high / ≥3 medium / else low |
+| 半导体 | 20 个观察点累计 12% | 5 个观察点内单日 4% | ≥25 critical / ≥15 high / ≥8 medium / else low |
+
+- 触发为 OR：持续或冲击任一越阈即触发，阈值比较**含等于**。
+- 冲击条件不受 `min_observations` 约束；持续条件至少需要 10 个观察点。
+- 同一 episode（间隔 ≤5 个观察点）复用同一事件并刷新摘要/严重性；超出间隔开新 episode。
+- 汇率信号按供应商 `settlement_currency` 命中（未填币种不命中）；大宗与半导体按行业/原材料命中；弱关联仍受 P2 上限约束。
+- 行情事件不进入 AI 情报报告；未登记品种继续走既有相关性/分级路径。
+
+### 配置 API
+
+```powershell
+# 只读：当前生效配置（含默认值、覆盖状态与启停）
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/market/config
+
+# 只读：全部指标读数、阈值状态与近 30 观察点序列
+Invoke-RestMethod http://127.0.0.1:8080/api/v1/market/indicators
+```
+
+写接口 `PUT /api/v1/market/config`（合并覆盖）与 `DELETE /api/v1/market/config`（回退默认）需要登录会话、`rule_manage` 权限与 Origin + CSRF。覆盖载荷示例：
+
+```json
+{"indicators":{"fut-CU":{"sustained_change_pct":6,"sustained_window":15}}}
+```
+
+### 验证
+
+```powershell
+rg -F "signal-analysis-v7" README.md
+rg -F "行情监控" README.md
 ```
 
 ## 已批准的下一阶段

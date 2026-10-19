@@ -9,20 +9,26 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, selectinload
 
 from app.ai.models import AIAnalysisRecord
-from app.ai.schemas import SignalAnalysisResult
+from app.ai.schemas import MARKET_EVENT_TYPES, SignalAnalysisResult
 from app.risks.engine.alert_persistence import AlertValues, upsert_alert
 from app.risks.engine.config import (
     COLUMN_COUNTRY,
+    COLUMN_CURRENCY,
     COLUMN_ENTITY,
     COLUMN_INDUSTRY,
     COLUMN_LOCATION,
     COLUMN_PRODUCT,
 )
-from app.risks.engine.event_identity import find_or_create_event, persist_event_facts
+from app.risks.engine.event_identity import (
+    find_or_create_event,
+    persist_event_facts,
+    refresh_result_fields,
+)
 from app.risks.engine.matching import (
     MATCH_ORDER,
     MatchCandidate,
     match_countries,
+    match_currencies,
     match_entities,
     match_industries,
     match_locations,
@@ -65,6 +71,7 @@ MATCHERS: dict[str, MatcherFn] = {
     COLUMN_PRODUCT: match_products,
     COLUMN_COUNTRY: match_countries,
     COLUMN_INDUSTRY: match_industries,
+    COLUMN_CURRENCY: match_currencies,
 }
 
 
@@ -239,6 +246,17 @@ def process_event(
     event, event_created = find_or_create_event(
         session, result, identity_override=identity_override
     )
+    # 行情同一 episode 的后续交易日再次触发：复用同一事件行，但把快照刷新成当日
+    # 口径（summary / severity / facts / 有效期坐标），dedup_key 不动——否则事件
+    # 会永远停在首日口径，而提醒已按当日严重性计分，两者长期互相矛盾。
+    # 画像路径由 find_or_create_event 内部按 identity_override 刷新；普通事件
+    # 保持既有语义：同键复用不重写首次快照。
+    if (
+        not event_created
+        and identity_override is None
+        and result.event_type in MARKET_EVENT_TYPES
+    ):
+        refresh_result_fields(event, result)
     # 画像路径侧表随当前周快照精确替换；普通事件保持既有增量补齐语义。
     persist_event_facts(
         session, event, result, replace=identity_override is not None

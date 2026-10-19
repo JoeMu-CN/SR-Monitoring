@@ -52,6 +52,16 @@ from app.config import (
     SIGNAL_RELEVANCE_FILTER_ENABLED,
 )
 from app.database import SessionLocal
+from app.market.config_store import load_market_config
+from app.market.evaluation import (
+    DETERMINISTIC_PROVIDER,
+    build_filtered_reason,
+    build_result,
+    evaluate_series,
+    load_series,
+    resolve_episode_start,
+)
+from app.market.registry import resolve_indicator
 from app.research.models import ResearchBatch, ResearchTask
 from app.research.schedule import (
     get_schedule_config,
@@ -107,6 +117,11 @@ _pending_signal_processing_lock = Lock()
 RELEVANCE_FILTER_KIND = "relevance"
 ENTITY_LIST_FILTER_KIND = "entity_list"
 STRUCTURED_GRADE_FILTER_KIND = "structured_grade"
+# 行情指标评估：不写 filtered 语义的过滤记录，而是自带 deterministic 结果的
+# 成功分析记录（未触发时结果为空），因此 filter_kind 独立于上面三类。
+MARKET_FILTER_KIND = "market_indicator"
+# 确定性行情评估的模型与提示版本标识（纯统计复算，不对应任何真实模型）。
+MARKET_PROMPT_VERSION = "market-eval-v1"
 
 
 def _mark_signal_irrelevant(
@@ -267,14 +282,86 @@ def collect_tyc_shard_job(shard_index: int) -> None:
         logger.exception("天眼查分片核查异常: %s", exc)
 
 
+def _evaluate_market_signal(
+    session: Session, signal: RawSignal, source_code: str, *, now_utc: datetime
+) -> tuple[AIAnalysisRecord | None, bool]:
+    """已登记行情指标走确定性评估（免 LLM）。
+
+    返回 ``(分析记录, 是否已终态处理)``：
+
+    - ``(None, False)``：不命中任何**启用中**的登记指标——未登记品种、指标被运行期
+      停用、或历史行没有 / 不可解析 ``source_extra``。这不是错误：调用方必须原样
+      继续既有路径（commodity 仍由旧分级兜底，其余走相关性 + AI）。
+    - ``(None, True)``：命中但未触发（还在积累 / 未达触发线 / 无可用观察点）：写终态
+      过滤记录并置 irrelevant，本条不再进入后续批次。
+    - ``(record, True)``：已触发；``record`` 是可直接复用的确定性结果，调用方继续
+      ``process_analysis``，**不经过任何 AI Provider**。
+
+    未触发时 ``needs_review=False``：判定是纯统计复算，没有模型不确定性需要人工复核
+    （与相关性/清单/结构化分级兜底不同，那三类是启发式近似）。
+    """
+    raw_data = signal.raw_data
+    extra = raw_data.get("source_extra") if isinstance(raw_data, dict) else None
+    spec = resolve_indicator(source_code, extra, load_market_config(session))
+    if spec is None:
+        return None, False
+    series = load_series(session, spec, source_id=signal.source_id)
+    verdict = evaluate_series(spec, series)
+    if not verdict.triggered:
+        reason = build_filtered_reason(spec, verdict)
+        detail = f"{reason.code}｜{reason.detail_zh}"
+        session.add(
+            AIAnalysisRecord(
+                signal_id=signal.id,
+                provider=DETERMINISTIC_PROVIDER,
+                model=MARKET_PROMPT_VERSION,
+                prompt_version=MARKET_PROMPT_VERSION,
+                status="succeeded",
+                finished_at=now_utc,
+                duration_ms=0,
+                result=None,
+                error=f"filtered: {detail}",
+                needs_review=False,
+            )
+        )
+        _mark_signal_irrelevant(
+            signal, filter_kind=MARKET_FILTER_KIND, reason=detail
+        )
+        session.commit()
+        return None, True
+    result = build_result(
+        spec,
+        verdict,
+        start_at=resolve_episode_start(
+            session, spec, source_id=signal.source_id, series=series, now=now_utc
+        ),
+    )
+    record = AIAnalysisRecord(
+        signal_id=signal.id,
+        provider=DETERMINISTIC_PROVIDER,
+        model=MARKET_PROMPT_VERSION,
+        prompt_version=MARKET_PROMPT_VERSION,
+        status="succeeded",
+        finished_at=now_utc,
+        duration_ms=0,
+        result=result.model_dump(mode="json"),
+        needs_review=False,
+    )
+    session.add(record)
+    session.flush()
+    return record, True
+
+
 def _process_pending_signals(
     limit: int | None = None, *, now_utc: datetime | None = None
 ) -> int:
     """领取尚未完成风险关联的有效信号，复用成功 AI 结果执行全链路。
 
     limit 为 None 时使用 SIGNAL_ANALYZE_BATCH 环境变量（默认 20）。
-    调用 LLM 前先做确定性相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED），
-    明确不相关的信号跳过 LLM 并写入 filtered 解析记录，避免重复取出。
+    可复用的成功分析之后先做**确定性行情评估**：已登记指标免 LLM（未触发写终态
+    过滤记录，触发直接以确定性结果进入事件链）；未命中才继续既有链路——
+    相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED）、清单未命中、结构化分级，
+    顺序与语义不变。
     """
     if not _pending_signal_processing_lock.acquire(blocking=False):
         logger.info("已有待处理信号批次运行，跳过本次重复处理")
@@ -321,6 +408,17 @@ def _process_pending_signals(
                 # 处理前登记当前信号（独立短事务；写失败不影响业务）。
                 runtime.record_pending_signal_started(signal.id, now=now)
                 analysis = latest_reusable_analysis(session, signal.id)
+                # 行情分支优先：已登记指标由确定性评估接管（命中即终态，触发即带结果
+                # 继续处理链）；未命中则原样回落既有相关性/清单/分级链，顺序不变。
+                if analysis is None:
+                    market_analysis, market_handled = _evaluate_market_signal(
+                        session, signal, source_code, now_utc=now
+                    )
+                    if market_handled:
+                        if market_analysis is None:
+                            filtered += 1
+                            continue
+                        analysis = market_analysis
                 if analysis is None and SIGNAL_RELEVANCE_FILTER_ENABLED:
                     decision = assess_signal_relevance(
                         session, signal.title, signal.content

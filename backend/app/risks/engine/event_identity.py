@@ -74,7 +74,7 @@ def find_or_create_event(
     existing = session.scalar(select(RiskEvent).where(RiskEvent.dedup_key == dedup_key))
     if existing is not None:
         if refresh:
-            _refresh_result_fields(existing, result)
+            refresh_result_fields(existing, result)
         return existing, False
     event = RiskEvent(
         dedup_key=dedup_key,
@@ -102,13 +102,18 @@ def find_or_create_event(
         if winner is None:
             raise
         if refresh:
-            _refresh_result_fields(winner, result)
+            refresh_result_fields(winner, result)
         return winner, False
     return event, True
 
 
-def _refresh_result_fields(event: RiskEvent, result: SignalAnalysisResult) -> None:
-    """跨周复用画像事件：用当前分析刷新快照字段（dedup_key 与有效期坐标不动）。"""
+def refresh_result_fields(event: RiskEvent, result: SignalAnalysisResult) -> None:
+    """用当前分析刷新事件快照字段（dedup_key 与有效期坐标不动）。
+
+    画像跨周复用与行情同 episode 第二日触发共用同一实现：事件身份（dedup_key）
+    保持不变，只把 summary / severity / facts / start_at / end_at / confidence
+    换成当前分析口径，避免事件快照永远停在首次触发的那一天。
+    """
     event.event_type = result.event_type
     event.event_subtype = result.event_subtype
     event.severity = result.suggested_severity

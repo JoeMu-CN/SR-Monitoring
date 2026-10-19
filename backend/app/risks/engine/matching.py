@@ -1,11 +1,12 @@
 """匹配柱：把风险事件与供应商清单按不同维度关联。
 
-五个匹配柱独立成函数，维度模块按需声明启用哪些柱：
+六个匹配柱独立成函数，维度模块按需声明启用哪些柱：
 - entity    主体：注册号 / 法人全称 / 别名（强关联，复用现有确定性逻辑）
 - location  地点：区县行政区名称精确匹配，不使用经纬度与影响半径；无法解析区县的事件地点不匹配
 - product   产品：受影响产品关键词 vs 供应产品
 - country   国家：事件受影响国家（affected_countries）vs 供应商国别/生产地国别（宏观维度，弱关联）
 - industry  行业：受影响行业 vs 供应商行业标签/关键原材料（宏观维度，单向包含）
+- currency  币种：受影响币种（affected_currencies）vs 供应商结算币种（经济与金融维度，弱关联）
 
 同一供应商被多根柱命中时按 MatchCandidate 合并（取最高分、并理由与证据）。
 """
@@ -31,6 +32,7 @@ MATCH_ORDER = {
     "country": 5,
     "industry": 6,
     "product": 7,
+    "currency": 8,
 }
 
 _DISTRICT_SUFFIXES = ("自治县", "开发区", "新区", "区", "县", "旗")
@@ -374,3 +376,39 @@ def match_industries(
                     "keyword": matched,
                 },
             )
+
+
+def match_currencies(
+    session: Session,
+    result: SignalAnalysisResult,
+    suppliers: Iterable[Supplier],
+    assoc: dict[str, int],
+    matches: dict[int, MatchCandidate],
+) -> None:
+    """币种柱（经济与金融维度）：事件受影响币种 vs 供应商结算币种。
+
+    双侧 ``strip().upper()`` 归一后做精确集合相等：不做包含、不做模糊匹配，也不
+    做国别→币种推导。供应商未填结算币种（None/空/纯空白）一律不命中（fail-closed），
+    避免把同国但结算币种无关的供应商批量拉进汇率类事件匹配。
+
+    弱关联：只表达汇兑与结算货币层面的成本传导。事件方向（升值/贬值）只决定评分
+    阈值条件是否成立，不改变币种归属——本柱不看方向。
+    """
+    del session  # 保持 MatcherFn 签名兼容，币种柱不访问数据库
+    affected = {code.strip().upper() for code in result.affected_currencies if code.strip()}
+    if not affected:
+        return
+    for supplier in suppliers:
+        settlement = (supplier.settlement_currency or "").strip().upper()
+        if not settlement or settlement not in affected:
+            continue
+        _candidate(matches, supplier).add(
+            "currency",
+            assoc.get("currency", 15),
+            f"结算币种匹配：{settlement} ↔ {supplier.legal_name}",
+            {
+                "object_type": "currency",
+                "supplier_id": supplier.id,
+                "currency": settlement,
+            },
+        )

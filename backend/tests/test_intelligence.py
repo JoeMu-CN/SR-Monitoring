@@ -4,6 +4,8 @@
 - 分类归属 = 声明该信源的 policy / industry 维度键，且**不受维度 enabled 影响**
   （policy 默认停用，但政策情报必须能生成）。
 - 同一 (event_id, category) 只生成一次；调度批量入口重复执行不产生第二行。
+- 行情类事件（market / exchange_rate）不走情报通道：即使信源归属 policy / industry
+  也不生成报告（由确定性行情链路处理），同来源的非行情事件照常生成。
 - 模型失败落 failed 行 + error，不抛出、不污染整批。
 - 列表接口按 tab 过滤，只返回 ready 行；详情接口可读到 failed 行的错误原因。
 """
@@ -22,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.ai.intelligence_providers import FakeIntelligenceProvider
 from app.ai.intelligence_schemas import INTELLIGENCE_PROMPT_VERSION
 from app.ai.providers import AIProviderError
+from app.ai.schemas import MARKET_EVENT_TYPES
 from app.risks import intelligence_batch, intelligence_service
 from app.risks.intelligence_models import IntelligenceReport
 from app.risks.models import RiskEvent, RiskEventSignal
@@ -57,7 +60,14 @@ def _source(session: Session, code: str) -> DataSource:
     return source
 
 
-def _event(session: Session, source_code: str, suffix: str) -> RiskEvent:
+def _event(
+    session: Session,
+    source_code: str,
+    suffix: str,
+    *,
+    event_type: str = "trade_policy",
+    event_subtype: str | None = "regulatory_change",
+) -> RiskEvent:
     """造一个已归并的风险事件及其唯一关联信号（不经信号解析链）。"""
     source = _source(session, source_code)
     signal = RawSignal(
@@ -79,8 +89,8 @@ def _event(session: Session, source_code: str, suffix: str) -> RiskEvent:
     )
     event = RiskEvent(
         dedup_key=f"intelligence-{source_code}-{suffix}",
-        event_type="trade_policy",
-        event_subtype="regulatory_change",
+        event_type=event_type,
+        event_subtype=event_subtype,
         severity="medium",
         summary=f"事件摘要 {suffix}",
         confidence=0.8,
@@ -212,6 +222,92 @@ def test_batch_generation_is_idempotent_and_skips_other_dimensions(
             .where(IntelligenceReport.event_id.in_([policy_event.id, industry_event.id]))
         )
         == 2
+    )
+
+
+def test_market_event_is_filtered_out_at_sql_coarse_select(
+    db_session: Session,
+) -> None:
+    # Given：同一行业信源下的 market / exchange_rate / logistics 三类事件
+    market_event = _event(
+        db_session,
+        INDUSTRY_SOURCE_CODE,
+        "sql-market",
+        event_type="market",
+        event_subtype="commodity_price_move",
+    )
+    fx_event = _event(
+        db_session,
+        INDUSTRY_SOURCE_CODE,
+        "sql-fx",
+        event_type="exchange_rate",
+        event_subtype="fx_volatility",
+    )
+    logistics_event = _event(
+        db_session,
+        INDUSTRY_SOURCE_CODE,
+        "sql-logistics",
+        event_type="logistics",
+        event_subtype="transport_disruption",
+    )
+
+    # When：直接执行 SQL 粗筛（排除行情必须发生在粗筛层，不能只靠 Python 兜底）
+    coarse_event_ids = {
+        event_id for event_id, _ in db_session.execute(
+            intelligence_batch._candidate_event_select()
+        ).all()
+    }
+
+    # Then：行情事件不进粗筛，同来源的 logistics 事件照常入选
+    assert market_event.event_type in MARKET_EVENT_TYPES
+    assert fx_event.event_type in MARKET_EVENT_TYPES
+    assert market_event.id not in coarse_event_ids
+    assert fx_event.id not in coarse_event_ids
+    assert logistics_event.id in coarse_event_ids
+
+
+def test_market_event_never_generates_report_but_logistics_still_does(
+    db_session: Session, monkeypatch: MonkeyPatch
+) -> None:
+    # Given：同一行业信源下的 market 事件与 logistics 事件
+    _use_fake_provider(monkeypatch)
+    market_event = _event(
+        db_session,
+        INDUSTRY_SOURCE_CODE,
+        "gen-market",
+        event_type="market",
+        event_subtype="commodity_price_move",
+    )
+    logistics_event = _event(
+        db_session,
+        INDUSTRY_SOURCE_CODE,
+        "gen-logistics",
+        event_type="logistics",
+        event_subtype="transport_disruption",
+    )
+    _use_test_session(monkeypatch, db_session)
+
+    # When / Then：待生成集合只含 logistics 事件
+    pending = intelligence_batch.pending_intelligence_events(db_session, now_utc=NOW_UTC)
+    assert [event.id for event, _ in pending] == [logistics_event.id]
+
+    # When：连续执行两轮批量生成
+    first = intelligence_batch.generate_pending_intelligence_reports(now_utc=NOW_UTC)
+    second = intelligence_batch.generate_pending_intelligence_reports(now_utc=NOW_UTC)
+
+    # Then：行情事件零报告，logistics 事件正常生成且幂等
+    assert first == 1
+    assert second == 0
+    assert db_session.scalar(select(func.count()).select_from(IntelligenceReport)) == 1
+    assert (
+        db_session.scalar(
+            select(IntelligenceReport.event_id).where(
+                IntelligenceReport.event_id.in_(
+                    [market_event.id, logistics_event.id]
+                )
+            )
+        )
+        == logistics_event.id
     )
 
 

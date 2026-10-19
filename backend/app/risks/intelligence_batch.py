@@ -5,11 +5,12 @@
 
 待生成判定（三层，缺一不可）：
 1. 事件至少有一条关联信号，其信源被 policy / industry 维度声明（信源归属）。
-2. 该事件还没有 status='ready' 的报告（已成功过就不重复消耗模型额度）。
-3. 若上一次生成是 failed，距今必须超过 ``INTELLIGENCE_RETRY_COOLDOWN_HOURS``。
+2. 事件类型不在 ``MARKET_EVENT_TYPES``（行情事件不走情报通道，由确定性行情链路处理）。
+3. 该事件还没有 status='ready' 的报告（已成功过就不重复消耗模型额度）。
+4. 若上一次生成是 failed，距今必须超过 ``INTELLIGENCE_RETRY_COOLDOWN_HOURS``。
 
-第 1、2 条可在 SQL 里粗筛（按信源 code 与 ready 子查询），第 1 条的「同一事件
-全部信号必须同分类」与第 3 条需要 Python 判定，因此粗筛结果要乘以扫描倍数再
+第 1~3 条可在 SQL 里粗筛（按信源 code、事件类型与 ready 子查询），第 1 条的「同一事件
+全部信号必须同分类」与第 4 条需要 Python 判定，因此粗筛结果要乘以扫描倍数再
 截断到批大小。
 """
 
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.intelligence_providers import build_intelligence_provider
 from app.ai.intelligence_schemas import IntelligenceCategory
+from app.ai.schemas import MARKET_EVENT_TYPES
 from app.config import (
     INTELLIGENCE_REPORT_BATCH,
     INTELLIGENCE_RETRY_COOLDOWN_HOURS,
@@ -50,7 +52,7 @@ _batch_lock = Lock()
 
 
 def _candidate_event_select() -> Select[tuple[int, RiskEvent]]:
-    """情报信源上「尚无 ready 报告」的事件，按事件 id 去重。"""
+    """情报信源上「非行情事件且尚无 ready 报告」的事件，按事件 id 去重。"""
     ready_event_ids = select(IntelligenceReport.event_id).where(
         IntelligenceReport.status == "ready"
     )
@@ -61,6 +63,8 @@ def _candidate_event_select() -> Select[tuple[int, RiskEvent]]:
         .join(DataSource, DataSource.id == RawSignal.source_id)
         .where(
             DataSource.code.in_(tuple(intelligence_source_categories())),
+            # 行情事件（market / exchange_rate）由确定性行情链路处理，不消耗情报额度。
+            RiskEvent.event_type.not_in(sorted(MARKET_EVENT_TYPES)),
             RiskEvent.id.not_in(ready_event_ids),
         )
         .order_by(RiskEvent.id.desc())

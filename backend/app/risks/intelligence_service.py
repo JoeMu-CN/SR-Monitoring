@@ -15,6 +15,15 @@ category 取**声明该事件信源的监控维度键**（policy / industry）�
 视为归属冲突并跳过，不猜测。归属由静态维度声明推导，与 ``rule_dimension_configs``
 的运行时启停/参数覆盖无关，因此不需要查库也不会随工作台配置漂移。
 
+行情事件不走情报通道
+--------------------
+``market`` / ``exchange_rate`` 两类事件（``app.ai.schemas.MARKET_EVENT_TYPES``）即使
+信源归属 policy / industry 也不会生成情报报告，由确定性行情链路（市场指标监控）单独
+处理与呈现。该排除在 ``intelligence_batch._candidate_event_select`` 的 SQL 粗筛层
+完成，避免行情点位被当作宏观文本解读并白白消耗模型额度；本模块仍保留直接调用
+``generate_intelligence_report`` 的能力（人工补生成），不改变 policy / industry
+文本事件既有的生成与幂等语义。
+
 幂等
 ----
 同一 (event_id, category) 只有一行：已存在 ready 行的事件不再生成；failed 行在

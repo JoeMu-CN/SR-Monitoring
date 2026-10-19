@@ -59,6 +59,7 @@ def apply_supplier_update(supplier: Supplier, payload: SupplierUpdate) -> Suppli
     supplier.registry_no = payload.registry_no
     supplier.registration_address = payload.registration_address
     supplier.industry = payload.industry
+    supplier.settlement_currency = payload.settlement_currency
     supplier.raw_materials = list(payload.raw_materials)
     supplier.enabled = payload.enabled
     supplier.updated_at = datetime.now(UTC)

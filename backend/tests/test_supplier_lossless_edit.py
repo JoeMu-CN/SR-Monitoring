@@ -20,6 +20,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.main import app
@@ -49,6 +50,7 @@ def _full_create_payload(code: str) -> dict[str, Any]:
         "registration_address": "上海市登记路1号",
         "industry": "精密制造",
         "raw_materials": ["铝材", "铜材"],
+        "settlement_currency": "USD",
         "enabled": False,
         "aliases": [
             {"alias": "无损测试", "language": "zh"},
@@ -126,8 +128,10 @@ def test_edit_only_legal_name_keeps_everything_else_and_child_ids(
         "registration_address",
         "industry",
         "raw_materials",
+        "settlement_currency",
     ):
         assert after[field] == detail[field], field
+    assert after["settlement_currency"] == "USD"
     assert after["enabled"] is False
     assert after["updated_at"] != detail["updated_at"]
 
@@ -147,6 +151,51 @@ def test_edit_only_legal_name_keeps_everything_else_and_child_ids(
         item["id"] for item in before_products
     ]
     assert after_products == before_products
+
+
+def test_edit_settlement_currency_keeps_children_and_normalizes(
+    client: TestClient, db_session: Session
+) -> None:
+    detail = _create_full_supplier(client, "SUP-CUR-LOSSLESS-1")
+    supplier_id = detail["id"]
+    assert detail["settlement_currency"] == "USD"
+
+    changed = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json=_put_body(detail, settlement_currency=" eur "),
+    )
+
+    assert changed.status_code == 200, changed.text
+    after = client.get(f"/api/v1/suppliers/{supplier_id}").json()
+    assert after["settlement_currency"] == "EUR"
+    assert sorted(after["sites"], key=lambda item: item["id"]) == sorted(
+        detail["sites"], key=lambda item: item["id"]
+    )
+    assert sorted(after["products"], key=lambda item: item["id"]) == sorted(
+        detail["products"], key=lambda item: item["id"]
+    )
+    assert sorted(after["aliases"], key=lambda item: item["id"]) == sorted(
+        detail["aliases"], key=lambda item: item["id"]
+    )
+
+    # 非法值被 Schema 拒绝，原值保持不变（不因失败写入半截数据）。
+    rejected = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json=_put_body(after, settlement_currency="USDT"),
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert client.get(f"/api/v1/suppliers/{supplier_id}").json()["settlement_currency"] == "EUR"
+
+    # 留空归一为 None，并落库为 NULL（可空字段，不强制必填）。
+    cleared = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json=_put_body(after, settlement_currency="   "),
+    )
+    assert cleared.status_code == 200, cleared.text
+    stored = db_session.scalar(
+        select(Supplier.settlement_currency).where(Supplier.id == supplier_id)
+    )
+    assert stored is None
 
 
 def test_edit_first_product_name_keeps_keywords(client: TestClient) -> None:

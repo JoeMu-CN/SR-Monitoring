@@ -25,6 +25,7 @@ SupplierCode = Annotated[
 ]
 
 COUNTRY_CODE_PATTERN = re.compile(r"^[A-Z]{2}$")
+SETTLEMENT_CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
 
 
 def normalize_alias(value: str) -> str:
@@ -36,6 +37,21 @@ def clean_optional_text(value: object) -> str | None:
         return None
     cleaned = str(value).strip()
     return cleaned or None
+
+
+def normalize_settlement_currency(value: object) -> str | None:
+    """归一结算币种：去空白 → 大写 → 校验 ISO 4217 三字母；空值归一为 None。
+
+    与 ``country_code`` 同口径：小写输入（``usd``）统一归一为 ``USD`` 后入库，
+    非法值在 Schema 层就抛 422，不让非法值流到数据库 CHECK 再变成误导性的 409。
+    """
+    cleaned = clean_optional_text(value)
+    if cleaned is None:
+        return None
+    normalized = cleaned.upper()
+    if not SETTLEMENT_CURRENCY_PATTERN.fullmatch(normalized):
+        raise ValueError("结算币种必须是三个大写英文字母（ISO 4217，例如 USD、JPY、CNY）")
+    return normalized
 
 
 class AliasInput(BaseModel):
@@ -97,6 +113,7 @@ class SupplierBase(BaseModel):
     registry_no: str | None = None
     registration_address: str | None = None
     industry: str | None = None
+    settlement_currency: str | None = None
     raw_materials: list[str] = Field(default_factory=list)
     enabled: bool = True
     aliases: list[AliasInput] = Field(default_factory=list)
@@ -125,6 +142,11 @@ class SupplierBase(BaseModel):
     @classmethod
     def clean_industry(cls, value: object) -> str | None:
         return clean_optional_text(value)
+
+    @field_validator("settlement_currency", mode="before")
+    @classmethod
+    def clean_settlement_currency(cls, value: object) -> str | None:
+        return normalize_settlement_currency(value)
 
     @field_validator("raw_materials", mode="before")
     @classmethod
@@ -208,6 +230,7 @@ class SupplierRead(BaseModel):
     registry_no: str | None
     registration_address: str | None
     industry: str | None
+    settlement_currency: str | None
     raw_materials: list[str]
     enabled: bool
     updated_at: datetime

@@ -46,6 +46,12 @@ SUPPLIER_COLUMNS = [
     ),
     ("别名", "aliases", False, "多个中文名、英文名或简称使用英文分号分隔"),
     ("启用监控", "enabled", False, "TRUE 或 FALSE，留空时默认为 TRUE"),
+    (
+        "结算币种",
+        "settlement_currency",
+        False,
+        "供应商与我方结算的币种（ISO 4217 三字母，如 USD/JPY/EUR/CNY）；用于汇率波动风险匹配",
+    ),
 ]
 SITE_COLUMNS = [
     ("供应商编码", "supplier_code", True, "必须存在于“供应商”工作表"),
@@ -85,7 +91,7 @@ def create_template() -> bytes:
         workbook,
         SHEET_SUPPLIERS,
         SUPPLIER_COLUMNS,
-        [20, 34, 14, 24, 34, 20, 26, 36, 14],
+        [20, 34, 14, 24, 34, 20, 26, 36, 14, 18],
     )
     _add_template_sheet(
         workbook, SHEET_SITES, SITE_COLUMNS, [20, 24, 14, 20, 18, 18, 42, 14, 14]
@@ -190,6 +196,7 @@ def parse_workbook(data: bytes) -> ImportPlan:
             "registry_no": row.get("registry_no"),
             "registration_address": row.get("registration_address"),
             "industry": clean_optional_text(row.get("industry")),
+            "settlement_currency": row.get("settlement_currency"),
             "raw_materials": _split_values(clean_optional_text(row.get("raw_materials"))),
             "enabled": _parse_bool(
                 row.get("enabled"), SHEET_SUPPLIERS, row_number, "启用监控", issues

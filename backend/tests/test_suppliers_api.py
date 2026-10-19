@@ -1,11 +1,23 @@
 from collections.abc import Callable
 from io import BytesIO
+from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 from openpyxl import load_workbook
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from app.suppliers.importer import SHEET_SITES
+from app.suppliers.importer import (
+    SHEET_PRODUCTS,
+    SHEET_SITES,
+    SHEET_SUPPLIERS,
+    create_template,
+)
+from app.suppliers.models import Supplier
+
+SETTLEMENT_CURRENCY_ERROR = "结算币种必须是三个大写英文字母"
 
 
 def upload(client: TestClient, content: bytes) -> Response:
@@ -19,6 +31,56 @@ def upload(client: TestClient, content: bytes) -> Response:
             )
         },
     )
+
+
+def currency_workbook(currency: object, supplier_code: str) -> bytes:
+    """按最新模板位置写入「结算币种」列（可选列，位于「启用监控」之后）。"""
+    workbook = load_workbook(BytesIO(create_template()))
+    workbook[SHEET_SUPPLIERS].append(
+        [
+            supplier_code,
+            "结算币种供应商",
+            "CN",
+            None,
+            None,
+            None,
+            None,
+            None,
+            True,
+            currency,
+        ]
+    )
+    workbook[SHEET_SITES].append(
+        [
+            supplier_code,
+            "币种工厂",
+            "CN",
+            "上海市",
+            "上海市",
+            "浦东新区",
+            "上海市浦东新区币种路1号",
+            None,
+            None,
+        ]
+    )
+    workbook[SHEET_PRODUCTS].append([supplier_code, "测试产品", None])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def currency_payload(code: str, **overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "supplier_code": code,
+        "legal_name": "结算币种测试供应商",
+        "country_code": "CN",
+        "enabled": True,
+        "aliases": [],
+        "sites": [],
+        "products": [],
+    }
+    payload.update(overrides)
+    return payload
 
 
 def test_template_download(client: TestClient) -> None:
@@ -226,3 +288,139 @@ def test_delete_supplier_requires_admin_and_cascades(
     # 重复删除返回 404
     again = client.delete(f"/api/v1/suppliers/{supplier_id}")
     assert again.status_code == 404
+
+
+# ---------------------------------------------------- 结算币种（ISO 4217）
+
+
+@pytest.mark.parametrize("invalid", ["US", "USDT", "US1", "人民币", "USD-"])
+def test_settlement_currency_rejects_non_iso_values(
+    client: TestClient, invalid: str
+) -> None:
+    response = client.post(
+        "/api/v1/suppliers",
+        json=currency_payload("SUP-CUR-BAD", settlement_currency=invalid),
+    )
+
+    assert response.status_code == 422, response.text
+    assert SETTLEMENT_CURRENCY_ERROR in response.text
+    assert client.get("/api/v1/suppliers").json()["total"] == 0
+
+
+def test_settlement_currency_lowercase_is_normalized_to_upper(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/suppliers",
+        json=currency_payload("SUP-CUR-LOWER", settlement_currency="  usd  "),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["settlement_currency"] == "USD"
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_settlement_currency_is_optional_and_blank_becomes_none(
+    client: TestClient, blank: str | None
+) -> None:
+    payload = currency_payload("SUP-CUR-BLANK")
+    if blank is not None:
+        payload["settlement_currency"] = blank
+    else:
+        payload.pop("settlement_currency", None)
+
+    created = client.post("/api/v1/suppliers", json=payload)
+
+    assert created.status_code == 201, created.text
+    assert created.json()["settlement_currency"] is None
+
+
+def test_settlement_currency_is_kept_and_updatable(client: TestClient) -> None:
+    created = client.post(
+        "/api/v1/suppliers",
+        json=currency_payload("SUP-CUR-UPDATE", settlement_currency="CNY"),
+    )
+    assert created.status_code == 201, created.text
+    supplier_id = created.json()["id"]
+
+    unchanged = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json={
+            key: value
+            for key, value in created.json().items()
+            if key not in {"id", "supplier_code"}
+        }
+        | {"legal_name": "结算币种测试供应商（改）"},
+    )
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["settlement_currency"] == "CNY"
+
+    changed = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json={
+            key: value
+            for key, value in unchanged.json().items()
+            if key not in {"id", "supplier_code"}
+        }
+        | {"settlement_currency": "jpy"},
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["settlement_currency"] == "JPY"
+
+    cleared = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json={
+            key: value
+            for key, value in changed.json().items()
+            if key not in {"id", "supplier_code"}
+        }
+        | {"settlement_currency": ""},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["settlement_currency"] is None
+
+    invalid = client.put(
+        f"/api/v1/suppliers/{supplier_id}",
+        json={
+            key: value
+            for key, value in cleared.json().items()
+            if key not in {"id", "supplier_code"}
+        }
+        | {"settlement_currency": "USDT"},
+    )
+    assert invalid.status_code == 422, invalid.text
+    assert SETTLEMENT_CURRENCY_ERROR in invalid.text
+    assert client.get(f"/api/v1/suppliers/{supplier_id}").json()["settlement_currency"] is None
+
+
+def test_import_settlement_currency_is_persisted_as_uppercase(
+    client: TestClient, db_session: Session
+) -> None:
+    created = upload(client, currency_workbook("jpy", "SUP-CUR-IMPORT"))
+
+    assert created.status_code == 200, created.text
+    assert created.json()["created_suppliers"] == 1
+    stored = db_session.scalar(
+        select(Supplier.settlement_currency).where(
+            Supplier.supplier_code == "SUP-CUR-IMPORT"
+        )
+    )
+    assert stored == "JPY"
+    assert (
+        client.get("/api/v1/suppliers", params={"q": "结算币种供应商"}).json()["items"][0][
+            "settlement_currency"
+        ]
+        == "JPY"
+    )
+
+
+def test_import_invalid_settlement_currency_is_rejected_atomically(
+    client: TestClient,
+) -> None:
+    response = upload(client, currency_workbook("USDT", "SUP-CUR-IMPORT-BAD"))
+
+    assert response.status_code == 422, response.text
+    errors = response.json()["detail"]["errors"]
+    assert any(
+        error["field"] == "settlement_currency" and SETTLEMENT_CURRENCY_ERROR in error["message"]
+        for error in errors
+    ), errors
+    assert client.get("/api/v1/suppliers").json()["total"] == 0

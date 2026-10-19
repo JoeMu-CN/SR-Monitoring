@@ -25,6 +25,10 @@ class Supplier(Base):
     __tablename__ = "suppliers"
     __table_args__ = (
         CheckConstraint("country_code ~ '^[A-Z]{2}$'", name="ck_suppliers_country_code"),
+        CheckConstraint(
+            "settlement_currency IS NULL OR settlement_currency ~ '^[A-Z]{3}$'",
+            name="ck_suppliers_settlement_currency",
+        ),
         Index(
             "uq_suppliers_country_registry",
             "country_code",
@@ -42,6 +46,7 @@ class Supplier(Base):
     registry_no: Mapped[str | None] = mapped_column(Text)
     registration_address: Mapped[str | None] = mapped_column(Text)
     industry: Mapped[str | None] = mapped_column(Text)
+    settlement_currency: Mapped[str | None] = mapped_column(Text)
     raw_materials: Mapped[list[str]] = mapped_column(
         JSONB, default=list, server_default=text("'[]'::jsonb")
     )

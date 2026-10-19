@@ -30,6 +30,80 @@ def test_template_has_three_structured_sheets() -> None:
     assert workbook[SHEET_SUPPLIERS].column_dimensions["D"].number_format == "@"
 
 
+def test_template_supplier_sheet_declares_settlement_currency_column() -> None:
+    workbook = load_workbook(BytesIO(create_template()))
+
+    labels = [cell.value for cell in workbook[SHEET_SUPPLIERS][1]]
+    assert labels[-1] == "结算币种"
+    assert labels[8] == "启用监控"
+    assert workbook[SHEET_SUPPLIERS].auto_filter.ref == "A1:J1"
+    assert workbook[SHEET_SUPPLIERS]["J1"].comment.text.startswith(
+        "供应商与我方结算的币种"
+    )
+
+
+def _currency_workbook(currency: object) -> bytes:
+    workbook = load_workbook(BytesIO(create_template()))
+    workbook[SHEET_SUPPLIERS].append(
+        [
+            "SUP-CUR-0001",
+            "结算币种解析供应商",
+            "CN",
+            None,
+            None,
+            None,
+            None,
+            None,
+            True,
+            currency,
+        ]
+    )
+    workbook[SHEET_SITES].append(
+        [
+            "SUP-CUR-0001",
+            "币种工厂",
+            "CN",
+            "上海市",
+            "上海市",
+            "浦东新区",
+            "上海市浦东新区币种路1号",
+            None,
+            None,
+        ]
+    )
+    workbook[SHEET_PRODUCTS].append(["SUP-CUR-0001", "测试产品", None])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def test_parse_workbook_normalizes_settlement_currency() -> None:
+    plan = parse_workbook(_currency_workbook("jpy"))
+
+    assert plan.suppliers[0].settlement_currency == "JPY"
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_parse_workbook_blank_settlement_currency_is_none(blank: object) -> None:
+    plan = parse_workbook(_currency_workbook(blank))
+
+    assert plan.suppliers[0].settlement_currency is None
+
+
+@pytest.mark.parametrize("invalid", ["US", "USDT", "人民币"])
+def test_parse_workbook_rejects_invalid_settlement_currency(invalid: str) -> None:
+    with pytest.raises(WorkbookValidationError) as captured:
+        parse_workbook(_currency_workbook(invalid))
+
+    assert any(
+        issue.sheet == SHEET_SUPPLIERS
+        and issue.row == 2
+        and issue.field == "settlement_currency"
+        and "结算币种必须是三个大写英文字母" in issue.message
+        for issue in captured.value.issues
+    ), [issue.model_dump() for issue in captured.value.issues]
+
+
 def test_parse_valid_workbook(workbook_factory: Callable[..., bytes]) -> None:
     plan = parse_workbook(workbook_factory())
 

@@ -209,8 +209,8 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
   await expect(page.getByRole('heading', {name: '情报聚合'})).toBeVisible({timeout: 15_000});
   await settleRoute(page);
 
-  // 三个页签齐备；行情监控的 hint 必须与情报报告语义区分开。
-  await expect(page.getByRole('tab')).toHaveCount(3);
+  // 三个外层页签齐备；行情监控的 hint 必须与情报报告语义区分开。
+  await expect(page.getByTestId('intelligence-tabs').getByRole('tab')).toHaveCount(3);
   await expect(tab(page, '政策情报')).toHaveAttribute('aria-selected', 'true');
 
   await tab(page, '行情监控').click();
@@ -220,12 +220,17 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
   await expect(page.getByTestId('intelligence-tabpanel-policy')).toBeHidden();
   await expect(page.getByTestId('intelligence-tabpanel-industry')).toBeHidden();
 
-  // 分组顺序固定：汇率 → 大宗商品 → 半导体。
-  await expect(page.getByTestId('market-indicator-group-title-fx-rates')).toContainText('汇率');
-  await expect(page.getByTestId('market-indicator-group-title-commodity-futures')).toContainText('大宗商品');
-  await expect(page.getByTestId('market-indicator-group-title-semiconductor-index')).toContainText('半导体');
+  // 分类改为面板内页签：顺序固定（汇率 → 大宗商品 → 半导体），默认只显示第一个有数据的分类。
+  const groupTabs = page.getByTestId('market-indicator-group-tabs').getByRole('tab');
+  await expect(groupTabs).toHaveCount(3);
+  await expect(groupTabs).toHaveText([/汇率/, /大宗商品/, /半导体/]);
+  await expect(page.getByTestId('market-group-tab-fx-rates')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('market-indicator-group-fx-rates')).toBeVisible();
+  // 非当前分类保持挂载但隐藏：三组长列表不再同屏。
+  await expect(page.getByTestId('market-group-panel-commodity-futures')).toBeHidden();
+  await expect(page.getByTestId('market-group-panel-semiconductor-index')).toBeHidden();
 
-  // 三态：触发中 / 数据积累中 3/10 / 正常。
+  // 汇率分类三态：触发中 / 数据积累中 3/10 / 正常。
   await expect(page.getByTestId('market-indicator-status-fx-CNY')).toHaveText('触发中');
   await expect(page.getByTestId('market-indicator-status-fx-JPY')).toHaveText('数据积累中 3/10');
   await expect(page.getByTestId('market-indicator-status-fx-EUR')).toHaveText('正常');
@@ -237,20 +242,26 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
 
   // 提醒入口只在 latest_alert_id 存在时出现，且指向风险详情。
   await expect(page.getByTestId('market-indicator-alert-fx-CNY')).toHaveAttribute('href', '/risks/4821');
-  await expect(page.getByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
   await expect(page.getByTestId('market-indicator-alert-fx-EUR')).toHaveCount(0);
 
-  // 走势为内联 SVG：30 点折线有几何；空序列没有折线也没有 NaN。
+  // 走势为内联 SVG：30 点折线有几何。
   const spark = page.getByTestId('market-indicator-spark-fx-CNY');
   await expect(spark).toHaveAttribute('data-points', '30');
   const polyline = await spark.locator('polyline').getAttribute('points');
   expect(polyline).not.toBeNull();
   expect(polyline).not.toContain('NaN');
   expect((polyline ?? '').trim().split(/\s+/)).toHaveLength(30);
+
+  // 切到大宗商品：提醒入口指向 /risks/:id；空序列没有折线也没有 NaN。
+  await page.getByTestId('market-group-tab-commodity-futures').click();
+  await expect(page.getByTestId('market-group-tab-commodity-futures')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('market-group-panel-commodity-futures')).toBeVisible();
+  await expect(page.getByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
   await expect(page.getByTestId('market-indicator-spark-fut-ZN')).toHaveAttribute('data-points', '0');
   expect(await page.getByTestId('market-indicator-spark-fut-ZN').locator('polyline').count()).toBe(0);
 
-  // latest 全空不得编造现值。
+  // 切到半导体：latest 全空不得编造现值。
+  await page.getByTestId('market-group-tab-semiconductor-index').click();
   await expect(page.getByTestId('market-indicator-value-semi-980017')).toHaveText('—');
   await expect(page.getByTestId('market-indicator-day-change-semi-980017')).toHaveText('—');
 
@@ -274,6 +285,10 @@ test('平板768 / 移动375 / 最小320：三态卡片与走势图在窄屏不�
     await settleRoute(page);
     await tab(page, '行情监控').click();
     await expect(page.getByTestId('market-indicator-status-fx-CNY')).toBeVisible();
+
+    // 宽带不变，窄屏下四个（含兜底）分类页签必须能换行/收缩，不撑破容器。
+    await expect(page.getByTestId('market-indicator-group-tabs')).toBeVisible();
+    await page.getByTestId('market-group-tab-commodity-futures').click();
 
     // 走势 SVG 的可视宽度必须落在卡片内，不得把布局撑出横向滚动。
     const cardBox = await page.getByTestId('market-indicator-fut-CU').boundingBox();
@@ -325,7 +340,8 @@ test('空列表：显示空态而不是错误或空白面板', async ({browser})
 
   await expect(page.getByText('暂无行情指标')).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await expect(page.getByTestId(/^market-indicator-group-/)).toHaveCount(0);
+  await expect(page.getByTestId('market-indicator-group-tabs')).toHaveCount(0);
+  await expect(page.getByTestId(/^market-indicator-group-(fx-rates|commodity-futures|semiconductor-index|other)$/)).toHaveCount(0);
   await page.screenshot({path: resolve(evidenceDirectory, 'task18-desktop-1280-market-empty.png')});
 
   await context.close();

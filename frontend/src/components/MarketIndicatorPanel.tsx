@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent} from 'react';
 import {AlertTriangle, ArrowDownRight, ArrowUpRight, BarChart3, Bell, Minus} from 'lucide-react';
 import {Link} from 'react-router-dom';
 import {
@@ -283,6 +283,39 @@ const useMarketIndicators = () => {
 export const MarketIndicatorPanel = ({active}: {readonly active: boolean}) => {
   const {data, error, loading, retry} = useMarketIndicators();
   const groups = useMemo(() => groupIndicators(data?.items ?? []), [data]);
+  /** 当前选中的分类（分组 key）；为空表示尚未选出第一个有数据的分类。 */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  /** 每个页签按钮的 DOM 引用，键盘导航时把焦点移到目标页签。 */
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+
+  /**
+   * 数据会随轮询变化：选中的分类若消失（该组指标清空），回退到第一个可用分类。
+   * 派生值 `activeKey` 与 state 同步计算，避免回退时出现一帧空白面板。
+   */
+  useEffect(() => {
+    if (selectedKey !== null && groups.some((group) => group.key === selectedKey)) return;
+    setSelectedKey(groups[0]?.key ?? null);
+  }, [groups, selectedKey]);
+
+  const activeKey = groups.some((group) => group.key === selectedKey)
+    ? selectedKey
+    : groups[0]?.key ?? null;
+
+  /** 页签键盘导航：左右方向键循环、Home/End 跳到首尾，切换后焦点跟随目标页签。 */
+  const handleGroupKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (groups.length === 0) return;
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % groups.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + groups.length) % groups.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = groups.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextGroup = groups[nextIndex];
+    if (nextGroup === undefined) return;
+    setSelectedKey(nextGroup.key);
+    tabRefs.current[nextGroup.key]?.focus();
+  };
 
   return (
     <div
@@ -328,25 +361,76 @@ export const MarketIndicatorPanel = ({active}: {readonly active: boolean}) => {
           <p className="text-[12px] text-slate-500 dark:text-slate-400">
             共 {data?.items.length ?? 0} 个指标，读数生成于 {formatDateTime(data?.generated_at ?? null)}
           </p>
-          {groups.map((group) => (
-            <section key={group.key} data-testid={`market-indicator-group-${group.key}`} className="space-y-2">
-              <h3
-                data-testid={`market-indicator-group-title-${group.key}`}
-                className="text-[13px] font-bold text-[#004782] dark:text-blue-300"
-              >
-                <span>{group.label}</span>
-                <span
-                  data-testid={`market-indicator-group-count-${group.key}`}
-                  className="ml-1 font-mono text-[11px] font-semibold text-slate-400 dark:text-slate-500"
+
+          {/*
+            内层分类切换（分段控件）：外层是「政策/行业/行情」下划线页签，这里改为分组页签，
+            一次只渲染当前分类，避免三组长列表把关键读数淹没。
+          */}
+          <div
+            role="tablist"
+            aria-label="指标分类"
+            data-testid="market-indicator-group-tabs"
+            className="flex flex-wrap gap-1 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-1 dark:border-slate-700/60 dark:bg-slate-800/60"
+          >
+            {groups.map((group, index) => {
+              const selected = group.key === activeKey;
+              return (
+                <button
+                  key={group.key}
+                  id={`market-group-tab-${group.key}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  aria-label={group.label}
+                  aria-controls={`market-group-panel-${group.key}`}
+                  tabIndex={selected ? 0 : -1}
+                  data-testid={`market-group-tab-${group.key}`}
+                  ref={(node) => {
+                    tabRefs.current[group.key] = node;
+                  }}
+                  onClick={() => setSelectedKey(group.key)}
+                  onKeyDown={(event) => handleGroupKeyDown(event, index)}
+                  className={`inline-flex min-h-9 items-center whitespace-nowrap rounded-xl px-3 py-1.5 text-[12px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782] focus-visible:ring-offset-1 focus-visible:ring-offset-slate-50 dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-slate-800 ${
+                    selected
+                      ? 'bg-white text-[#004782] shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-700 dark:text-blue-300 dark:ring-slate-600'
+                      : 'text-slate-600 hover:bg-white/70 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700/60 dark:hover:text-white'
+                  }`}
                 >
-                  {group.items.length}
-                </span>
-              </h3>
-              {group.items.map((indicator) => (
-                <MarketIndicatorCard key={indicator.code} indicator={indicator} />
-              ))}
-            </section>
-          ))}
+                  <span>{group.label}</span>
+                  <span
+                    data-testid={`market-group-count-${group.key}`}
+                    aria-hidden="true"
+                    className="ml-1 font-mono text-[11px] font-semibold text-slate-400 dark:text-slate-500"
+                  >
+                    {group.items.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 三个分类面板都常驻挂载、非当前项 hidden：与外层页签同一套 aria 关联，`aria-controls` 始终指向存在的元素。 */}
+          {groups.map((group) => {
+            const selected = group.key === activeKey;
+            return (
+              <section
+                key={group.key}
+                role="tabpanel"
+                id={`market-group-panel-${group.key}`}
+                aria-labelledby={`market-group-tab-${group.key}`}
+                tabIndex={0}
+                hidden={!selected}
+                data-testid={`market-group-panel-${group.key}`}
+                className="space-y-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#004782]/40 rounded-2xl"
+              >
+                <div data-testid={`market-indicator-group-${group.key}`} className="space-y-2">
+                  {group.items.map((indicator) => (
+                    <MarketIndicatorCard key={indicator.code} indicator={indicator} />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
     </div>

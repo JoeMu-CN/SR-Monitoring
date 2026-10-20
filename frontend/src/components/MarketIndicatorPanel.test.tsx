@@ -163,6 +163,7 @@ describe('行情监控面板：三个阈值状态', () => {
   });
 
   it('最近提醒入口链接到对应风险详情 /risks/:id，仅在 latest_alert_id 存在时出现', async () => {
+    const user = userEvent.setup();
     vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxTripped, copper, fxNormal]));
 
     renderPanel();
@@ -171,27 +172,104 @@ describe('行情监控面板：三个阈值状态', () => {
     const alertLink = screen.getByTestId('market-indicator-alert-fx-CNY');
     expect(alertLink).toHaveAttribute('href', '/risks/4821');
     expect(alertLink).toHaveTextContent('最近提醒');
-    expect(screen.getByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
+    // 大宗商品是另一个分类页签：先切过去再断言，避免依赖跨组同屏渲染。
+    await user.click(screen.getByTestId('market-group-tab-commodity-futures'));
+    expect(await screen.findByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
     // 无 alert_id 的正常指标不渲染空链接，避免给出跳转到 /risks/null 的假入口。
     expect(screen.queryByTestId('market-indicator-alert-fx-EUR')).not.toBeInTheDocument();
   });
 });
 
 describe('行情监控面板：分组与走势', () => {
-  it('按汇率 / 大宗商品 / 半导体分组，且分组顺序固定', async () => {
+  it('分类以页签呈现，顺序固定，默认只显示第一个有数据的分类', async () => {
     vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([semiconductor, copper, fxNormal]));
 
     renderPanel();
 
     await screen.findByText('美元兑欧元汇率');
-    // 标题节点内含「分组名 + 数量」，标签本身取首个文本节点，顺序断言的是分组名。
-    const groups = within(screen.getByTestId('intelligence-tabpanel-market'))
-      .getAllByTestId(/^market-indicator-group-title-/)
-      .map((title) => title.firstElementChild?.textContent);
-    expect(groups).toEqual(['汇率', '大宗商品', '半导体']);
+    const groupTabs = within(screen.getByTestId('market-indicator-group-tabs')).getAllByRole('tab');
+    expect(groupTabs.map((groupTab) => groupTab.getAttribute('aria-label'))).toEqual(['汇率', '大宗商品', '半导体']);
+    expect(screen.getByTestId('market-group-tab-fx-rates')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('market-group-count-fx-rates')).toHaveTextContent('1');
     expect(screen.getByTestId('market-indicator-group-fx-rates')).toContainElement(screen.getByText('美元兑欧元汇率'));
-    expect(screen.getByTestId('market-indicator-group-commodity-futures')).toContainElement(screen.getByText('沪铜主力'));
-    expect(screen.getByTestId('market-indicator-group-semiconductor-index')).toContainElement(screen.getByText('国证半导体芯片指数'));
+    // 非当前分类保持挂载但隐藏：一次只展示一类，同时 aria-controls 始终指向存在的面板。
+    expect(screen.getByTestId('market-group-panel-commodity-futures')).not.toBeVisible();
+    expect(screen.getByTestId('market-group-panel-semiconductor-index')).not.toBeVisible();
+    expect(screen.getByTestId('market-group-panel-fx-rates')).toBeVisible();
+  });
+
+  it('点击分类页签切换：只替换内容区，aria-selected 与计数同步', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([semiconductor, copper, fxNormal]));
+
+    renderPanel();
+
+    await screen.findByText('美元兑欧元汇率');
+    await user.click(screen.getByTestId('market-group-tab-commodity-futures'));
+
+    expect(screen.getByTestId('market-group-tab-commodity-futures')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('market-group-tab-fx-rates')).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByTestId('market-group-panel-commodity-futures')).toContainElement(screen.getByText('沪铜主力'));
+    expect(screen.getByTestId('market-group-panel-commodity-futures')).toBeVisible();
+    expect(screen.getByTestId('market-group-panel-fx-rates')).not.toBeVisible();
+
+    await user.click(screen.getByTestId('market-group-tab-semiconductor-index'));
+    expect(screen.getByTestId('market-group-panel-semiconductor-index')).toContainElement(screen.getByText('国证半导体芯片指数'));
+    expect(screen.getByTestId('market-group-panel-semiconductor-index')).toBeVisible();
+    expect(screen.getByTestId('market-group-panel-commodity-futures')).not.toBeVisible();
+  });
+
+  it('键盘：ArrowRight / ArrowLeft 在分类间循环，Home / End 跳到首尾并移动焦点', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([semiconductor, copper, fxNormal]));
+
+    renderPanel();
+
+    await screen.findByText('美元兑欧元汇率');
+    screen.getByTestId('market-group-tab-fx-rates').focus();
+
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('market-group-tab-commodity-futures')).toHaveFocus();
+    expect(screen.getByTestId('market-group-tab-commodity-futures')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('market-group-tab-fx-rates')).toHaveAttribute('tabindex', '-1');
+
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByTestId('market-group-tab-fx-rates')).toHaveFocus();
+
+    await user.keyboard('{End}');
+    expect(screen.getByTestId('market-group-tab-semiconductor-index')).toHaveFocus();
+    expect(screen.getByTestId('market-group-tab-semiconductor-index')).toHaveAttribute('aria-selected', 'true');
+
+    // 末个页签继续右移必须循环回首项，不得越界。
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByTestId('market-group-tab-fx-rates')).toHaveAttribute('aria-selected', 'true');
+
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByTestId('market-group-tab-semiconductor-index')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('默认选中第一个有数据的分类：汇率缺失时落到大宗商品', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([semiconductor, copper]));
+
+    renderPanel();
+
+    await screen.findByText('沪铜主力');
+    // 无数据的分类不出现空页签，也不留空白面板。
+    expect(screen.queryByTestId('market-group-tab-fx-rates')).not.toBeInTheDocument();
+    expect(screen.getByTestId('market-group-tab-commodity-futures')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('market-group-panel-semiconductor-index')).not.toBeVisible();
+  });
+
+  it('未登记信源的指标进入「其他指标」分类，不静默丢弃', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([
+      item({code: 'misc-1', label: '未登记指标', source_code: 'unknown-source'}),
+    ]));
+
+    renderPanel();
+
+    await screen.findByText('未登记指标');
+    expect(screen.getByTestId('market-group-tab-other')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('market-indicator-group-other')).toContainElement(screen.getByText('未登记指标'));
   });
 
   it('走势为内联 SVG：点数最多取近 30 个观察点，路径不含 NaN', async () => {
@@ -312,7 +390,8 @@ describe('行情监控面板：加载 / 错误 / 空态', () => {
 
     await screen.findByText('暂无行情指标');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.queryByTestId(/^market-indicator-group-/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('market-indicator-group-tabs')).not.toBeInTheDocument();
+    expect(screen.queryByTestId(/^market-indicator-group-(fx-rates|commodity-futures|semiconductor-index|other)$/)).not.toBeInTheDocument();
   });
 });
 

@@ -24,8 +24,8 @@ export const SupplierRow = ({supplier, canManage, onAskAssistant, onToggleStatus
       <td className="p-3.5 font-mono text-[12px] text-[#424751] dark:text-slate-400">{supplier.registrationNo}</td>
       <td className="p-3.5 text-[#424751] dark:text-slate-300">{supplier.productionLocation}</td>
       <td className="p-3.5 font-medium text-[#101d28] dark:text-white">{supplier.suppliedProduct}</td>
-      <td className="p-3.5 text-center">
-        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${status.badge}`}>
+      <td className="whitespace-nowrap p-3.5 text-center">
+        <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${status.badge}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />
           {status.label}
         </span>

@@ -171,7 +171,7 @@ export const SuppliersView = ({
                 <th className="p-3.5 font-bold">注册号</th>
                 <th className="p-3.5 font-bold">生产地点</th>
                 <th className="p-3.5 font-bold">供应产品</th>
-                <th className="p-3.5 text-center font-bold">监控状态</th>
+                <th className="whitespace-nowrap p-3.5 text-center font-bold">监控状态</th>
                 <th className="p-3.5 pr-4 text-center">操作</th>
               </tr>
             </thead>

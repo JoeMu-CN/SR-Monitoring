@@ -3,6 +3,9 @@ name: supplier-risk-frontend-gap-test
 x-test-environment: &test-environment
   DATABASE_URL: ${TEST_DATABASE_URL:-postgresql+psycopg://supplier_risk_test:test_only_password@postgres-test:5432/supplier_risk_test}
   APP_ENV: test
+  # 镜像内的 app 是构建时拷贝的普通包，site-packages 优先于 /app；
+  # 显式把 /app 放到 sys.path 最前，测试栈才验证「当前工作区代码」而不是镜像快照。
+  PYTHONPATH: /app
   AI_PROVIDER: fake
   ALLOWED_ORIGINS: http://127.0.0.1:18080,http://testserver
   SESSION_SECRET: todo3-test-session-secret-not-for-production
@@ -51,6 +54,9 @@ services:
   app-test:
     image: supplierriskmonitoring-app
     environment: *test-environment
+    # 与 test-runner 共用同一组挂载：迁移与 seed 脚本必须来自工作区，
+    # 否则 app-test 启动时执行的是镜像内旧迁移，新迁移永远不会在测试库生效。
+    volumes: *test-volumes
     command:
       - sh
       - -c

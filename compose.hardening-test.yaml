@@ -5,6 +5,9 @@ services:
 
   app-test:
     image: "${HARDENING_TEST_IMAGE:?HARDENING_TEST_IMAGE is required}"
+    # 硬化验证必须针对构建产物：显式清空 base 的工作区挂载，
+    # 否则 app-test 会跑宿主代码而不是被测镜像，硬化结论失效。
+    volumes: !reset []
     labels:
       supplier-risk-hardening.owner: "${HARDENING_RUN_ID:?HARDENING_RUN_ID is required}"
     environment:

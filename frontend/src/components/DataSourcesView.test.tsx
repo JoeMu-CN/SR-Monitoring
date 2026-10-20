@@ -274,6 +274,16 @@ describe('信息源有效期策略表单', () => {
     renderAdmin();
     await openForm();
 
+    // 弹窗结构回归：外层裁剪圆角、内层滚动，避免滚动条把右侧圆角压成直角
+    const form = screen.getByRole('button', {name: '保存配置'}).closest('form') as HTMLFormElement;
+    expect(form).toHaveClass('rounded-2xl');
+    expect(form).toHaveClass('overflow-hidden');
+    expect(form).not.toHaveClass('overflow-y-auto');
+    const scroller = form.querySelector<HTMLElement>('.overflow-y-auto');
+    expect(scroller).not.toBeNull();
+    expect(scroller).toContainElement(screen.getByRole('button', {name: '保存配置'}));
+    expect(scroller).toContainElement(screen.getByLabelText('有效期策略'));
+
     expect(screen.getByLabelText('有效期策略')).toHaveValue('fixed_days');
     expect(screen.getByLabelText('固定天数（天）')).toHaveValue(30);
   });

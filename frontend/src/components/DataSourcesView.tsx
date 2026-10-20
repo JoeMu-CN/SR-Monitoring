@@ -747,158 +747,160 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
 
       {showForm && editingId && (
         <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
-          <form onSubmit={(event) => void submit(event)} className="bg-white rounded-2xl p-6 w-full max-w-3xl space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between">
-              <h2 className="text-lg font-bold">编辑信息源 · ID {editingId}</h2>
-              <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">关闭</button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="text-xs font-bold">编码
-                <input required disabled value={form.code} className="mt-1 w-full border rounded-lg p-2 disabled:bg-slate-100 disabled:text-slate-500" />
-              </label>
-              <label className="text-xs font-bold">名称
-                <input required value={form.name} onChange={(event) => update('name', event.target.value)} className="mt-1 w-full border rounded-lg p-2" />
-              </label>
-              <label className="text-xs font-bold">类型
-                <input required disabled value={form.source_type} className="mt-1 w-full border rounded-lg p-2 disabled:bg-slate-100 disabled:text-slate-500" />
-              </label>
-              <label className="text-xs font-bold">可信度
-                <input type="number" min="0" max="100" required value={form.credibility} onChange={(event) => update('credibility', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-              </label>
-              <label className="text-xs font-bold sm:col-span-2">官方接口 URL
-                <input type="url" value={form.endpoint_url ?? ''} onChange={(event) => update('endpoint_url', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
-              </label>
-              <label className="text-xs font-bold" title="分 时 日 月 周，如 */30 * * * * 表示每 30 分钟一次，北京时间">{isExternalForm ? '调用方式' : '调度 cron'}
-                <input disabled={isExternalForm} value={isExternalForm ? '调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
-              </label>
-              {isTycForm && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
-                  调度策略：人工核查通过页面按供应商调用；Scheduler 不按 cron 刷新。启用且运行密钥有效、额度充足时，每周日、周一各覆盖一个分片自动核查已启用供应商；停用时不执行批量核查。
-                </div>
-              )}
-              <label className="text-xs font-bold sm:col-span-2" title="选择信号有效期策略模式；不同模式启用不同配置字段">
-                有效期策略
-                <select
-                  value={validityMode}
-                  onChange={(event) => {
-                    setValidityMode(event.target.value as ValidityMode);
-                    setValidityError(null);
-                  }}
-                  className="mt-1 w-full border rounded-lg p-2"
-                >
-                  {(Object.keys(VALIDITY_MODE_LABELS) as ValidityMode[]).map((mode) => (
-                    <option key={mode} value={mode}>{VALIDITY_MODE_LABELS[mode]}</option>
-                  ))}
-                </select>
-              </label>
-              {(validityMode === 'fixed_days' || validityMode === 'until_superseded') && (
-                <label
-                  className="text-xs font-bold"
-                  title={validityMode === 'until_superseded'
-                    ? '替代时失效必须提供固定天数，作为长期未更新时的兜底有效期'
-                    : '信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录'}
-                >
-                  固定天数（天）
-                  <input type="number" min="1" max="3650" placeholder={validityMode === 'until_superseded' ? '必填' : '留空=永久有效'} value={validityFixedDays ?? ''} onChange={(event) => setValidityFixedDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+          <form onSubmit={(event) => void submit(event)} className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+            <div className="min-h-0 space-y-4 overflow-y-auto p-6">
+              <div className="flex justify-between">
+                <h2 className="text-lg font-bold">编辑信息源 · ID {editingId}</h2>
+                <button type="button" onClick={() => setShowForm(false)} className="text-slate-400 hover:text-slate-600">关闭</button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="text-xs font-bold">编码
+                  <input required disabled value={form.code} className="mt-1 w-full border rounded-lg p-2 disabled:bg-slate-100 disabled:text-slate-500" />
                 </label>
-              )}
-              {validityMode === 'event_end_plus_grace' && (
-                <>
-                  <label className="text-xs font-bold" title="事件结束后额外宽限的天数">
-                    宽限天数（天）
-                    <input type="number" min="1" max="3650" placeholder="留空=不设宽限" value={validityGraceDays ?? ''} onChange={(event) => setValidityGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-                  </label>
-                  <label className="text-xs font-bold" title="关键事件（如制裁、出口管制）的额外宽限天数">
-                    关键宽限天数（天）
-                    <input type="number" min="1" max="3650" placeholder="留空=不设关键宽限" value={validityCriticalGraceDays ?? ''} onChange={(event) => setValidityCriticalGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-                  </label>
-                </>
-              )}
-              {validityMode === 'until_revoked' && (
-                <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2">
-                  <input type="checkbox" checked={autoRevokeOnMissingSnapshot} onChange={(event) => setAutoRevokeOnMissingSnapshot(event.target.checked)} />
-                  按完整快照缺失自动撤销（名单类信源）
+                <label className="text-xs font-bold">名称
+                  <input required value={form.name} onChange={(event) => update('name', event.target.value)} className="mt-1 w-full border rounded-lg p-2" />
                 </label>
-              )}
-              {validityMode === 'until_revoked' && autoRevokeOnMissingSnapshot && (
-                <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2" title="自动撤销依赖信源声明为权威完整快照；未声明时后端不会执行自动撤销">
-                  <input type="checkbox" checked={authoritativeFullSnapshot} onChange={(event) => setAuthoritativeFullSnapshot(event.target.checked)} />
-                  声明权威完整快照（authoritative_full_snapshot）
+                <label className="text-xs font-bold">类型
+                  <input required disabled value={form.source_type} className="mt-1 w-full border rounded-lg p-2 disabled:bg-slate-100 disabled:text-slate-500" />
                 </label>
-              )}
-              {validityError && (
-                <p role="alert" className="sm:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{validityError}</p>
-              )}
-              {isLegacyAuthType ? (
-                <div
-                  data-testid="auth-type-legacy-warning"
-                  role="status"
-                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 sm:col-span-2"
-                >
-                  当前认证方式为“{form.auth_type}”（历史值，不在可编辑选项中），保存时将保持服务器上的原值不变。
-                </div>
-              ) : (
-                <label className="text-xs font-bold">认证方式
-                  <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">
-                    {AUTH_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+                <label className="text-xs font-bold">可信度
+                  <input type="number" min="0" max="100" required value={form.credibility} onChange={(event) => update('credibility', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                </label>
+                <label className="text-xs font-bold sm:col-span-2">官方接口 URL
+                  <input type="url" value={form.endpoint_url ?? ''} onChange={(event) => update('endpoint_url', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
+                </label>
+                <label className="text-xs font-bold" title="分 时 日 月 周，如 */30 * * * * 表示每 30 分钟一次，北京时间">{isExternalForm ? '调用方式' : '调度 cron'}
+                  <input disabled={isExternalForm} value={isExternalForm ? '调用' : form.schedule ?? ''} onChange={(event) => update('schedule', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2 font-mono disabled:bg-slate-100 disabled:text-slate-600" />
+                </label>
+                {isTycForm && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">
+                    调度策略：人工核查通过页面按供应商调用；Scheduler 不按 cron 刷新。启用且运行密钥有效、额度充足时，每周日、周一各覆盖一个分片自动核查已启用供应商；停用时不执行批量核查。
+                  </div>
+                )}
+                <label className="text-xs font-bold sm:col-span-2" title="选择信号有效期策略模式；不同模式启用不同配置字段">
+                  有效期策略
+                  <select
+                    value={validityMode}
+                    onChange={(event) => {
+                      setValidityMode(event.target.value as ValidityMode);
+                      setValidityError(null);
+                    }}
+                    className="mt-1 w-full border rounded-lg p-2"
+                  >
+                    {(Object.keys(VALIDITY_MODE_LABELS) as ValidityMode[]).map((mode) => (
+                      <option key={mode} value={mode}>{VALIDITY_MODE_LABELS[mode]}</option>
                     ))}
                   </select>
                 </label>
-              )}
-              {!isExternalForm && form.auth_type === 'api_key' && (
-                <label className="text-xs font-bold">凭据引用
-                  <input value={form.credential_ref ?? ''} onChange={(event) => update('credential_ref', event.target.value || null)} placeholder="env:SOURCE_API_KEY" className="mt-1 w-full border rounded-lg p-2 font-mono" />
+                {(validityMode === 'fixed_days' || validityMode === 'until_superseded') && (
+                  <label
+                    className="text-xs font-bold"
+                    title={validityMode === 'until_superseded'
+                      ? '替代时失效必须提供固定天数，作为长期未更新时的兜底有效期'
+                      : '信号自发生起 N 天内有效；留空=永久有效。过期后仅留库，不再计入有效记录'}
+                  >
+                    固定天数（天）
+                    <input type="number" min="1" max="3650" placeholder={validityMode === 'until_superseded' ? '必填' : '留空=永久有效'} value={validityFixedDays ?? ''} onChange={(event) => setValidityFixedDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  </label>
+                )}
+                {validityMode === 'event_end_plus_grace' && (
+                  <>
+                    <label className="text-xs font-bold" title="事件结束后额外宽限的天数">
+                      宽限天数（天）
+                      <input type="number" min="1" max="3650" placeholder="留空=不设宽限" value={validityGraceDays ?? ''} onChange={(event) => setValidityGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                    </label>
+                    <label className="text-xs font-bold" title="关键事件（如制裁、出口管制）的额外宽限天数">
+                      关键宽限天数（天）
+                      <input type="number" min="1" max="3650" placeholder="留空=不设关键宽限" value={validityCriticalGraceDays ?? ''} onChange={(event) => setValidityCriticalGraceDays(event.target.value === '' ? null : Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                    </label>
+                  </>
+                )}
+                {validityMode === 'until_revoked' && (
+                  <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2">
+                    <input type="checkbox" checked={autoRevokeOnMissingSnapshot} onChange={(event) => setAutoRevokeOnMissingSnapshot(event.target.checked)} />
+                    按完整快照缺失自动撤销（名单类信源）
+                  </label>
+                )}
+                {validityMode === 'until_revoked' && autoRevokeOnMissingSnapshot && (
+                  <label className="text-xs font-bold sm:col-span-2 flex items-center gap-2" title="自动撤销依赖信源声明为权威完整快照；未声明时后端不会执行自动撤销">
+                    <input type="checkbox" checked={authoritativeFullSnapshot} onChange={(event) => setAuthoritativeFullSnapshot(event.target.checked)} />
+                    声明权威完整快照（authoritative_full_snapshot）
+                  </label>
+                )}
+                {validityError && (
+                  <p role="alert" className="sm:col-span-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{validityError}</p>
+                )}
+                {isLegacyAuthType ? (
+                  <div
+                    data-testid="auth-type-legacy-warning"
+                    role="status"
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 sm:col-span-2"
+                  >
+                    当前认证方式为“{form.auth_type}”（历史值，不在可编辑选项中），保存时将保持服务器上的原值不变。
+                  </div>
+                ) : (
+                  <label className="text-xs font-bold">认证方式
+                    <select value={form.auth_type} onChange={(event) => update('auth_type', event.target.value)} className="mt-1 w-full border rounded-lg p-2">
+                      {AUTH_TYPE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {!isExternalForm && form.auth_type === 'api_key' && (
+                  <label className="text-xs font-bold">凭据引用
+                    <input value={form.credential_ref ?? ''} onChange={(event) => update('credential_ref', event.target.value || null)} placeholder="env:SOURCE_API_KEY" className="mt-1 w-full border rounded-lg p-2 font-mono" />
+                  </label>
+                )}
+                {!isExternalForm && form.auth_type === 'api_key' && (
+                  <label className="text-xs font-bold">API Key 请求头名
+                    <input
+                      value={String(form.login_config.header_name ?? '')}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value) {
+                          // 合并而非覆盖：保全迁移 marker（0054/0055 provenance）等既有 login_config 键。
+                          update('login_config', {...form.login_config, header_name: value});
+                        } else {
+                          const {header_name: _headerName, ...restConfig} = form.login_config;
+                          update('login_config', restConfig);
+                        }
+                      }}
+                      placeholder="X-API-Key"
+                      className="mt-1 w-full border rounded-lg p-2"
+                    />
+                  </label>
+                )}
+                {isExternalForm && (
+                  <label className="text-xs font-bold sm:col-span-2">运行密钥 API Key
+                    <input type="password" autoComplete="new-password" value={apiKeyInput} onChange={(event) => setApiKeyInput(event.target.value)} placeholder={editingKeyHint ? `已配置（${editingKeyHint}），留空保持不变` : '输入天眼查 API Key（tyc_ 开头）'} className="mt-1 w-full border rounded-lg p-2 font-mono" />
+                  </label>
+                )}
+                {isTycForm && (
+                  <label className="text-xs font-bold">每日调用上限
+                    <input type="number" min="1" max="1000" value={String(form.login_config.daily_limit ?? 80)} onChange={(event) => updateTycConfig('daily_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  </label>
+                )}
+                {isTycForm && (
+                  <label className="text-xs font-bold">每月调用上限
+                    <input type="number" min="1" max="10000" value={String(form.login_config.monthly_limit ?? 900)} onChange={(event) => updateTycConfig('monthly_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
+                  </label>
+                )}
+                <label className="text-xs font-bold sm:col-span-2">说明
+                  <textarea value={form.description ?? ''} onChange={(event) => update('description', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
                 </label>
-              )}
-              {!isExternalForm && form.auth_type === 'api_key' && (
-                <label className="text-xs font-bold">API Key 请求头名
-                  <input
-                    value={String(form.login_config.header_name ?? '')}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value) {
-                        // 合并而非覆盖：保全迁移 marker（0054/0055 provenance）等既有 login_config 键。
-                        update('login_config', {...form.login_config, header_name: value});
-                      } else {
-                        const {header_name: _headerName, ...restConfig} = form.login_config;
-                        update('login_config', restConfig);
-                      }
-                    }}
-                    placeholder="X-API-Key"
-                    className="mt-1 w-full border rounded-lg p-2"
-                  />
-                </label>
-              )}
+              </div>
               {isExternalForm && (
-                <label className="text-xs font-bold sm:col-span-2">运行密钥 API Key
-                  <input type="password" autoComplete="new-password" value={apiKeyInput} onChange={(event) => setApiKeyInput(event.target.value)} placeholder={editingKeyHint ? `已配置（${editingKeyHint}），留空保持不变` : '输入天眼查 API Key（tyc_ 开头）'} className="mt-1 w-full border rounded-lg p-2 font-mono" />
-                </label>
+                <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">运行密钥加密保存在服务器数据库中，控制台仅显示末四位，保存后不回传明文；启用/停用由下方开关统一控制。</p>
               )}
-              {isTycForm && (
-                <label className="text-xs font-bold">每日调用上限
-                  <input type="number" min="1" max="1000" value={String(form.login_config.daily_limit ?? 80)} onChange={(event) => updateTycConfig('daily_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-                </label>
-              )}
-              {isTycForm && (
-                <label className="text-xs font-bold">每月调用上限
-                  <input type="number" min="1" max="10000" value={String(form.login_config.monthly_limit ?? 900)} onChange={(event) => updateTycConfig('monthly_limit', Number(event.target.value))} className="mt-1 w-full border rounded-lg p-2" />
-                </label>
-              )}
-              <label className="text-xs font-bold sm:col-span-2">说明
-                <textarea value={form.description ?? ''} onChange={(event) => update('description', event.target.value || null)} className="mt-1 w-full border rounded-lg p-2" />
+              <label className="text-xs font-bold flex items-center gap-2">
+                <input type="checkbox" disabled={!mayEnable} checked={form.enabled && mayEnable} onChange={(event) => update('enabled', event.target.checked)} />
+                {isExternalForm ? '启用核查' : '启用正式采集（仅已发布或内置适配器可用）'}
               </label>
-            </div>
-            {isExternalForm && (
-              <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">运行密钥加密保存在服务器数据库中，控制台仅显示末四位，保存后不回传明文；启用/停用由下方开关统一控制。</p>
-            )}
-            <label className="text-xs font-bold flex items-center gap-2">
-              <input type="checkbox" disabled={!mayEnable} checked={form.enabled && mayEnable} onChange={(event) => update('enabled', event.target.checked)} />
-              {isExternalForm ? '启用核查' : '启用正式采集（仅已发布或内置适配器可用）'}
-            </label>
-            <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowForm(false)} className="border rounded-lg px-4 py-2">取消</button>
-              <button type="submit" className="bg-[#004782] text-white rounded-lg px-4 py-2 font-bold">保存配置</button>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setShowForm(false)} className="border rounded-lg px-4 py-2">取消</button>
+                <button type="submit" className="bg-[#004782] text-white rounded-lg px-4 py-2 font-bold">保存配置</button>
+              </div>
             </div>
           </form>
         </div>

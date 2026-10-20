@@ -328,6 +328,8 @@ describe('NewSupplierModal — 面板视口高度约束与纵向滚动（防止�
 
   /** 弹窗面板 = 标题所在的 max-w-3xl 容器 */
   const panelOf = (title: string) => screen.getByText(title).closest('.max-w-3xl') as HTMLElement;
+  /** 面板内的滚动区：外层负责圆角裁剪，滚动交给内层，避免滚动条把右侧圆角压成直角 */
+  const scrollerOf = (panel: HTMLElement) => panel.querySelector<HTMLElement>('.overflow-y-auto');
 
   it('编辑态叠加删除影响横幅时面板仍受视口高度约束、可纵向滚动，底部操作区可访问', () => {
     render(
@@ -344,9 +346,12 @@ describe('NewSupplierModal — 面板视口高度约束与纵向滚动（防止�
     const panel = panelOf('编辑供应商 · SUP-0042');
     // 视口高度约束：面板高度不超过视口，避免顶/底被裁切
     expect(panel.className).toMatch(/max-h-\[[^\]]*d?vh/);
-    // 纵向滚动：内容超出时滚动而非被 overflow-hidden 裁掉
-    expect(panel).toHaveClass('overflow-y-auto');
-    expect(panel).not.toHaveClass('overflow-hidden');
+    // 圆角裁剪：面板自身 overflow-hidden，保证四角（含右侧）呈圆角
+    expect(panel).toHaveClass('overflow-hidden');
+    // 纵向滚动：内容超出时由内层滚动容器滚动，而非被裁掉
+    const scroller = scrollerOf(panel);
+    expect(scroller).not.toBeNull();
+    expect(scroller).toHaveClass('overflow-y-auto');
 
     // 删除影响横幅与底部操作区（删除/取消/保存）同时可访问
     expect(screen.getByRole('alert')).toHaveTextContent('风险关联 3 条');
@@ -360,8 +365,8 @@ describe('NewSupplierModal — 面板视口高度约束与纵向滚动（防止�
 
     const panel = panelOf('新增供应商');
     expect(panel.className).toMatch(/max-h-\[[^\]]*d?vh/);
-    expect(panel).toHaveClass('overflow-y-auto');
-    expect(panel).not.toHaveClass('overflow-hidden');
+    expect(panel).toHaveClass('overflow-hidden');
+    expect(scrollerOf(panel)).toHaveClass('overflow-y-auto');
     expect(screen.getByRole('button', {name: '新增并开启监控'})).toBeInTheDocument();
   });
 });

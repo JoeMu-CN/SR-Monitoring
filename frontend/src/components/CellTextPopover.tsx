@@ -62,22 +62,25 @@ export const CellTextPopover = ({anchor, title, children, onClose}: CellTextPopo
       ref={panelRef}
       role="dialog"
       aria-label={title}
-      className="fixed z-[70] max-h-[60vh] w-[min(560px,calc(100vw-1rem))] overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900"
+      className="fixed z-[70] flex max-h-[60vh] w-[min(560px,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900"
       style={position ?? {top: 0, left: 0}}
     >
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-bold text-[#727782] dark:text-slate-400">{title}</p>
-        <button
-          ref={closeButtonRef}
-          type="button"
-          aria-label="关闭完整内容"
-          onClick={onClose}
-          className="-mr-1 -mt-1 flex min-h-8 min-w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#007aff] dark:hover:bg-slate-800"
-        >
-          <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+      {/* 外层只裁剪圆角，滚动交给内层：否则原生滚动条会把右侧圆角压成直角 */}
+      <div className="min-h-0 overflow-y-auto overscroll-contain p-3">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-[11px] font-bold text-[#727782] dark:text-slate-400">{title}</p>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            aria-label="关闭完整内容"
+            onClick={onClose}
+            className="-mr-1 -mt-1 flex min-h-8 min-w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#007aff] dark:hover:bg-slate-800"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-1.5">{children}</div>
       </div>
-      <div className="mt-1.5">{children}</div>
     </div>,
     document.body,
   );

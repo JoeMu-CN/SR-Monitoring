@@ -69,6 +69,12 @@ def insert_supersession(
     validity_key = ingestion.signal.validity_key
     assert validity_key is not None  # is_supersession_candidate 已保证
     _advisory_lock(session, ingestion.source.id, validity_key)
+    if _dedup_key_already_stored(session, ingestion):
+        # 同一 dedup_key 的重采是"同一条信号被再次读到"，不是新版本：
+        # 此时插入会被 (source_id, dedup_key) 唯一约束挡下，但若先执行替代，
+        # 就只剩"把 active 版本标成 superseded"的副作用 —— 信源的有效记录数
+        # 会掉到 0（现场：commodity-futures 每 6 小时重采、identity 按日固定）。
+        return 0
     for _attempt in range(2):
         _resolve_supersession(session, ingestion, snapshot, row)
         try:
@@ -89,6 +95,19 @@ def insert_supersession(
     from app.signals.ingestion import SignalIngestionError
 
     raise SignalIngestionError("supersession_unique_conflict")
+
+
+def _dedup_key_already_stored(session: Session, ingestion: SignalIngestion) -> bool:
+    """同一信源下该 dedup_key 是否已落库（含 superseded 历史版本）。"""
+    stored = session.scalar(
+        select(RawSignal.id)
+        .where(
+            RawSignal.source_id == ingestion.source.id,
+            RawSignal.dedup_key == ingestion.dedup_key,
+        )
+        .limit(1)
+    )
+    return stored is not None
 
 
 def _resolve_supersession(

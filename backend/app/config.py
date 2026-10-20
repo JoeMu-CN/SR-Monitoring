@@ -197,6 +197,20 @@ class NotificationSettings:
     quiet_end: str
     retry_attempts: int
     timeout_seconds: float
+    # ── 风险提醒邮件推送（《风险提醒邮件推送接入方案.md》第 10 章）──
+    # 追加在末尾，避免打乱既有字段顺序（测试用 dataclasses.replace 构造）。
+    email_enabled: bool
+    email_smtp_host: str
+    email_smtp_port: int
+    # "ssl"（默认，465）或 "starttls"（587）
+    email_smtp_security: str
+    email_username: str
+    email_password: str
+    email_from: str
+    email_from_name: str
+    email_timeout_seconds: float
+    email_user_hourly_limit: int
+    email_global_hourly_limit: int
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -243,6 +257,26 @@ def get_notification_settings() -> NotificationSettings:
         quiet_end=os.getenv("NOTIFY_QUIET_END", "08:00").strip(),
         retry_attempts=_int_env("NOTIFY_RETRY_ATTEMPTS", 3, minimum=0, maximum=5),
         timeout_seconds=_float_env("NOTIFY_TIMEOUT_SECONDS", 10, minimum=1, maximum=60),
+        # 邮件渠道默认关闭；凭据只从环境变量读取，不写入任何持久化结构。
+        email_enabled=_bool_env("NOTIFY_EMAIL_ENABLED"),
+        email_smtp_host=os.getenv("NOTIFY_EMAIL_SMTP_HOST", "").strip(),
+        email_smtp_port=_int_env(
+            "NOTIFY_EMAIL_SMTP_PORT", 465, minimum=1, maximum=65535
+        ),
+        email_smtp_security=os.getenv("NOTIFY_EMAIL_SMTP_SECURITY", "ssl").strip().lower(),
+        email_username=os.getenv("NOTIFY_EMAIL_USERNAME", "").strip(),
+        email_password=os.getenv("NOTIFY_EMAIL_PASSWORD", ""),
+        email_from=os.getenv("NOTIFY_EMAIL_FROM", "").strip(),
+        email_from_name=os.getenv("NOTIFY_EMAIL_FROM_NAME", "供应商风险监控").strip(),
+        email_timeout_seconds=_float_env(
+            "NOTIFY_EMAIL_TIMEOUT_SECONDS", 20, minimum=1, maximum=120
+        ),
+        email_user_hourly_limit=_int_env(
+            "NOTIFY_EMAIL_USER_HOURLY_LIMIT", 20, minimum=1, maximum=1000
+        ),
+        email_global_hourly_limit=_int_env(
+            "NOTIFY_EMAIL_GLOBAL_HOURLY_LIMIT", 60, minimum=1, maximum=1000
+        ),
     )
 
 
@@ -253,6 +287,8 @@ SCHEDULER_EXPIRE_CRON = os.getenv("SCHEDULER_EXPIRE_CRON", "0 * * * *").strip()
 SCHEDULER_CLEANUP_CRON = os.getenv("SCHEDULER_CLEANUP_CRON", "0 3 * * *").strip()
 # 情报聚合（政策/行业报告）默认在整点后第 15 分钟生成，避开整点的采集与提醒失效任务。
 SCHEDULER_INTELLIGENCE_CRON = os.getenv("SCHEDULER_INTELLIGENCE_CRON", "15 * * * *").strip()
+# 风险月报：默认每日 09:00 检查上一个自然月，按 (user_id, period) 幂等重试。
+NOTIFY_MONTHLY_REPORT_CRON = os.getenv("NOTIFY_MONTHLY_REPORT_CRON", "0 9 * * *").strip()
 # 研究轨发布开关：本地默认开启以保留开发/测试能力，生产发布候选必须显式关闭。
 RESEARCH_TRACK_ENABLED = os.getenv("RESEARCH_TRACK_ENABLED", "true").strip().lower() in {
     "1",

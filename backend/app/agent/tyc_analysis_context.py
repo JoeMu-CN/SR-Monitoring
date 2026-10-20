@@ -48,6 +48,12 @@ PRIVATE_RAW_FIELDS: Final[frozenset[str]] = frozenset({PRIVATE_RAW_FIELD})
 _BASE_EXCERPT_CHARS: Final[int] = 400
 _MAX_EXCERPT_CHARS: Final[int] = 1200
 _EXCERPT_STEP: Final[int] = 200
+#: 变更记录按「最新在前」返回，且头部先有近千字口径说明：默认首尾采样会把头部
+#: 预算耗在说明上、尾部只留最旧一条，恰好丢掉负责人/股东等关键变更。该维度改为
+#: 只保留头部并放宽单维度上限，确保最新记录进入模型上下文。
+_CHANGE_TOOL_KEY: Final[str] = "get_change_records"
+_MAX_EXCERPT_CHARS_BY_KEY: Final[dict[str, int]] = {_CHANGE_TOOL_KEY: 2400}
+_HEAD_ONLY_EXCERPT_KEYS: Final[frozenset[str]] = frozenset({_CHANGE_TOOL_KEY})
 #: 整个 JSON 上下文上限（按最终 JSON 编码长度计量，含元数据与转义开销）。
 _MAX_CONTEXT_CHARS: Final[int] = 10_000
 #: 装不下时的摘要收缩档位：先削片段预算，再逐档削摘要。
@@ -195,13 +201,14 @@ def _excerpt_budgets(
     budgets = [_BASE_EXCERPT_CHARS if draft.raw else 0 for draft in drafts]
     if _oversized(report, drafts, budgets, summary_cap, anchor_incomplete):
         return _shrink(report, drafts, budgets, summary_cap, anchor_incomplete)
-    for target in range(
-        _BASE_EXCERPT_CHARS + _EXCERPT_STEP, _MAX_EXCERPT_CHARS + 1, _EXCERPT_STEP
-    ):
+    limits = [
+        _MAX_EXCERPT_CHARS_BY_KEY.get(draft.finding.key, _MAX_EXCERPT_CHARS) for draft in drafts
+    ]
+    for target in range(_BASE_EXCERPT_CHARS + _EXCERPT_STEP, max(limits) + 1, _EXCERPT_STEP):
         for index, draft in enumerate(drafts):
             if draft.raw is None:
                 continue
-            raised = min(target, len(draft.raw))
+            raised = min(target, limits[index], len(draft.raw))
             if budgets[index] >= raised:
                 continue
             trial = [*budgets[:index], raised, *budgets[index + 1 :]]
@@ -264,11 +271,9 @@ def _assemble(
     )
 
 
-def _dimension_payload(
-    draft: _Draft, budget: int, summary_cap: int
-) -> AnalysisDimension:
+def _dimension_payload(draft: _Draft, budget: int, summary_cap: int) -> AnalysisDimension:
     finding = draft.finding
-    excerpt, state = _excerpt(draft.raw, budget)
+    excerpt, state = _excerpt(draft.raw, budget, head_only=finding.key in _HEAD_ONLY_EXCERPT_KEYS)
     return AnalysisDimension(
         key=finding.key,
         name=finding.name,
@@ -281,8 +286,14 @@ def _dimension_payload(
     )
 
 
-def _excerpt(raw: str | None, budget: int) -> tuple[str | None, RawAvailability]:
-    """按预算取原文片段：整段放得下即 complete，否则保留首尾并标记 sampled。"""
+def _excerpt(
+    raw: str | None, budget: int, *, head_only: bool = False
+) -> tuple[str | None, RawAvailability]:
+    """按预算取原文片段：整段放得下即 complete，否则按维度策略截断并标记 sampled。
+
+    ``head_only`` 用于「最新在前」的记录型原文（变更记录）：只留头部，避免尾部
+    采样反而留下最旧记录、错过最新关键变更。
+    """
     if raw is None:
         return None, "unavailable"
     if len(raw) <= budget:
@@ -290,6 +301,8 @@ def _excerpt(raw: str | None, budget: int) -> tuple[str | None, RawAvailability]
     if budget <= len(_OMISSION_MARKER):
         return raw[:budget], "sampled"
     keep = budget - len(_OMISSION_MARKER)
+    if head_only:
+        return raw[:keep] + _OMISSION_MARKER, "sampled"
     tail = keep // 3
     head = keep - tail
     return raw[:head] + _OMISSION_MARKER + raw[len(raw) - tail :], "sampled"

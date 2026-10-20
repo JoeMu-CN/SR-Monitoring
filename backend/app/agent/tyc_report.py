@@ -29,9 +29,14 @@ _BEIJING = timezone(timedelta(hours=8))
 _MAX_SUMMARY_CHARS = 200
 _MAX_EVIDENCE_ITEMS = 5
 _MAX_ITEM_CHARS = 40
+# 并列人员/股东变更做集合差时最多比较的条目数；超出时只记「项目+日期」。
+_MAX_CHANGE_DIFF_ITEMS = 5
 _SHELL_TOOL = "get_shell_company_check"
 # 变更记录维度：摘要要给出具体变更事实而不是「共有 N 条」，故单列工具名做专门处理。
 _CHANGE_TOOL = "get_change_records"
+# 分节式变更记录标题：「#### 第 1 条 · 2026-07-14 · 负责人变更（…）」。
+_CHANGE_SECTION_RE = re.compile(r"^#{2,6}\s*第\s*\d+\s*条\s*[·・]\s*(?P<rest>.+)$")
+_CHANGE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # 展示脱敏：手机号 / 座机 / 证件号（18 位或 15 位）；前后数字边界避免误伤长编号。
 _SENSITIVE_PATTERNS = (
@@ -266,7 +271,8 @@ def _build_finding(
     message = _coerce_text(entry.get("message"), f"{key}.message")
     if status is DimensionStatus.SUCCESS and raw is not None:
         facts = _parse_facts(raw)
-        if facts.abstract or facts.groups or not _EMPTY_MARKERS.search(raw):
+        change_items = _parse_change_sections(raw) if key == _CHANGE_TOOL else []
+        if facts.abstract or facts.groups or change_items or not _EMPTY_MARKERS.search(raw):
             hit = spec.risk_relevant
             summary = _summarize(facts) or "有记录"
             if key == _SHELL_TOOL:
@@ -276,8 +282,14 @@ def _build_finding(
                 if tag_count is not None:
                     summary = f"空壳识别标签 {tag_count} 项"
             elif key == _CHANGE_TOOL:
-                # 「共有 N 条变更记录」只说条数，不说变了什么；改用解析出的具体事实。
-                summary = _change_summary(facts) or summary
+                # 「共有 N 条变更记录」只说条数，不说变了什么；分节式原文优先，
+                # 旧版表格回退既有解析，二者都取不到时保留原始摘要。
+                summary = _join_change_items(change_items) or _change_summary(facts) or summary
+            evidence = (
+                change_items
+                if change_items
+                else [item for _, items in facts.groups for item in items]
+            )
             return DimensionFinding(
                 key=key,
                 name=spec.name,
@@ -285,9 +297,7 @@ def _build_finding(
                 risk_level=_risk_level(raw),
                 hit=hit,
                 summary=summary,
-                evidence_refs=[
-                    item for _, items in facts.groups for item in items
-                ][:_MAX_EVIDENCE_ITEMS],
+                evidence_refs=evidence[:_MAX_EVIDENCE_ITEMS],
                 raw_ref=f"dimensions.{key}.raw",
             )
         status = DimensionStatus.EMPTY
@@ -381,6 +391,115 @@ def _change_summary(facts: _Facts) -> str:
     if not items:
         return ""
     return _clip(mask_sensitive("；".join(items)), _MAX_SUMMARY_CHARS)
+
+
+def _join_change_items(items: list[str]) -> str:
+    if not items:
+        return ""
+    return _clip(mask_sensitive("；".join(items)), _MAX_SUMMARY_CHARS)
+
+
+def _parse_change_sections(raw: str) -> list[str]:
+    """解析分节式变更记录（当前上游形态）。
+
+    上游同一接口存在两种 Markdown 形态：旧版五行表格（``_parse_facts`` 处理）与
+    分节形态——每条记录一个「#### 第 N 条 · 日期 · 项目」标题，变更前/后值放在
+    ```text 代码块里。分节形态没有表格，旧解析只能退回「共有 N 条变更记录」，
+    因而在此单独解析，返回按原文顺序（最新在前）的事实条目：
+
+    - 单值变更（负责人、登记机关等）：「项目：变更前 → 变更后（日期）」；
+    - 少量并列值（股东、董监高）：「项目：新增 X；退出 Y（日期）」；
+    - 值过多或前后相同：只用「项目（日期）」，不臆造或截断成半句。
+    """
+    items: list[str] = []
+    date = ""
+    project = ""
+    before: str | None = None
+    after: str | None = None
+    field: str | None = None
+    fence: list[str] | None = None
+
+    def flush() -> None:
+        if not project:
+            return
+        text = project
+        pair = _change_pair_text(before, after)
+        if pair:
+            text = f"{project}：{pair}"
+        if date:
+            text = f"{text}（{date}）"
+        _append_fact(items, text)
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+        heading = _CHANGE_SECTION_RE.match(stripped)
+        if heading:
+            flush()
+            date, project = _split_change_heading(heading.group("rest"))
+            before = after = None
+            field = None
+            fence = None
+            continue
+        if not project:
+            continue
+        if stripped.startswith("#"):
+            field = (
+                "before"
+                if "变更前原文" in stripped
+                else "after"
+                if "变更后原文" in stripped
+                else None
+            )
+            continue
+        if stripped.startswith("```"):
+            if fence is None:
+                fence = []
+            else:
+                value = _WHITESPACE_RE.sub(" ", " ".join(fence)).strip()
+                if field == "before":
+                    before = value
+                elif field == "after":
+                    after = value
+                fence = None
+                field = None
+            continue
+        if fence is not None:
+            fence.append(stripped)
+    flush()
+    return items
+
+
+def _split_change_heading(rest: str) -> tuple[str, str]:
+    """标题载荷 → （日期，项目）；缺失日期时保持未知，不拿记录创建日期补齐。"""
+    parts = [part.strip() for part in re.split(r"[·・]", rest, maxsplit=1)]
+    if len(parts) == 2 and _CHANGE_DATE_RE.fullmatch(parts[0]):
+        return parts[0], parts[1]
+    return "", rest.strip()
+
+
+def _change_pair_text(before: str | None, after: str | None) -> str:
+    """变更前/后原文 → 可读对照；只做确定性的等值比较，不推断先后含义。"""
+    if not before or not after or before == after:
+        return ""
+    if _single_change_value(before) and _single_change_value(after):
+        return f"{before} → {after}"
+    before_items = before.split()
+    after_items = after.split()
+    if len(before_items) > _MAX_CHANGE_DIFF_ITEMS or len(after_items) > _MAX_CHANGE_DIFF_ITEMS:
+        return ""
+    added = [item for item in after_items if item not in before_items]
+    removed = [item for item in before_items if item not in after_items]
+    parts = []
+    if added:
+        parts.append("新增 " + "、".join(added))
+    if removed:
+        parts.append("退出 " + "、".join(removed))
+    return "；".join(parts)
+
+
+def _single_change_value(text: str) -> bool:
+    """单值变更：单个姓名/机构名，不含并列值，长度可控。"""
+    return len(text) <= 16 and not any(char.isspace() for char in text)
 
 
 def _risk_level(raw: str) -> RiskLevel | None:

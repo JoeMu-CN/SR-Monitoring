@@ -526,6 +526,113 @@ def test_change_records_without_date_column_omits_date_fragment() -> None:
     assert finding.summary == "股东变更：张弛 → 姜云富"
 
 
+# 当前上游返回的分节形态：每条记录一个标题，变更前后值放在 ```text 代码块里。
+RAW_CHANGE_RECORDS_SECTIONS = "\n".join(
+    [
+        "# 变更记录：江苏热联臻融供应链管理有限公司",
+        "",
+        "- tool: `get_change_records`",
+        "",
+        "> 时间口径：变更时间（changeTime）为本条记录变更时间，不能解释为任职起始日期。",
+        "> 摘要：该查询实体共有2条变更记录。",
+        "",
+        "| 字段 | 值 |",
+        "|---|---|",
+        "| 总数 | 2 |",
+        "",
+        "### 变更记录（2 条）",
+        "",
+        "#### 第 1 条 · 2026-07-14 · "
+        "负责人变更（法定代表人、负责人、首席代表、合伙事务执行人等变更）",
+        "",
+        "##### 变更前人员",
+        "",
+        "```text",
+        "张弛",
+        "```",
+        "",
+        "##### 变更后人员",
+        "",
+        "```text",
+        "姜云富",
+        "```",
+        "",
+        "##### 变更前原文",
+        "",
+        "```text",
+        "张弛",
+        "```",
+        "",
+        "##### 变更后原文",
+        "",
+        "```text",
+        "姜云富",
+        "```",
+        "",
+        "#### 第 2 条 · 2024-11-04 · 投资人变更（包括出资额、出资方式、出资日期、投资人名称等）",
+        "",
+        "##### 变更前原文",
+        "",
+        "```text",
+        "上海臻融实业有限公司 杭州热联集团股份有限公司",
+        "```",
+        "",
+        "##### 变更后原文",
+        "",
+        "```text",
+        "杭州热联集团股份有限公司 上海实臻金属科技有限公司",
+        "```",
+        "",
+    ]
+)
+
+
+def test_change_records_parse_section_format_with_before_after_blocks() -> None:
+    """分节形态：最新记录在头部，负责人变更必须解析出「前 → 后（日期）」。"""
+    finding = _build_change_records(RAW_CHANGE_RECORDS_SECTIONS)
+
+    assert finding.hit is True
+    assert finding.summary.startswith(
+        "负责人变更（法定代表人、负责人、首席代表、合伙事务执行人等变更）："
+        "张弛 → 姜云富（2026-07-14）"
+    )
+    assert "投资人变更" in finding.summary
+    assert "新增 上海实臻金属科技有限公司" in finding.summary
+    assert "退出 上海臻融实业有限公司" in finding.summary
+    assert (
+        "负责人变更（法定代表人、负责人、首席代表、合伙事务执行人等变更）："
+        "张弛 → 姜云富（2026-07-14）"
+    ) in finding.evidence_refs
+
+
+def test_change_records_roster_change_is_summarized_as_added_and_removed() -> None:
+    """人员清单变化按集合差给出新增/退出，不把长名单截断成半句。"""
+    raw = "\n".join(
+        [
+            "#### 第 1 条 · 2026-07-14 · 高级管理人员备案（董事、监事、经理等）",
+            "",
+            "##### 变更前原文",
+            "",
+            "```text",
+            "李涛（董事） 黄震宇（董事） 王剑（经理） 张弛（董事长）",
+            "```",
+            "",
+            "##### 变更后原文",
+            "",
+            "```text",
+            "李涛（董事） 黄震宇（董事） 王剑（经理） 姜云富（董事长）",
+            "```",
+            "",
+        ]
+    )
+
+    finding = _build_change_records(raw)
+
+    assert "新增 姜云富（董事长）" in finding.summary
+    assert "退出 张弛（董事长）" in finding.summary
+    assert "李涛（董事） 黄震宇（董事）" not in finding.summary
+
+
 def test_non_change_table_falls_back_to_preferred_column() -> None:
     """表头未命中变更列时回退通用列选取，司法解析等维度解析不受影响。"""
     finding = _findings_by_key(_build())["get_judicial_case"]

@@ -193,6 +193,68 @@ def test_sampled_excerpt_keeps_head_and_tail_with_explicit_marker() -> None:
     assert excerpt.endswith(TAIL_FACT)
 
 
+def _raw_change_records() -> str:
+    preamble = "\n".join(
+        f"> 口径说明{index}：变更时间不等同任职起始日期，不得以记录创建日期补齐。"
+        for index in range(20)
+    )
+    sections = []
+    for index in range(1, 8):
+        if index == 1:
+            project, before, after = "负责人变更（法定代表人）", "张弛", "姜云富"
+        elif index == 7:
+            project = "高级管理人员备案"
+            before, after = "王剑（董事，总经理）", "王剑（董事，经理）"
+        else:
+            project, before, after = f"备案变更{index}", f"前值{index}", f"后值{index}"
+        # 第 2 条起填充说明，使总长度超过单维度预算，同时保证最新一条仍在头部。
+        notes = (
+            [] if index == 1 else [f"> 记录说明{index}：仅用于撑满上下文预算。" for _ in range(15)]
+        )
+        sections.append(
+            "\n".join(
+                [
+                    f"#### 第 {index} 条 · 2025-11-0{index} · {project}",
+                    "",
+                    *notes,
+                    "",
+                    "##### 变更前原文",
+                    "",
+                    "```text",
+                    before,
+                    "```",
+                    "",
+                    "##### 变更后原文",
+                    "",
+                    "```text",
+                    after,
+                    "```",
+                    "",
+                ]
+            )
+        )
+    return (
+        "# 变更记录：上下文测试有限公司\n\n"
+        + preamble
+        + "\n\n### 变更记录（7 条）\n\n"
+        + "\n".join(sections)
+    )
+
+
+def test_change_records_excerpt_keeps_newest_records_instead_of_oldest_tail() -> None:
+    """变更记录「最新在前」：采样只留头部，最新负责人变更进入上下文，最旧一条不占尾部。"""
+    raw = _raw_change_records()
+    _, context = _build(_results({"get_change_records": _entry("success", raw)}))
+
+    dimension = context.dimensions[0]
+    excerpt = dimension.raw_excerpt
+    assert excerpt is not None
+    assert dimension.raw_state == "sampled"
+    assert "姜云富" in excerpt
+    assert "王剑（董事，总经理）" not in excerpt
+    assert excerpt.rstrip().endswith("…")
+
+
 def test_anchor_failure_marks_query_incomplete() -> None:
     """锚定未成功时即使维度齐全也标记查询未完成。"""
     results = _results({"get_risk_overview": _entry("success", "# 风险\n\n> 摘要：1 条。\n")})

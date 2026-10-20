@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 from mofcom_detail_support import (
+    CHANNEL_LIST_URL,
     DETAIL_MARKDOWN,
     ENTITY_TITLES,
     HOMEPAGE_URL,
@@ -25,6 +26,7 @@ from mofcom_detail_support import (
     detail_adapter,
     html_anchor,
     html_homepage,
+    is_channel_list,
     is_homepage,
     no_entity_details,
 )
@@ -353,7 +355,13 @@ def test_fetch_caps_detail_pages_at_eight(monkeypatch) -> None:
 
     items = asyncio.run(env.adapter.fetch())
 
-    assert [url for url in env.crawl_calls if not is_homepage(url)] == detail_urls[:8]
+    detail_calls = [
+        url
+        for url in env.crawl_calls
+        if not is_homepage(url) and not is_channel_list(url)
+    ]
+    assert detail_calls == detail_urls[:8]
+    assert env.crawl_calls.count(CHANNEL_LIST_URL) == 1
     assert len(items) == 24
 
 
@@ -365,3 +373,55 @@ def test_fetch_caps_entities_at_two_hundred(monkeypatch) -> None:
     items = asyncio.run(env.adapter.fetch())
 
     assert len(items) == 200
+
+
+def test_fetch_uses_channel_list_when_homepage_only_has_qa_page(monkeypatch) -> None:
+    """线上现场：首页只剩“答记者问”（正文无编号名单），栏目列表仍能补齐公告。
+
+    现场证据（2026-10-20）：首页合格链接只剩
+    ``/zhxx/art/2026/art_90f295...``（答记者问，正文只写“拉法特集团等14家”），
+    详情解析 0 实体 → 整轮采集报“均未解析出实体”。实体名单公告已滚出首页，
+    仍留在“规章及规范性文件”栏目列表，故必须合并栏目列表。
+    """
+    qa_url = "https://aqygzj.mofcom.gov.cn/zhxx/art/2026/art_90f295.html"
+    env = controlled_env(
+        monkeypatch,
+        homepage_body=html_homepage(html_anchor(qa_url, QUALIFYING_TITLE)),
+        detail_markdowns={qa_url: NO_ENTITY_DETAIL_MARKDOWN},
+        channel_markdown=f"* [{QUALIFYING_TITLE}]({QUALIFYING_DETAIL_URL})\n",
+    )
+
+    items = asyncio.run(env.adapter.fetch())
+
+    assert env.crawl_calls.count(CHANNEL_LIST_URL) == 1
+    assert [item.title for item in items] == ENTITY_TITLES
+    assert all(item.url == QUALIFYING_DETAIL_URL for item in items)
+
+
+def test_fetch_keeps_homepage_items_when_channel_list_unavailable(monkeypatch) -> None:
+    """栏目列表不可用只降级为“无补充链接”，不得连累首页链路。"""
+    env = controlled_env(
+        monkeypatch,
+        channel_error=SourceRequestFailed(
+            "监控轨 Crawl4AI 连接失败", error_kind="network_error"
+        ),
+    )
+
+    items = asyncio.run(env.adapter.fetch())
+
+    assert [item.title for item in items] == ENTITY_TITLES
+
+
+def test_fetch_dedupes_homepage_and_channel_links(monkeypatch) -> None:
+    """首页与栏目列表给出同一公告时只抓一次详情。"""
+    env = controlled_env(
+        monkeypatch,
+        channel_markdown=(
+            f"* [{QUALIFYING_TITLE}]({QUALIFYING_DETAIL_URL})\n"
+            f"* [{NON_QUALIFYING_TITLE}]({NON_QUALIFYING_DETAIL_URL})\n"
+        ),
+    )
+
+    asyncio.run(env.adapter.fetch())
+
+    assert env.crawl_calls.count(QUALIFYING_DETAIL_URL) == 1

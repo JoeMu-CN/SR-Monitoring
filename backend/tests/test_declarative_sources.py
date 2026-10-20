@@ -180,6 +180,39 @@ def test_html_preview_supports_attribute_operators_and_self_selector() -> None:
     assert str(first.url).endswith("t20260811_680260.shtml")
 
 
+def test_html_items_carry_only_json_safe_extra() -> None:
+    """HTML 列表项不得把 ``__html_node__`` 解析节点带进 ``extra``。
+
+    现场证据（2026-10-20 应急管理部事故通报）：extra 里的 ``_HtmlNode`` 会被
+    采集服务写进 ``raw_data`` JSONB，序列化直接抛 TypeError，整轮采集 failed。
+    """
+    spec = AdapterSpec.model_validate(
+        {
+            "format": "html",
+            "request": {"url": "https://www.mem.gov.cn/xw/zhsgxx/"},
+            "items_selector": 'a[href*="yjglbgzdt"]',
+            "mapping": {"title": "self", "content": "self", "url": "self@href"},
+        }
+    )
+    html = (
+        "<html><body><ul><li>"
+        '<a href="../yjglbgzdt/202608/t20260811_680260.shtml">'
+        "山西防汛四级响应<span>2026-08-11 20:12</span></a>"
+        "</li></ul></body></html>"
+    )
+    adapter = DeclarativeSourceAdapter(
+        "mem-zhsgxx",
+        spec,
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, text=html)),
+    )
+
+    items = asyncio.run(adapter.fetch())
+
+    assert len(items) == 1
+    assert all(not key.startswith("__") for key in items[0].extra)
+    assert json.dumps(items[0].extra, ensure_ascii=False)
+
+
 def test_html_selector_supports_all_css_attribute_operators() -> None:
     """所有 6 种 CSS attribute 操作符必须被识别。"""
     from app.signals.declarative import _HtmlNode, _matches_selector

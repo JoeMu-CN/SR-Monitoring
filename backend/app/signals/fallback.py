@@ -121,5 +121,5 @@ async def read_public_page_with_crawl4ai_for_monitor(
     target_host = (urlparse(url).hostname or "").rstrip(".").lower()
     if target_host:
         clear_transient_host_error(target_host)
-    logger.warning("mem-incident-bulletin fallback path used url=%s", url)
+    logger.warning("监控轨 Crawl4AI 回退抓取成功 url=%s", url)
     return markdown

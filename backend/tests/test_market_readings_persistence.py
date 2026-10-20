@@ -202,6 +202,32 @@ def test_none_extra_is_tolerated_and_not_persisted(db_session: Session) -> None:
     assert signal.raw_data["title"] == "None 读数"
 
 
+def test_unserializable_extra_is_dropped_instead_of_failing_run(
+    db_session: Session,
+) -> None:
+    """对抗性：extra 含不可 JSON 序列化值（如 HTML 解析节点）时丢弃该键并继续入库。
+
+    现场证据（2026-10-20 应急管理部事故通报）：声明式 HTML 适配器把
+    ``__html_node__`` 节点放进 extra，写入 JSONB 时抛
+    ``Object of type _HtmlNode is not JSON serializable``，整轮采集被标记 failed。
+    """
+    source = _source(db_session, "stub-unsafe-extra")
+    item = RawSourceItem(
+        external_id="stub-unsafe-1",
+        title="不可序列化读数",
+        content="正文",
+        extra={"symbol": "nf_CU0", "raw_node": object()},
+    )
+
+    run = collect_source(db_session, source, _StubAdapter("stub-unsafe-extra", [item]))
+
+    assert run.status == "succeeded"
+    assert run.created_count == 1
+    signal = _signal_row(db_session, source)
+    assert signal.raw_data is not None
+    assert signal.raw_data["source_extra"] == {"symbol": "nf_CU0"}
+
+
 @pytest.mark.parametrize("read_key", ["symbol", "last_price", "change_pct"])
 def test_each_market_observation_point_is_queryable(
     db_session: Session, read_key: str

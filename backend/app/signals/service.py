@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import Final, TypeVar
@@ -29,6 +31,8 @@ from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError
 
 _T = TypeVar("_T")
+
+logger = logging.getLogger(__name__)
 
 # 遗留 running 采集运行的保守收尾阈值：进程异常退出会留下无终态的 running
 # 记录，超过该时长（默认 30 分钟）才判定为已中断，避免误伤仍在执行的采集。
@@ -158,10 +162,39 @@ def _reading_raw_data(
     ``extra`` 为空（空 dict / None / 缺省）时返回 ``None``，走
     ``persist_signal_ingestions`` 的默认 ``signal.model_dump(mode="json")``，
     与本次改动前完全一致：不写空的 ``source_extra`` 键。
+
+    无法 JSON 序列化的值（例如适配器误把解析节点塞进 extra）只丢弃该键并
+    告警，绝不让单条适配器缺陷把整轮采集打成 failed。
     """
-    if not item.extra:
+    extra = _json_safe_extra(item.extra)
+    if extra is None:
         return None
-    return {**signal.model_dump(mode="json"), "source_extra": item.extra}
+    return {**signal.model_dump(mode="json"), "source_extra": extra}
+
+
+def _json_safe_extra(extra: object) -> dict[str, object] | None:
+    """把适配器 ``extra`` 收敛为可写入 JSONB 的字典；全部不可用时返回 None。"""
+    if not isinstance(extra, dict) or not extra:
+        return None
+    try:
+        json.dumps(extra, ensure_ascii=False)
+    except (TypeError, ValueError):
+        pass
+    else:
+        return extra
+    dropped: list[str] = []
+    safe: dict[str, object] = {}
+    for key, value in extra.items():
+        try:
+            json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            dropped.append(str(key))
+            continue
+        safe[key] = value
+    logger.warning(
+        "适配器结构化读数含无法序列化的值，已丢弃键 %s", ",".join(dropped) or "<unknown>"
+    )
+    return safe or None
 
 
 def _discard_provisional_run(session: Session, run_id: int) -> None:

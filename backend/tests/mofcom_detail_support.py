@@ -17,6 +17,8 @@ from app.signals import sources as sources_module
 from app.signals.request_control import ControlledResponse, SourceRequestFailed
 
 HOMEPAGE_URL = "https://aqygzj.mofcom.gov.cn/"
+# 栏目列表页（“规章及规范性文件”）：JS 渲染，只有 Crawl4AI 能拿到条目。
+CHANNEL_LIST_URL = "https://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/index.html"
 QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/24/art_30.html"
 SECOND_QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/24/art_31.html"
 NON_QUALIFYING_DETAIL_URL = "https://aqygzj.mofcom.gov.cn/art/2026/07/20/art_28.html"
@@ -120,6 +122,10 @@ def is_homepage(url: str) -> bool:
     return url.rstrip("/") == HOMEPAGE_URL.rstrip("/")
 
 
+def is_channel_list(url: str) -> bool:
+    return url.rstrip("/") == CHANNEL_LIST_URL.rstrip("/")
+
+
 def no_entity_details() -> dict[str, str]:
     """两条候选详情都成功抓取但解析不出任何实体的 Crawl4AI 桩结果。"""
     return {
@@ -148,6 +154,8 @@ def patch_crawl4ai(
     *,
     homepage: str = HOMEPAGE_MARKDOWN,
     details: dict[str, str | BaseException] | None = None,
+    channel_markdown: str = "",
+    channel_error: BaseException | None = None,
 ) -> None:
     """替换 fallback.read_public_page_with_crawl4ai_for_monitor。"""
 
@@ -155,6 +163,10 @@ def patch_crawl4ai(
         log.append(url)
         if is_homepage(url):
             return homepage
+        if is_channel_list(url):
+            if isinstance(channel_error, BaseException):
+                raise channel_error
+            return channel_markdown
         outcome = (details or {}).get(url)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -255,6 +267,8 @@ def controlled_env(
     homepage_body: str = HOMEPAGE_HTML,
     homepage_markdown: str = HOMEPAGE_MARKDOWN,
     detail_markdowns: dict[str, str | BaseException] | None = None,
+    channel_markdown: str = "",
+    channel_error: BaseException | None = None,
     guard: bool = False,
     async_client_fallback: bool = False,
 ) -> MofcomFetchEnv:
@@ -266,7 +280,12 @@ def controlled_env(
         guard_declarative_source(monkeypatch, source_calls)
     patch_controlled_get(monkeypatch, direct_calls, homepage_body=homepage_body)
     patch_crawl4ai(
-        monkeypatch, crawl_calls, homepage=homepage_markdown, details=detail_markdowns
+        monkeypatch,
+        crawl_calls,
+        homepage=homepage_markdown,
+        details=detail_markdowns,
+        channel_markdown=channel_markdown,
+        channel_error=channel_error,
     )
     if async_client_fallback:
         patch_async_client(monkeypatch, direct_calls)

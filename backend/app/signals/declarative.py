@@ -357,6 +357,12 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             raise SourceFetchError("有效期或生命周期映射值无效") from exc
         if not title or not content:
             raise SourceFetchError("字段映射后 title 或 content 为空")
+        # 只把行内公开字段放进 extra：HTML 格式的行携带 ``__html_node__``
+        # 解析节点（``_HtmlNode`` 实例），一旦原样写进 raw_data JSONB 就会在
+        # 序列化阶段抛 TypeError，把整轮采集打成 failed。
+        public_values = {
+            key: value for key, value in row.items() if not key.startswith("__")
+        }
         return RawSourceItem(
             external_id=external_id or "",
             title=title,
@@ -372,7 +378,7 @@ class DeclarativeSourceAdapter(PullSourceAdapter):
             lifecycle_reason=_optional_text(
                 read(mapping.lifecycle_reason) if mapping.lifecycle_reason else None
             ),
-            extra={"raw": row},
+            extra={"raw": public_values} if public_values else {},
         )
 
     def normalize(self, item: RawSourceItem) -> ManualSignalInput:

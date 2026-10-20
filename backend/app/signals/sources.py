@@ -17,6 +17,7 @@ import hashlib
 import html
 import io
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -43,6 +44,8 @@ MAX_OFAC_BYTES = 20 * 1024 * 1024
 # CCFI 表头「本期 YYYY-MM-DD」：周度指数发布日，按北京时间零点作为发布时刻。
 _SSE_CURRENT_PERIOD = re.compile(r"本期\s*(\d{4})-(\d{2})-(\d{2})")
 _SSE_TIMEZONE = timezone(timedelta(hours=8))
+
+logger = logging.getLogger(__name__)
 
 
 class SourceFetchError(RuntimeError):
@@ -2069,6 +2072,13 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
     # 间歇拦成 502，把 upstream_error 写进域名访问状态，导致连通徽标长期误报
     # “连通异常”。首页链接均为相对路径，urljoin 后详情页同样走 HTTPS。
     _LIST_URL = "https://aqygzj.mofcom.gov.cn/"
+    # 栏目列表页（“规章及规范性文件”）：实体名单公告长期留在这里，而首页每个
+    # 栏目只展示少量最新条目，公告一旦滚出首页，首页链路就再也找不到实体名单
+    # （只剩“答记者问”这类无编号名单的正文）。栏目页是 JS 渲染的空壳，直连
+    # HTML 只有 5KB 框架，必须走 Crawl4AI 才能拿到条目。
+    _CHANNEL_LIST_URLS = (
+        "https://aqygzj.mofcom.gov.cn/flzc/gzjgfxwj/index.html",
+    )
     # HTTP 白名单仅作回退保险：该站历史上曾 TLS 握手失败，若 HTTPS 再次不可用，
     # Crawl4AI 回退仍允许以 HTTP 明文抓取同一域名。
     _HTTP_ALLOW_HOSTS = frozenset({"aqygzj.mofcom.gov.cn"})
@@ -2102,6 +2112,14 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
             links = _parse_announcement_links_markdown(body, base_url=self._LIST_URL)
         else:
             links = _parse_announcement_links_html(body, base_url=self._LIST_URL)
+        # 1b. 首页条目会轮换：合并栏目列表，保证实体名单公告滚出首页后仍可发现。
+        #     栏目页抓取失败只告警，不阻断首页链路。
+        links = self._dedupe_links(
+            [
+                *links,
+                *await self._channel_list_links(read_public_page_with_crawl4ai_for_monitor),
+            ]
+        )
         # 2. 只挑实体/名单类公告（标题含"列入""管控名单""不可靠实体""反制措施"）
         detail_links = self._qualifying_links(links)
         if not detail_links:
@@ -2144,7 +2162,8 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
             # 候选详情存在且至少一次抓取成功，却未解析出任何实体：
             # 属解析失败，不能把 [] 当作成功空采集记录。
             raise SourceFetchError(
-                "商务部名单详情页均未解析出实体",
+                "商务部名单详情页均未解析出实体"
+                f"（候选 {len(candidates)} 条，示例 {candidates[0][1]}）",
                 error_kind="empty_result",
             )
         return items
@@ -2158,6 +2177,46 @@ class MofcomEntityDetailAdapter(PullSourceAdapter):
             for title, url in links
             if any(keyword in title for keyword in self._QUALIFY_KEYWORDS)
         ]
+
+    @staticmethod
+    def _dedupe_links(
+        links: list[tuple[str, str]],
+    ) -> list[tuple[str, str]]:
+        """按规范化 URL 去重，保留首次出现的顺序（首页新条目优先）。"""
+        seen: set[str] = set()
+        unique: list[tuple[str, str]] = []
+        for title, url in links:
+            key = canonicalize_url(url) or url
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append((title, url))
+        return unique
+
+    async def _channel_list_links(
+        self,
+        read_fallback: Callable[..., Awaitable[str]],
+    ) -> list[tuple[str, str]]:
+        """用 Crawl4AI 渲染栏目列表页并解析公告链接。
+
+        栏目页失效、Crawl4AI 不可用等情况一律降级为"没有补充链接"：首页链路
+        已提供最新条目时不能因补充源故障而整轮失败。
+        """
+        collected: list[tuple[str, str]] = []
+        for page_url in self._CHANNEL_LIST_URLS:
+            try:
+                markdown = await read_fallback(
+                    page_url, allow_http_hosts=self._HTTP_ALLOW_HOSTS
+                )
+            except (SourceFetchError, SourceRequestFailed) as exc:
+                logger.warning(
+                    "商务部栏目列表抓取失败，仅使用首页链接: %s: %s", page_url, exc
+                )
+                continue
+            collected.extend(
+                _parse_announcement_links_markdown(markdown, base_url=page_url)
+            )
+        return collected
 
     async def _fallback_qualifying_links(
         self,

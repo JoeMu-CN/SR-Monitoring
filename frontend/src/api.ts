@@ -285,7 +285,8 @@ export interface IntelligenceReportRead {
   id: number;
   event_id: number;
   category: IntelligenceCategory;
-  status: 'ready' | 'failed';
+  /** skipped = 门控判定不值得进入情报页（列表默认不返回，仅供 status=skipped 抽查）。 */
+  status: 'ready' | 'failed' | 'skipped';
   title: string;
   event_summary: string;
   event_type: string;
@@ -301,6 +302,8 @@ export interface IntelligenceReportRead {
   model: string;
   prompt_version: string;
   error: string | null;
+  /** 门控判定依据；仅 status='skipped' 的行有值。 */
+  gate_reason?: string | null;
   generated_at: string | null;
 }
 

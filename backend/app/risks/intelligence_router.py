@@ -1,9 +1,11 @@
 """情报聚合只读 API：政策情报 / 行业情报的 LLM 报告与风险提醒建议。
 
-- ``GET /api/v1/intelligence?tab=policy|industry``：按情报分类分页列出**已生成
-  （status='ready'）**的报告。失败行不出现在列表（页面是报告页，不展示失败噪声），
-  但仍可通过详情接口按 id 查看错误原因。
-- ``GET /api/v1/intelligence/{id}``：单条详情，含 failed 行的 error。
+- ``GET /api/v1/intelligence?tab=policy|industry``：按情报分类分页列出报告。
+  ``status=ready``（默认）只列已生成的报告；``status=skipped`` 列出门控判为
+  「不值得进入情报页」的事件及其依据，供运营抽查误杀与调参。failed 行不进列表
+  （页面是报告页，不展示失败噪声），但仍可通过详情接口按 id 查看错误原因。
+- ``GET /api/v1/intelligence/{id}``：单条详情，含 failed 行的 error 与 skipped
+  行的 gate_reason。
 
 权限复用 ``PERM_RISK_VIEW`` 与 risks 包的依赖别名：情报只读，不引入新的权限点，
 也不引入任何写接口（生成只由 Scheduler 触发）。
@@ -85,6 +87,7 @@ def _report_rows(
                 model=report.model,
                 prompt_version=report.prompt_version,
                 error=report.error,
+                gate_reason=report.gate_reason,
                 generated_at=report.generated_at,
             )
         )
@@ -96,15 +99,17 @@ def list_intelligence_reports(
     session: SessionDependency,
     _user: RiskView,
     tab: str = Query("policy", pattern="^(policy|industry)$"),
+    status_filter: str = Query("ready", alias="status", pattern="^(ready|skipped)$"),
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> IntelligenceReportListResponse:
-    ready = IntelligenceReport.status == "ready"
+    """按分类与状态分页列出报告；默认只列 ready，skipped 供运营抽查门控判定。"""
+    matched = IntelligenceReport.status == status_filter
     total = (
         session.scalar(
             select(func.count())
             .select_from(IntelligenceReport)
-            .where(IntelligenceReport.category == tab, ready)
+            .where(IntelligenceReport.category == tab, matched)
         )
         or 0
     )
@@ -112,7 +117,7 @@ def list_intelligence_reports(
         session.execute(
             select(IntelligenceReport, RiskEvent)
             .join(RiskEvent, RiskEvent.id == IntelligenceReport.event_id)
-            .where(IntelligenceReport.category == tab, ready)
+            .where(IntelligenceReport.category == tab, matched)
             .order_by(
                 IntelligenceReport.generated_at.desc().nullslast(),
                 IntelligenceReport.id.desc(),

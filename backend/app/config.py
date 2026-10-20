@@ -325,6 +325,30 @@ INTELLIGENCE_REPORT_BATCH = _int_env(
 INTELLIGENCE_RETRY_COOLDOWN_HOURS = _int_env(
     "INTELLIGENCE_RETRY_COOLDOWN_HOURS", 24, minimum=1, maximum=720
 )
+# 生成前的 LLM 相关性门控（两段式：门控 → 报告）。判定不相关的事件不发起报告调用，
+# 以 status='skipped' 落库并在列表隐藏；判定失败按 failed 冷却重试。
+INTELLIGENCE_GATE_ENABLED = os.getenv(
+    "INTELLIGENCE_GATE_ENABLED", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+_INTELLIGENCE_GATE_CATEGORY_CODES = frozenset(
+    code.strip()
+    for code in os.getenv("INTELLIGENCE_GATE_CATEGORIES", "policy").split(",")
+    if code.strip()
+)
+if not _INTELLIGENCE_GATE_CATEGORY_CODES <= {"policy", "industry"}:
+    raise RuntimeError(
+        "INTELLIGENCE_GATE_CATEGORIES 仅支持 policy / industry（逗号分隔，留空表示不启用门控）"
+    )
+#: 开启门控的情报分类；默认只政策情报（行业信源噪声低，且门控本身也要一次调用）。
+INTELLIGENCE_GATE_CATEGORIES = _INTELLIGENCE_GATE_CATEGORY_CODES
+# 门控只看正文前若干字符：判定「这条公告讲什么」不需要全文。
+INTELLIGENCE_GATE_MAX_CONTENT_CHARS = _int_env(
+    "INTELLIGENCE_GATE_MAX_CONTENT_CHARS", 800, minimum=100, maximum=4000
+)
+# 供应商画像里注入门控提示词的产品关键词上限（按出现频次取前 N，确定性排序）。
+INTELLIGENCE_GATE_SCOPE_KEYWORD_LIMIT = _int_env(
+    "INTELLIGENCE_GATE_SCOPE_KEYWORD_LIMIT", 40, minimum=5, maximum=200
+)
 # 海外供应链重点关注国家（ISO 3166-1 alpha-2，逗号分隔）。
 # 即使供应商清单尚未导入该国供应商，命中这些国家的事件也不被相关性过滤
 # 跳过（避免误滤海外供应链风险信号），并在放行理由中标记。

@@ -1,17 +1,25 @@
 """情报报告的批量生成（Scheduler 入口）：挑选待生成事件并逐条调用生成服务。
 
-与 ``intelligence_service`` 的分工：后者只负责「一条事件 → 一份报告」，本模块只
-负责「哪些事件还没报告」与「一批跑完不要互相踩」。两者都不碰提醒链路。
+与 ``intelligence_service`` 的分工：后者只负责「一条事件 → 一份报告」与「一条事件
+→ 一次门控判定」，本模块只负责「哪些事件还没处理」与「一批跑完不要互相踩」。
+两者都不碰提醒链路。
 
-待生成判定（三层，缺一不可）：
+待生成判定（四层，缺一不可）：
 1. 事件至少有一条关联信号，其信源被 policy / industry 维度声明（信源归属）。
 2. 事件类型不在 ``MARKET_EVENT_TYPES``（行情事件不走情报通道，由确定性行情链路处理）。
-3. 该事件还没有 status='ready' 的报告（已成功过就不重复消耗模型额度）。
+3. 该事件还没有 status IN ('ready', 'skipped') 的报告（已成功或已判定不相关都不重复
+   消耗模型额度；skipped 是「已判定」的幂等标记，口径升级由重判脚本处理）。
 4. 若上一次生成是 failed，距今必须超过 ``INTELLIGENCE_RETRY_COOLDOWN_HOURS``。
 
-第 1~3 条可在 SQL 里粗筛（按信源 code、事件类型与 ready 子查询），第 1 条的「同一事件
+第 1~3 条可在 SQL 里粗筛（按信源 code、事件类型与终态子查询），第 1 条的「同一事件
 全部信号必须同分类」与第 4 条需要 Python 判定，因此粗筛结果要乘以扫描倍数再
 截断到批大小。
+
+两段式门控
+----------
+``INTELLIGENCE_GATE_ENABLED`` 且分类落在 ``INTELLIGENCE_GATE_CATEGORIES`` 时，逐条先
+跑门控：放行才生成报告，不相关落 skipped，门控失败落 failed。关注域每批只组装一次
+（同分类共享），避免每条事件重复查供应商画像。
 """
 
 from __future__ import annotations
@@ -25,9 +33,11 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.ai.intelligence_providers import build_intelligence_provider
-from app.ai.intelligence_schemas import IntelligenceCategory
+from app.ai.intelligence_schemas import IntelligenceCategory, IntelligenceScope
 from app.ai.schemas import MARKET_EVENT_TYPES
 from app.config import (
+    INTELLIGENCE_GATE_CATEGORIES,
+    INTELLIGENCE_GATE_ENABLED,
     INTELLIGENCE_REPORT_BATCH,
     INTELLIGENCE_RETRY_COOLDOWN_HOURS,
     get_ai_settings,
@@ -35,8 +45,10 @@ from app.config import (
 from app.database import SessionLocal
 from app.risks.intelligence_models import IntelligenceReport
 from app.risks.intelligence_service import (
+    gate_event_for_intelligence,
     generate_intelligence_report,
     intelligence_source_categories,
+    load_intelligence_scope,
     resolve_intelligence_category,
 )
 from app.risks.models import RiskEvent, RiskEventSignal
@@ -47,14 +59,17 @@ logger = logging.getLogger("risks.intelligence")
 #: SQL 粗筛行里可能大部分被冷却期或归属冲突挡掉，因此放宽扫描倍数再截断到批大小。
 _SCAN_FACTOR = 5
 
+#: 已进入终态、不需要再次处理的状态：ready 已成功，skipped 已判定不相关。
+_SETTLED_STATUSES: tuple[str, ...] = ("ready", "skipped")
+
 # 当前部署为单 Scheduler 进程；扩为多副本前需改用数据库级领取或 advisory lock。
 _batch_lock = Lock()
 
 
 def _candidate_event_select() -> Select[tuple[int, RiskEvent]]:
-    """情报信源上「非行情事件且尚无 ready 报告」的事件，按事件 id 去重。"""
-    ready_event_ids = select(IntelligenceReport.event_id).where(
-        IntelligenceReport.status == "ready"
+    """情报信源上「非行情事件且尚无终态报告」的事件，按事件 id 去重。"""
+    settled_event_ids = select(IntelligenceReport.event_id).where(
+        IntelligenceReport.status.in_(_SETTLED_STATUSES)
     )
     return (
         select(RiskEventSignal.event_id, RiskEvent)
@@ -65,7 +80,7 @@ def _candidate_event_select() -> Select[tuple[int, RiskEvent]]:
             DataSource.code.in_(tuple(intelligence_source_categories())),
             # 行情事件（market / exchange_rate）由确定性行情链路处理，不消耗情报额度。
             RiskEvent.event_type.not_in(sorted(MARKET_EVENT_TYPES)),
-            RiskEvent.id.not_in(ready_event_ids),
+            RiskEvent.id.not_in(settled_event_ids),
         )
         .order_by(RiskEvent.id.desc())
         .limit(INTELLIGENCE_REPORT_BATCH * _SCAN_FACTOR)
@@ -136,7 +151,11 @@ def pending_intelligence_events(
 def generate_pending_intelligence_reports(
     *, limit: int | None = None, now_utc: datetime | None = None
 ) -> int:
-    """为待生成的政策/行业事件批量生成情报报告，返回成功条数。"""
+    """为待生成的政策/行业事件批量生成情报报告，返回成功条数。
+
+    门控开启时，本批内同分类的关注域只组装一次；门控拒绝与失败都不计入返回值，
+    但会写日志便于观察筛选效果。
+    """
     if not _batch_lock.acquire(blocking=False):
         logger.info("已有情报报告批次运行，跳过本次重复生成")
         return 0
@@ -149,12 +168,49 @@ def generate_pending_intelligence_reports(
                 logger.info("没有待生成的政策/行业情报报告")
                 return 0
             provider = build_intelligence_provider(get_ai_settings())
+            scopes: dict[IntelligenceCategory, IntelligenceScope] = {}
             generated = 0
+            skipped = 0
+            gate_failed = 0
             for event, category in targets:
+                gated = INTELLIGENCE_GATE_ENABLED and (
+                    category in INTELLIGENCE_GATE_CATEGORIES
+                )
+                if gated:
+                    scope = scopes.get(category)
+                    if scope is None:
+                        scope = load_intelligence_scope(session, category)
+                        scopes[category] = scope
+                    try:
+                        verdict = asyncio.run(
+                            gate_event_for_intelligence(
+                                session, event, category, scope=scope, provider=provider
+                            )
+                        )
+                    except Exception as exc:
+                        # 会话可能已被门控写坏，回滚后继续下一条（与报告失败同策略）。
+                        session.rollback()
+                        logger.exception(
+                            "情报门控异常: event=%s category=%s: %s",
+                            event.id,
+                            category,
+                            exc,
+                        )
+                        continue
+                    if verdict is not None:
+                        if verdict.status == "skipped":
+                            skipped += 1
+                        else:
+                            gate_failed += 1
+                        continue
                 try:
                     report = asyncio.run(
                         generate_intelligence_report(
-                            session, event, category, provider=provider
+                            session,
+                            event,
+                            category,
+                            provider=provider,
+                            gated=gated,
                         )
                     )
                 except Exception as exc:
@@ -166,7 +222,13 @@ def generate_pending_intelligence_reports(
                     continue
                 if report is not None and report.status == "ready":
                     generated += 1
-        logger.info("本次生成情报报告 %d/%d 条", generated, len(targets))
+        logger.info(
+            "本次生成情报报告 %d/%d 条（门控拒绝 %d，门控失败 %d）",
+            generated,
+            len(targets),
+            skipped,
+            gate_failed,
+        )
         return generated
     finally:
         _batch_lock.release()

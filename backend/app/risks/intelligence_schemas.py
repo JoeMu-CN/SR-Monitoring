@@ -31,6 +31,8 @@ class IntelligenceReportRead(BaseModel):
     model: str
     prompt_version: str
     error: str | None
+    #: 门控判定依据；仅 skipped 行有值，ready 行恒为 None。
+    gate_reason: str | None = None
     generated_at: datetime | None
 
 

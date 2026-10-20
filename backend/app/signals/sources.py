@@ -774,7 +774,7 @@ class CommodityFuturesAdapter(PullSourceAdapter):
 
     免费 JSON 直连（新浪期货行情接口 hq.sinajs.cn，需 Referer，GBK 编码），
     取核心 15 个品种主力连续合约（铜/铝/锌/镍/锡/铅/金/银/原油/燃料油/
-    螺纹钢/不锈钢/PTA/天然橡胶/棉花）。每条品种生成一条信号（含最新价与
+    螺纹钢/不锈钢/PTA/天然橡胶）。每条品种生成一条信号（含最新价与
     较昨结算涨跌幅），可匹配供应商关键原材料成本波动。external_id=
     fut-{code}-{YYYYMMDD}（每日一条，指纹稳定可去重）。
     """
@@ -797,7 +797,6 @@ class CommodityFuturesAdapter(PullSourceAdapter):
         ("nf_SS0", "不锈钢", "元/吨"),
         ("nf_TA0", "PTA", "元/吨"),
         ("nf_RU0", "天然橡胶", "元/吨"),
-        ("nf_CF0", "棉花", "元/吨"),
     )
 
     def __init__(

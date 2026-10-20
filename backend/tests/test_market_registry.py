@@ -1,7 +1,7 @@
 """行情指标注册表与运行时配置加载（Todo 7）。
 
 锁定三件最容易静默失效的事：
-1. 20 个指标齐备，且 ``extra_match`` 的键名/取值与适配器 ``RawSourceItem.extra``
+1. 19 个指标齐备，且 ``extra_match`` 的键名/取值与适配器 ``RawSourceItem.extra``
    逐字一致（不一致时 ``load_series`` 恒空、指标永远停在"数据积累中"却不报错）；
 2. 默认阈值落在可运营区间，不会因为手滑写出 0 或 999 这类永不/恒触发的配置；
 3. DB 运行时覆盖只在合法范围内生效，非法/越界值一律回退代码默认。
@@ -29,7 +29,7 @@ from app.signals.sources import CommodityFuturesAdapter, FxRatesAdapter
 
 FUTURES_CODES = {
     "fut-CU", "fut-AL", "fut-ZN", "fut-NI", "fut-SN", "fut-PB", "fut-AU", "fut-AG",
-    "fut-SC", "fut-FU", "fut-RB", "fut-SS", "fut-TA", "fut-RU", "fut-CF",
+    "fut-SC", "fut-FU", "fut-RB", "fut-SS", "fut-TA", "fut-RU",
 }  # fmt: skip
 FX_CODES = {"fx-CNY", "fx-JPY", "fx-CNY-JPY", "fx-CNY-KRW"}
 SEMI_CODES = {"semi-980017"}
@@ -59,10 +59,10 @@ def _isolated_market_config_cache() -> Generator[None]:
 
 
 def _commodity_body() -> str:
-    """新浪期货行情报文：15 个品种主力连续各一条（昨结 1000 → 最新 1050）。"""
+    """新浪期货行情报文：14 个品种主力连续各一条（昨结 1000 → 最新 1050）。"""
     symbols = ("nf_CU0", "nf_AL0", "nf_ZN0", "nf_NI0", "nf_SN0", "nf_PB0",
                "nf_AU0", "nf_AG0", "nf_SC0", "nf_FU0", "nf_RB0", "nf_SS0",
-               "nf_TA0", "nf_RU0", "nf_CF0")  # fmt: skip
+               "nf_TA0", "nf_RU0")  # fmt: skip
     rows = [
         f'var hq_str_{symbol}="品种,150000,1000.000,1020.000,1000.000,2000.000,'
         f"1050.000,2000.000,2000.000,1000.000,900.000,1,2,100.000,50,,"
@@ -87,7 +87,7 @@ def _commodity_extras() -> dict[str, dict[str, object]]:
         )
     )
     items = asyncio.run(CommodityFuturesAdapter(transport=transport).fetch())
-    assert len(items) == 15, "适配器应产出 15 个品种行情条目"
+    assert len(items) == 14, "适配器应产出 14 个品种行情条目"
     return {str(item.extra["symbol"]): item.extra for item in items}
 
 
@@ -139,12 +139,12 @@ def _write_config(db_session: Session, config: object, *, enabled: bool = True) 
 # ---------------------------------------------------------------------------
 
 
-def test_registry_contains_exactly_twenty_indicators() -> None:
+def test_registry_contains_expected_indicators() -> None:
     # Given / When / Then
     codes = {spec.code for spec in INDICATORS}
-    assert len(INDICATORS) == 20
+    assert len(INDICATORS) == 19
     assert codes == FUTURES_CODES | FX_CODES | SEMI_CODES
-    assert sum(1 for s in INDICATORS if s.source_code == "commodity-futures") == 15
+    assert sum(1 for s in INDICATORS if s.source_code == "commodity-futures") == 14
     assert sum(1 for s in INDICATORS if s.source_code == "fx-rates") == 4
     assert sum(1 for s in INDICATORS if s.source_code == "semiconductor-index") == 1
 

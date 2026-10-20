@@ -143,7 +143,6 @@ _FUTURES_TABLE: Final[tuple[tuple[str, str, str, str, tuple[str, ...]], ...]] = 
         "fut-RU", "nf_RU0", "天然橡胶主力", "元/吨",
         ("天然橡胶", "橡胶", "轮胎", "橡胶制品"),
     ),
-    ("fut-CF", "nf_CF0", "棉花主力", "元/吨", ("棉花", "纺织", "棉纱", "面料")),
 )
 
 # 汇率：code / 标签 / 观察点绑定键（extra_match） / 受影响结算币种。

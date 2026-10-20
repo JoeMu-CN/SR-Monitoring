@@ -731,4 +731,4 @@ def test_market_router_is_registered() -> None:
         "put",
         "delete",
     }
-    assert len(INDICATORS) == len(INDICATORS_BY_CODE) == 20
+    assert len(INDICATORS) == len(INDICATORS_BY_CODE) == 19

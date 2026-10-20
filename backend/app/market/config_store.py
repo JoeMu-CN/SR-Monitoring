@@ -14,7 +14,7 @@
 
     {"indicators": {
         "fut-CU": {"sustained_change_pct": 6, "shock_window": 4},
-        "fx-GBP": {"enabled": False},
+        "fx-CNY-JPY": {"enabled": False},
     }}
 """
 

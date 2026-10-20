@@ -18,7 +18,7 @@ import html
 import io
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
@@ -1604,15 +1604,19 @@ class CustomsAnnouncementAdapter(PullSourceAdapter):
 class FxRatesAdapter(PullSourceAdapter):
     """国际汇率（E1 汇率 / E3 成本维度）。
 
-    信息源：open.er-api.com（免费、无 key、JSON 直达，166 币种实时汇率）。
-    以 USD 为基准取关键币种（CNY/EUR/JPY/GBP），生成汇率信号，
-    供供应商成本/结算货币风险匹配。
+    信息源：open.er-api.com（免费、无 key、JSON 直达），一次请求返回以 **USD 为基准**
+    的全量汇率。据此产出 4 条信号：
+
+    - USD/CNY = ``rates["CNY"]``；USD/JPY = ``rates["JPY"]``；
+    - CNY/JPY = ``rates["JPY"] / rates["CNY"]``；CNY/KRW = ``rates["KRW"] / rates["CNY"]``
+      两条人民币基准口径由美元基准交叉换算得到，不额外请求。
+
+    绑定键与 :mod:`app.market.registry` 严格对齐：四条都写 ``pair``，但只有美元口径的
+    观察点写 ``currency``（人民币口径不写），避免与 USD/JPY 抢同一条观察点。
     """
 
     source_code = "fx-rates"
     endpoint = "https://open.er-api.com/v6/latest/USD"
-    _KEY_CURRENCIES = ("CNY", "EUR", "JPY", "GBP")
-    _MAX_ITEMS = 10
 
     def __init__(
         self,
@@ -1622,6 +1626,49 @@ class FxRatesAdapter(PullSourceAdapter):
     ) -> None:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+
+    @staticmethod
+    def _rate_of(rates: object, code: str) -> float | None:
+        """取以 USD 为基准的汇率；缺失/非数值/非正数（含分母为 0）返回 None。"""
+        if not isinstance(rates, Mapping):
+            return None
+        value = rates.get(code)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        rate = float(value)
+        if rate <= 0.0:
+            return None
+        return rate
+
+    def _usd_item(self, code: str, value: float, updated: str) -> RawSourceItem:
+        """美元基准观察点：文案与绑定键沿用既有口径（历史序列按 ``currency`` 落库）。"""
+        return RawSourceItem(
+            external_id=f"fx-{code}-{updated}",
+            title=f"汇率：USD/{code} = {value:.4f}",
+            content=f"1 美元兑 {code}：{value:.4f}；更新时间：{updated}",
+            url=self.endpoint,
+            validity_profile=ValidityProfile.MARKET_PRICE_POINT,
+            validity_key=f"fx-{code}",
+            extra={
+                "currency": code,
+                "pair": f"USD/{code}",
+                "rate": value,
+                "updated": updated,
+            },
+        )
+
+    def _cross_item(self, base: str, quote: str, value: float, updated: str) -> RawSourceItem:
+        """人民币基准交叉汇率观察点：**不写** ``currency`` 键，只靠 ``pair`` 绑定。"""
+        pair = f"{base}/{quote}"
+        return RawSourceItem(
+            external_id=f"fx-{base}-{quote}-{updated}",
+            title=f"汇率：{pair} = {value:.4f}",
+            content=f"1 {base} 兑 {quote}：{value:.4f}；更新时间：{updated}",
+            url=self.endpoint,
+            validity_profile=ValidityProfile.MARKET_PRICE_POINT,
+            validity_key=f"fx-{base}-{quote}",
+            extra={"pair": pair, "rate": value, "updated": updated},
+        )
 
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         del cursor
@@ -1661,25 +1708,18 @@ class FxRatesAdapter(PullSourceAdapter):
             raise SourceFetchError("汇率接口返回异常状态")
         rates = payload.get("rates") or {}
         updated = payload.get("time_last_update_utc") or ""
+        usd_cny = self._rate_of(rates, "CNY")
+        usd_jpy = self._rate_of(rates, "JPY")
+        usd_krw = self._rate_of(rates, "KRW")
         items: list[RawSourceItem] = []
-        for code in self._KEY_CURRENCIES:
-            value = rates.get(code)
-            if not isinstance(value, (int, float)):
-                continue
-            items.append(
-                RawSourceItem(
-                    external_id=f"fx-{code}-{updated}",
-                    title=f"汇率：USD/{code} = {value:.4f}",
-                    content=(
-                        f"1 美元兑 {code}：{value:.4f}；"
-                        f"更新时间：{updated}"
-                    ),
-                    url=self.endpoint,
-                    validity_profile=ValidityProfile.MARKET_PRICE_POINT,
-                    validity_key=f"fx-{code}",
-                    extra={"currency": code, "rate": value, "updated": updated},
-                )
-            )
+        if usd_cny is not None:
+            items.append(self._usd_item("CNY", usd_cny, updated))
+        if usd_jpy is not None:
+            items.append(self._usd_item("JPY", usd_jpy, updated))
+        if usd_cny is not None and usd_jpy is not None:
+            items.append(self._cross_item("CNY", "JPY", usd_jpy / usd_cny, updated))
+        if usd_cny is not None and usd_krw is not None:
+            items.append(self._cross_item("CNY", "KRW", usd_krw / usd_cny, updated))
         return items
 
     def normalize(self, item: RawSourceItem) -> ManualSignalInput:

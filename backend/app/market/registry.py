@@ -8,6 +8,11 @@
 运行时只允许覆盖阈值/窗口/标签与启停（见 :mod:`app.market.config_store`），
 ``source_code`` / ``extra_match`` / ``value_key`` / ``change_key`` / 事件类型
 等绑定身份字段不可配置，避免运行期把读数切到不存在的键上。
+
+汇率指标的绑定键分两种口径（合计仍为 4 条）：美元基准的 USD/CNY、USD/JPY 用
+``{"currency": ...}``（沿用既有历史序列），人民币基准的 CNY/JPY、CNY/KRW 用
+``{"pair": ...}``——CNY/JPY 的报价货币与 USD/JPY 相同（都是 JPY），若统一用
+``currency`` 键，两条指标就会抢同一条观察点。
 """
 
 from __future__ import annotations
@@ -141,12 +146,20 @@ _FUTURES_TABLE: Final[tuple[tuple[str, str, str, str, tuple[str, ...]], ...]] = 
     ("fut-CF", "nf_CF0", "棉花主力", "元/吨", ("棉花", "纺织", "棉纱", "面料")),
 )
 
-# 汇率：code / ISO 4217 币种 / 标签 / 供应商结算币种所对应的 USD 汇率对货币
-_FX_TABLE: Final[tuple[tuple[str, str, str, tuple[str, ...]], ...]] = (
-    ("fx-CNY", "CNY", "美元兑人民币汇率", ("USD",)),
-    ("fx-JPY", "JPY", "美元兑日元汇率", ("JPY",)),
-    ("fx-EUR", "EUR", "美元兑欧元汇率", ("EUR",)),
-    ("fx-GBP", "GBP", "美元兑英镑汇率", ("GBP",)),
+# 汇率：code / 标签 / 观察点绑定键（extra_match） / 受影响结算币种。
+# 报价口径按行注释：USD/CNY、USD/JPY 为美元基准口径；CNY/JPY、CNY/KRW 为人民币基准
+# 口径（由 USD 基准交叉换算得到）。四条指标的报价货币会重复（USD/JPY 与 CNY/JPY 的
+# 报价货币都是 JPY），所以**不能**统一用 {"currency": ...} 绑定，否则后一条指标会抢走
+# 前一条指标的观察点。具体取舍见下方 _fx_spec 注释。
+_FX_TABLE: Final[tuple[tuple[str, str, Mapping[str, str], tuple[str, ...]], ...]] = (
+    # USD/CNY：1 USD = X CNY
+    ("fx-CNY", "美元兑人民币汇率", {"currency": "CNY"}, ("USD",)),
+    # USD/JPY：1 USD = X JPY
+    ("fx-JPY", "美元兑日元汇率", {"currency": "JPY"}, ("JPY",)),
+    # CNY/JPY：1 CNY = X JPY（交叉汇率）
+    ("fx-CNY-JPY", "人民币兑日元汇率", {"pair": "CNY/JPY"}, ("JPY",)),
+    # CNY/KRW：1 CNY = X KRW（交叉汇率）
+    ("fx-CNY-KRW", "人民币兑韩元汇率", {"pair": "CNY/KRW"}, ("KRW",)),
 )
 
 
@@ -181,13 +194,28 @@ def _futures_spec(
 
 
 def _fx_spec(
-    code: str, currency: str, label: str, currencies: tuple[str, ...]
+    code: str,
+    label: str,
+    extra_match: Mapping[str, str],
+    currencies: tuple[str, ...],
 ) -> IndicatorSpec:
+    """构造一条汇率指标。
+
+    绑定键的取舍（改动前务必读完）：
+
+    - 美元口径指标（``fx-CNY`` / ``fx-JPY``）继续用 ``{"currency": ...}``：库里已有
+      约 14 天历史观察点按该键写在 ``raw_signals.raw_data.source_extra`` 上，改键等于
+      把这些指标的历史序列归零；
+    - 人民币口径指标（``fx-CNY-JPY`` / ``fx-CNY-KRW``）改用 ``{"pair": ...}``：USD/JPY
+      与 CNY/JPY 的报价货币都是 JPY，若四条指标都用 ``currency`` 键，两个指标会命中
+      同一条观察点、互相抢占序列。适配器对四条指标都写 ``pair`` 键，但只在美元口径的
+      观察点上写 ``currency`` 键，从结构上保证两条人民币口径指标不会与 USD/JPY 冲突。
+    """
     return IndicatorSpec(
         code=code,
         label=label,
         source_code=FX_SOURCE_CODE,
-        extra_match=MappingProxyType({"currency": currency}),
+        extra_match=MappingProxyType(dict(extra_match)),
         value_key="rate",
         change_key=None,  # 汇率接口只有现价，单日变化由相邻观察点推导
         unit="汇率",

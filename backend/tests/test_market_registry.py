@@ -31,7 +31,7 @@ FUTURES_CODES = {
     "fut-CU", "fut-AL", "fut-ZN", "fut-NI", "fut-SN", "fut-PB", "fut-AU", "fut-AG",
     "fut-SC", "fut-FU", "fut-RB", "fut-SS", "fut-TA", "fut-RU", "fut-CF",
 }  # fmt: skip
-FX_CODES = {"fx-CNY", "fx-JPY", "fx-EUR", "fx-GBP"}
+FX_CODES = {"fx-CNY", "fx-JPY", "fx-CNY-JPY", "fx-CNY-KRW"}
 SEMI_CODES = {"semi-980017"}
 
 # 计划书锁定的默认分档下限（期货 ≥15/≥10/≥5、汇率 ≥8/≥5/≥3、半导体 ≥25/≥15/≥8）
@@ -75,7 +75,7 @@ def _commodity_body() -> str:
 def _fx_body() -> str:
     return (
         '{"result":"success","time_last_update_utc":"Sun, 19 Oct 2026 00:00:01 +0000",'
-        '"rates":{"CNY":7.1042,"EUR":0.9213,"JPY":151.44,"GBP":0.7831,"AUD":1.5}}'
+        '"rates":{"CNY":7.1042,"JPY":151.44,"KRW":1432.5,"AUD":1.5}}'
     )
 
 
@@ -92,13 +92,17 @@ def _commodity_extras() -> dict[str, dict[str, object]]:
 
 
 def _fx_extras() -> dict[str, dict[str, object]]:
-    """适配器实际产出的 extra：{currency: extra}（不走网络）。"""
+    """适配器实际产出的 extra：{pair: extra}（不走网络）。
+
+    按 ``pair`` 建索引：四条指标的报价货币会重复（USD/JPY 与 CNY/JPY 都是 JPY），
+    用 ``currency`` 建索引会在人民币口径的观察点上取不到键。
+    """
     transport = httpx.MockTransport(
         lambda _request: httpx.Response(200, content=_fx_body().encode("utf-8"))
     )
     items = asyncio.run(FxRatesAdapter(transport=transport).fetch())
-    assert len(items) == 4, "适配器应产出 4 个币种汇率条目"
-    return {str(item.extra["currency"]): item.extra for item in items}
+    assert len(items) == 4, "适配器应产出 4 条汇率条目（2 美元口径 + 2 人民币口径）"
+    return {str(item.extra["pair"]): item.extra for item in items}
 
 
 def _all_fixture_extras() -> dict[str, Mapping[str, object]]:
@@ -216,8 +220,16 @@ def test_registry_binding_table_matches_plan() -> None:
     # 汇率的 affected_currencies 写死为供应商结算币种口径
     assert _spec("fx-CNY").affected_currencies == ("USD",)
     assert _spec("fx-JPY").affected_currencies == ("JPY",)
-    assert _spec("fx-EUR").affected_currencies == ("EUR",)
-    assert _spec("fx-GBP").affected_currencies == ("GBP",)
+    # 人民币口径的交叉汇率仍影响日元/韩元结算
+    assert _spec("fx-CNY-JPY").affected_currencies == ("JPY",)
+    assert _spec("fx-CNY-KRW").affected_currencies == ("KRW",)
+    # 绑定键分口径：美元口径沿用 currency（历史序列），人民币口径用 pair
+    assert _spec("fx-CNY").extra_match == {"currency": "CNY"}
+    assert _spec("fx-JPY").extra_match == {"currency": "JPY"}
+    assert _spec("fx-CNY-JPY").extra_match == {"pair": "CNY/JPY"}
+    assert _spec("fx-CNY-KRW").extra_match == {"pair": "CNY/KRW"}
+    assert _spec("fx-CNY-JPY").label == "人民币兑日元汇率"
+    assert _spec("fx-CNY-KRW").label == "人民币兑韩元汇率"
 
 
 # ---------------------------------------------------------------------------
@@ -263,17 +275,26 @@ def test_commodity_fixture_resolves_each_symbol_to_exactly_one_indicator() -> No
     assert {spec.code for spec in resolved if spec} == FUTURES_CODES
 
 
-def test_fx_fixture_resolves_each_currency_to_exactly_one_indicator() -> None:
+def test_fx_fixture_resolves_each_pair_to_exactly_one_indicator() -> None:
     # Given
     extras = _fx_extras()
 
-    # When / Then
+    # When / Then：4 条适配器读数逐条命中 4 个汇率指标，一一对应
     resolved = [resolve_indicator("fx-rates", extra) for extra in extras.values()]
     assert all(spec is not None for spec in resolved)
     assert {spec.code for spec in resolved if spec} == FX_CODES
-    cny = resolve_indicator("fx-rates", extras["CNY"])
+    assert {
+        pair: (spec.code if spec else None)
+        for pair, spec in zip(extras, resolved, strict=True)
+    } == {
+        "USD/CNY": "fx-CNY",
+        "USD/JPY": "fx-JPY",
+        "CNY/JPY": "fx-CNY-JPY",
+        "CNY/KRW": "fx-CNY-KRW",
+    }
+    cny = resolve_indicator("fx-rates", extras["USD/CNY"])
     assert cny is not None and cny.code == "fx-CNY"
-    assert cny.value_key == "rate" and "rate" in extras["CNY"]
+    assert cny.value_key == "rate" and "rate" in extras["USD/CNY"]
 
 
 def test_semiconductor_fixture_resolves_to_single_indicator() -> None:
@@ -357,6 +378,8 @@ def test_resolve_indicator_returns_spec_for_registered_extra() -> None:
         ("commodity-futures", ["symbol", "nf_CU0"]),  # 类型不可解析
         ("commodity-futures", "{不是 JSON"),  # 字符串不可解析
         ("fx-rates", {"currency": "AUD"}),  # 未登记币种
+        ("fx-rates", {"currency": "KRW"}),  # KRW 只按 pair 绑定，单 currency 键不命中
+        ("fx-rates", {"pair": "CNY/EUR"}),  # 未登记汇率对
         ("semiconductor-index", {"index_code": "980018"}),
         ("unknown-source", {"symbol": "nf_CU0"}),  # 未登记信源
         ("", {}),
@@ -441,7 +464,7 @@ def test_market_config_valid_overrides_are_applied(db_session: Session) -> None:
                         {"threshold_pct": 4, "severity": "medium"},
                     ],
                 },
-                "fx-GBP": {"enabled": False},
+                "fx-CNY-JPY": {"enabled": False},
             }
         },
     )
@@ -467,8 +490,8 @@ def test_market_config_valid_overrides_are_applied(db_session: Session) -> None:
     ]
     # 未覆盖指标保持默认；停用开关生效
     assert config.spec_for("fut-AL") == _spec("fut-AL")
-    assert config.is_enabled("fx-GBP") is False
-    assert config.spec_for("fx-GBP") is None
+    assert config.is_enabled("fx-CNY-JPY") is False
+    assert config.spec_for("fx-CNY-JPY") is None
 
 
 @pytest.mark.parametrize(

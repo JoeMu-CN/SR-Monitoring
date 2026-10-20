@@ -6,13 +6,14 @@ import asyncio
 from datetime import UTC, datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from app.signals.sources import FxRatesAdapter, SseShippingAdapter
 
 _FX_JSON = (
     '{"result": "success", "time_last_update_utc": "Thu, 20 Aug 2026 00:02:31 +0000", '
-    '"base_code": "USD", "rates": {"USD": 1, "CNY": 6.746073, "EUR": 0.858444, '
-    '"JPY": 158.548543, "GBP": 0.735868}}'
+    '"base_code": "USD", "rates": {"USD": 1, "CNY": 6.746073, "KRW": 1432.5, '
+    '"JPY": 158.548543}}'
 )
 
 _SHIPPING_MD = """
@@ -54,15 +55,62 @@ class TestFxRatesAdapter:
     def _adapter(self, handler) -> FxRatesAdapter:
         return FxRatesAdapter(transport=httpx.MockTransport(handler))
 
-    def test_fetch_parses_key_currencies(self) -> None:
+    def test_fetch_parses_four_rates_with_cross_pairs(self) -> None:
+        # Given
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=_FX_JSON.encode("utf-8"))
 
+        # When
         items = asyncio.run(self._adapter(handler).fetch())
-        assert len(items) == 4  # CNY/EUR/JPY/GBP
-        cny = [it for it in items if it.extra.get("currency") == "CNY"][0]
-        assert "6.7461" in cny.title
-        assert "2026-08-20" in cny.content or "Thu, 20 Aug" in cny.content
+
+        # Then：仍是 4 条（2 条美元基准 + 2 条人民币基准交叉换算）
+        assert len(items) == 4
+        pairs = [it.extra.get("pair") for it in items]
+        assert pairs == ["USD/CNY", "USD/JPY", "CNY/JPY", "CNY/KRW"]
+        by_pair = {str(it.extra["pair"]): it for it in items}
+
+        # USD/CNY 数值与文案保持既有口径
+        usd_cny = by_pair["USD/CNY"]
+        assert usd_cny.extra["currency"] == "CNY"
+        assert usd_cny.extra["rate"] == pytest.approx(6.746073)
+        assert "6.7461" in usd_cny.title
+        assert "USD/CNY" in usd_cny.title
+        assert "1 美元兑 CNY：6.7461" in usd_cny.content
+        assert "2026-08-20" in usd_cny.content or "Thu, 20 Aug" in usd_cny.content
+        assert usd_cny.validity_key == "fx-CNY"
+
+        # CNY/JPY、CNY/KRW 由 USD 基准交叉换算：rate(JPY)/rate(CNY)、rate(KRW)/rate(CNY)
+        cny_jpy = by_pair["CNY/JPY"]
+        assert cny_jpy.extra["rate"] == pytest.approx(158.548543 / 6.746073)
+        assert cny_jpy.title == f"汇率：CNY/JPY = {158.548543 / 6.746073:.4f}"
+        assert "1 CNY 兑 JPY" in cny_jpy.content
+        assert cny_jpy.external_id == "fx-CNY-JPY-Thu, 20 Aug 2026 00:02:31 +0000"
+        assert cny_jpy.validity_key == "fx-CNY-JPY"
+
+        cny_krw = by_pair["CNY/KRW"]
+        assert cny_krw.extra["rate"] == pytest.approx(1432.5 / 6.746073)
+        assert "1 CNY 兑 KRW" in cny_krw.content
+        assert cny_krw.validity_key == "fx-CNY-KRW"
+
+        # 人民币口径观察点不写 currency 键：从结构上避免与 USD/JPY 抢同一条观察点
+        assert "currency" not in cny_jpy.extra
+        assert "currency" not in cny_krw.extra
+
+    def test_fetch_skips_missing_or_invalid_rates_without_raising(self) -> None:
+        # Given：缺 JPY、KRW 非数值、CNY 为 0（分母不可用）
+        body = (
+            '{"result": "success", "time_last_update_utc": "Thu, 20 Aug 2026 00:02:31 +0000", '
+            '"rates": {"CNY": 0, "KRW": "not-a-number"}}'
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=body.encode("utf-8"))
+
+        # When
+        items = asyncio.run(self._adapter(handler).fetch())
+
+        # Then：全部跳过，不抛异常
+        assert items == []
 
     def test_healthcheck_ok(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

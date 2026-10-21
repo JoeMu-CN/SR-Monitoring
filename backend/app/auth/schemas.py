@@ -21,6 +21,26 @@ class UserRead(BaseModel):
     status: str
     last_login_at: datetime | None = None
     created_at: datetime
+    # 已分配负责供应商数量（仅列表页展示，完整列表走 /users/{id}/suppliers）。
+    supplier_count: int = 0
+
+
+class UserSupplierRead(BaseModel):
+    """负责供应商条目：只暴露列表页需要的三个字段。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    supplier_code: str
+    legal_name: str
+
+
+class UserSupplierUpdate(BaseModel):
+    """全量替换负责供应商；空数组表示清空。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    supplier_ids: list[int] = Field(default_factory=list)
 
 
 class UserCreate(BaseModel):

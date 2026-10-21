@@ -13,6 +13,7 @@ from app.auth.security import ensure_bootstrap_admin
 from app.config import RESEARCH_TRACK_ENABLED, validate_auth_config
 from app.database import SessionLocal, engine
 from app.market.router import router as market_router
+from app.notification.push_matrix_router import router as push_matrix_router
 from app.notification.router import router as notification_router
 from app.research.router import router as research_router
 from app.risks.intelligence_router import router as intelligence_router
@@ -39,6 +40,7 @@ app.include_router(intelligence_router)
 if RESEARCH_TRACK_ENABLED:
     app.include_router(research_router)
 app.include_router(notification_router)
+app.include_router(push_matrix_router)
 app.include_router(market_router)
 app.include_router(monitoring_health_router)
 app.include_router(auth_router)

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.config import NotificationSettings, get_notification_settings
 from app.database import SessionLocal
 from app.notification import delivery_queries as queries
+from app.notification import email_dispatch, user_targets
 from app.notification.models import NotificationDelivery
 from app.notification.providers import (
     NotificationError,
@@ -66,6 +67,7 @@ def scan_and_notify(
             "backfill_pending",
             "legacy_unlinked",
             "channels",
+            "email_targets",
         ),
         0,
     )
@@ -75,44 +77,63 @@ def scan_and_notify(
     }
     channels = queries.active_channels(session, set(provider_map))
     summary["channels"] = len(channels)
-    if not channels:
+    email_ready = email_dispatch.email_transport_ready(settings, set(provider_map))
+    if not channels and not email_ready:
         return summary
 
     global_row = queries.global_subscription(session, settings)
     push_levels = set(global_row.push_levels or list(settings.push_levels))
     quiet = global_row.quiet_hours
-    criteria = (current_alert_condition(current), RiskAlert.level.in_(push_levels))
+    # 邮件接收人每轮只加载一次；无有效方案时不做任何额外查询。
+    targets = user_targets.load_targets(session) if email_ready else []
+    summary["email_targets"] = len(targets)
+    # 候选级别 = 全局级别 ∪ 用户勾选级别（用户勾 P3 也能被扫到，固定渠道不受影响）
+    criteria_levels = set(push_levels)
+    if targets:
+        criteria_levels |= user_targets.subscribed_levels(session)
+    criteria = (current_alert_condition(current), RiskAlert.level.in_(criteria_levels))
     candidates = list(
         session.scalars(select(RiskAlert).where(*criteria).order_by(RiskAlert.id))
     )
 
     for alert in candidates:
-        for channel in channels:
-            existing = queries.get_delivery(session, alert.id, channel)
-            if existing is None:
-                if queries.is_backfill(alert, current):
-                    summary["backfill_pending"] += 1
-                    continue
-                summary["new_alerts"] += 1
-            else:
-                action = queries.plan_redelivery(existing, alert.level)
-                if action is None:
-                    continue
-                summary[action] += 1
-            _enqueue_or_send(
-                session, settings, provider_map[channel], alert, quiet, current,
-                summary, delivery=existing,
+        # 固定 4 渠道：仍只处理全局 push_levels 内的提醒，行为与接入邮件前一致。
+        if alert.level in push_levels:
+            for channel in channels:
+                existing = queries.get_delivery(session, alert.id, channel)
+                if existing is None:
+                    if queries.is_backfill(alert, current):
+                        summary["backfill_pending"] += 1
+                        continue
+                    summary["new_alerts"] += 1
+                else:
+                    action = queries.plan_redelivery(existing, alert.level)
+                    if action is None:
+                        continue
+                    summary[action] += 1
+                _enqueue_or_send(
+                    session, settings, provider_map[channel], alert, quiet, current,
+                    summary, delivery=existing,
+                )
+        # 邮件按用户展开：级别与供应商范围由 target 自己判定。
+        for target in targets:
+            email_dispatch.dispatch_email(
+                session, settings, alert, target, quiet, current, summary
             )
 
     session.flush()
     _process_merge_queue(
         session, settings, provider_map, channels, quiet, current, summary
     )
+    if email_ready:
+        email_dispatch.process_email_merge_queue(
+            session, settings, quiet, current, summary
+        )
     session.flush()
     return summary
 
 
-def _send_with_retry(
+def send_with_retry(
     session: Session,
     provider: NotifyProvider,
     delivery: NotificationDelivery,
@@ -190,7 +211,7 @@ def _enqueue_or_send(
     # 免打扰/限频判定：immediate 之外的取值同时是 summary 键
     action = queries.classify_dispatch(session, provider, alert, quiet, now, settings)
     if action == "immediate":
-        action = _send_with_retry(
+        action = send_with_retry(
             session, provider, delivery, title, content, settings, now=now
         )
     else:

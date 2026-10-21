@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import NotificationSettings
 from app.notification.models import NotificationDelivery, NotificationSubscription
@@ -35,15 +36,22 @@ RECOVERABLE_STATUSES = frozenset(
 
 
 def get_delivery(
-    session: Session, alert_id: int, channel: str
+    session: Session, alert_id: int, channel: str, *, user_id: int | None = None
 ) -> NotificationDelivery | None:
-    """按 (alert_id, channel) 精确取投递记录（唯一去重判据，无全局游标）。"""
-    return session.scalar(
-        select(NotificationDelivery).where(
-            NotificationDelivery.alert_id == alert_id,
-            NotificationDelivery.channel == channel,
-        )
-    )
+    """按 (alert_id, channel, user_id) 精确取投递记录（唯一去重判据，无全局游标）。
+
+    user_id 为 None 时只匹配固定渠道记录（user_id IS NULL），行为与既有实现一致；
+    邮件按用户投递时传 user_id，去重键自然扩展为三元组。
+    """
+    conditions: list[ColumnElement[bool]] = [
+        NotificationDelivery.alert_id == alert_id,
+        NotificationDelivery.channel == channel,
+    ]
+    if user_id is None:
+        conditions.append(NotificationDelivery.user_id.is_(None))
+    else:
+        conditions.append(NotificationDelivery.user_id == user_id)
+    return session.scalar(select(NotificationDelivery).where(*conditions))
 
 
 def count_legacy_unlinked(session: Session) -> int:
@@ -114,8 +122,31 @@ def in_quiet_hours(now: datetime, quiet_hours: dict[str, object] | None) -> bool
         return False
 
 
-def hourly_sent_count(session: Session, channel: str, now: datetime) -> int:
-    """单渠道近一小时已成功投递的消息数（摘要按消息数计 1）。"""
+def hourly_sent_count(
+    session: Session, channel: str, now: datetime, *, user_id: int | None = None
+) -> int:
+    """近一小时已成功投递的消息数（摘要按消息数计 1）。
+
+    user_id 为 None 时只统计固定渠道记录（user_id IS NULL），邮件记录不会
+    挤占钉钉/飞书的每小时额度；传 user_id 时统计该用户的邮件额度。
+    """
+    conditions: list[ColumnElement[bool]] = [
+        NotificationDelivery.channel == channel,
+        NotificationDelivery.status == "success",
+        NotificationDelivery.delivered_at >= now - timedelta(hours=1),
+    ]
+    if user_id is None:
+        conditions.append(NotificationDelivery.user_id.is_(None))
+    else:
+        conditions.append(NotificationDelivery.user_id == user_id)
+    return int(
+        session.scalar(select(func.count(NotificationDelivery.id)).where(*conditions))
+        or 0
+    )
+
+
+def hourly_sent_total(session: Session, channel: str, now: datetime) -> int:
+    """渠道全量近一小时成功数（含按用户投递），用于邮件全局额度。"""
     return int(
         session.scalar(
             select(func.count(NotificationDelivery.id)).where(
@@ -158,14 +189,29 @@ def classify_dispatch(
     quiet: dict[str, object] | None,
     now: datetime,
     settings: NotificationSettings,
+    *,
+    user_id: int | None = None,
+    email_limits: tuple[int, int] | None = None,
 ) -> str:
-    """投递前判定：返回 immediate / queued / quiet_suppressed / rate_limited。"""
+    """投递前判定：返回 immediate / queued / quiet_suppressed / rate_limited。
+
+    默认路径（``email_limits`` 为 None）与固定渠道语义完全一致：按渠道全量计数
+    与 ``settings.hourly_limit`` 判定。邮件路径改用「单用户额度 + 全局额度」双阈值，
+    ``email_limits`` 为 ``(user_limit, global_limit)``。
+    """
     if alert.level == "P2" and in_quiet_hours(now, quiet):
         return "quiet_suppressed"  # 免打扰仅抑制 P2（P1 始终可达）
     if alert.level != "P1":
         return "queued"
-    if hourly_sent_count(session, provider.name, now) >= settings.hourly_limit:
-        return "rate_limited"  # 单渠道超限转合并队列
+    if email_limits is None:
+        if hourly_sent_count(session, provider.name, now) >= settings.hourly_limit:
+            return "rate_limited"  # 单渠道超限转合并队列
+        return "immediate"
+    user_limit, global_limit = email_limits
+    if hourly_sent_count(session, provider.name, now, user_id=user_id) >= user_limit:
+        return "rate_limited"  # 单用户超限：转合并队列并留痕
+    if hourly_sent_total(session, provider.name, now) >= global_limit:
+        return "rate_limited"  # 邮件渠道全局超限，防 SMTP 账号被限流
     return "immediate"
 
 

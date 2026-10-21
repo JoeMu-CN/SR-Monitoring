@@ -2,6 +2,7 @@ import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {AlertTriangle, Save, UserPlus, X} from 'lucide-react';
 import {api, ApiError, type AuthUser, type UserCreatePayload, type UserRole, type UserStatus, type UserUpdatePayload} from '../api';
 import {useDialogFocus} from '../hooks/useDialogFocus';
+import {SupplierMultiSelect, type SupplierOption} from './SupplierMultiSelect';
 
 const roleOptions: ReadonlyArray<readonly [UserRole, string]> = [
   ['viewer', '查看者'], ['risk_analyst', '风险分析员'], ['risk_admin', '风险管理员'], ['platform_admin', '平台管理员'],
@@ -28,6 +29,16 @@ type UserEditorModalProps = UserEditorModalBaseProps & (
 
 const fieldClassName = 'min-h-11 w-full rounded-lg border border-[#c2c6d2] bg-[#f1f5f9] px-3 text-sm text-[#101d28] outline-none focus:ring-2 focus:ring-[#007aff] disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 
+/** 负责供应商多选控件的搜索框 id，供外层 label 关联。 */
+const supplierSearchId = 'user-editor-supplier-search';
+
+/** 按 id 集合比较两组供应商（顺序无关）。 */
+const sameSupplierSet = (left: readonly number[], right: readonly number[]) => {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((id) => rightSet.has(id));
+};
+
 export const UserEditorModal = (props: UserEditorModalProps) => {
   const {isOpen, onClose, onSaved, onRequestError} = props;
   const isEditing = props.mode === 'edit';
@@ -44,6 +55,11 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
   const [status, setStatus] = useState<UserStatus>('active');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // 负责供应商：已选项与初始值分开保存，切换角色离开 risk_analyst 时只保留在本地不提交。
+  const [suppliers, setSuppliers] = useState<readonly SupplierOption[]>([]);
+  const [initialSupplierIds, setInitialSupplierIds] = useState<readonly number[]>([]);
+  const [supplierError, setSupplierError] = useState<string | null>(null);
+  const supplierRequestRef = useRef(0);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -54,7 +70,21 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
     setRole(user?.role ?? 'viewer');
     setStatus(user?.status ?? 'active');
     setError(null);
-  }, [isOpen, user]);
+    setSuppliers([]);
+    setInitialSupplierIds([]);
+    setSupplierError(null);
+    if (!isEditing || !user) return;
+    const requestId = ++supplierRequestRef.current;
+    void api.auth.getUserSuppliers(user.id).then((items) => {
+      if (requestId !== supplierRequestRef.current) return;
+      const options = items.map((item) => ({id: item.id, supplier_code: item.supplier_code, legal_name: item.legal_name}));
+      setSuppliers(options);
+      setInitialSupplierIds(options.map((option) => option.id));
+    }).catch((caught: unknown) => {
+      if (requestId !== supplierRequestRef.current) return;
+      setSupplierError(caught instanceof Error ? caught.message : '负责供应商加载失败');
+    });
+  }, [isOpen, isEditing, user]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -85,13 +115,19 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
     setSaving(true);
     setError(null);
     try {
+      const supplierIds = suppliers.map((option) => option.id);
       if (!isEditing) {
         const payload: UserCreatePayload = {
           username: username.trim(), password, role,
           ...(displayName.trim() ? {display_name: displayName.trim()} : {}),
           ...(email.trim() ? {email: email.trim()} : {}),
         };
-        onSaved(await api.auth.createUser(payload), false);
+        const saved = await api.auth.createUser(payload);
+        // 只有风险分析员存在负责供应商归属；其他角色不写入。
+        if (role === 'risk_analyst') {
+          await api.auth.updateUserSuppliers(saved.id, supplierIds);
+        }
+        onSaved(saved, false);
         return;
       }
       if (!user) return;
@@ -101,12 +137,19 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
         ...(!isCurrentUser && role !== user.role ? {role} : {}),
         ...(!isCurrentUser && status !== user.status ? {status} : {}),
       };
-      if (Object.keys(payload).length === 0) {
+      // 离开 risk_analyst 角色时已选供应商保留在表单内但不提交。
+      const supplierChanged = !sameSupplierSet(supplierIds, initialSupplierIds);
+      const shouldSaveSuppliers = role === 'risk_analyst' && supplierChanged;
+      if (Object.keys(payload).length === 0 && !shouldSaveSuppliers) {
         setError('未检测到可保存的更改');
         return;
       }
       const sessionRevoked = !isCurrentUser && (role !== user.role || status !== user.status);
-      onSaved(await api.auth.updateUser(user.id, payload), sessionRevoked);
+      const saved = Object.keys(payload).length > 0 ? await api.auth.updateUser(user.id, payload) : user;
+      if (shouldSaveSuppliers) {
+        await api.auth.updateUserSuppliers(saved.id, supplierIds);
+      }
+      onSaved(saved, sessionRevoked);
     } catch (caught) {
       reportError(caught);
     } finally {
@@ -150,7 +193,16 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
             </label>}
           </div>
           {isCurrentUser && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">不能修改本人角色或状态，请由其他平台管理员操作。</p>}
+          {role === 'risk_analyst' && (
+            <div className="space-y-2">
+              <label htmlFor={supplierSearchId} className="block text-sm font-bold text-[#101d28] dark:text-white">负责供应商</label>
+              {supplierError && <p role="alert" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{supplierError}</p>}
+              <SupplierMultiSelect inputId={supplierSearchId} value={suppliers} onChange={setSuppliers} disabled={saving} />
+              <p className="text-xs text-[#727782] dark:text-slate-400">仅决定该分析员收到的实时风险邮件范围。</p>
+            </div>
+          )}
           {error && <p role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-[#ffdad6] p-3 text-sm text-[#93000a]"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{error}</p>}
+          <p className="text-xs text-slate-500">推送方案（P1/P2/P3、月报）在『推送管理』中配置。</p>
           <p className="text-xs text-[#727782] dark:text-slate-400">密码不会在用户列表或编辑表单中显示。</p>
           <footer className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end dark:border-slate-700">
             <button type="button" onClick={onClose} disabled={saving} className="min-h-11 rounded-xl border border-[#c2c6d2] px-5 text-sm font-bold text-[#424751] hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">取消</button>

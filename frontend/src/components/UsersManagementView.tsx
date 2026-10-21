@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
-import {AlertTriangle, KeyRound, Pencil, RefreshCw, UserPlus, Users} from 'lucide-react';
+import {AlertTriangle, BellRing, KeyRound, Pencil, RefreshCw, UserPlus, Users} from 'lucide-react';
 import {api, ApiError, type AuthUser, type UserRole, type UserStatus} from '../api';
+import {PushMatrixModal} from './PushMatrixModal';
 import {UserEditorModal} from './UserEditorModal';
 import {UserPasswordResetModal} from './UserPasswordResetModal';
 
@@ -36,6 +37,7 @@ export const UsersManagementView = ({currentUser, onRequestError, onCurrentUserU
   const [retryKey, setRetryKey] = useState(0);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [resetUser, setResetUser] = useState<AuthUser | null>(null);
+  const [pushMatrixOpen, setPushMatrixOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const listGenerationRef = useRef(0);
 
@@ -81,7 +83,10 @@ export const UsersManagementView = ({currentUser, onRequestError, onCurrentUserU
     <div className="space-y-5 pb-20 lg:pb-8">
       <header className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div><h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">用户管理</h1><p className="mt-0.5 text-xs text-[#424751] dark:text-slate-400">管理平台账号、角色和访问状态。</p></div>
-        <button type="button" onClick={() => setEditor({mode: 'create'})} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#007aff] px-4 text-sm font-bold text-white hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff] focus:ring-offset-2 sm:w-auto"><UserPlus aria-hidden="true" className="h-4 w-4" />创建用户</button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          {currentUser.role === 'platform_admin' && <button type="button" onClick={() => setPushMatrixOpen(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#c2c6d2] bg-white px-4 text-sm font-bold text-[#007aff] hover:bg-[#eef6ff] focus:outline-none focus:ring-2 focus:ring-[#007aff] dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800 sm:w-auto"><BellRing aria-hidden="true" className="h-4 w-4" />推送管理</button>}
+          <button type="button" onClick={() => setEditor({mode: 'create'})} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#007aff] px-4 text-sm font-bold text-white hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff] focus:ring-offset-2 sm:w-auto"><UserPlus aria-hidden="true" className="h-4 w-4" />创建用户</button>
+        </div>
       </header>
       {notice && <div role="status" className="flex items-start justify-between gap-3 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/40 dark:text-green-200"><span>{notice}</span><button type="button" aria-label="关闭提示" onClick={() => setNotice(null)} className="min-h-11 px-2 text-xs font-bold underline focus:outline-none focus:ring-2 focus:ring-[#007aff]">关闭</button></div>}
       <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60">
@@ -98,6 +103,7 @@ export const UsersManagementView = ({currentUser, onRequestError, onCurrentUserU
         ? <UserEditorModal isOpen mode="edit" user={editor.user} isCurrentUser={editor.user.id === currentUser.id} onClose={() => setEditor(null)} onSaved={saveUser} onRequestError={onRequestError} />
         : <UserEditorModal isOpen={editor !== null} mode="create" onClose={() => setEditor(null)} onSaved={saveUser} onRequestError={onRequestError} />}
       <UserPasswordResetModal isOpen={resetUser !== null} user={resetUser} onClose={() => setResetUser(null)} onReset={resetPassword} onRequestError={onRequestError} />
+      <PushMatrixModal isOpen={pushMatrixOpen} onClose={() => setPushMatrixOpen(false)} onSaved={() => setNotice('已保存推送方案。')} onRequestError={onRequestError} />
     </div>
   );
 };

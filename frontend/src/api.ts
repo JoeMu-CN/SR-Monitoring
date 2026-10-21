@@ -1061,7 +1061,37 @@ export interface AuthUser {
   status: UserStatus;
   last_login_at: string | null;
   created_at: string;
+  /**
+   * 已分配负责供应商数量（后端列表接口总会返回）。
+   *
+   * 可选是因为登录响应与历史构造对象未必带该字段，读取处一律按 0 兜底。
+   */
+  supplier_count?: number;
 }
+
+/** 用户负责的供应商条目：只暴露多选控件需要的三个字段。 */
+export interface UserSupplierItem {
+  id: number;
+  supplier_code: string;
+  legal_name: string;
+}
+
+/** 推送管理矩阵行：用户基本信息 + 四个推送开关 + 已分配供应商数量。 */
+export interface PushMatrixRow {
+  user_id: number;
+  username: string;
+  display_name: string | null;
+  role: UserRole;
+  email: string | null;
+  push_p1: boolean;
+  push_p2: boolean;
+  push_p3: boolean;
+  push_monthly_report: boolean;
+  supplier_count: number;
+}
+
+/** 矩阵单行更新：只提交发生变化的行，未提交的行保持原样。 */
+export type PushMatrixUpdate = Pick<PushMatrixRow, 'user_id' | 'push_p1' | 'push_p2' | 'push_p3' | 'push_monthly_report'>;
 
 export interface AuthMeResponse {
   user: AuthUser;
@@ -1302,6 +1332,19 @@ export const api = {
     resetPassword: (id: number, payload: PasswordResetPayload) => request<{detail: string}>(`/api/v1/auth/users/${id}/password-reset`, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
     }),
+    // 用户负责的供应商：risk_analyst 的实时推送范围数据源。
+    getUserSuppliers: (id: number) => request<readonly UserSupplierItem[]>(`/api/v1/auth/users/${id}/suppliers`),
+    // 全量替换负责供应商；空数组表示清空，非空仅 risk_analyst 可提交。
+    updateUserSuppliers: (id: number, supplierIds: readonly number[]) => request<readonly UserSupplierItem[]>(`/api/v1/auth/users/${id}/suppliers`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({supplier_ids: [...supplierIds]}),
+    }),
+  },
+  // 推送管理矩阵：行=全部用户，列=P1/P2/P3/月报；viewer 行四列恒为 false。
+  notifications: {
+    getPushMatrix: () => request<readonly PushMatrixRow[]>('/api/v1/notifications/push-matrix'),
+    updatePushMatrix: (items: readonly PushMatrixUpdate[]) => request<readonly PushMatrixRow[]>('/api/v1/notifications/push-matrix', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({items: [...items]}),
+    }),
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
   // 当前提醒全量计数：概览口径专用，不受上面列表 limit=100 的单页截断影响。
@@ -1314,6 +1357,14 @@ export const api = {
   ),
   intelligenceReport: (id: number) => request<IntelligenceReportRead>(`/api/v1/intelligence/${id}`),
   suppliers: () => request<SupplierListResponse>('/api/v1/suppliers?limit=100'),
+  /**
+   * 供应商候选搜索：单页取前 100 条，用于「负责供应商」多选控件。
+   *
+   * 与 supplierAll 不同——这里按关键字取第一页，不做全量分页聚合，避免一次搜索拉全量名录。
+   */
+  searchSuppliers: (keyword: string) => request<SupplierListResponse>(
+    `/api/v1/suppliers?q=${encodeURIComponent(keyword)}&limit=${SUPPLIER_MAX_LIMIT}&offset=0`,
+  ),
   /**
    * 名录单页展示：按后端单次上限逐页拉取并聚合，直到取满同一筛选口径的 total。
    * 依赖 total 而不是「拿到空页」来终止，避免后端截断或并发增删导致漏数据/死循环。

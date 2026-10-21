@@ -6,7 +6,7 @@ import {UsersManagementView} from './UsersManagementView';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
-  return {...actual, api: {...actual.api, auth: {...actual.api.auth, listUsers: vi.fn(), createUser: vi.fn(), updateUser: vi.fn(), resetPassword: vi.fn()}}};
+  return {...actual, api: {...actual.api, auth: {...actual.api.auth, listUsers: vi.fn(), createUser: vi.fn(), updateUser: vi.fn(), resetPassword: vi.fn()}, notifications: {getPushMatrix: vi.fn(), updatePushMatrix: vi.fn()}}};
 });
 
 const admin = {id: 1, username: 'platform-admin', display_name: '平台管理员', email: 'admin@example.com', role: 'platform_admin', status: 'active', last_login_at: null, created_at: '2026-01-01T00:00:00Z'} satisfies AuthUser;
@@ -29,7 +29,6 @@ const createDeferred = <Value,>(): Deferred<Value> => {
 
 const renderView = (onRequestError = vi.fn(), onCurrentUserUpdated?: (user: AuthUser) => void) =>
   render(<UsersManagementView currentUser={admin} onRequestError={onRequestError} onCurrentUserUpdated={onCurrentUserUpdated} />);
-
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -119,5 +118,30 @@ describe('UsersManagementView', () => {
     await user.click(within(dialog).getByRole('button', {name: '保存更改'}));
 
     await waitFor(() => expect(onCurrentUserUpdated).toHaveBeenCalledWith(updatedAdmin));
+  });
+
+  it('提供推送管理入口并打开推送矩阵弹窗', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.auth.listUsers).mockResolvedValue([admin, analyst]);
+    vi.mocked(api.notifications.getPushMatrix).mockResolvedValue([{
+      user_id: 2, username: 'analyst01', display_name: '分析员', role: 'risk_analyst', email: 'analyst@example.com',
+      push_p1: false, push_p2: false, push_p3: false, push_monthly_report: false, supplier_count: 0,
+    }]);
+
+    renderView();
+    const entry = await screen.findByRole('button', {name: '推送管理'});
+    await user.click(entry);
+
+    expect(await screen.findByRole('dialog', {name: '推送管理'})).toBeInTheDocument();
+    expect(api.notifications.getPushMatrix).toHaveBeenCalledTimes(1);
+  });
+
+  it('非平台管理员不展示推送管理入口', async () => {
+    vi.mocked(api.auth.listUsers).mockResolvedValue([admin]);
+
+    render(<UsersManagementView currentUser={{...analyst, role: 'risk_admin'}} onRequestError={vi.fn()} />);
+
+    expect(await screen.findByRole('button', {name: '创建用户'})).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: '推送管理'})).toBeNull();
   });
 });

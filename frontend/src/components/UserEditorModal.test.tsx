@@ -1,16 +1,19 @@
-import {afterEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import {useState} from 'react';
 import userEvent from '@testing-library/user-event';
-import {api, ApiError, type AuthUser} from '../api';
+import {api, ApiError, type AuthUser, type SupplierListResponse} from '../api';
 import {UserEditorModal} from './UserEditorModal';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
-  return {...actual, api: {...actual.api, auth: {...actual.api.auth, createUser: vi.fn(), updateUser: vi.fn()}}};
+  return {...actual, api: {...actual.api, searchSuppliers: vi.fn(), auth: {...actual.api.auth, createUser: vi.fn(), updateUser: vi.fn(), getUserSuppliers: vi.fn(), updateUserSuppliers: vi.fn()}}};
 });
 
 const analyst = {id: 2, username: 'analyst01', display_name: '分析员', email: 'analyst@example.com', role: 'risk_analyst', status: 'active', last_login_at: null, created_at: '2026-01-02T00:00:00Z'} satisfies AuthUser;
+
+const supplierOption = {id: 5, supplier_code: 'SUP-005', legal_name: '丙公司'};
+const supplierOther = {id: 6, supplier_code: 'SUP-006', legal_name: '丁公司'};
 
 type CreateOverrides = Partial<Pick<{onClose: () => void; onSaved: (user: AuthUser, sessionRevoked: boolean) => void; onRequestError: (error: ApiError) => void}, 'onClose' | 'onSaved' | 'onRequestError'>>;
 type EditOverrides = Partial<Pick<{onClose: () => void; onSaved: (user: AuthUser, sessionRevoked: boolean) => void; onRequestError: (error: ApiError) => void; isCurrentUser: boolean}, 'onClose' | 'onSaved' | 'onRequestError' | 'isCurrentUser'>>;
@@ -29,6 +32,12 @@ const CreateFocusHarness = () => {
     <UserEditorModal isOpen={isOpen} mode="create" onClose={() => setIsOpen(false)} onSaved={vi.fn()} onRequestError={vi.fn()} />
   </>;
 };
+
+beforeEach(() => {
+  vi.mocked(api.auth.getUserSuppliers).mockResolvedValue([]);
+  vi.mocked(api.auth.updateUserSuppliers).mockResolvedValue([]);
+  vi.mocked(api.searchSuppliers).mockResolvedValue({items: [], total: 0, limit: 100, offset: 0} as SupplierListResponse);
+});
 
 afterEach(() => {
   cleanup();
@@ -159,5 +168,89 @@ describe('UserEditorModal', () => {
     renderCreate({onClose});
     await user.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('仅风险分析员显示负责供应商控件', async () => {
+    const user = userEvent.setup();
+
+    renderCreate();
+    expect(screen.queryByLabelText('负责供应商')).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText('角色'), 'risk_analyst');
+    expect(screen.getByLabelText('负责供应商')).toBeInTheDocument();
+  });
+
+  it('切换角色离开风险分析员后已选供应商保留但不显示', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.searchSuppliers).mockResolvedValue({items: [supplierOption], total: 1, limit: 100, offset: 0} as SupplierListResponse);
+
+    renderCreate();
+    await user.selectOptions(screen.getByLabelText('角色'), 'risk_analyst');
+    await user.type(screen.getByPlaceholderText('输入供应商编码或名称搜索'), '丙');
+    await user.click(await screen.findByRole('option', {name: /丙公司/}));
+    expect(screen.getByText('SUP-005')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('角色'), 'viewer');
+    expect(screen.queryByText('SUP-005')).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText('角色'), 'risk_analyst');
+    expect(screen.getByText('SUP-005')).toBeInTheDocument();
+  });
+
+  it('编辑态加载已分配的负责供应商', async () => {
+    vi.mocked(api.auth.getUserSuppliers).mockResolvedValue([supplierOption]);
+
+    renderEdit(analyst);
+
+    expect(await screen.findByText('SUP-005')).toBeInTheDocument();
+  });
+
+  it('负责供应商加载失败时展示行内错误且不阻塞其他字段', async () => {
+    vi.mocked(api.auth.getUserSuppliers).mockRejectedValue(new ApiError(500, '供应商加载失败'));
+
+    renderEdit(analyst);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('供应商加载失败');
+    expect(screen.getByLabelText('显示名称')).toBeEnabled();
+  });
+
+  it('保存时先更新用户再写入负责供应商', async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    const updated = {...analyst, display_name: '高级分析员'};
+    vi.mocked(api.auth.updateUser).mockResolvedValue(updated);
+    vi.mocked(api.auth.getUserSuppliers).mockResolvedValue([supplierOption]);
+    vi.mocked(api.searchSuppliers).mockResolvedValue({items: [supplierOther], total: 1, limit: 100, offset: 0} as SupplierListResponse);
+
+    renderEdit(analyst, {onSaved});
+    await screen.findByText('SUP-005');
+    await user.clear(screen.getByLabelText('显示名称'));
+    await user.type(screen.getByLabelText('显示名称'), '高级分析员');
+    await user.type(screen.getByPlaceholderText('输入供应商编码或名称搜索'), '丁');
+    await user.click(await screen.findByRole('option', {name: /丁公司/}));
+    await user.click(screen.getByRole('button', {name: '保存更改'}));
+
+    await waitFor(() => expect(api.auth.updateUserSuppliers).toHaveBeenCalledWith(2, [5, 6]));
+    expect(api.auth.updateUser).toHaveBeenCalledWith(2, {display_name: '高级分析员'});
+    expect(vi.mocked(api.auth.updateUser).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.auth.updateUserSuppliers).mock.invocationCallOrder[0]!,
+    );
+    expect(onSaved).toHaveBeenCalledWith(updated, false);
+  });
+
+  it('写入负责供应商失败时停留弹窗并展示错误', async () => {
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    vi.mocked(api.auth.getUserSuppliers).mockResolvedValue([supplierOption]);
+    vi.mocked(api.auth.updateUserSuppliers).mockRejectedValue(new ApiError(422, '仅风险分析员可分配负责供应商'));
+
+    renderEdit(analyst, {onSaved});
+    await screen.findByText('SUP-005');
+    await user.click(screen.getByRole('button', {name: '移除 丙公司'}));
+    await user.click(screen.getByRole('button', {name: '保存更改'}));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('仅风险分析员可分配负责供应商');
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', {name: '编辑用户'})).toBeInTheDocument();
   });
 });

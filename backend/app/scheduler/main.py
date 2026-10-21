@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import (
+    NOTIFY_MONTHLY_REPORT_CRON,
     RESEARCH_DAILY_CRON,
     RESEARCH_DAILY_TOPIC,
     RESEARCH_MONTHLY_CRON,
@@ -30,6 +31,7 @@ from app.config import (
     get_notification_settings,
 )
 from app.database import SessionLocal
+from app.notification.monthly_report import monthly_report_job
 from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
 from app.scheduler.events import attach_observability_listener
@@ -273,6 +275,12 @@ def main() -> None:
             id="notify",
             name="风险提醒推送",
         )
+        scheduler.add_job(
+            monthly_report_job,
+            _trigger(NOTIFY_MONTHLY_REPORT_CRON),
+            id="notify-monthly",
+            name="风险月报推送",
+        )
     scheduler.add_job(
         cleanup_job, _trigger(SCHEDULER_CLEANUP_CRON), id="cleanup", name="保留清理"
     )
@@ -304,7 +312,7 @@ def main() -> None:
         )
     logger.info(
         "Scheduler 启动: collect=%s expire=%s cleanup=%s intelligence=%s research_daily=%s "
-        "research_weekly=%s research_monthly=%s notify=%s",
+        "research_weekly=%s research_monthly=%s notify=%s notify_monthly=%s",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
@@ -327,6 +335,11 @@ def main() -> None:
         ),
         (
             f"{_notification_settings.scan_interval_seconds}s"
+            if _notification_settings.enabled
+            else "disabled"
+        ),
+        (
+            NOTIFY_MONTHLY_REPORT_CRON
             if _notification_settings.enabled
             else "disabled"
         ),

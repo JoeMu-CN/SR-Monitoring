@@ -22,6 +22,8 @@ from app.ai.providers import (
     AIProviderError,
     FakeAIProvider,
     OpenAICompatibleProvider,
+    announcement_system_prompt,
+    signal_system_prompt,
     supplier_profile_system_prompt,
     system_prompt,
 )
@@ -118,6 +120,51 @@ def test_profile_system_prompt_keeps_same_machine_consumed_schema() -> None:
     base_schema = json.loads(system_prompt()[system_prompt().index("{") :])
 
     assert profile_schema == base_schema
+
+
+def test_announcement_prompt_routes_by_content_kind() -> None:
+    """公告形态走公告提示词：追加多省多时段拆解规则，且 Schema 契约不变。"""
+    announcement = signal_system_prompt(
+        SignalAnalysisInput(
+            signal_id=1,
+            title="中央气象台10月22日10时继续发布台风蓝色预警",
+            content="台风预警...",
+            content_kind="announcement",
+        )
+    )
+    ordinary = signal_system_prompt(
+        SignalAnalysisInput(signal_id=2, title="普通信号", content="普通信号正文")
+    )
+
+    assert announcement == announcement_system_prompt()
+    assert announcement != ordinary
+    assert "逐条拆开" in announcement
+    assert json.loads(announcement[announcement.index("{") :]) == json.loads(
+        system_prompt()[system_prompt().index("{") :]
+    )
+
+
+def test_analysis_content_kind_only_marks_adapter_announcements() -> None:
+    """只有适配器显式标记 content_kind 的信号走公告提示词分支。"""
+    marked = RawSignal(
+        source_id=1,
+        title="台风预警",
+        content="正文",
+        fingerprint="f1",
+        dedup_key="d1",
+        raw_data={"source_extra": {"content_kind": "announcement"}},
+    )
+    plain = RawSignal(
+        source_id=1,
+        title="台风预警",
+        content="正文",
+        fingerprint="f2",
+        dedup_key="d2",
+        raw_data={"source_extra": {"section": "perday"}},
+    )
+
+    assert ai_service.analysis_content_kind(marked) == "announcement"
+    assert ai_service.analysis_content_kind(plain) == "signal"
 
 
 def import_signal(client: TestClient) -> None:

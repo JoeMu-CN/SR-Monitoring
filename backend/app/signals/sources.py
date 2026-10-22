@@ -22,6 +22,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
+from html.parser import HTMLParser
 from typing import Protocol
 from urllib.parse import urljoin
 
@@ -223,6 +224,253 @@ class NmcWeatherAdapter(PullSourceAdapter):
         if not items:
             return SourceHealth(ok=False, message="中央气象台接口无返回数据")
         return SourceHealth(ok=True, message=f"返回 {len(items)} 条预警")
+
+
+class _ArticleTextParser(HTMLParser):
+    """提取 ``<div id=text>`` 内的正文文本，块级标签转换为换行。
+
+    栏目页把文章正文内嵌在 ``#text`` 容器里（服务端渲染），容器外是导航与栏目
+    列表；按 div 深度计数截取容器范围，避免把整页导航文本当成公告正文。
+    """
+
+    _BLOCK_TAGS = frozenset({"p", "br", "div", "li", "tr", "h1", "h2", "h3", "h4"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._depth = 0
+        self._capturing = False
+        self._parts: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return "".join(self._parts)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if not self._capturing:
+            if tag == "div" and any(
+                name == "id" and (value or "").strip() == "text" for name, value in attrs
+            ):
+                self._capturing = True
+                self._depth = 1
+            return
+        if tag == "div":
+            self._depth += 1
+        if tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._capturing:
+            return
+        if tag == "div":
+            self._depth -= 1
+            if self._depth <= 0:
+                self._capturing = False
+                return
+        if tag in self._BLOCK_TAGS:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._capturing:
+            self._parts.append(data)
+
+
+class NmcBulletinAdapter(PullSourceAdapter):
+    """中央气象台公告类栏目（每日天气提示 / 重要天气提示 / 台风预警）。
+
+    这些栏目以"公告"形式发布，往往早于地方台通过 findAlarm 发布的、带行政区划的
+    正式预警信号，是更早的风险线索。三个页面均为服务端渲染，且**只展示最新一条**：
+
+    - 正文位于 ``<div id=text>``，头部含「制作/签发（预报）+ YYYY 年 M 月 D 日 HH 时」；
+    - 页面没有单篇固定 URL，故信号 ``url`` 指回栏目页，去重靠发布时分生成的
+      ``external_id``（``{栏目}-YYYYMMDDHH``），同一篇反复采到不会重复入库。
+
+    同域受控请求最小间隔 10 秒（``app.signals.request_control``），页间显式等待，
+    避免同一轮采集被自己的节流判成"请求过于频繁"。
+    """
+
+    source_code = "nmc-weather-bulletin"
+    endpoint = "https://www.nmc.cn/publish/weatherperday/index.htm"
+    # (栏目编码, 栏目名称, 页面地址)；名称用于剔除正文里的栏目抬头行。
+    SECTIONS: tuple[tuple[str, str, str], ...] = (
+        ("perday", "每日天气提示", "https://www.nmc.cn/publish/weatherperday/index.htm"),
+        ("important", "重要天气提示", "https://www.nmc.cn/publish/news/weather_new.html"),
+        (
+            "typhoon",
+            "台风预警",
+            "https://www.nmc.cn/publish/country/warning/typhoon.html",
+        ),
+    )
+    INTER_PAGE_DELAY_SECONDS = 11.0
+    MAX_ARTICLE_CHARS = 6000
+    _ISSUED_AT_RE = re.compile(
+        r"(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时"
+    )
+    _HEADER_MARKERS = ("制作", "签发", "预报：", "预报:", "来源：", "来源:")
+    _MAX_HEADLINE_CHARS = 80
+
+    def __init__(
+        self,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        sections: tuple[tuple[str, str, str], ...] | None = None,
+    ) -> None:
+        self._transport = transport
+        self._timeout_seconds = timeout_seconds
+        self._sections = sections if sections is not None else self.SECTIONS
+
+    async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
+        del cursor
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept": "text/html,*/*;q=0.8",
+        }
+        items: list[RawSourceItem] = []
+        failures: list[str] = []
+        for index, (section_code, section_name, url) in enumerate(self._sections):
+            if index and self._transport is None:
+                # 真实抓取受同域 10 秒最小间隔约束；MockTransport 旁路域名租约。
+                await asyncio.sleep(self.INTER_PAGE_DELAY_SECONDS)
+            try:
+                page_html = await self._get_page(url, headers)
+                items.append(
+                    self._parse_section(page_html, section_code, section_name, url)
+                )
+            except SourceFetchError as exc:
+                failures.append(f"{section_name}: {exc}")
+                logger.warning("中央气象台公告栏目 %s 抓取失败: %s", section_name, exc)
+        if not items:
+            detail = "；".join(failures) or "无可用栏目"
+            raise SourceFetchError(f"中央气象台公告栏目全部抓取失败（{detail}）")
+        return items
+
+    async def _get_page(self, url: str, headers: dict[str, str]) -> str:
+        if self._transport is not None:
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds, transport=self._transport
+                ) as client:
+                    response = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise SourceFetchError("中央气象台公告页面网络请求失败") from exc
+            body_bytes = response.content
+        else:
+            try:
+                controlled = await controlled_get(
+                    url,
+                    headers=headers,
+                    timeout=self._timeout_seconds,
+                    maximum_bytes=MAX_NMC_BYTES,
+                )
+            except SourceRequestFailed as exc:
+                raise SourceFetchError(
+                    f"中央气象台公告页面请求失败: {exc}",
+                    error_kind=exc.error_kind,
+                    http_status=exc.status_code,
+                ) from exc
+            body_bytes = controlled.content
+        return body_bytes.decode("utf-8", "ignore")
+
+    def _parse_section(
+        self, page_html: str, section_code: str, section_name: str, url: str
+    ) -> RawSourceItem:
+        parser = _ArticleTextParser()
+        parser.feed(page_html)
+        parser.close()
+        text = self._normalize_text(parser.text)
+        if len(text) < 50:
+            raise SourceFetchError(f"{section_name} 页面未解析到正文（结构可能已变更）")
+        published_at = self._parse_issued_at(text)
+        headline = self._headline(text, section_name)
+        external_id = (
+            f"{section_code}-{published_at.astimezone(_SSE_TIMEZONE):%Y%m%d%H}"
+            if published_at is not None
+            else f"{section_code}-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}"
+        )
+        content = text[: self.MAX_ARTICLE_CHARS]
+        return RawSourceItem(
+            external_id=external_id,
+            title=headline,
+            content=content,
+            url=url,
+            published_at=published_at,
+            validity_profile=ValidityProfile.WEATHER_ALERT,
+            extra={
+                "section": section_code,
+                "section_name": section_name,
+                "headline": headline,
+                # 供 AI 解析分支识别"公告形态"，不依赖信源编码。
+                "content_kind": "announcement",
+            },
+        )
+
+    @staticmethod
+    def _normalize_text(raw: str) -> str:
+        text = raw.replace("\u3000", " ").replace("\xa0", " ")
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+        return "\n".join(line for line in lines if line)
+
+    def _parse_issued_at(self, text: str) -> datetime | None:
+        match = self._ISSUED_AT_RE.search(text[:400])
+        if match is None:
+            return None
+        year, month, day, hour = (int(value) for value in match.groups())
+        try:
+            issued = datetime(year, month, day, hour, tzinfo=_SSE_TIMEZONE)
+        except ValueError:
+            return None
+        return issued.astimezone(UTC)
+
+    def _headline(self, text: str, section_name: str) -> str:
+        """取第一个非抬头行作为标题：栏目名、制作/签发行与发布时间行都跳过。"""
+        compact_section = re.sub(r"\s+", "", section_name)
+        for line in text.split("\n"):
+            compact = re.sub(r"\s+", "", line)
+            if not compact or compact == compact_section:
+                continue
+            if any(marker in line for marker in self._HEADER_MARKERS):
+                continue
+            if self._ISSUED_AT_RE.fullmatch(compact):
+                continue
+            if not re.search(r"[\u4e00-\u9fffA-Za-z]", compact):
+                continue
+            return line.rstrip("：:")[: self._MAX_HEADLINE_CHARS]
+        return section_name
+
+    def normalize(self, item: RawSourceItem) -> ManualSignalInput:
+        try:
+            return ManualSignalInput(
+                external_id=item.external_id,
+                title=item.title,
+                content=item.content,
+                url=HttpUrl(item.url) if item.url else None,
+                published_at=_to_utc(item.published_at),
+            )
+        except ValidationError as exc:
+            raise SourceFetchError(f"信号校验失败: {exc}") from exc
+
+    def fingerprint(self, signal: ManualSignalInput) -> str:
+        canonical = json.dumps(
+            signal.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return _fingerprint_sha256(canonical)
+
+    async def healthcheck(self) -> SourceHealth:
+        try:
+            items = await self.fetch()
+        except SourceFetchError as exc:
+            return SourceHealth(ok=False, message=str(exc))
+        return SourceHealth(
+            ok=True,
+            message=f"返回 {len(items)} 条公告（共 {len(self._sections)} 个栏目）",
+        )
 
 
 class OfacSdnAdapter(PullSourceAdapter):

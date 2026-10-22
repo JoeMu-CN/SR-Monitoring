@@ -21,6 +21,7 @@ MatchType = Literal[
     "alias",
     "site_distance",
     "site_text",
+    "site_region",
     "product",
     "country",
     "industry",

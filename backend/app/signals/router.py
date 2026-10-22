@@ -99,6 +99,7 @@ from app.signals.sources import (
     FxRatesAdapter,
     MeeAnnouncementAdapter,
     MofcomEntityDetailAdapter,
+    NmcBulletinAdapter,
     NmcWeatherAdapter,
     OfacSdnAdapter,
     PbcLprAdapter,
@@ -311,6 +312,8 @@ def build_pull_adapter(source: DataSource | str) -> PullSourceAdapter:
     source_code = source.code if isinstance(source, DataSource) else source
     if source_code == NmcWeatherAdapter.source_code:
         return NmcWeatherAdapter()
+    if source_code == NmcBulletinAdapter.source_code:
+        return NmcBulletinAdapter()
     if source_code == OfacSdnAdapter.source_code:
         return OfacSdnAdapter()
     if source_code == EuOfficialJournalAdapter.source_code:

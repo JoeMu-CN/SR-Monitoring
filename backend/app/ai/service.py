@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from time import perf_counter
+from typing import Literal
 
 from sqlalchemy import Text, and_, cast, select
 from sqlalchemy.orm import Session
@@ -57,6 +58,19 @@ def analysis_content(signal: RawSignal) -> str:
     return render_analysis_context(context) if context is not None else signal.content
 
 
+def analysis_content_kind(signal: RawSignal) -> Literal["signal", "announcement"]:
+    """输入形态：适配器在 ``raw_data.source_extra`` 标记的公告类内容走公告提示词。
+
+    只有适配器显式写入 ``content_kind`` 时才切换提示词，普通信号与历史数据
+    默认为 ``signal``，行为不变。
+    """
+    raw_data = signal.raw_data if isinstance(signal.raw_data, dict) else {}
+    extra = raw_data.get("source_extra")
+    if isinstance(extra, dict) and extra.get("content_kind") == "announcement":
+        return "announcement"
+    return "signal"
+
+
 async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisRecord:
     provider = get_ai_provider(get_ai_settings())
     record = AIAnalysisRecord(
@@ -79,6 +93,7 @@ async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisR
                 content=analysis_content(signal),
                 url=signal.url,
                 published_at=signal.published_at,
+                content_kind=analysis_content_kind(signal),
             )
         )
     except AIProviderError as exc:

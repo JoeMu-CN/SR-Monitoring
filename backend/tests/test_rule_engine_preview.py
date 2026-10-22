@@ -181,6 +181,9 @@ def test_preview_country_only_draft_matches_saved_result(
         "event_type": "weather",
         "severity": "critical",
         "locations": [{"name": "中国", "country_code": "CN"}],
+        # 国家柱只认 affected_countries（事件构成国家级系统性风险），不再回退
+        # locations[].country_code；本用例只需一个国家级命中样本。
+        "affected_countries": ["CN"],
         "credibility": 80,
         "dimension_key": "natural",
     }

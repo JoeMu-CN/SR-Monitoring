@@ -2,7 +2,8 @@
 
 六个匹配柱独立成函数，维度模块按需声明启用哪些柱：
 - entity    主体：注册号 / 法人全称 / 别名（强关联，复用现有确定性逻辑）
-- location  地点：区县行政区名称精确匹配，不使用经纬度与影响半径；无法解析区县的事件地点不匹配
+- location  地点：区县行政区名称精确匹配，不使用经纬度与影响半径；无法解析区县的事件地点
+             仅在天气/地质事件下按省/市名称做弱匹配（site_region，低分）
 - product   产品：受影响产品关键词 vs 供应产品
 - country   国家：事件受影响国家（affected_countries）vs 供应商国别/生产地国别（宏观维度，弱关联）
 - industry  行业：受影响行业 vs 供应商行业标签/关键原材料（宏观维度，单向包含）
@@ -33,7 +34,16 @@ MATCH_ORDER = {
     "industry": 6,
     "product": 7,
     "currency": 8,
+    # 省/市级弱匹配：仅天气与地质灾害事件、且事件地点解析不出区县时使用。
+    "site_region": 9,
 }
+
+# 省/市弱匹配只对"以行政区范围为单位发布"的事件类型开放：中央气象台栏目公告
+# 通常只给到省、市或区域，而供应商站点精确到区县。
+_REGION_FALLBACK_EVENT_TYPES = frozenset({"weather", "geological"})
+_REGION_SUFFIXES = ("特别行政区", "自治区", "省", "市")
+_CITY_SUFFIXES = ("自治州", "地区", "市", "盟")
+_MIN_REGION_CHARS = 2
 
 _DISTRICT_SUFFIXES = ("自治县", "开发区", "新区", "区", "县", "旗")
 _DISTRICT_TOKEN = re.compile(r"[^省市州盟县区旗]{1,16}(?:自治县|开发区|新区|区|县|旗)")
@@ -204,6 +214,53 @@ def matches_location_reference(location: object, site: SupplierSite) -> bool:
     return True
 
 
+def _region_key(value: str | None) -> str | None:
+    """省级名称归一：去后缀（省/市/自治区/特别行政区），过短视为无效。"""
+    if not value:
+        return None
+    normalized = normalize_alias(value)
+    for suffix in _REGION_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized if len(normalized) >= _MIN_REGION_CHARS else None
+
+
+def _city_key(value: str | None) -> str | None:
+    """地级市名称归一：去后缀（市/地区/盟/自治州），过短视为无效。"""
+    if not value:
+        return None
+    normalized = normalize_alias(value)
+    for suffix in _CITY_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized if len(normalized) >= _MIN_REGION_CHARS else None
+
+
+def region_match_precision(location: object, site: SupplierSite) -> str | None:
+    """省市弱匹配：返回命中精度（``region`` / ``city``），不命中返回 ``None``。
+
+    只用于事件地点解析不出区县的天气/地质事件（见 ``match_locations``）。规则刻意
+    保守：国家必须一致；双方都给出省且不一致时直接不命中（避免同名城市跨省误配）；
+    市名相等优先按市级命中，否则省名相等按省级命中。
+    """
+    event_country = getattr(location, "country_code", None)
+    if event_country and site.country_code and event_country != site.country_code:
+        return None
+    event_region = _region_key(getattr(location, "region", None))
+    site_region = _region_key(site.region)
+    if event_region and site_region and event_region != site_region:
+        return None
+    event_city = _city_key(getattr(location, "city", None))
+    site_city = _city_key(site.city)
+    if event_city and site_city and event_city == site_city:
+        return "city"
+    if event_region and site_region and event_region == site_region:
+        return "region"
+    return None
+
+
 def match_locations(
     session: Session,
     result: SignalAnalysisResult,
@@ -211,11 +268,18 @@ def match_locations(
     assoc: dict[str, int],
     matches: dict[int, MatchCandidate],
 ) -> None:
-    """地点柱：仅区县行政区名称精确匹配；无法解析区县的事件地点不参与匹配。"""
+    """地点柱：区县精确匹配（site_text）+ 天气/地质事件的省市弱匹配（site_region）。
+
+    区县匹配口径不变；省市弱匹配只在事件类型为 weather/geological、且该地点
+    解析不出区县时启用，避免区县级预警被放大成整个省/市的关联。
+    """
     del session  # 保持 MatcherFn 签名兼容，地点柱不再访问数据库
+    allow_region_fallback = result.event_type in _REGION_FALLBACK_EVENT_TYPES
     for location in result.locations:
         inferred_district = _location_district(location)
         if not inferred_district:
+            if allow_region_fallback:
+                _match_region_level(location, suppliers, assoc, matches)
             continue
         for supplier in suppliers:
             for site in supplier.sites:
@@ -240,6 +304,37 @@ def match_locations(
                         "precision": "district",
                     },
                 )
+
+
+def _match_region_level(
+    location: object,
+    suppliers: Iterable[Supplier],
+    assoc: dict[str, int],
+    matches: dict[int, MatchCandidate],
+) -> None:
+    """按省/市名称做弱匹配，命中精度写入证据，分值低于区县精确匹配。"""
+    for supplier in suppliers:
+        for site in supplier.sites:
+            precision = region_match_precision(location, site)
+            if precision is None:
+                continue
+            level_label = "市级" if precision == "city" else "省级"
+            _candidate(matches, supplier).add(
+                "site_region",
+                assoc.get("site_region", 10),
+                (
+                    f"事件行政区{level_label}匹配：{getattr(location, 'name', '')} → "
+                    f"{site.site_name}（{site.region or site.city or '未知'}）"
+                ),
+                {
+                    "object_type": "site",
+                    "site_id": site.id,
+                    "site_name": site.site_name,
+                    "event_location": getattr(location, "name", None),
+                    "method": "text",
+                    "precision": "city" if precision == "city" else "region",
+                },
+            )
 
 
 def _supplier_term_matches(term: str, affected: str) -> bool:

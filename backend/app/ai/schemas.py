@@ -58,6 +58,9 @@ class SignalAnalysisInput(BaseModel):
     content: NonEmptyText
     url: str | None = None
     published_at: datetime | None = None
+    # 输入形态：普通信号 / 中央气象台公告类栏目（栏目公告可能一张覆盖多省多时段，
+    # 需要公告专用解析规则）。默认 signal，历史调用与测试行为不变。
+    content_kind: Literal["signal", "announcement"] = "signal"
 
 
 class OrganizationReference(BaseModel):

@@ -15,7 +15,7 @@ from app.research.reporting import (
     ResearchReportGenerationInput,
 )
 
-PROMPT_VERSION = "signal-analysis-v7"
+PROMPT_VERSION = "signal-analysis-v8"
 
 
 class AIProviderError(RuntimeError):
@@ -281,7 +281,9 @@ def _parse_analysis_result(content: str) -> SignalAnalysisResult:
 
 
 def signal_system_prompt(value: SignalAnalysisInput) -> str:
-    """按输入形态选择提示词：画像上下文追加画像约束，普通信号保持原提示词。"""
+    """按输入形态选择提示词：画像上下文与栏目公告各有追加约束，普通信号不变。"""
+    if value.content_kind == "announcement":
+        return announcement_system_prompt()
     if is_supplier_profile_context(value.content):
         return supplier_profile_system_prompt()
     return system_prompt()
@@ -290,6 +292,11 @@ def signal_system_prompt(value: SignalAnalysisInput) -> str:
 def system_prompt() -> str:
     """通用信号分析系统提示词（公开文本正文）；机器消费的等级规则与 Schema 原样保留。"""
     return _BASE_PROMPT_RULES + _SCHEMA_TAIL
+
+
+def announcement_system_prompt() -> str:
+    """中央气象台栏目公告提示词：在通用约束之上追加"一稿多区域、多时段"的解析规则。"""
+    return _BASE_PROMPT_RULES + _ANNOUNCEMENT_RULES + _SCHEMA_TAIL
 
 
 def supplier_profile_system_prompt() -> str:
@@ -352,6 +359,25 @@ _PROFILE_CONTEXT_RULES = (
     "实际控制人、注册资本、注册地址、企业名称、经营范围等；"
     "使用「变更前 → 变更后」的写法并标注变更时间，不得罗列全部变更流水，只挑关键项。"
     "summary_zh 控制在 2 至 3 句，只陈述证据支持的事实。"
+)
+
+# 仅中央气象台栏目公告追加：一张公告常覆盖多省多时段，必须逐条拆开并保留定量信息；
+# 原文的泛称（大区、海域）不得编造成省/市/区县。
+_ANNOUNCEMENT_RULES = (
+    "本次输入是中央气象台栏目公告（每日天气提示、重要天气提示、台风预警），"
+    "一张公告常同时覆盖多个省、市与多个时段，必须逐条拆开提取，不得合并成一条。"
+    "locations 按公告明确点名的行政区逐项列出：region 填省级名称（如 浙江省），"
+    "city 填地级市名称，district 仅在原文明确写到区、县、旗或县级市时填写；"
+    "原文只给大区、流域或海域泛称（华北、江南、黄淮、东海大部海域）时，"
+    "不得编造成省/市/区县，只能在 summary_zh 中按原文表述。"
+    "沿海表述（浙江沿海、福建沿海）按原文提取，不要推断对应陆地行政区。"
+    "start_at 取公告明示的影响起始时间，end_at 取影响结束时间；"
+    "原文给出多个时间段时取最早的开始与最晚的结束，并在 summary_zh 写清各时段。"
+    "公告主体是天气过程、预警发布或灾害影响预报时 event_type 填 weather、"
+    "event_subtype 填 weather_alert；只有正文主体是地质灾害时才填 geological。"
+    "summary_zh 用 1 至 2 句写清何时、何地、何种天气、影响程度，"
+    "并照抄原文的定量信息（风力等级、降雨量级、降温幅度）。"
+    "affected_activities 按公告点到的影响面填写：production、logistics、trade、operations。"
 )
 
 _SCHEMA_TAIL = (

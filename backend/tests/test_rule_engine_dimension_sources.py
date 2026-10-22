@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from fastapi.testclient import TestClient
-from sqlalchemy import event, select
+from sqlalchemy import event, select, update
 from sqlalchemy.orm import Session
 
 from app.database import engine
@@ -421,6 +421,16 @@ def test_all_disabled_sources_declared_enabled_zero_no_input(
         source_name="中央气象台",
         source_enabled=False,
         dimension="natural",
+    )
+    # 迁移播种的公告栏目信源默认启用：本用例口径是"声明信源全部停用"，
+    # 因此按 natural 维度声明的 code 统一停用，而不是只停用其中一条。
+    dimensions = client.get("/api/v1/rule-engine/dimensions").json()
+    natural = next(item for item in dimensions if item["key"] == "natural")
+    declared_codes = [source["code"] for source in natural["data_sources"]]
+    db_session.execute(
+        update(DataSource)
+        .where(DataSource.code.in_(declared_codes))
+        .values(enabled=False)
     )
     db_session.flush()
 

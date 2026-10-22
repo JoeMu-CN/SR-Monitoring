@@ -44,6 +44,7 @@ NOW = datetime(2026, 9, 6, 12, tzinfo=UTC)
 # 已定映射：20 个真实 code → 唯一 owner 维度。
 SOURCE_OWNER: dict[str, str] = {
     "nmc-weather": "natural",
+    "nmc-weather-bulletin": "natural",
     "usgs-earthquake-day": "natural",
     "mem-incident-bulletin": "natural",
     "ofac-sdn": "geopolitical",
@@ -66,7 +67,12 @@ SOURCE_OWNER: dict[str, str] = {
 }
 
 EXPECTED_OWNERS: dict[str, list[str]] = {
-    "natural": ["nmc-weather", "usgs-earthquake-day", "mem-incident-bulletin"],
+    "natural": [
+        "nmc-weather",
+        "nmc-weather-bulletin",
+        "usgs-earthquake-day",
+        "mem-incident-bulletin",
+    ],
     "geopolitical": [
         "ofac-sdn",
         "bis-entity-list",

@@ -38,7 +38,13 @@ from app.signals.service import (
     collect_source,
     finalize_stale_collection_runs,
 )
-from app.signals.sources import NmcWeatherAdapter, RawSourceItem, SourceFetchError, StatsPmiAdapter
+from app.signals.sources import (
+    NmcBulletinAdapter,
+    NmcWeatherAdapter,
+    RawSourceItem,
+    SourceFetchError,
+    StatsPmiAdapter,
+)
 from app.suppliers.models import Supplier
 
 
@@ -71,6 +77,19 @@ def _get_nmc_source(session: Session) -> DataSource:
     source = session.scalar(select(DataSource).where(DataSource.code == "nmc-weather"))
     assert source is not None, "迁移 0009 应已注册 nmc-weather 信息源"
     return source
+
+
+def test_nmc_bulletin_source_seeded(db_session: Session) -> None:
+    """迁移 0067 播种公告栏目信源，端地址与适配器一致，有效期按公告影响期取 7 天。"""
+    source = db_session.scalar(
+        select(DataSource).where(DataSource.code == NmcBulletinAdapter.source_code)
+    )
+    assert source is not None, "迁移 0067 应已注册 nmc-weather-bulletin 信息源"
+    assert source.enabled is True
+    assert source.adapter_status == "builtin"
+    assert source.adapter_config == {}
+    assert source.endpoint_url == NmcBulletinAdapter.endpoint
+    assert source.validity_policy == {"mode": "fixed_days", "fixed_days": 7}
 
 
 def test_manual_trigger_run_collects_signals(

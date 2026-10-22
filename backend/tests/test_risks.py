@@ -378,12 +378,12 @@ def test_county_level_city_district_matches_explicitly(
     assert match.evidence[0]["district"] == "张家港市"
 
 
-def test_city_only_event_no_longer_matches_site_text(
+def test_city_only_event_matches_by_city_region_level(
     client: TestClient,
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """仅市级事件不命中：事件无法解析区县时，不回退到 name/city 文本包含。"""
+    """仅市级事件按市名弱匹配（site_region），不产生区县级 site_text。"""
     result = SignalAnalysisResult(
         event_type="weather",
         event_subtype="weather_alert",
@@ -413,16 +413,19 @@ def test_city_only_event_no_longer_matches_site_text(
     response = client.post(f"/api/v1/signals/{signal_id}/process")
 
     assert response.status_code == 200
-    assert response.json()["alert_ids"] == []
-    assert db_session.scalar(select(func.count()).select_from(SupplierEventMatch)) == 0
+    assert len(response.json()["alert_ids"]) == 1
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert match.match_type == "site_region"
+    assert match.evidence[0]["precision"] == "city"
 
 
-def test_province_only_event_no_longer_matches_site_text(
+def test_province_only_event_matches_by_province_region_level(
     client: TestClient,
     db_session: Session,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """仅省级事件不命中：事件无法解析区县时，不回退到 region 文本包含。"""
+    """仅省级事件按省名弱匹配（site_region），不回退到地址文本包含。"""
     result = SignalAnalysisResult(
         event_type="weather",
         event_subtype="weather_alert",
@@ -444,6 +447,64 @@ def test_province_only_event_no_longer_matches_site_text(
             "legal_name": "昆山精工制造有限公司",
             "country_code": "CN",
             "registry_no": "91320000D7PROVINCE1",
+            "aliases": [],
+            "sites": [
+                {
+                    "site_name": "昆山工厂",
+                    "country_code": "CN",
+                    "region": "江苏省",
+                    "city": "苏州市",
+                    "district": "昆山市",
+                    "address": "江苏省苏州市昆山市测试路1号",
+                    "latitude": None,
+                    "longitude": None,
+                }
+            ],
+            "products": [],
+        },
+    )
+    assert response.status_code == 201
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+
+    processed = client.post(f"/api/v1/signals/{signal_id}/process")
+
+    assert processed.status_code == 200
+    assert len(processed.json()["alert_ids"]) == 1
+    match = db_session.scalar(select(SupplierEventMatch))
+    assert match is not None
+    assert match.match_type == "site_region"
+    assert match.evidence[0]["precision"] == "region"
+
+
+def test_non_weather_event_does_not_use_region_fallback(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """省市弱匹配只对 weather/geological 开放，其他事件类型仍要求区县精确匹配。"""
+    result = SignalAnalysisResult(
+        event_type="trade_policy",
+        event_subtype="regulatory_change",
+        suggested_severity="medium",
+        organizations=[],
+        locations=[{"name": "江苏省", "country_code": "CN", "region": "江苏省"}],
+        affected_activities=["trade"],
+        affected_products=[],
+        summary_zh="江苏省贸易政策变化",
+        evidence_sentences=["江苏省发布贸易政策调整通知。"],
+        confidence=0.9,
+    )
+    provider = StaticProvider(result)
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    response = client.post(
+        "/api/v1/suppliers",
+        json={
+            "supplier_code": "D7-NON-WEATHER",
+            "legal_name": "昆山精工制造有限公司",
+            "country_code": "CN",
+            "registry_no": "91320000D7NOWEATHER",
             "aliases": [],
             "sites": [
                 {

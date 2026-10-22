@@ -62,6 +62,8 @@ class ScoringSettings:
             "alias": 25,
             "site_distance": 20,
             "site_text": 20,
+            # 省/市级弱匹配：天气与地质公告只给到省、市时的低分关联。
+            "site_region": 10,
             "product": 12,
         }
     )

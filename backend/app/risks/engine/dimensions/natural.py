@@ -22,6 +22,7 @@ DIMENSION = DimensionConfig(
     ),
     data_sources=(
         DimensionDataSource("nmc-weather", "中央气象台", "connected"),
+        DimensionDataSource("nmc-weather-bulletin", "中央气象台天气公告", "connected"),
         DimensionDataSource("usgs-earthquake-day", "USGS 全天地震速报", "connected"),
         DimensionDataSource("mem-incident-bulletin", "应急管理部事故通报", "planned"),
     ),

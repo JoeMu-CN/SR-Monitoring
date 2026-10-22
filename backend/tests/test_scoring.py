@@ -167,6 +167,29 @@ class TestApplyLevelCap:
         level = apply_level_cap(settings, "P1", "legal_name", detail)
         assert level == "P2"
 
+    def test_site_region_only_capped_at_p3(self) -> None:
+        """省市级弱匹配是唯一命中柱时，AI 建议 P1/P2 也不得超过 P3。"""
+        settings = ScoringSettings()
+        detail: dict[str, object] = {}
+        level = apply_level_cap(settings, "P2", "site_region", detail)
+        assert level == "P3"
+        assert detail["level_cap"] == "site_region_only_max_p3"
+
+    def test_site_region_with_other_columns_not_capped(self) -> None:
+        """与产品等其它柱组合时保留更高等级（不是"仅省市级"）。"""
+        settings = ScoringSettings()
+        detail: dict[str, object] = {}
+        level = apply_level_cap(settings, "P2", "site_region+product", detail)
+        assert level == "P2"
+        assert "level_cap" not in detail
+
+    def test_site_region_keeps_lower_levels(self) -> None:
+        """已经是 P3/P4 时不改写等级。"""
+        settings = ScoringSettings()
+        detail: dict[str, object] = {}
+        assert apply_level_cap(settings, "P4", "site_region", detail) == "P4"
+        assert "level_cap" not in detail
+
 
 class TestApplyForcedRules:
     def test_sanctions_entity_hit_forces_p1(self) -> None:

@@ -228,6 +228,11 @@ def apply_level_cap(
     if types == {"country"} and level != "P4":
         detail["level_cap"] = "country_only_max_p4"
         return "P4"
+    # 省/市级弱匹配（中央气象台公告等只给到省、市的事件）：即便 AI 建议更高等级，
+    # 也不得超过 P3。区县精确匹配（site_text）或主体/产品命中不受此限制。
+    if types == {"site_region"} and level in {"P1", "P2"}:
+        detail["level_cap"] = "site_region_only_max_p3"
+        return "P3"
     if level == "P1" and types.isdisjoint(settings.strong_match_types):
         detail["level_cap"] = "weak_association_max_p2"
         return "P2"

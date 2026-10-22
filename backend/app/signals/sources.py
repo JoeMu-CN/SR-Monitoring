@@ -121,10 +121,18 @@ class NmcWeatherAdapter(PullSourceAdapter):
     接口：http://www.nmc.cn/rest/findAlarm
     返回全国各级气象台发布的灾害预警信号（暴雨、台风、山洪、大雾等）。
     属于官方公开信息源，无需鉴权，符合技术方案 7.2 首批信息源选择原则。
+
+    级别口径（采集端过滤）：蓝色 / 黄色预警不入库。地方台每天发布数百条低级别
+    预警，占该源入库量的 91%、LLM 调用的 95%，但几乎只产出 P3 弱提醒；过滤后
+    每轮入库量从约 200 条/天降到 10-25 条/天。台风类豁免：台风路径与强度不确定，
+    首次通报可能仍是蓝色，属于早期线索。标题不含颜色词时按高等级保留（fail-open）。
     """
 
     source_code = "nmc-weather"
     endpoint = "http://www.nmc.cn/rest/findAlarm"
+    _LOW_LEVEL_RE = re.compile(r"蓝色|黄色")
+    _HIGH_LEVEL_RE = re.compile(r"橙色|红色")
+    _LOW_LEVEL_EXEMPT_RE = re.compile(r"台风")
 
     def __init__(
         self,
@@ -134,6 +142,8 @@ class NmcWeatherAdapter(PullSourceAdapter):
     ) -> None:
         self._transport = transport
         self._timeout_seconds = timeout_seconds
+        # 最近一次 fetch 被过滤的低级别条数，供 healthcheck 与采集日志观测。
+        self._skipped_low_level = 0
 
     async def fetch(self, cursor: str | None = None) -> list[RawSourceItem]:
         params = {
@@ -167,12 +177,16 @@ class NmcWeatherAdapter(PullSourceAdapter):
         page = payload["data"].get("page") or {}
         rows = page.get("list") or []
         items: list[RawSourceItem] = []
+        skipped_low_level = 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
             alert_id = str(row.get("alertid") or "").strip()
             title = str(row.get("title") or "").strip()
             if not alert_id or not title:
+                continue
+            if self.is_low_level(title):
+                skipped_low_level += 1
                 continue
             items.append(
                 RawSourceItem(
@@ -185,7 +199,23 @@ class NmcWeatherAdapter(PullSourceAdapter):
                     extra={"pic": str(row.get("pic") or "")},
                 )
             )
+        self._skipped_low_level = skipped_low_level
+        if skipped_low_level:
+            logger.info(
+                "中央气象台预警过滤低级别（蓝色/黄色）%d 条，保留 %d 条",
+                skipped_low_level,
+                len(items),
+            )
         return items
+
+    @classmethod
+    def is_low_level(cls, title: str) -> bool:
+        """蓝色 / 黄色视为低级别；含橙/红或台风关键词时不判低级别。"""
+        if cls._HIGH_LEVEL_RE.search(title):
+            return False
+        if cls._LOW_LEVEL_EXEMPT_RE.search(title):
+            return False
+        return bool(cls._LOW_LEVEL_RE.search(title))
 
     @staticmethod
     def _absolute_url(path: str) -> str | None:
@@ -221,9 +251,14 @@ class NmcWeatherAdapter(PullSourceAdapter):
             items = await self.fetch()
         except SourceFetchError as exc:
             return SourceHealth(ok=False, message=str(exc))
-        if not items:
+        skipped = self._skipped_low_level
+        if not items and not skipped:
             return SourceHealth(ok=False, message="中央气象台接口无返回数据")
-        return SourceHealth(ok=True, message=f"返回 {len(items)} 条预警")
+        message = f"返回 {len(items)} 条预警"
+        if skipped:
+            # 全部为低级别时也算健康：接口可用，只是被采集端过滤规则清空。
+            message += f"（已过滤低级别 {skipped} 条）"
+        return SourceHealth(ok=True, message=message)
 
 
 class _ArticleTextParser(HTMLParser):

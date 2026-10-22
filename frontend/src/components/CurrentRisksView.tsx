@@ -1,7 +1,7 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
-import {formatValidityReasonLabel, formatValidityState, type RiskAlertSummary} from '../api';
+import {formatProcessingState, formatValidityReasonLabel, formatValidityState, type RiskAlertSummary} from '../api';
 import type {RiskItem} from '../types';
 
 const RISK_LEVELS = ['P1', 'P2', 'P3', 'P4'] as const;
@@ -172,6 +172,7 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
                     <div className="flex flex-wrap items-center gap-2">
                       <RiskBadge level={item.level} name={item.levelName} />
                       <ValidityBadge state={item.validityState} />
+                      <ProcessingBadge state={item.processingState} />
                       <span className="truncate text-[15px] font-bold text-slate-900 group-hover:text-[#185fa5] dark:text-white">{item.companyName}</span>
                     </div>
                     {item.location && (
@@ -198,7 +199,7 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
                   <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800">
                     {item.validUntil && <div><dt className="inline font-bold">截止</dt> <dd className="inline font-mono">{formatDateTime(item.validUntil)}</dd></div>}
                     {item.reviewDueAt && <div><dt className="inline font-bold">复核</dt> <dd className="inline font-mono">{formatDateTime(item.reviewDueAt)}</dd></div>}
-                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline">{formatValidityReasonLabel(item.validityReason.code)}</dd></div>}
+                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline">{formatValidityReasonLabel(item.validityReason.code, item.validityReason.details)}</dd></div>}
                   </dl>
                 )}
               </motion.button>
@@ -249,11 +250,29 @@ const VALIDITY_BADGE_CLASS: Record<string, string> = {
   irrelevant: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-300',
 };
 
-const ValidityBadge = ({state}: {state: string | undefined}) => {
+const PROCESSING_BADGE_CLASS: Record<string, string> = {
+  pending_classification: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  filtered: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-300',
+  no_trigger: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
+  classification_failed: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+};
+
+/** 生命周期未定（null）时不渲染徽标，避免出现空徽标或 "undefined"。 */
+const ValidityBadge = ({state}: {state: string | null | undefined}) => {
   if (!state) return null;
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${VALIDITY_BADGE_CLASS[state] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
       {formatValidityState(state)}
+    </span>
+  );
+};
+
+/** analyzed 由生命周期徽标承担表达，不单独重复展示。 */
+const ProcessingBadge = ({state}: {state: string | null | undefined}) => {
+  if (!state || state === 'analyzed') return null;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PROCESSING_BADGE_CLASS[state] ?? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+      {formatProcessingState(state)}
     </span>
   );
 };

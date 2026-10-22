@@ -8,7 +8,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.risks.models import RiskAlert
 from app.signals.models import DataSource, RawSignal
-from app.signals.validity import ValidityMode, ValidityState
+from app.signals.validity import ProcessingState, ValidityMode, ValidityState
 
 FINITE_SIGNAL_MODES: Final = (
     ValidityMode.FIXED_DAYS,
@@ -18,6 +18,13 @@ FINITE_SIGNAL_MODES: Final = (
 UNBOUNDED_SIGNAL_MODES: Final = (
     ValidityMode.UNTIL_REVOKED,
     ValidityMode.INDEFINITE,
+)
+
+# 可作为有效证据的处理状态：尚未分析但已确认生命周期有效，以及已完成分析。
+# filtered / no_trigger / classification_failed 一律不计有效证据。
+VALID_EVIDENCE_PROCESSING_STATES: Final = (
+    ProcessingState.PENDING_CLASSIFICATION,
+    ProcessingState.ANALYZED,
 )
 
 
@@ -47,7 +54,12 @@ def current_alert_condition(now_utc: datetime) -> ColumnElement[bool]:
 def valid_signal_condition(
     source: DataSource, *, now_utc: datetime
 ) -> ColumnElement[bool]:
-    """返回信号实时判活条件；legacy 保留旧信源天数口径。"""
+    """返回信号实时判活条件；legacy 保留旧信源天数口径。
+
+    有效证据只认「生命周期 active」且「处理状态仍可支撑风险结论」：
+    pending_classification / analyzed 计入，filtered / no_trigger /
+    classification_failed 不计入。legacy 分支保持旧口径不变。
+    """
     now_parameter = bindparam(
         "now_utc",
         value=now_utc,
@@ -55,6 +67,7 @@ def valid_signal_condition(
     )
     active_condition = and_(
         RawSignal.validity_state == ValidityState.ACTIVE,
+        RawSignal.processing_state.in_(VALID_EVIDENCE_PROCESSING_STATES),
         or_(
             and_(
                 RawSignal.validity_mode.in_(FINITE_SIGNAL_MODES),

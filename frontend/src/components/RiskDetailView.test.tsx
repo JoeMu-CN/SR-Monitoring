@@ -42,6 +42,7 @@ const alert = (id: number, status: RiskAlertRead['status'] = 'current'): RiskAle
   expires_at: null,
   expiry_kind: 'none',
   validity_state: 'active',
+  processing_state: 'analyzed',
   valid_until: null,
   review_due_at: null,
   validity_policy_version: 'v1',
@@ -59,7 +60,7 @@ const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetai
   end_at: null,
   confidence: 0.88,
   created_at: '2026-08-30T08:00:00Z',
-  signals: [{signal_id: id, title: `原始信号 ${id}`, content: '信号原文内容', url: 'https://example.test/signal', published_at: '2026-08-30T08:00:00Z', collected_at: '2026-08-30T09:00:00Z', validity_state: 'active'}],
+  signals: [{signal_id: id, title: `原始信号 ${id}`, content: '信号原文内容', url: 'https://example.test/signal', published_at: '2026-08-30T08:00:00Z', collected_at: '2026-08-30T09:00:00Z', validity_state: 'active', processing_state: 'analyzed'}],
   entities: [{name: '关联主体', normalized_name: '关联主体有限公司', registry_no: '91310000'}],
   locations: [{name: '上海生产地点', country_code: 'CN', region: '上海', city: '上海', district: '浦东', latitude: 31.2, longitude: 121.5, radius_km: 10}],
   validity_state: 'active',
@@ -108,6 +109,31 @@ describe('RiskDetailView', () => {
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v1/risk-alerts/7', '/api/v1/events/70']);
     expect(screen.getByText(/规范名称：关联主体有限公司/)).toBeInTheDocument();
     expect(screen.getByText('上海生产地点')).toBeInTheDocument();
+  });
+
+  it('生命周期为 null 时只展示处理状态，不出现空徽标或 undefined', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({...alert(7), validity_state: null, processing_state: 'no_trigger'}))
+      .mockResolvedValueOnce(response(event(70, {
+        validity_state: null,
+        signals: [{
+          signal_id: 1,
+          title: '未触发信号',
+          content: '数据积累中',
+          url: null,
+          published_at: null,
+          collected_at: '2026-08-30T09:00:00Z',
+          validity_state: null,
+          processing_state: 'no_trigger',
+        }],
+      })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAt('/risks/7');
+
+    expect((await screen.findAllByText('未触发（数据积累中）')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('其他状态')).not.toBeInTheDocument();
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
   it.each([

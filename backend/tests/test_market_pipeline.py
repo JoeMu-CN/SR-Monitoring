@@ -7,8 +7,9 @@
 2. **触发 → 写确定性结果并继续既有处理链**：产出 ``market`` /
    ``commodity_price_move`` 事件，``start_at`` 取 episode 起点，并给关键原材料
    为铜的电缆供应商生成弱关联等级上限内的提醒（含 industry 证据）。
-3. **未触发 → 终态过滤**：写空结果的 succeeded 记录 + irrelevant 终态，不产出
-   任何事件，且后续批次不再被队列谓词捞取（否则每日重复统计、重复写记录）。
+3. **未触发 → 终态过滤**：写空结果的 succeeded 记录 + ``processing_state='no_trigger'``
+   处理阶段（生命周期保持不变），不产出任何事件，且后续批次不再被队列谓词捞取
+   （否则每日重复统计、重复写记录）。
 4. **未命中即回落**：未登记品种 / 配置停用 / ``source_extra`` 缺失或不可解析一律
    走既有路径（commodity 仍由旧分级兜底），既不报错也不静默吞掉信号。
 5. **脏观察点只跳过该行**：注册键命中但缺现值时判"无可用观察点"，而不是把整条
@@ -51,7 +52,7 @@ from app.risks.scoring import compute_level, load_scoring_settings
 from app.risks.service import process_analysis
 from app.signals.models import DataSource, RawSignal
 from app.signals.relevance import invalidate_filter_rules_cache
-from app.signals.validity import ValidityState
+from app.signals.validity import ProcessingState
 from app.suppliers.models import Supplier
 
 NOW: Final = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -143,7 +144,7 @@ def _pending(
     title: str = "沪铜主力 日行情",
     content: str = "沪铜主力 nf_CU0 收盘 75600 元/吨，较昨结算：+0.53%。",
 ) -> RawSignal:
-    """本轮候选信号：pending_classification，会被调度取出处理。"""
+    """本轮候选信号：待分类（生命周期未定），会被调度取出处理。"""
     payload: dict[str, object] = {"title": title, "content": content}
     if extra is not None:
         payload["source_extra"] = extra
@@ -158,7 +159,8 @@ def _pending(
         fingerprint=f"market-pipeline-pending-fp-{index}",
         raw_data=payload,
         validity_key=f"fut-{CU_SYMBOL}",
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         validity_reason={
             "code": "pending_classification",
             "anchor_source": "published_at",
@@ -366,7 +368,7 @@ def test_untriggered_market_signal_is_terminally_filtered(
     # When：调度器处理待处理信号。
     processed = scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW)
 
-    # Then：终态过滤记录（result 为空、无需人工复核）+ irrelevant 终态 + 无事件。
+    # Then：终态过滤记录（result 为空、无需人工复核）+ no_trigger 处理阶段 + 无事件。
     assert processed == 0
     db_session.refresh(signal)
     analysis = _analyses(db_session, signal)[0]
@@ -376,7 +378,9 @@ def test_untriggered_market_signal_is_terminally_filtered(
     assert analysis.result is None
     assert analysis.needs_review is False
     assert analysis.error is not None and "below_threshold" in analysis.error
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    # 行情未触发只改处理阶段，生命周期仍为未定（NULL）。
+    assert signal.processing_state == ProcessingState.NO_TRIGGER
+    assert signal.validity_state is None
     assert signal.validity_reason["code"] == "filtered_out"
     assert signal.validity_reason["details"]["filter"] == scheduler_jobs.MARKET_FILTER_KIND
     assert "未达触发线" in signal.validity_reason["details"]["reason"]
@@ -404,7 +408,7 @@ def test_untriggered_market_signal_is_not_reprocessed_in_next_round(
     # Then
     assert second == 0
     db_session.refresh(signal)
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    assert signal.processing_state == ProcessingState.NO_TRIGGER
     assert len(_analyses(db_session, signal)) == 1
 
 
@@ -427,7 +431,8 @@ def test_market_signal_without_usable_value_is_filtered_as_no_observations(
     assert analysis.provider == DETERMINISTIC_PROVIDER
     assert analysis.result is None
     assert analysis.error is not None and "no_observations" in analysis.error
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    assert signal.processing_state == ProcessingState.NO_TRIGGER
+    assert signal.validity_state is None
 
 
 # ---------------------------------------------------------------------------

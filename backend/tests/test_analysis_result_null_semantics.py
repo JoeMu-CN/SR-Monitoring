@@ -2,10 +2,11 @@
 
 确定性过滤（deterministic-filter）以 ``result=None`` 落库，而 ``result`` 是无
 ``none_as_null`` 的 JSONB 列，显式 None 实际写成 JSON null（``jsonb_typeof='null'``）
-而非 SQL NULL。因此 ``result.is_(None)`` 排除不掉这些已过滤记录（队首阻塞），
+而非 SQL NULL。因此 ``result.is_(None)`` 排除不掉这些已过滤记录，
 ``result.is_not(None)`` 又把它们当作可复用分析（静默 continue）。
-本文件锁定正确的 NULL 语义：过滤记录（JSON null 或 SQL NULL）必须被排除且不可复用，
-真实 JSON object 结果必须可复用，队首过滤记录不得阻塞后续信号，手工 process 路径一致。
+本文件锁定正确的 NULL 语义：过滤记录（JSON null 或 SQL NULL）不可复用；0066 起队列
+是否捞取只由 ``processing_state`` 决定（过滤结论必须显式落 filtered），真实 JSON
+object 结果必须可复用，队首过滤记录不得阻塞后续信号，手工 process 路径一致。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from app.ai.providers import FakeAIProvider
 from app.ai.schemas import SignalAnalysisResult
 from app.risks.models import RiskEventSignal
 from app.signals.models import DataSource, RawSignal
+from app.signals.validity import ProcessingState
 
 NOW_UTC = datetime(2026, 10, 10, 12, tzinfo=UTC)
 
@@ -59,7 +61,9 @@ def _signal(
         collected_at=published_at,
         fingerprint=f"null-semantics-{suffix}",
         raw_data={},
-        validity_state="pending_classification",
+        # 尚未处理：生命周期未定（NULL），阶段待分类（0066 起队列只认 processing_state）。
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         validity_reason={
             "code": "pending_classification",
             "anchor_source": "published_at",
@@ -154,52 +158,60 @@ def _candidate_ids(session: Session) -> list[int]:
     ]
 
 
-def test_pending_candidates_exclude_json_null_filtered_analysis(db_session: Session) -> None:
-    # Given：已过滤分析以 JSON null 落库（生产 deterministic-filter 形态）
-    source = _source(db_session, "null-json-filter")
-    signal = _signal(db_session, source, "json-null", NOW_UTC - timedelta(hours=1))
-    _json_null_filtered_record(db_session, signal)
+def test_empty_result_records_are_not_reusable_and_do_not_block_queue(
+    db_session: Session,
+) -> None:
+    """空结果记录不可复用；队列排除由 processing_state 表达，而非空结果子查询。
 
-    # When：读取待处理候选
-    candidates = _candidate_ids(db_session)
+    0066 起候选谓词不再内联「终态过滤记录」子查询：写入侧过滤必须落
+    ``processing_state='filtered'``。这里同时锁定两种落库形态（JSON null 与 SQL NULL）
+    既不被当作可复用分析，也不会因为残留空结果记录而长期占住队列。
+    """
+    # Given：两条待处理信号各自带 JSON null / SQL NULL 的过滤记录。
+    json_source = _source(db_session, "null-json-filter")
+    json_signal = _signal(db_session, json_source, "json-null", NOW_UTC - timedelta(hours=1))
+    _json_null_filtered_record(db_session, json_signal)
+    sql_source = _source(db_session, "null-sql-filter")
+    sql_signal = _signal(db_session, sql_source, "sql-null", NOW_UTC - timedelta(hours=1))
+    _sql_null_filtered_record(db_session, sql_signal)
+    db_session.flush()
 
-    # Then：该信号被排除，不再阻塞队列；且确认它确实是 JSON null 而非 SQL NULL
-    assert signal.id not in candidates
+    # Then：两种形态都确认落库正确（JSON null 是 SQL 非 NULL，SQL NULL 为真 NULL）。
     assert (
         db_session.scalar(
             select(func.count())
             .select_from(AIAnalysisRecord)
             .where(
-                AIAnalysisRecord.signal_id == signal.id,
+                AIAnalysisRecord.signal_id == json_signal.id,
                 AIAnalysisRecord.result.is_not(None),
             )
         )
         == 1
     )
-
-
-def test_pending_candidates_exclude_sql_null_filtered_analysis(db_session: Session) -> None:
-    # Given：已过滤分析以 SQL NULL 落库
-    source = _source(db_session, "null-sql-filter")
-    signal = _signal(db_session, source, "sql-null", NOW_UTC - timedelta(hours=1))
-    _sql_null_filtered_record(db_session, signal)
-
-    # When：读取待处理候选
-    candidates = _candidate_ids(db_session)
-
-    # Then：该信号被排除；并确认落库的确是 SQL NULL
-    assert signal.id not in candidates
     assert (
         db_session.scalar(
             select(func.count())
             .select_from(AIAnalysisRecord)
             .where(
-                AIAnalysisRecord.signal_id == signal.id,
+                AIAnalysisRecord.signal_id == sql_signal.id,
                 AIAnalysisRecord.result.is_(None),
             )
         )
         == 1
     )
+    # Then：空结果记录不可复用。
+    for signal in (json_signal, sql_signal):
+        assert ai_service.latest_reusable_analysis(db_session, signal.id) is None
+    # Then：阶段仍是待分类时它们是候选（不再依赖空结果子查询做排除）……
+    candidates = _candidate_ids(db_session)
+    assert {json_signal.id, sql_signal.id} <= set(candidates)
+    # ……写入侧把过滤结论落到 processing_state 后立刻移出队列。
+    for signal in (json_signal, sql_signal):
+        signal.processing_state = ProcessingState.FILTERED
+    db_session.flush()
+    candidates = _candidate_ids(db_session)
+    assert json_signal.id not in candidates
+    assert sql_signal.id not in candidates
 
 
 def test_pending_candidates_keep_object_analysis_result(db_session: Session) -> None:
@@ -236,13 +248,16 @@ def test_latest_reusable_analysis_prefers_object_over_json_null_filtered(
 def test_head_json_null_filtered_records_do_not_block_later_signal(
     db_session: Session, monkeypatch: MonkeyPatch
 ) -> None:
-    # Given：队首两条为 JSON null 过滤记录，之后一条是可复用对象结果
+    # Given：队首两条是已落 filtered 阶段的过滤信号，之后一条是可复用对象结果
     source = _source(db_session, "null-head-block")
     head_old = _signal(db_session, source, "head-old", NOW_UTC - timedelta(hours=3))
     head_new = _signal(db_session, source, "head-new", NOW_UTC - timedelta(hours=2))
     good = _signal(db_session, source, "good", NOW_UTC - timedelta(hours=1))
     _json_null_filtered_record(db_session, head_old)
     _json_null_filtered_record(db_session, head_new)
+    # 写入侧过滤结论：确定性过滤落 filtered 后不再回到队列（0066 起由阶段表达）。
+    head_old.processing_state = ProcessingState.FILTERED
+    head_new.processing_state = ProcessingState.FILTERED
     _object_analysis(db_session, good)
     db_session.commit()
 
@@ -253,10 +268,10 @@ def test_head_json_null_filtered_records_do_not_block_later_signal(
     monkeypatch.setattr(scheduler_jobs, "SIGNAL_RELEVANCE_FILTER_ENABLED", False)
     monkeypatch.setattr(scheduler_jobs, "analyze_raw_signal", _forbidden)
 
-    # When：batch=2，队首过滤记录若未被排除会占满整批
+    # When：batch=2，队首过滤信号若未被排除会占满整批
     processed = scheduler_jobs._process_pending_signals(limit=2, now_utc=NOW_UTC)
 
-    # Then：后续信号仍被处理，队首过滤记录未被再处理
+    # Then：后续信号仍被处理，队首过滤信号未被再处理
     assert processed == 1
     assert (
         db_session.scalar(

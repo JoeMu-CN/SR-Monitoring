@@ -16,6 +16,7 @@ from app.signals.models import DataSource, RawSignal
 from app.signals.validity import (
     EVENT_SUBTYPE_PROFILES,
     LifecycleAction,
+    ProcessingState,
     ValidityMode,
     ValidityProfile,
     ValidityState,
@@ -185,7 +186,9 @@ def _pending_market_signal(
         fingerprint=f"market-taxonomy-{suffix}",
         raw_data={},
         validity_key=f"market-key-{suffix}",
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        # 待分类：生命周期未定（NULL），处理阶段 pending_classification。
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         validity_reason={
             "code": "pending_classification",
             "anchor_source": "published_at",
@@ -271,8 +274,8 @@ def test_prompt_when_market_taxonomy_is_released_then_covers_new_values() -> Non
     # Given
     prompt = system_prompt()
 
-    # Then：提示词版本已升到 v7
-    assert PROMPT_VERSION == "signal-analysis-v7"
+    # Then：提示词版本已升到 v8（公告形态解析规则）
+    assert PROMPT_VERSION == "signal-analysis-v8"
     # 规则正文（硬编码文本）显式给出新映射
     assert "commodity_price_move" in prompt
     assert "industry_market_move" in prompt

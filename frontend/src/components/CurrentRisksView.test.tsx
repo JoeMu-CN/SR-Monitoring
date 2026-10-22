@@ -46,7 +46,7 @@ describe('当前风险列表有效期状态展示', () => {
       baseItem({id: '4', companyName: '替代供应商', validityState: 'superseded', status: 'invalid'}),
       baseItem({id: '5', companyName: '冲突供应商', validityState: 'conflicted', status: 'invalid'}),
       baseItem({id: '6', companyName: '旧版供应商', validityState: 'legacy', status: 'invalid'}),
-      baseItem({id: '7', companyName: '不相关供应商', validityState: 'irrelevant', status: 'invalid'}),
+      baseItem({id: '7', companyName: '已过滤供应商', validityState: 'irrelevant', status: 'invalid'}),
     ];
 
     render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
@@ -58,7 +58,28 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.getByText('已替代')).toBeInTheDocument();
     expect(screen.getByText('冲突')).toBeInTheDocument();
     expect(screen.getByText('旧版兼容')).toBeInTheDocument();
-    expect(screen.getByText('不相关')).toBeInTheDocument();
+    // 历史兼容：旧 irrelevant 终态按「已过滤」展示。
+    expect(screen.getByText('已过滤')).toBeInTheDocument();
+  });
+
+  it('并排展示处理状态，且生命周期为 null 时不渲染空徽标', () => {
+    render(
+      <CurrentRisksView
+        riskItems={[baseItem({
+          id: '8',
+          companyName: '处理状态供应商',
+          validityState: null,
+          processingState: 'no_trigger',
+        })]}
+        summary={null}
+        onSelectRisk={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('未触发（数据积累中）')).toBeInTheDocument();
+    expect(screen.queryByText('有效')).not.toBeInTheDocument();
+    expect(screen.queryByText('其他状态')).not.toBeInTheDocument();
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
   it('展示截止时间、复核时间与中文原因，且不暴露策略版本', () => {
@@ -113,7 +134,7 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.getByText('其他状态')).toBeInTheDocument();
     expect(screen.queryByText('brand_new_state')).not.toBeInTheDocument();
     // 新增的 filtered_out 原因码同样必须有中文，不回落到英文原码
-    expect(screen.getByText('预筛不相关')).toBeInTheDocument();
+    expect(screen.getByText('已过滤')).toBeInTheDocument();
     expect(screen.queryByText('filtered_out')).not.toBeInTheDocument();
   });
 

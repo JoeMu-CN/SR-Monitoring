@@ -180,7 +180,8 @@ def _make_signal(
     source: DataSource,
     fingerprint: str,
     collected_at: datetime,
-    validity_state: str = "pending_classification",
+    validity_state: str | None = None,
+    processing_state: str = "pending_classification",
     validity_reason_code: str | None = None,
 ) -> RawSignal:
     signal = RawSignal(
@@ -192,6 +193,7 @@ def _make_signal(
         raw_data={},
         collected_at=collected_at,
         validity_state=validity_state,
+        processing_state=processing_state,
     )
     if validity_reason_code is not None:
         signal.validity_reason = {
@@ -200,6 +202,16 @@ def _make_signal(
             "details": {},
         }
     session.add(signal)
+    session.flush()
+    if validity_state is None:
+        # validity_state 列仍有 server_default：ORM 构造函数传 None 会被默认值覆盖，
+        # 这里显式 UPDATE 成 SQL NULL，模拟写入侧 Core insert 的真实语义。
+        session.execute(
+            update(RawSignal)
+            .where(RawSignal.id == signal.id)
+            .values(validity_state=None)
+        )
+        session.expire(signal)
     session.flush()
     return signal
 
@@ -273,6 +285,7 @@ def test_baseline_pending_candidate_predicate_excludes_disabled_and_terminal(
         source=active_source,
         fingerprint="baseline-drop-cf",
         collected_at=NOW - timedelta(minutes=5),
+        processing_state="classification_failed",
         validity_reason_code="classification_failed",
     )
 
@@ -993,6 +1006,7 @@ def test_pending_counts_backlog_and_classification_failed_separately(
         source=source,
         fingerprint="cf",
         collected_at=NOW - timedelta(hours=5),
+        processing_state="classification_failed",
         validity_reason_code="classification_failed",
     )
 
@@ -1001,6 +1015,11 @@ def test_pending_counts_backlog_and_classification_failed_separately(
     assert pending.backlog_over_1h == 1
     assert pending.classification_failed == 1
     assert pending.oldest_pending_age_seconds == int(timedelta(hours=5).total_seconds())
+    # 处理状态分布只统计启用信源下的信号，且与队列口径独立。
+    assert pending.processing_state_counts == {
+        "pending_classification": 2,
+        "classification_failed": 1,
+    }
 
 
 def test_pending_last_run_zero_new_success(db_session: Session) -> None:

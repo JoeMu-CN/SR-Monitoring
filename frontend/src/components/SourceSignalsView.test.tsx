@@ -30,6 +30,7 @@ const populatedResponse: SourceSignalListResponse = {
       collected_at: '2026-09-01T08:00:00Z',
       validity_profile: 'transport_disruption',
       validity_state: 'active',
+      processing_state: 'analyzed',
       valid_from: '2026-08-31T08:00:00Z',
       valid_until: '2026-09-30T08:00:00Z',
       validity_mode: 'fixed_days',
@@ -50,6 +51,7 @@ const populatedResponse: SourceSignalListResponse = {
       collected_at: '2026-09-01T09:00:00Z',
       validity_profile: null,
       validity_state: 'expired',
+      processing_state: 'analyzed',
       valid_from: null,
       valid_until: null,
       review_due_at: null,
@@ -74,7 +76,7 @@ const tianyanchaResponse: SourceSignalListResponse = {
   offset: 0,
 };
 
-/** 预筛判定为不相关的终态记录：状态标签比「有效」更长，用于验证状态列收到最小宽度时同样不换行不溢出。 */
+/** 旧终态「不相关」记录 + 未触发处理状态：验证历史兼容、长标签与两枚徽标并存。 */
 const irrelevantSignalResponse: SourceSignalListResponse = {
   ...tianyanchaResponse,
   items: [
@@ -85,7 +87,12 @@ const irrelevantSignalResponse: SourceSignalListResponse = {
       external_id: 'EXT-93',
       title: '预筛判定不相关的记录',
       validity_state: 'irrelevant',
-      validity_reason: {code: 'filtered_out', anchor_source: 'published_at', details: {}},
+      processing_state: 'no_trigger',
+      validity_reason: {
+        code: 'filtered_out',
+        anchor_source: 'published_at',
+        details: {filter: 'market_indicator', reason: 'accumulating'},
+      },
     },
   ],
   total: 2,
@@ -192,7 +199,7 @@ describe('信息源采集记录清单', () => {
     expect(table.parentElement).toHaveClass('overflow-x-auto');
     const headers = within(table).getAllByRole('columnheader');
     expect(headers.map((header) => header.textContent)).toEqual([
-      '序号', '标题', '状态', '发布时间', '采集时间', '有效期截止', '复核时间', '外部编号', '有效期原因', '摘要 / 内容', '原文',
+      '序号', '标题', '状态', '处理状态', '发布时间', '采集时间', '有效期截止', '复核时间', '外部编号', '有效期原因', '摘要 / 内容', '原文',
     ]);
     headers.forEach((header) => expect(within(header).getByText(header.textContent ?? '')).toHaveClass('truncate'));
     ['发布时间', '采集时间', '有效期截止', '复核时间'].forEach((label) => {
@@ -200,6 +207,30 @@ describe('信息源采集记录清单', () => {
     });
     const summaryCell = screen.getByTestId('source-signal-summary-91');
     expect(within(summaryCell).getByRole('button')).toHaveClass('truncate');
+  });
+
+  it('生命周期未定时不渲染空徽标，处理状态照常展示', async () => {
+    vi.spyOn(api, 'sourceSignals').mockResolvedValue({
+      ...populatedResponse,
+      items: [{
+        ...populatedResponse.items[0]!,
+        id: 94,
+        title: '生命周期未定的记录',
+        validity_state: null,
+        processing_state: 'filtered',
+      }],
+      total: 1,
+      offset: 0,
+    });
+
+    renderView('/sources/17/signals?scope=all&page=1');
+    await screen.findByText('生命周期未定的记录');
+
+    const row = screen.getAllByRole('row')[1]!;
+    expect(within(row).queryByText('有效')).not.toBeInTheDocument();
+    expect(within(row).getByText('已过滤')).toBeInTheDocument();
+    expect(row).not.toHaveTextContent('undefined');
+    expect(row).not.toHaveTextContent('其他状态');
   });
 
   it('紧凑表格只呈现既有信息：不显示策略版本', async () => {
@@ -407,8 +438,9 @@ describe('采集记录单元格完整内容浮层', () => {
     singleLine(within(screen.getAllByRole('row')[1]!).getByText('有效').parentElement);
     singleLine(within(screen.getAllByRole('row')[1]!).getByRole('link', {name: '原文'}).parentElement);
     singleLine(within(screen.getAllByRole('row')[1]!).getByRole('button', {name: /查看完整报告/}).parentElement);
-    // 「不相关」标签比「有效」多一个字，同样受 truncate 约束，不换行不溢出
-    singleLine(within(screen.getAllByRole('row')[2]!).getByText('不相关').parentElement);
+    // 旧终态 irrelevant 按「已过滤」展示；处理状态长标签同样受 truncate 约束。
+    singleLine(within(screen.getAllByRole('row')[2]!).getByText('已过滤').parentElement);
+    singleLine(within(screen.getAllByRole('row')[2]!).getByText('未触发（数据积累中）').parentElement);
 
     const statusHandle = screen.getByRole('separator', {name: '调整「状态」列宽'});
     statusHandle.focus();
@@ -416,7 +448,7 @@ describe('采集记录单元格完整内容浮层', () => {
 
     await waitFor(() => expect(statusHandle).toHaveAttribute('aria-valuenow', '80'));
     singleLine(within(screen.getAllByRole('row')[1]!).getByText('有效').parentElement);
-    singleLine(within(screen.getAllByRole('row')[2]!).getByText('不相关').parentElement);
+    singleLine(within(screen.getAllByRole('row')[2]!).getByText('已过滤').parentElement);
   });
 });
 
@@ -667,9 +699,17 @@ describe('采集记录有效期原因显示', () => {
     expect(await renderValidityReason({code: 'active', anchor_source: 'legacy', details: {}})).toBe('有效');
   });
 
-  it('预筛不相关原因显示为中文，不露出英文原因码', async () => {
+  it('预筛过滤原因显示为「已过滤」，不露出英文原因码', async () => {
     expect(await renderValidityReason({code: 'filtered_out', anchor_source: 'collected_at', details: {}}))
-      .toBe('预筛不相关（以采集时间为依据）');
+      .toBe('已过滤（以采集时间为依据）');
+  });
+
+  it('行情指标处于数据积累期时显示「数据积累中」而不是「已过滤/不相关」', async () => {
+    expect(await renderValidityReason({
+      code: 'filtered_out',
+      anchor_source: 'published_at',
+      details: {filter: 'market_indicator', reason: 'accumulating'},
+    })).toBe('数据积累中');
   });
 
   it('未知原因保留后端原文并照常标注时间依据', async () => {

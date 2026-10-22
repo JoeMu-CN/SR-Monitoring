@@ -1,9 +1,9 @@
-"""确定性预筛过滤分支写入显式终态 irrelevant 的写路径锁定。
+"""确定性预筛过滤分支只改处理阶段的写路径锁定。
 
 三个过滤分支（相关性预筛 / 清单未命中 / 结构化分级）此前只写 filtered 分析记录，
 信号本身长期滞留 pending_classification；本文件锁定：过滤发生后信号进入
-``irrelevant`` 终态并带 ``filtered_out`` 原因，不再生成风险事件，也不再被分析队列
-谓词捞取。
+``processing_state='filtered'`` 并带 ``filtered_out`` 原因，**生命周期
+（validity_state）保持原值不被覆盖**，不再生成风险事件，也不再被分析队列谓词捞取。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from app.risks.query_validity import valid_signal_condition
 from app.risks.validity import is_raw_signal_effective
 from app.signals.models import DataSource, RawSignal
 from app.signals.relevance import invalidate_filter_rules_cache, load_filter_rules
-from app.signals.validity import ValidityState
+from app.signals.validity import ProcessingState, ValidityState
 
 NOW_UTC = datetime(2026, 10, 12, 12, tzinfo=UTC)
 
@@ -67,7 +67,8 @@ def _signal(
         collected_at=NOW_UTC,
         fingerprint=f"irrelevant-{suffix}",
         raw_data={},
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         validity_reason={
             "code": "pending_classification",
             "anchor_source": "published_at" if published_at else "collected_at",
@@ -82,8 +83,10 @@ def _signal(
 def _assert_irrelevant_and_excluded(
     session: Session, signal: RawSignal, source: DataSource
 ) -> None:
-    """终态 + filtered_out 原因 + 无事件 + 队列与判活谓词双排除。"""
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    """处理阶段 filtered + filtered_out 原因 + 无事件 + 队列与判活谓词双排除。"""
+    assert signal.processing_state == ProcessingState.FILTERED
+    # 过滤结论不是生命周期：未被策略解析的信号生命周期仍为未定（NULL）。
+    assert signal.validity_state is None
     assert signal.validity_reason["code"] == "filtered_out"
     assert signal.validity_reason["details"]["filter"]
     assert signal.validity_reason["details"]["reason"]
@@ -104,7 +107,7 @@ def _assert_irrelevant_and_excluded(
     # 不生成任何风险事件与信号关联。
     assert session.scalar(select(func.count()).select_from(RiskEvent)) == 0
     assert session.scalar(select(func.count()).select_from(RiskEventSignal)) == 0
-    # 不再进入分析队列（正向白名单自动排除 irrelevant）。
+    # 不再进入分析队列（候选谓词只接受形成阶段 pending_classification）。
     assert signal.id not in [
         signal_id
         for signal_id, _ in session.execute(
@@ -225,10 +228,10 @@ def test_irrelevant_signal_survives_next_scheduler_round(
     db_session.refresh(filtered)
     second_round = scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW_UTC)
 
-    # Then：irrelevant 不会被重复捞取，也不产生第二条过滤记录。
+    # Then：已过滤信号不会被重复捞取，也不产生第二条过滤记录。
     assert second_round == 0
     db_session.refresh(filtered)
-    assert filtered.validity_state == ValidityState.IRRELEVANT
+    assert filtered.processing_state == ProcessingState.FILTERED
     assert (
         db_session.scalar(
             select(func.count())
@@ -240,7 +243,7 @@ def test_irrelevant_signal_survives_next_scheduler_round(
 
 
 def test_irrelevant_signal_is_not_effective_for_business_chain(db_session: Session) -> None:
-    # Given：irrelevant 信号（手动构造，锁定 Python 侧判活入口）。
+    # Given：已确定性过滤的信号（手动构造，锁定 Python 侧判活入口）。
     source = _source(db_session, "irrelevant-manual")
     signal = _signal(
         db_session,
@@ -249,6 +252,7 @@ def test_irrelevant_signal_is_not_effective_for_business_chain(db_session: Sessi
         title="Branch maintenance notice",
         content="The branch in Germany will be closed for maintenance next week.",
     )
+    signal.processing_state = ProcessingState.FILTERED
     signal.validity_state = ValidityState.IRRELEVANT
     signal.validity_reason = {
         "code": "filtered_out",

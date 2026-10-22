@@ -240,12 +240,59 @@ CREATE INDEX CONCURRENTLY ix_raw_signals_priority_collected
 - 隔离测试栈（`scripts/test-backend.ps1`，`alembic upgrade head` 至 0065）跑 13 个定向文件：全绿，健康检查 `{"database":"supplier_risk_test","pytest":"passed","health":"ok"}`。
 - 覆盖：预筛三链、优先级分档/加分、消费预算与锁跳过、队列按源汇总、采集不再触发消费、行情/清单/有效性/事件链路回归。
 
-**待执行（需用户确认，未动生产）**
+**已执行（2026-10-22）**
 
-1. 重建并重启 `app` + `scheduler`（加载新代码并自动 `alembic upgrade head`）。
-2. OFAC 历史批量收敛：先跑只读预检（统计命中供应商、会被保留的条数），确认 0 后写过滤记录 + 置 `irrelevant`。
-3. `nmc-weather` 调度改 `*/30`（`data_sources.schedule`）。
-4. 观察 30 分钟：`scheduler_runtime_state.pending_signals` 的 processed/filtered、`signal-consume` 日志、队列深度与政策类时延。
+1. 镜像重建、迁移至 0065、`app` + `scheduler` 重启，健康检查 ok。
+2. OFAC 历史收敛：预检 4,437 条、命中供应商 0 条，批量写过滤记录并置 `irrelevant`；待处理归零。
+3. `nmc-weather` 调度改 `*/30`，05:00 已按新周期触发。
+4. 观察：队列候选 3,896 → 0；LLM 调用恢复至 92–216 条/小时；`signal-consume` 每 20 秒稳定运行。
+
+---
+
+## 十二、状态模型重构（2026-10-22）
+
+### 问题
+`raw_signals.validity_state` 一个字段混了三种语义：生命周期、处理阶段、过滤结论，导致「数据积累中」被展示为「不相关」。
+
+### 目标模型
+
+| 字段 | 取值 | 含义 |
+|---|---|---|
+| `validity_state` | `active / expired / superseded / revoked / conflicted / legacy`，或 **NULL** | 只表达生命周期；未定时为 NULL |
+| `processing_state` | `pending_classification / analyzed / filtered / no_trigger / classification_failed` | 处理进度与结论 |
+
+语义拆分：
+
+- `filtered`：确定性过滤，业务无关（相关性/清单/结构化）。
+- `no_trigger`：已确定性评估、本次未触发（行情数据积累中、未达阈值）。
+- `analyzed`：已进入事件链。
+- `classification_failed`：分类失败，等待重试。
+
+### 候选与判活口径
+
+- 分析候选：`processing_state='pending_classification'` 且 `validity_state IS NULL OR validity_state='active'`，再叠加有效期。
+- 有效信号：`validity_state='active'` 且 `processing_state IN ('pending_classification','analyzed')`。
+- `filtered` / `no_trigger` 不计有效证据，但不改生命周期。
+
+### 历史数据回填
+
+1. `pending_classification` → `validity_state=NULL`，`processing_state='pending_classification'`。
+2. `irrelevant` → 按 `details.filter` 映射 `filtered` / `no_trigger`；生命周期按 `valid_until` / `validity_mode` 推断。
+3. 有 `risk_event_signals` → `analyzed`（覆盖）。
+4. 有 `market-eval-v1` 记录且未 analyzed → `no_trigger`。
+5. `validity_reason.code='classification_failed'` → `classification_failed`。
+
+### 兼容与回滚
+
+- `validity_state` 的旧值（`pending_classification`/`irrelevant`）与宽松约束保留一个版本；新代码不再写入。
+- 新列有默认值，回退镜像时旧代码可忽略；迁移 `0066` 的 downgrade 可恢复旧语义。
+- 稳定运行一周后再收紧约束、删除旧值分支。
+
+### 涉及文件
+
+- 写入/迁移：`signals/validity.py`、`signals/models.py`、`alembic/versions/0066_*`、`signals/ingestion.py`、`signals/prefilter.py`、`scheduler/jobs.py`、`risks/signal_validity.py`、`risks/service.py`、`ai/service.py`、`signals/{lifecycle,supersession,membership_repository}.py`
+- 读取/API：`risks/query_validity.py`、`scheduler/health.py`、`risks/{router,schemas}.py`、`signals/{router,schemas}.py`
+- 前端：`api.ts`、`ValidityStateBadge.tsx`、`SourceSignalsTable.tsx`、`SourceSignalsView.tsx`、`CurrentRisksView.tsx`、`RiskDetailView.tsx`、`RiskDetailEvidenceSections.tsx`、`types.ts`
 
 
 ---

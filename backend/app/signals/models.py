@@ -329,12 +329,23 @@ class RawSignal(Base):
         ),
         # irrelevant 为确定性预筛的显式终态（不计有效、不再进入分析队列），与
         # pending_classification / legacy 同属「无需策略快照与截止时间」豁免集。
-        # 三条约束文本必须与 alembic/versions/0059_signal_irrelevant_state.py 一致；
+        # 生命周期未定的信号（待分类、已确定性过滤）写 NULL，因此三条约束都显式
+        # 放行 NULL；pending_classification / irrelevant 两个旧取值保留以兼容历史
+        # 数据与回滚，业务代码不再写入。约束文本必须与
+        # alembic/versions/0066_signal_processing_state.py 一致；
         # 测试 test_signal_irrelevant_migration.py 做等价性断言。
         CheckConstraint(
-            "validity_state IN ('pending_classification','active','expired','superseded',"
+            "validity_state IS NULL OR validity_state IN "
+            "('pending_classification','active','expired','superseded',"
             "'revoked','conflicted','irrelevant','legacy')",
             name="ck_raw_signals_validity_state",
+        ),
+        # 处理进度与过滤结论（与 validity_state 的生命周期正交）：待分类 / 已分析 /
+        # 确定性过滤 / 行情未触发 / 分类失败。
+        CheckConstraint(
+            "processing_state IN ('pending_classification','analyzed','filtered',"
+            "'no_trigger','classification_failed')",
+            name="ck_raw_signals_processing_state",
         ),
         CheckConstraint(
             "validity_mode IS NULL OR validity_mode IN ('fixed_days','until_superseded',"
@@ -346,12 +357,14 @@ class RawSignal(Base):
             name="ck_raw_signals_lifecycle_action",
         ),
         CheckConstraint(
+            "validity_state IS NULL OR "
             "validity_state IN ('pending_classification','irrelevant','legacy') OR "
             "(validity_profile IS NOT NULL AND validity_mode IS NOT NULL "
             "AND valid_from IS NOT NULL AND validity_policy_version IS NOT NULL)",
             name="ck_raw_signals_policy_snapshot",
         ),
         CheckConstraint(
+            "validity_state IS NULL OR "
             "validity_state IN ('pending_classification','irrelevant','legacy') OR "
             "(validity_mode IN ('fixed_days','until_superseded','event_end_plus_grace') "
             "AND valid_until IS NOT NULL) OR validity_mode IN ('until_revoked','indefinite')",
@@ -408,7 +421,11 @@ class RawSignal(Base):
     dedup_key: Mapped[str] = mapped_column(Text)
     raw_data: Mapped[dict[str, object]] = mapped_column(JSONB)
     validity_profile: Mapped[str | None] = mapped_column(Text)
-    validity_state: Mapped[str] = mapped_column(
+    # 只表达生命周期；未定（待分类/确定性过滤）时为 NULL。列上不设默认值：给默认值
+    # 会让「未定」在直插路径上被静默改写成某个生命周期取值。
+    validity_state: Mapped[str | None] = mapped_column(Text)
+    # 处理进度与过滤结论，与生命周期正交；见 app.signals.validity.ProcessingState。
+    processing_state: Mapped[str] = mapped_column(
         Text, server_default=text("'pending_classification'")
     )
     valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

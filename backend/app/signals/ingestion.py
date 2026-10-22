@@ -17,6 +17,7 @@ from app.signals.supersession import insert_supersession, is_supersession_candid
 from app.signals.validity import (
     LifecycleAction,
     PolicyResolutionRequest,
+    ProcessingState,
     SignalValidityFacts,
     SourceValidityPolicyConfig,
     ValidityConfigurationError,
@@ -65,10 +66,10 @@ class SignalIngestion:
 
 @dataclass(frozen=True, slots=True)
 class SignalValiditySnapshot:
-    """可直接持久化的不可变有效期计算结果。"""
+    """可直接持久化的不可变有效期计算结果；策略未定时 state 为 NULL。"""
 
     profile: str | None
-    state: str
+    state: str | None
     valid_from: datetime
     valid_until: datetime | None
     review_due_at: datetime | None
@@ -184,9 +185,10 @@ def _resolve_validity_snapshot(ingestion: SignalIngestion) -> SignalValiditySnap
     if decision.state is ValidityState.PENDING_CLASSIFICATION:
         if signal.lifecycle_action is not LifecycleAction.ASSERT:
             raise SignalIngestionError("lifecycle_action_requires_resolved_policy")
+        # 策略未定：生命周期未知写 NULL，处理阶段落在 pending_classification。
         return SignalValiditySnapshot(
             profile=None,
-            state=decision.state,
+            state=None,
             valid_from=anchor,
             valid_until=None,
             review_due_at=None,
@@ -285,6 +287,7 @@ def _signal_row(
         ),
         "validity_profile": snapshot.profile,
         "validity_state": snapshot.state,
+        "processing_state": ProcessingState.PENDING_CLASSIFICATION,
         "valid_from": snapshot.valid_from,
         "valid_until": snapshot.valid_until,
         "review_due_at": snapshot.review_due_at,

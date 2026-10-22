@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import bindparam, select, update
+from sqlalchemy import bindparam, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.signals.models import DataSource, RawSignal
@@ -24,6 +24,7 @@ from app.signals.relevance import (
     load_supplier_profiles,
     supplier_name_index,
 )
+from app.signals.validity import ProcessingState, ValidityState
 from app.suppliers.schemas import normalize_alias
 
 # 分项加分与上限（与采集侧打分口径固定，便于事后解释队列顺序）。
@@ -34,7 +35,15 @@ DEADLINE_SOON_BONUS = 10
 PRIORITY_MAX = 100
 DEADLINE_SOON_HOURS = 24
 _UPDATE_BATCH_SIZE = 2000
-_PRIORITY_STATES = ("pending_classification", "active")
+# 只给尚未处理的信号打分：处理阶段为 pending_classification，生命周期未定（NULL）
+# 或仍 active。已分析/已过滤/已过期/已替代的信号不改写优先级。
+_PRIORITY_ACTIVITY_FILTERS = (
+    RawSignal.processing_state == ProcessingState.PENDING_CLASSIFICATION.value,
+    or_(
+        RawSignal.validity_state.is_(None),
+        RawSignal.validity_state == ValidityState.ACTIVE.value,
+    ),
+)
 
 
 def source_tier(source: DataSource, rules: FilterRules) -> int:
@@ -82,7 +91,8 @@ def assign_signal_priorities(
 ) -> int:
     """给指定信号批量计算并写入消费优先级（采集入库后调用）。
 
-    只处理 pending_classification / active；一次 commit；异常由调用方兜底。
+    只处理仍未处理的信号（processing_state=pending_classification，生命周期未定或
+    active）；一次 commit；异常由调用方兜底。
     供应商命中索引只加载一次，避免逐条信号全表扫描。
     """
     if not signal_ids:
@@ -93,7 +103,7 @@ def assign_signal_priorities(
         .join(DataSource, DataSource.id == RawSignal.source_id)
         .where(
             RawSignal.id.in_(list(signal_ids)),
-            RawSignal.validity_state.in_(_PRIORITY_STATES),
+            *_PRIORITY_ACTIVITY_FILTERS,
         )
     ).all()
     if not rows:

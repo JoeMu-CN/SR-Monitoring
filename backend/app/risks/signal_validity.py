@@ -14,6 +14,7 @@ from app.signals.validity import (
     AnchorSource,
     LifecycleAction,
     PolicyResolutionRequest,
+    ProcessingState,
     SignalValidityFacts,
     SourceValidityPolicyConfig,
     ValidityConfigurationError,
@@ -65,8 +66,9 @@ def _policy_version(
 def mark_classification_failed(
     signal: RawSignal, analysis: AIAnalysisRecord, reason: str
 ) -> None:
-    """保留 pending 供人工复核，并记录稳定 reason code。"""
-    signal.validity_state = ValidityState.PENDING_CLASSIFICATION
+    """记录分类失败阶段，生命周期保持原值（未定时仍为 NULL）。"""
+    # 处理阶段记录失败，供队列谓词排除与人工复核；validity_state 不参与该判定。
+    signal.processing_state = ProcessingState.CLASSIFICATION_FAILED
     signal.validity_reason = {
         "code": "classification_failed",
         "anchor_source": (
@@ -93,8 +95,12 @@ def classify_pending_signal(
     profile 优先取 AI 细类映射；AI 不产出细类时回落到信源级显式
     `validity_policy.profile`（指数/行情类信源由运营显式声明），两者都无
     才判定分类失败并保留 pending 供人工复核。
+
+    只有生命周期未定（validity_state 为 NULL）的信号需要这里补策略；已定生命周期
+    的信号原样返回。补出策略后处理阶段仍是 pending_classification，随后由
+    process_analysis 在进入事件链时置 analyzed。
     """
-    if signal.validity_state != ValidityState.PENDING_CLASSIFICATION:
+    if signal.validity_state is not None:
         return
     source = session.get(DataSource, signal.source_id)
     assert source is not None
@@ -141,6 +147,8 @@ def classify_pending_signal(
         return
     signal.validity_profile = window.profile
     signal.validity_state = window.state
+    # 只补生命周期；处理阶段等 process_analysis 进入事件链时再置 analyzed。
+    signal.processing_state = ProcessingState.PENDING_CLASSIFICATION
     signal.valid_from = window.valid_from
     signal.valid_until = window.valid_until
     signal.review_due_at = window.review_due_at

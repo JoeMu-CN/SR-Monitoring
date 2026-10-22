@@ -272,7 +272,11 @@ class SourceSignalRead(BaseModel):
     published_at: datetime | None
     collected_at: datetime
     validity_profile: ValidityProfile | None
-    validity_state: ValidityState
+    # 生命周期只表达 active/expired/.../legacy；生命周期未定时为 null。
+    validity_state: ValidityState | None
+    # 处理状态：pending_classification / analyzed / filtered / no_trigger /
+    # classification_failed；旧响应缺省时按待分析读取。
+    processing_state: str = "pending_classification"
     valid_from: datetime | None
     valid_until: datetime | None
     review_due_at: datetime | None

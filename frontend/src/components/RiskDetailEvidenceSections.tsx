@@ -1,5 +1,5 @@
 import {Building2, CalendarDays, FileText, MapPin, ShieldCheck, Signal, Target} from 'lucide-react';
-import {formatValidityState, type EventDetailRead, type EventLocationEvidence, type RiskAlertRead, type ValidityReasonRead} from '../api';
+import {formatProcessingState, formatValidityState, type EventDetailRead, type EventLocationEvidence, type RiskAlertRead, type ValidityReasonRead} from '../api';
 import {ValidityStateBadge} from './ValidityStateBadge';
 
 interface RiskDetailEvidenceSectionsProps {
@@ -54,7 +54,7 @@ const VALIDITY_REASON_LABELS: Record<string, string> = {
   anchor_fallback: '时间锚点降级', policy_resolved: '策略已解析',
   superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
   quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
-  filtered_out: '预筛不相关',
+  filtered_out: '已过滤',
 };
 
 const ANCHOR_LABELS: Record<string, string> = {
@@ -82,6 +82,13 @@ const formatValue = (value: unknown): string => {
 /** 常见枚举取中文，未知值保留原文，绝不吞掉后端新增枚举。 */
 const label = (labels: Record<string, string>, value: string): string => labels[value] ?? value;
 
+/** 生命周期未定时不渲染成 "undefined"/空徽标；技术明细用明确的「未确定」占位。 */
+const formatOptionalValidityState = (value: string | null | undefined): string =>
+  value ? formatValidityState(value) : '未确定';
+
+const formatOptionalProcessingState = (value: string | null | undefined): string =>
+  value ? formatProcessingState(value) : '未提供';
+
 const formatEventCategory = (event: EventDetailRead): string => {
   const raw = event.event_subtype ?? event.event_type;
   const map = event.event_subtype === null ? EVENT_TYPE_LABELS : EVENT_SUBTYPE_LABELS;
@@ -102,6 +109,10 @@ const formatEvidenceValue = (key: string, value: unknown): string => {
 };
 
 const formatValidityReason = (reason: ValidityReasonRead): string => {
+  // 行情指标观察点不足：过滤原因细节是 market_indicator/accumulating，按「数据积累中」呈现。
+  if (reason.code === 'filtered_out' && reason.details.filter === 'market_indicator' && reason.details.reason === 'accumulating') {
+    return '数据积累中';
+  }
   const code = label(VALIDITY_REASON_LABELS, reason.code);
   const anchor = label(ANCHOR_LABELS, reason.anchor_source);
   return reason.anchor_source === 'legacy' ? code : `${code}（锚定${anchor}）`;
@@ -341,7 +352,7 @@ const EventEvidence = ({alert, event}: RiskDetailEvidenceSectionsProps) => (
             <li key={signal.signal_id} className={SUBTLE_PANEL_CLASS}>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <p className="min-w-0 break-words font-bold text-slate-900 dark:text-white">{signal.title}</p>
-                <ValidityStateBadge state={signal.validity_state} />
+                <ValidityStateBadge validityState={signal.validity_state} processingState={signal.processing_state} />
               </div>
               {/* 标题与正文归一化空白后相同则只呈现一次，否则正文完整保留换行 */}
               {normalizeWhitespace(signal.title) !== normalizeWhitespace(signal.content) && (
@@ -473,12 +484,13 @@ const TechnicalDetails = ({alert, event}: RiskDetailEvidenceSectionsProps) => (
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒评分规则版本</dt><dd className="break-all font-mono">{formatScoreDetailValue('rule_version', alert.score_detail.rule_version)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒失效方式</dt><dd className="break-words">{label(EXPIRY_KIND_LABELS, alert.expiry_kind)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒失效时间</dt><dd className="break-words">{formatDateTime(alert.expires_at)}</dd></div>
-        <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒有效期状态</dt><dd className="break-words">{formatValidityState(alert.validity_state)}</dd></div>
+        <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒有效期状态</dt><dd className="break-words">{formatOptionalValidityState(alert.validity_state)}</dd></div>
+        <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒处理状态</dt><dd className="break-words">{formatOptionalProcessingState(alert.processing_state)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒有效期截止</dt><dd className="break-words">{formatDateTime(alert.valid_until)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒复核时间</dt><dd className="break-words">{formatDateTime(alert.review_due_at)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒有效期策略版本</dt><dd className="break-all font-mono">{alert.validity_policy_version ?? '未生成'}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">提醒有效期原因</dt><dd className="break-words">{formatValidityReason(alert.validity_reason)}</dd></div>
-        <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">事件有效期状态</dt><dd className="break-words">{formatValidityState(event.validity_state)}</dd></div>
+        <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">事件有效期状态</dt><dd className="break-words">{formatOptionalValidityState(event.validity_state)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">事件有效期截止</dt><dd className="break-words">{formatDateTime(event.valid_until)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">事件复核时间</dt><dd className="break-words">{formatDateTime(event.review_due_at)}</dd></div>
         <div className="min-w-0"><dt className="font-semibold text-slate-500 dark:text-slate-400">事件有效期策略版本</dt><dd className="break-all font-mono">{event.validity_policy_version ?? '未生成'}</dd></div>

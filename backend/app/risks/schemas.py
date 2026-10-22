@@ -36,7 +36,10 @@ class RiskAlertRead(BaseModel):
     published_at: datetime | None
     expires_at: datetime | None
     expiry_kind: str
-    validity_state: str
+    # 事件生命周期状态；生命周期未定时为 null，前端不得渲染成 "undefined"。
+    validity_state: str | None
+    # 代表信号的处理状态；无关联信号时为 null。
+    processing_state: str | None = None
     valid_until: datetime | None
     review_due_at: datetime | None
     validity_policy_version: str | None
@@ -118,7 +121,8 @@ class EventSignalEvidence(BaseModel):
     url: str | None
     published_at: datetime | None
     collected_at: datetime
-    validity_state: str
+    validity_state: str | None
+    processing_state: str = "pending_classification"
 
 
 class EventDetailRead(BaseModel):
@@ -132,7 +136,7 @@ class EventDetailRead(BaseModel):
     end_at: datetime | None
     confidence: float
     created_at: datetime
-    validity_state: str
+    validity_state: str | None
     valid_until: datetime | None
     review_due_at: datetime | None
     validity_policy_version: str | None

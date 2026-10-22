@@ -37,6 +37,11 @@ from sqlalchemy.exc import IntegrityError
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_FILE = BACKEND_ROOT / "alembic" / "versions" / "0059_signal_irrelevant_state.py"
+# 约束文本的「当前目标态」已由 0066 承接（validity_state 放行 NULL）；
+# 0059 的 TARGET_CHECKS 作为该版本的历史契约继续参与本文件的往返断言。
+LATEST_MIGRATION_FILE = (
+    BACKEND_ROOT / "alembic" / "versions" / "0066_signal_processing_state.py"
+)
 SOURCE_CODE = "irrelevant-migration-source"
 FILTERED_OUT_REASON: dict[str, object] = {
     "code": "filtered_out",
@@ -91,6 +96,8 @@ def _load_module(name: str, path: Path) -> ModuleType:
 _MIGRATION = _load_module("migration_0059", MIGRATION_FILE)
 TARGET_CHECKS: dict[str, str] = dict(_MIGRATION.TARGET_CHECKS)
 LEGACY_CHECKS: dict[str, str] = dict(_MIGRATION.LEGACY_CHECKS)
+_LATEST_MIGRATION = _load_module("migration_0066", LATEST_MIGRATION_FILE)
+LATEST_CHECKS: dict[str, str] = dict(_LATEST_MIGRATION.TARGET_CHECKS)
 
 
 def _normalize(sql_text: str) -> str:
@@ -390,16 +397,17 @@ def test_round_trip_upgrade_downgrade_upgrade_keeps_states(
 
 
 def test_models_constraint_text_matches_migration() -> None:
+    """models.py 三条约束必须与「当前最新迁移」的目标态逐字一致（0066 起）。"""
     from app.signals.models import RawSignal
 
     constraints = {
         item.name: str(item.sqltext)
         for item in RawSignal.__table__.constraints
-        if item.name in TARGET_CHECKS
+        if item.name in LATEST_CHECKS
     }
 
-    assert set(constraints) == set(TARGET_CHECKS)
-    for name, migration_text in TARGET_CHECKS.items():
+    assert set(constraints) == set(LATEST_CHECKS)
+    for name, migration_text in LATEST_CHECKS.items():
         assert _normalize(constraints[name]) == _normalize(migration_text)
 
 

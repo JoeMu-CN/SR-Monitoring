@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import bindparam, insert, select, update
+from sqlalchemy import bindparam, insert, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.ai.models import AIAnalysisRecord
@@ -31,7 +31,7 @@ from app.signals.relevance import (
     load_supplier_profiles,
     supplier_name_index,
 )
-from app.signals.validity import ValidityState
+from app.signals.validity import ProcessingState, ValidityState
 from app.suppliers.schemas import normalize_alias
 
 logger = logging.getLogger(__name__)
@@ -46,10 +46,15 @@ STRUCTURED_GRADE_FILTER_KIND: Final = "structured_grade"
 _RECORD_BATCH_SIZE: Final = 1000
 _UPDATE_BATCH_SIZE: Final = 2000
 
-# 只有尚未定态的信号参与预筛：已过期/已替代/已撤销的信号不再改写。
-_PREFILTER_STATES: Final = (
-    ValidityState.PENDING_CLASSIFICATION.value,
-    ValidityState.ACTIVE.value,
+# 只有尚未处理的信号参与预筛：处理阶段为 pending_classification，且生命周期未定
+# （NULL）或仍 active；已分析/已过滤/行情未触发/分类失败、以及已过期/已替代/已撤销
+# 的信号不再改写。
+_PREFILTER_ACTIVITY_FILTERS: Final = (
+    RawSignal.processing_state == ProcessingState.PENDING_CLASSIFICATION.value,
+    or_(
+        RawSignal.validity_state.is_(None),
+        RawSignal.validity_state == ValidityState.ACTIVE.value,
+    ),
 )
 
 
@@ -95,7 +100,7 @@ def prefilter_new_signals(
             .join(DataSource, DataSource.id == RawSignal.source_id)
             .where(
                 RawSignal.id.in_(list(signal_ids)),
-                RawSignal.validity_state.in_(_PREFILTER_STATES),
+                *_PREFILTER_ACTIVITY_FILTERS,
             )
         ).all()
         if not rows:
@@ -227,13 +232,17 @@ def _write_filter_records(
 
 
 def _mark_irrelevant(session: Session, hits: Sequence[_FilterHit]) -> None:
-    """批量把被过滤信号置为显式终态 irrelevant（不复用 ORM 对象，避免逐条 UPDATE）。"""
+    """批量把被过滤信号的处理阶段置 filtered（不复用 ORM 对象，避免逐条 UPDATE）。
+
+    只改 ``processing_state`` 与 ``validity_reason``；``validity_state``（生命周期）
+    保持原值不动——过滤结论属于处理阶段，不是生命周期。
+    """
     reason_type = RawSignal.__table__.c.validity_reason.type
     statement = (
         update(RawSignal)
         .where(RawSignal.id == bindparam("target_signal_id"))
         .values(
-            validity_state=ValidityState.IRRELEVANT,
+            processing_state=ProcessingState.FILTERED,
             validity_reason=bindparam("target_reason", type_=reason_type),
         )
     )

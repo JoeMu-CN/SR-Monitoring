@@ -92,7 +92,7 @@ from app.signals.relevance import (
 )
 from app.signals.router import build_pull_adapter
 from app.signals.service import CollectionDeferred, CollectionFailed, collect_source
-from app.signals.validity import AnchorSource, ValidityState
+from app.signals.validity import AnchorSource, ProcessingState
 from app.suppliers.models import Supplier
 from app.suppliers.schemas import normalize_alias
 
@@ -128,16 +128,22 @@ MARKET_PROMPT_VERSION = "market-eval-v1"
 
 
 def _mark_signal_irrelevant(
-    signal: RawSignal, *, filter_kind: str, reason: str
+    signal: RawSignal,
+    *,
+    filter_kind: str,
+    reason: str,
+    state: ProcessingState = ProcessingState.FILTERED,
 ) -> None:
-    """把被确定性预筛判定为不相关的信号置为显式终态 irrelevant。
+    """把确定性预筛未通过（或行情未触发）的信号落到处理阶段。
 
-    与过滤记录（AIAnalysisRecord status=succeeded 且结果为空）同一事务写入，使信号
-    不再以 pending_classification 长期滞留、也不被队列谓词反复捞取；计数为 0 的
-    irrelevant 不计有效信号，判活谓词 valid_signal_condition 的 ACTIVE/LEGACY
+    只改 ``processing_state``：相关性/清单/结构化分级为 ``filtered``，行情未触发为
+    ``no_trigger``；``validity_state``（生命周期）保持原值不被覆盖——过滤结论不是
+    生命周期。与过滤记录（AIAnalysisRecord status=succeeded 且结果为空）同一事务
+    写入，使信号不再以 pending_classification 长期滞留、也不被队列谓词反复捞取；
+    计数为 0 的过滤信号不计有效信号，判活谓词 valid_signal_condition 的 ACTIVE/LEGACY
     allow-list 天然排除。调用方负责 commit。
     """
-    signal.validity_state = ValidityState.IRRELEVANT
+    signal.processing_state = state
     signal.validity_reason = {
         "code": "filtered_out",
         "anchor_source": (
@@ -326,7 +332,11 @@ def _evaluate_market_signal(
             )
         )
         _mark_signal_irrelevant(
-            signal, filter_kind=MARKET_FILTER_KIND, reason=detail
+            signal,
+            filter_kind=MARKET_FILTER_KIND,
+            reason=detail,
+            # 行情未触发是「已确定性评估、未达触发线」，不是业务无关过滤。
+            state=ProcessingState.NO_TRIGGER,
         )
         session.commit()
         return None, True
@@ -588,7 +598,11 @@ def _risk_processed_signal_ids() -> Select[tuple[int]]:
 
 
 def _terminal_filtered_signal_ids() -> Select[tuple[int]]:
-    """终态过滤信号：成功但结果为空（SQL NULL 或 JSON null，含确定性预过滤）。"""
+    """终态过滤信号：成功但结果为空（SQL NULL 或 JSON null，含确定性预过滤）。
+
+    historical：队列谓词自 0066 起改用 ``processing_state`` 表达处理阶段，不再依赖
+    本子查询；保留它是给历史回填/审计口径做纵深对照，勿在新谓词里复活。
+    """
     return select(AIAnalysisRecord.signal_id).where(
         AIAnalysisRecord.status == "succeeded",
         ~usable_analysis_result(),
@@ -600,19 +614,19 @@ def pending_signal_candidate_filters(
 ) -> list[ColumnElement[bool]]:
     """当前分析队列候选信号的共享谓词（业务处理链与只读健康聚合复用同一份）。
 
-    要求已 join ``DataSource``。排除：已生成风险关联的、落入 terminal filtered
-    分析记录的、分类失败(classification_failed)的、停用信源下的、以及有效期已过的
-    active 信号。绝不复制会与业务漂移的第二份谓词。
+    要求已 join ``DataSource``。以 ``processing_state='pending_classification'`` 表达
+    「尚未处理」：已分析、已确定性过滤、行情未触发、分类失败的信号一律不再入队；
+    生命周期维度只接受未定（NULL）或 active，并排除已过 valid_until 的行。停用信源
+    下的信号同样排除。绝不复制会与业务漂移的第二份谓词。
     """
     now = now_utc or datetime.now(UTC)
     return [
-        RawSignal.validity_state.in_(("pending_classification", "active")),
+        RawSignal.processing_state == "pending_classification",
         RawSignal.id.not_in(_risk_processed_signal_ids()),
-        RawSignal.id.not_in(_terminal_filtered_signal_ids()),
-        RawSignal.validity_reason["code"].astext != "classification_failed",
         DataSource.enabled.is_(True),
+        or_(RawSignal.validity_state.is_(None), RawSignal.validity_state == "active"),
         or_(
-            RawSignal.validity_state == "pending_classification",
+            RawSignal.validity_state.is_(None),
             RawSignal.valid_until.is_(None),
             RawSignal.valid_until > now,
         ),

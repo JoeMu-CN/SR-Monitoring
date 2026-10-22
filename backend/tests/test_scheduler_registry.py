@@ -26,6 +26,7 @@ from app.scheduler.observability import JobLike
 from app.scheduler.observability_models import SchedulerJobRegistry
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.service import STALE_COLLECTION_RUN_ERROR
+from app.signals.validity import ProcessingState
 from app.suppliers.models import Supplier
 
 
@@ -494,6 +495,9 @@ def test_pending_signal_processing_skips_disabled_source(
             content="该信号不应进入当前分析队列。",
             fingerprint="disabled-signal-fingerprint",
             raw_data={},
+            # 标准待处理形态：生命周期未定 + 阶段待分类，只有信源停用能把它排除。
+            validity_state=None,
+            processing_state=ProcessingState.PENDING_CLASSIFICATION,
         )
     )
     db_session.commit()
@@ -501,6 +505,91 @@ def test_pending_signal_processing_skips_disabled_source(
 
     assert scheduler_jobs._process_pending_signals(limit=20) == 0
     assert db_session.scalar(select(AIAnalysisRecord)) is None
+
+
+def test_pending_signal_candidate_predicate_keys_on_processing_state(
+    db_session,
+) -> None:
+    """候选谓词只看处理阶段 + 生命周期：已过滤/未触发/分类失败/已分析一律不入队。"""
+    now = datetime(2026, 10, 22, 12, tzinfo=UTC)
+    source = DataSource(
+        code="candidate-predicate-source",
+        name="候选谓词信源",
+        source_type="api",
+        credibility=80,
+        enabled=True,
+    )
+    db_session.add(source)
+    db_session.flush()
+
+    def signal(
+        suffix: str,
+        *,
+        processing: ProcessingState,
+        validity: str | None = None,
+        valid_until: datetime | None = None,
+    ) -> RawSignal:
+        row = RawSignal(
+            source_id=source.id,
+            external_id=f"CAND-{suffix}",
+            title=f"候选谓词信号 {suffix}",
+            content="候选谓词覆盖用例。",
+            collected_at=now,
+            fingerprint=f"candidate-predicate-{suffix}",
+            raw_data={},
+            validity_state=validity,
+            processing_state=processing,
+            validity_reason={
+                "code": "pending_classification",
+                "anchor_source": "collected_at",
+                "details": {},
+            },
+        )
+        if validity is not None:
+            row.validity_profile = "weather_alert"
+            row.validity_mode = "fixed_days"
+            row.valid_from = now - timedelta(days=5)
+            row.valid_until = valid_until
+            row.validity_policy_version = "policy-candidate"
+            row.validity_reason = {
+                "code": "policy_resolved",
+                "anchor_source": "collected_at",
+                "details": {},
+            }
+        db_session.add(row)
+        db_session.flush()
+        return row
+
+    pending = signal("pending", processing=ProcessingState.PENDING_CLASSIFICATION)
+    active_pending = signal(
+        "active-pending",
+        processing=ProcessingState.PENDING_CLASSIFICATION,
+        validity="active",
+        valid_until=now + timedelta(days=3),
+    )
+    active_expired = signal(
+        "active-expired",
+        processing=ProcessingState.PENDING_CLASSIFICATION,
+        validity="active",
+        valid_until=now - timedelta(days=1),
+    )
+    signal("filtered", processing=ProcessingState.FILTERED)
+    signal("no-trigger", processing=ProcessingState.NO_TRIGGER)
+    signal("classification-failed", processing=ProcessingState.CLASSIFICATION_FAILED)
+    signal("analyzed", processing=ProcessingState.ANALYZED)
+    db_session.commit()
+
+    candidates = {
+        signal_id
+        for signal_id, _ in db_session.execute(
+            scheduler_jobs.pending_signal_candidate_select(now_utc=now)
+        )
+    }
+
+    # 生命周期未定的待分类信号与「已解析策略但未处理」的 active 信号都是候选；
+    # 过期 active 与其他处理阶段都不是。
+    assert candidates == {pending.id, active_pending.id}
+    assert active_expired.id not in candidates
 
 
 # ---------------------------------------------------------------------------

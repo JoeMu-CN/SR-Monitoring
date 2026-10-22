@@ -22,6 +22,7 @@ from app.risks.validity import (
     is_raw_signal_effective,
 )
 from app.signals.models import RawSignal
+from app.signals.validity import ProcessingState
 
 __all__ = [
     "MATCH_ORDER",
@@ -54,4 +55,7 @@ def process_analysis(
     if not is_raw_signal_effective(signal, now_utc=now):
         session.commit()
         raise InactiveRiskSignalError(signal.id, str(signal.validity_reason["code"]))
+    # 进入事件链即视为已分析；与 process_event 的提交边界同一事务，中断回滚后
+    # 阶段仍是 pending_classification，可被队列重新捞取（不丢重试）。
+    signal.processing_state = ProcessingState.ANALYZED
     return process_event(session, signal, analysis, now_utc=now)

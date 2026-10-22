@@ -26,6 +26,7 @@ from app.signals.validity import (
     MissingValidityProfileError,
     PolicyResolutionRequest,
     PolicySource,
+    ProcessingState,
     SignalValidityFacts,
     ValidityConfigurationError,
     ValidityMode,
@@ -643,7 +644,9 @@ def _pending_signal(
         collected_at=NOW_UTC,
         fingerprint=f"classify-{suffix}",
         raw_data={},
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        # 策略未定：生命周期未知留 NULL，处理阶段落在 pending_classification。
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         validity_reason={
             "code": "pending_classification",
             "anchor_source": "published_at",
@@ -706,6 +709,8 @@ def test_classify_pending_signal_when_source_has_explicit_profile_resolves_it(
 
     # Then：不再卡死，按信源级显式 profile 算出有效期窗口
     assert signal.validity_state == ValidityState.ACTIVE
+    # 生命周期已定，但还没进入事件链：处理阶段仍是待分析。
+    assert signal.processing_state == ProcessingState.PENDING_CLASSIFICATION
     assert signal.validity_reason["code"] == "classification_resolved"
     assert signal.validity_reason["details"]["event_subtype"] is None
     assert signal.validity_profile == ValidityProfile.MARKET_PRICE_POINT
@@ -727,8 +732,9 @@ def test_classify_pending_signal_when_source_has_no_profile_still_fails(
     # When
     _classify(db_session, signal, analysis)
 
-    # Then：行为不变，仍停在待分类并标记分类失败
-    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    # Then：行为不变，停在待分类阶段，生命周期仍为 NULL
+    assert signal.validity_state is None
+    assert signal.processing_state == ProcessingState.CLASSIFICATION_FAILED
     assert signal.validity_reason["code"] == "classification_failed"
     assert signal.validity_reason["details"]["reason"] == "event_subtype_missing"
     assert signal.validity_profile is None
@@ -748,7 +754,8 @@ def test_classify_pending_signal_when_source_has_no_policy_at_all_still_fails(
     _classify(db_session, signal, analysis)
 
     # Then
-    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    assert signal.validity_state is None
+    assert signal.processing_state == ProcessingState.CLASSIFICATION_FAILED
     assert signal.validity_reason["code"] == "classification_failed"
     assert signal.validity_reason["details"]["reason"] == "event_subtype_missing"
 

@@ -60,6 +60,7 @@ const detailWithReport: SourceSignalDetailRead = {
   collected_at: '2026-09-29T04:31:00Z',
   validity_profile: null,
   validity_state: 'active',
+  processing_state: 'analyzed',
   valid_from: '2026-09-29T04:30:00Z',
   valid_until: null,
   review_due_at: null,

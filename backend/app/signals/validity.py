@@ -51,14 +51,41 @@ class ValidityMode(StrEnum):
 
 
 class ValidityState(StrEnum):
+    """信号有效性生命周期（只表达生命周期，不表达处理进度或过滤结论）。
+
+    ``pending_classification`` / ``irrelevant`` 两个取值已废弃（deprecated）：
+    它们混入了「处理阶段」与「确定性过滤结论」两种语义，已由
+    ``ProcessingState`` 承接；这里保留一个版本仅用于兼容历史数据与回滚，
+    业务代码不再写入这两个值，生命周期未定时写 NULL。
+    """
+
+    # deprecated: 生命周期未定的信号改为 validity_state=NULL + ProcessingState 表达阶段。
     PENDING_CLASSIFICATION = "pending_classification"
     ACTIVE = "active"
     EXPIRED = "expired"
     SUPERSEDED = "superseded"
     REVOKED = "revoked"
     CONFLICTED = "conflicted"
+    # deprecated: 确定性过滤结论改由 ProcessingState.FILTERED / NO_TRIGGER 表达。
     IRRELEVANT = "irrelevant"
     LEGACY = "legacy"
+
+
+class ProcessingState(StrEnum):
+    """信号处理进度与结论；与 ``ValidityState`` 的生命周期正交。
+
+    - ``pending_classification``：待分类/待分析（入库与 AI 前的默认阶段）；
+    - ``analyzed``：已分析并进入事件链；
+    - ``filtered``：确定性过滤（相关性/清单/结构化分级判定与业务无关）；
+    - ``no_trigger``：已确定性评估但未触发（行情数据积累中/未达阈值）；
+    - ``classification_failed``：分类失败，等待人工复核或重试。
+    """
+
+    PENDING_CLASSIFICATION = "pending_classification"
+    ANALYZED = "analyzed"
+    FILTERED = "filtered"
+    NO_TRIGGER = "no_trigger"
+    CLASSIFICATION_FAILED = "classification_failed"
 
 
 class LifecycleAction(StrEnum):
@@ -401,6 +428,8 @@ def resolve_policy(request: PolicyResolutionRequest) -> PolicyDecision:
         )
     if request.requires_ai_classification:
         if request.allow_ai_classification:
+            # 「待分类」是处理阶段而非生命周期：这里只回 pending 决策，持久化时写
+            # validity_state=NULL，阶段由 ProcessingState 表达。
             return PolicyDecision(ValidityState.PENDING_CLASSIFICATION, None, None)
         raise MissingValidityProfileError()
     raise MissingValidityProfileError()

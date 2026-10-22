@@ -14,6 +14,7 @@ from app.ai.providers import PROMPT_VERSION, AIProviderError, get_ai_provider
 from app.ai.schemas import SignalAnalysisInput
 from app.config import get_ai_settings
 from app.signals.models import RawSignal
+from app.signals.validity import ProcessingState
 
 
 def usable_analysis_result() -> ColumnElement[bool]:
@@ -93,8 +94,12 @@ async def analyze_raw_signal(session: Session, signal: RawSignal) -> AIAnalysisR
             stored_signal = session.get(RawSignal, signal.id)
             if (
                 stored_signal is not None
-                and stored_signal.validity_state == "pending_classification"
+                and stored_signal.validity_state is None
+                and stored_signal.processing_state
+                == ProcessingState.PENDING_CLASSIFICATION
             ):
+                # 生命周期保持 NULL，失败只落在处理阶段（不改 validity_state）。
+                stored_signal.processing_state = ProcessingState.CLASSIFICATION_FAILED
                 stored_signal.validity_reason = {
                     "code": "classification_failed",
                     "anchor_source": (

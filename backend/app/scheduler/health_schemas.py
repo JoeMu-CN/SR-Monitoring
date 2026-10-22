@@ -99,6 +99,8 @@ class ProcessingHealthRead(BaseModel):
     oldest_pending_age_seconds: int | None
     # 队列按信源类型拆解（source_type → 候选条数）；只增字段，缺失时为 {}。
     queue_by_source_type: dict[str, int] = Field(default_factory=dict)
+    # 处理状态分布（processing_state → 条数）；只增字段，缺失时为 {}。
+    processing_state_counts: dict[str, int] = Field(default_factory=dict)
     last_run: ProcessingRunRead
 
 

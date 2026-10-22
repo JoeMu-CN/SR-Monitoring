@@ -20,6 +20,7 @@ from app.database import SessionLocal
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
 from app.risks.service import expire_alerts, process_analysis
 from app.signals.models import DataSource, RawSignal
+from app.signals.validity import ProcessingState
 from app.suppliers.models import Supplier
 
 NOW_UTC = datetime(2026, 9, 6, 12, tzinfo=UTC)
@@ -49,11 +50,11 @@ def _signal(
     suffix: str,
     published_at: datetime,
     *,
-    state: str = "pending_classification",
+    state: str | None = None,
     valid_until: datetime | None = None,
     review_due_at: datetime | None = None,
 ) -> RawSignal:
-    resolved = state != "pending_classification"
+    resolved = state is not None
     signal = RawSignal(
         source_id=source.id,
         external_id=suffix,
@@ -64,7 +65,9 @@ def _signal(
         fingerprint=f"risk-validity-{suffix}",
         raw_data={},
         validity_profile="weather_alert" if resolved else None,
+        # 生命周期未定（待分类）写 NULL；处理阶段统一从待分类开始。
         validity_state=state,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
         valid_from=published_at,
         valid_until=valid_until,
         review_due_at=review_due_at,
@@ -166,8 +169,11 @@ def test_pending_classification_becomes_active_or_expired_before_event(
 
     assert result.event_created is True
     assert current.validity_state == "active"
+    assert current.processing_state == ProcessingState.ANALYZED
     assert current.valid_until == current.published_at + timedelta(days=3)
     assert stale.validity_state == "expired"
+    # 过期只改生命周期：分析未进入事件链，处理阶段不应变成 analyzed。
+    assert stale.processing_state == ProcessingState.PENDING_CLASSIFICATION
     assert db_session.scalar(select(func.count()).select_from(RiskEvent)) == 1
     assert db_session.scalar(select(func.count()).select_from(RiskEventSignal)) == 1
 
@@ -192,7 +198,9 @@ def test_final_ai_failure_stays_pending_for_manual_review(
     assert scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW_UTC) == 0
     record = db_session.scalar(select(AIAnalysisRecord))
     assert record is not None and record.status == "failed" and record.needs_review is True
-    assert signal.validity_state == "pending_classification"
+    # 分类失败只改处理阶段，生命周期仍是未定（NULL）。
+    assert signal.validity_state is None
+    assert signal.processing_state == ProcessingState.CLASSIFICATION_FAILED
     assert signal.validity_reason["code"] == "classification_failed"
     assert db_session.scalar(select(func.count()).select_from(RiskEvent)) == 0
 

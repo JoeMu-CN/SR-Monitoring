@@ -156,3 +156,52 @@ describe('RiskDetailEvidenceSections 币种关联标签（todo 19）', () => {
     expect(screen.getByText('对象类型：').parentElement as HTMLElement).toHaveTextContent('currency_rate');
   });
 });
+
+describe('RiskDetailEvidenceSections 生命周期与处理状态并列展示', () => {
+  const signal = {
+    signal_id: 1,
+    title: '原始信号一',
+    content: '信号正文',
+    url: null,
+    published_at: null,
+    collected_at: '2026-08-30T09:00:00Z',
+    validity_state: 'active' as const,
+    processing_state: 'no_trigger' as const,
+  };
+
+  it('原始信号行同时展示生命周期徽标与处理状态徽标', () => {
+    renderSections({event: {signals: [signal]}});
+
+    const row = screen.getByText('原始信号一').closest('li');
+    if (row === null) throw new Error('原始信号行未渲染');
+    expect(within(row).getByText('有效')).toBeInTheDocument();
+    expect(within(row).getByText('未触发（数据积累中）')).toBeInTheDocument();
+  });
+
+  it('生命周期为 null 时不渲染状态徽标，也不出现 undefined/其他状态', () => {
+    renderSections({
+      event: {validity_state: null, signals: [{...signal, validity_state: null, processing_state: 'filtered'}]},
+    });
+
+    expect(screen.queryByText('其他状态')).not.toBeInTheDocument();
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
+    expect(screen.getByText('已过滤')).toBeInTheDocument();
+    // 技术明细的生命周期占位使用明确的「未确定」。
+    expect(screen.getAllByText('未确定').length).toBeGreaterThan(0);
+  });
+
+  it('行情指标数据积累期的过滤原因显示「数据积累中」', () => {
+    renderSections({
+      alert: {
+        validity_reason: {
+          code: 'filtered_out',
+          anchor_source: 'published_at',
+          details: {filter: 'market_indicator', reason: 'accumulating'},
+        },
+      },
+    });
+
+    expect(screen.getByText('数据积累中')).toBeInTheDocument();
+    expect(screen.queryByText('已过滤（锚定发布时间）')).not.toBeInTheDocument();
+  });
+});

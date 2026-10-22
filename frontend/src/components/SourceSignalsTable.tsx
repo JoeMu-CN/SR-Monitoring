@@ -10,28 +10,28 @@ import {ValidityStateBadge} from './ValidityStateBadge';
 /** 只有天眼查记录带结构化报告，其余信息源不渲染报告列。 */
 const TYC_SOURCE_CODE = 'tianyancha';
 
-type ColumnKey = 'index' | 'title' | 'state' | 'published' | 'collected' | 'validUntil' | 'reviewDue'
+type ColumnKey = 'index' | 'title' | 'state' | 'processing' | 'published' | 'collected' | 'validUntil' | 'reviewDue'
   | 'external' | 'reason' | 'summary' | 'source' | 'report';
 
 /** 状态、原文、报告列没有可展开的完整值，序号是行内计算值，因此都不参与浮层。 */
-type OverlayKind = Exclude<ColumnKey, 'index' | 'state' | 'source' | 'report'>;
+type OverlayKind = Exclude<ColumnKey, 'index' | 'state' | 'processing' | 'source' | 'report'>;
 
 const COLUMN_LABELS: Readonly<Record<ColumnKey, string>> = {
   index: '序号',
-  title: '标题', state: '状态',
+  title: '标题', state: '状态', processing: '处理状态',
   published: '发布时间', collected: '采集时间', validUntil: '有效期截止', reviewDue: '复核时间',
   external: '外部编号', reason: '有效期原因', summary: '摘要 / 内容',
   source: '原文', report: '报告',
 };
 
 const BASE_COLUMN_ORDER: readonly ColumnKey[] = [
-  'index', 'title', 'state', 'published', 'collected', 'validUntil', 'reviewDue',
+  'index', 'title', 'state', 'processing', 'published', 'collected', 'validUntil', 'reviewDue',
   'external', 'reason', 'summary', 'source',
 ];
 
 const INITIAL_WIDTHS: Readonly<Record<ColumnKey, number>> = {
   index: 80,
-  title: 280, state: 90,
+  title: 280, state: 90, processing: 170,
   published: 170, collected: 170, validUntil: 170, reviewDue: 170,
   external: 220, reason: 280, summary: 360,
   source: 100, report: 120,
@@ -58,7 +58,7 @@ const VALIDITY_REASON_LABELS: Record<string, string> = {
   anchor_fallback: '未提供发布时间，改用采集时间计算', policy_resolved: '已按有效期规则计算',
   superseded_by_newer_version: '被更新版本取代', same_authority_time_conflict: '权威时间冲突',
   quarantine_promoted: '隔离后恢复采集', two_consecutive_misses: '连续两次未命中',
-  filtered_out: '预筛不相关',
+  filtered_out: '已过滤',
 };
 
 /** legacy 不展示时间依据，因此这里只覆盖实际会渲染的四种时间依据。 */
@@ -67,8 +67,15 @@ const ANCHOR_SOURCE_LABELS: Record<Exclude<ValidityAnchorSource, 'legacy'>, stri
   official_valid_until: '官方有效期截止时间', event_end: '事件结束时间',
 };
 
-/** 常见原因取易懂中文，未知原因保留后端原文；时间依据统一说明“依据哪个时间算的”。 */
-const formatValidityReason = ({code, anchor_source}: ValidityReasonRead): string => {
+/**
+ * 常见原因取易懂中文，未知原因保留后端原文；时间依据统一说明“依据哪个时间算的”。
+ * 行情指标处于观察点积累期时，`filtered_out` 的细节是 market_indicator/accumulating，
+ * 这里必须表达为「数据积累中」而不是「已过滤/不相关」。
+ */
+const formatValidityReason = ({code, anchor_source, details}: ValidityReasonRead): string => {
+  if (code === 'filtered_out' && details.filter === 'market_indicator' && details.reason === 'accumulating') {
+    return '数据积累中';
+  }
   const reason = VALIDITY_REASON_LABELS[code] ?? code;
   // legacy 记录没有时间依据；anchor_fallback 文案已自带计算依据，重复追加会变成两句话说同一件事。
   if (anchor_source === 'legacy' || code === 'anchor_fallback') return reason;
@@ -197,7 +204,18 @@ export const SourceSignalsTable = ({source, items, offset, onOpenReport}: Source
                 </td>
                 {cell('title')}
                 <td className="px-2.5 py-1 align-middle">
-                  <span className="block truncate"><ValidityStateBadge state={signal.validity_state} /></span>
+                  <span className="block truncate">
+                    {signal.validity_state === null
+                      ? <span className="text-[13px] text-slate-400">—</span>
+                      : <ValidityStateBadge validityState={signal.validity_state} />}
+                  </span>
+                </td>
+                <td className="px-2.5 py-1 align-middle">
+                  <span className="block truncate">
+                    {signal.processing_state === 'analyzed'
+                      ? <span className="text-[13px] text-slate-400">—</span>
+                      : <ValidityStateBadge processingState={signal.processing_state} />}
+                  </span>
                 </td>
                 {cell('published')}
                 {cell('collected')}

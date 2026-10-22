@@ -4,7 +4,14 @@ import type {DataSource, MonitoringDimension, RiskItem, RiskLevel, Supplier} fro
 
 export type ValidityMode = 'fixed_days' | 'until_superseded' | 'until_revoked' | 'event_end_plus_grace' | 'indefinite';
 
-export type ValidityState = 'pending_classification' | 'active' | 'expired' | 'superseded' | 'revoked' | 'conflicted' | 'legacy' | 'irrelevant';
+/**
+ * 生命周期状态。前 6 个是当前语义；`pending_classification` / `irrelevant`
+ * 仅用于未迁移环境的历史数据兼容，不再由新写入产生。
+ */
+export type ValidityState = 'active' | 'expired' | 'superseded' | 'revoked' | 'conflicted' | 'legacy' | 'pending_classification' | 'irrelevant';
+
+/** 处理状态：与生命周期正交，由后端 `processing_state` 列维护。 */
+export type ProcessingState = 'pending_classification' | 'analyzed' | 'filtered' | 'no_trigger' | 'classification_failed';
 
 export type LifecycleAction = 'assert' | 'confirm' | 'revoke' | 'supersede';
 
@@ -35,15 +42,25 @@ export const VALIDITY_MODE_LABELS: Record<ValidityMode, string> = {
 };
 
 export const VALIDITY_STATE_LABELS: Record<ValidityState, string> = {
-  pending_classification: '待分类',
   active: '有效',
   expired: '已过期',
   superseded: '已替代',
   revoked: '已撤销',
   conflicted: '冲突',
   legacy: '旧版兼容',
-  /** 终态：被确定性预筛判为不相关，不计入有效信号，也不出现在 scope=valid。 */
-  irrelevant: '不相关',
+  /** 历史兼容：旧数据可能仍带此生命周期值，读取时不应报错。 */
+  pending_classification: '待分类',
+  /** 历史兼容：旧终态“不相关/预筛不相关”，现统一表述为「已过滤」。 */
+  irrelevant: '已过滤',
+};
+
+/** 处理状态中文映射（与生命周期徽标并列展示）。 */
+export const PROCESSING_STATE_LABELS: Record<ProcessingState, string> = {
+  pending_classification: '待分析',
+  analyzed: '已分析',
+  filtered: '已过滤',
+  no_trigger: '未触发（数据积累中）',
+  classification_failed: '分类失败',
 };
 
 /** 有效期原因码中文映射；覆盖后端 risks/signals 实际写入的全部原因码。 */
@@ -62,14 +79,26 @@ export const VALIDITY_REASON_LABELS: Record<string, string> = {
   quarantine_promoted: '隔离后恢复采集',
   two_consecutive_misses: '连续两次未命中',
   legacy_unmigrated: '历史数据未迁移',
-  filtered_out: '预筛不相关',
+  filtered_out: '已过滤',
 };
 
-/** 未知原因码不裸露英文码，统一回落到中文说明。 */
-export const formatValidityReasonLabel = (code: string): string => VALIDITY_REASON_LABELS[code] ?? '其他原因';
+/**
+ * 未知原因码不裸露英文码，统一回落到中文说明。
+ * 行情指标在数据积累期的过滤原因（filtered_out + market_indicator/accumulating）
+ * 表达为「数据积累中」，避免被读成“不相关”。
+ */
+export const formatValidityReasonLabel = (code: string, details?: Record<string, unknown>): string => {
+  if (code === 'filtered_out' && details?.filter === 'market_indicator' && details?.reason === 'accumulating') {
+    return '数据积累中';
+  }
+  return VALIDITY_REASON_LABELS[code] ?? '其他原因';
+};
 
 /** 未知有效期状态不裸露英文码，统一回落到中文说明；与原因码兜底同一原则。 */
 export const formatValidityState = (state: string): string => VALIDITY_STATE_LABELS[state as ValidityState] ?? '其他状态';
+
+/** 未知处理状态不裸露英文码，统一回落到中文说明。 */
+export const formatProcessingState = (state: string): string => PROCESSING_STATE_LABELS[state as ProcessingState] ?? '其他处理状态';
 
 export type ResearchTaskType = 'manual' | 'daily' | 'weekly';
 export type ResearchTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -206,7 +235,9 @@ export interface RiskAlertRead {
   updated_at: string;
   expires_at: string | null;
   expiry_kind: string;
-  validity_state: ValidityState;
+  validity_state: ValidityState | null;
+  /** 代表信号的处理状态；后端无法确定时为 null。 */
+  processing_state?: ProcessingState | null;
   valid_until: string | null;
   review_due_at: string | null;
   validity_policy_version: string | null;
@@ -220,7 +251,8 @@ export interface EventSignalEvidence {
   readonly url: string | null;
   readonly published_at: string | null;
   readonly collected_at: string;
-  readonly validity_state: ValidityState;
+  readonly validity_state: ValidityState | null;
+  readonly processing_state?: ProcessingState | null;
 }
 
 export interface EventEntityEvidence {
@@ -254,7 +286,7 @@ export interface EventDetailRead {
   readonly signals: readonly EventSignalEvidence[];
   readonly entities: readonly EventEntityEvidence[];
   readonly locations: readonly EventLocationEvidence[];
-  readonly validity_state: ValidityState;
+  readonly validity_state: ValidityState | null;
   readonly valid_until: string | null;
   readonly review_due_at: string | null;
   readonly validity_policy_version: string | null;
@@ -481,7 +513,9 @@ export interface SourceSignalRead {
   readonly published_at: string | null;
   readonly collected_at: string;
   readonly validity_profile: ValidityProfile | null;
-  readonly validity_state: ValidityState;
+  readonly validity_state: ValidityState | null;
+  /** 处理状态：待分析/已分析/已过滤/未触发/分类失败。 */
+  readonly processing_state: ProcessingState;
   readonly valid_from: string | null;
   readonly valid_until: string | null;
   readonly review_due_at: string | null;
@@ -1007,6 +1041,8 @@ export interface MonitoringProcessingHealth {
   classification_failed: number;
   backlog_over_1h: number;
   oldest_pending_age_seconds: number | null;
+  /** 处理状态分布；旧响应可能缺省，读取时按空对象处理。 */
+  processing_state_counts?: Record<string, number>;
   last_run: MonitoringProcessingRun;
 }
 
@@ -1559,7 +1595,8 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     source: alert.source_title || '来源未披露',
     tags: [eventLabels[alert.event_type] ?? alert.event_type, ...alert.match_reasons.slice(0, 2)],
     status: alert.status === 'current' ? 'valid' : 'invalid', overallScore: alert.score,
-    validityState: alert.validity_state,
+    validityState: alert.validity_state ?? undefined,
+    processingState: alert.processing_state ?? undefined,
     validUntil: alert.valid_until,
     reviewDueAt: alert.review_due_at,
     validityReason: alert.validity_reason,

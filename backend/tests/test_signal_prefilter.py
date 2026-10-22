@@ -19,7 +19,7 @@ from app.signals.models import DataSource, RawSignal
 from app.signals.prefilter import PrefilterOutcome, prefilter_new_signals
 from app.signals.priority import assign_signal_priorities
 from app.signals.relevance import invalidate_filter_rules_cache
-from app.signals.validity import ValidityState
+from app.signals.validity import ProcessingState
 from app.suppliers.models import Supplier, SupplierAlias
 
 NOW = datetime(2026, 10, 21, 8, tzinfo=UTC)
@@ -59,7 +59,9 @@ def _add_signal(
         fingerprint=f"{source.code}:{title}",
         dedup_key=f"{source.code}:{title}",
         raw_data={},
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        # 采集刚入库：生命周期未定（NULL），处理阶段待分类。
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
     )
     session.add(signal)
     session.flush()
@@ -108,10 +110,11 @@ def test_list_source_signal_without_supplier_is_filtered(db_session: Session) ->
     # When
     outcome = prefilter_new_signals(db_session, [signal.id], now_utc=NOW)
 
-    # Then: 不进 LLM，信号置无关，记录为清单类过滤。
+    # Then: 不进 LLM，处理阶段落 filtered，生命周期保持未定（NULL）。
     assert outcome == PrefilterOutcome(filtered=1, kept=0)
     db_session.refresh(signal)
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    assert signal.processing_state == ProcessingState.FILTERED
+    assert signal.validity_state is None
     assert signal.validity_reason["code"] == "filtered_out"
     assert signal.validity_reason["details"]["filter"] == "entity_list"
     record = _only_record(db_session, signal)
@@ -142,7 +145,8 @@ def test_foreign_geography_without_supplier_is_filtered_by_relevance(
     # Then
     assert outcome == PrefilterOutcome(filtered=1, kept=0)
     db_session.refresh(signal)
-    assert signal.validity_state == ValidityState.IRRELEVANT
+    assert signal.processing_state == ProcessingState.FILTERED
+    assert signal.validity_state is None
     assert signal.validity_reason["details"]["filter"] == "relevance"
     record = _only_record(db_session, signal)
     assert record.prompt_version == "relevance-v1"
@@ -163,12 +167,13 @@ def test_list_source_signal_matching_supplier_is_kept(db_session: Session) -> No
     # When
     outcome = prefilter_new_signals(db_session, [signal.id], now_utc=NOW)
 
-    # Then: 放行给 LLM，状态不变且不写过滤记录。
+    # Then: 放行给 LLM，处理阶段不变、生命周期仍未定且不写过滤记录。
     assert outcome.filtered == 0
     assert outcome.kept == 1
     assert outcome.kept_ids == (signal.id,)
     db_session.refresh(signal)
-    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    assert signal.processing_state == ProcessingState.PENDING_CLASSIFICATION
+    assert signal.validity_state is None
     assert (
         db_session.scalar(
             select(AIAnalysisRecord).where(AIAnalysisRecord.signal_id == signal.id)
@@ -195,6 +200,7 @@ def test_low_commodity_change_is_filtered_by_structured_grade(
     # Then
     assert outcome == PrefilterOutcome(filtered=1, kept=0)
     db_session.refresh(signal)
+    assert signal.processing_state == ProcessingState.FILTERED
     assert signal.validity_reason["details"]["filter"] == "structured_grade"
     record = _only_record(db_session, signal)
     assert record.prompt_version == "structured-grade-v1"
@@ -235,7 +241,8 @@ def test_market_reading_signal_is_kept_for_consumption(db_session: Session) -> N
         fingerprint="commodity:reading",
         dedup_key="commodity:reading",
         raw_data={"source_extra": {"symbol": "CU", "close": 1.0}},
-        validity_state=ValidityState.PENDING_CLASSIFICATION,
+        validity_state=None,
+        processing_state=ProcessingState.PENDING_CLASSIFICATION,
     )
     db_session.add(signal)
     db_session.flush()
@@ -245,7 +252,8 @@ def test_market_reading_signal_is_kept_for_consumption(db_session: Session) -> N
     assert outcome.filtered == 0
     assert outcome.kept_ids == (signal.id,)
     db_session.refresh(signal)
-    assert signal.validity_state == ValidityState.PENDING_CLASSIFICATION
+    assert signal.processing_state == ProcessingState.PENDING_CLASSIFICATION
+    assert signal.validity_state is None
 
 
 def test_assign_priorities_scores_kept_signals(db_session: Session) -> None:

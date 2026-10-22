@@ -12,7 +12,9 @@
   tianyancha 外部核查工具无 CollectionRun/runtime 观测，最近成功取
   ``tyc_usage_records`` 最新一条 ``success`` 的 ``called_at``；
   无成功时用首次创建/最近配置更新时间推导首个预期触发点，再加 300 秒宽限。
-- pending：复用业务候选谓词（不含 batch limit），classification_failed 另列。
+- pending：复用业务候选谓词（不含 batch limit，候选谓词由写入侧按
+  ``processing_state = 'pending_classification'`` 维护），classification_failed 另列，
+  并给出启用信源下的处理状态分布。
 - 状态判定全部在 ``health_rules``（纯函数）；本模块只做数据聚合。
 """
 
@@ -20,7 +22,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.agent.budget import TYC_SOURCE_CODE
@@ -69,6 +71,7 @@ from app.scheduler.runtime_models import (
 from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.router import build_pull_adapter
 from app.signals.service import SourceNotCollectable
+from app.signals.validity import ProcessingState
 
 
 def _utc(value: datetime) -> datetime:
@@ -358,7 +361,11 @@ def _pending(
         .join(DataSource, DataSource.id == RawSignal.source_id)
         .where(
             DataSource.enabled.is_(True),
-            RawSignal.validity_reason["code"].astext == "classification_failed",
+            or_(
+                RawSignal.processing_state == ProcessingState.CLASSIFICATION_FAILED,
+                # 历史兼容：旧行只有 validity_reason.code，没有处理状态列。
+                RawSignal.validity_reason["code"].astext == "classification_failed",
+            ),
         )
     ) or 0
 
@@ -391,6 +398,18 @@ def _pending(
         str(source_type): int(count) for source_type, count in queue_rows
     }
 
+    # 处理状态分布：只统计启用信源下的全部信号，用于一眼看出积压与终态构成。
+    processing_rows = session.execute(
+        select(RawSignal.processing_state, func.count())
+        .select_from(RawSignal)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(DataSource.enabled.is_(True))
+        .group_by(RawSignal.processing_state)
+    ).all()
+    processing_state_counts = {
+        str(state): int(count) for state, count in processing_rows if state is not None
+    }
+
     collect_row = runtime.get(PENDING_SIGNALS_JOB_KEY)
     if collect_row is None:
         last_run = ProcessingRunRead(
@@ -417,6 +436,7 @@ def _pending(
         backlog_over_1h=int(backlog),
         oldest_pending_age_seconds=oldest_age,
         queue_by_source_type=queue_by_source_type,
+        processing_state_counts=processing_state_counts,
         last_run=last_run,
     )
 

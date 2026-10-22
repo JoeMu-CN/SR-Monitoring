@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.scheduler.health import build_monitoring_health
@@ -33,7 +34,12 @@ def _make_source(session: Session, *, code: str, source_type: str) -> DataSource
 
 
 def _make_signal(
-    session: Session, *, source: DataSource, fingerprint: str, collected_at: datetime
+    session: Session,
+    *,
+    source: DataSource,
+    fingerprint: str,
+    collected_at: datetime,
+    processing_state: str = "pending_classification",
 ) -> RawSignal:
     signal = RawSignal(
         source_id=source.id,
@@ -43,9 +49,17 @@ def _make_signal(
         fingerprint=fingerprint,
         raw_data={},
         collected_at=collected_at,
-        validity_state="pending_classification",
+        validity_state=None,
+        processing_state=processing_state,
     )
     session.add(signal)
+    session.flush()
+    # validity_state 列仍有 server_default：ORM 构造函数传 None 会被默认值覆盖，
+    # 这里显式 UPDATE 成 SQL NULL，模拟写入侧「生命周期未定」的真实行。
+    session.execute(
+        update(RawSignal).where(RawSignal.id == signal.id).values(validity_state=None)
+    )
+    session.expire(signal)
     session.flush()
     return signal
 
@@ -76,6 +90,7 @@ def test_queue_breakdown_counts_candidates_by_source_type(db_session: Session) -
 
     assert processing.total == 3
     assert processing.queue_by_source_type == {"official": 1, "media": 2}
+    assert processing.processing_state_counts == {"pending_classification": 3}
     # 既有字段一个都不能少，且口径不变。
     assert processing.classification_failed == 0
     assert processing.backlog_over_1h == 1
@@ -106,6 +121,7 @@ def test_queue_breakdown_excludes_non_candidates(db_session: Session) -> None:
         source=active,
         fingerprint="bd-drop-cf",
         collected_at=NOW - timedelta(minutes=1),
+        processing_state="classification_failed",
     )
     failed.validity_reason = {
         "code": "classification_failed",
@@ -139,3 +155,4 @@ def test_processing_schema_keeps_old_payload_compatible() -> None:
         last_run=last_run,
     )
     assert legacy.queue_by_source_type == {}
+    assert legacy.processing_state_counts == {}

@@ -104,6 +104,7 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
                 expires_at=alert.expires_at,
                 expiry_kind=alert.expiry_kind,
                 validity_state=event.validity_state,
+                processing_state=signal.processing_state if signal is not None else None,
                 valid_until=event.valid_until,
                 review_due_at=event.review_due_at,
                 validity_policy_version=event.validity_policy_version,
@@ -291,6 +292,7 @@ def get_event_detail(
                 published_at=signal.published_at,
                 collected_at=signal.collected_at,
                 validity_state=signal.validity_state,
+                processing_state=signal.processing_state,
             )
             for signal in signals
         ],

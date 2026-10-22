@@ -19,12 +19,11 @@ describe('ValidityStateBadge', () => {
     expect(screen.getByText('已过滤')).toBeInTheDocument();
   });
 
-  it('analyzed 不单独展示处理状态徽标', () => {
-    const {container} = render(<ValidityStateBadge validityState="active" processingState="analyzed" />);
+  it('analyzed 单独展示处理状态徽标，与生命周期并存', () => {
+    render(<ValidityStateBadge validityState="active" processingState="analyzed" />);
 
     expect(screen.getByText('有效')).toBeInTheDocument();
-    expect(screen.queryByText('已分析')).not.toBeInTheDocument();
-    expect(container.textContent).toBe('有效');
+    expect(screen.getByText('已分析')).toBeInTheDocument();
   });
 
   it('两个状态都为空时不渲染任何徽标', () => {

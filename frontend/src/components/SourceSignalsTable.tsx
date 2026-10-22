@@ -212,9 +212,7 @@ export const SourceSignalsTable = ({source, items, offset, onOpenReport}: Source
                 </td>
                 <td className="px-2.5 py-1 align-middle">
                   <span className="block truncate">
-                    {signal.processing_state === 'analyzed'
-                      ? <span className="text-[13px] text-slate-400">—</span>
-                      : <ValidityStateBadge processingState={signal.processing_state} />}
+                    <ValidityStateBadge processingState={signal.processing_state} />
                   </span>
                 </td>
                 {cell('published')}

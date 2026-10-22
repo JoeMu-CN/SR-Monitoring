@@ -22,6 +22,7 @@ const LIFECYCLE_CLASS: Record<string, string> = {
 
 const PROCESSING_CLASS: Record<string, string> = {
   pending_classification: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+  analyzed: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   filtered: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900/40 dark:text-zinc-300',
   no_trigger: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
   classification_failed: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
@@ -34,11 +35,11 @@ export const ValidityStateBadge = ({validityState, processingState}: ValiditySta
   const lifecycle = validityState !== null && validityState !== undefined && validityState !== ''
     ? validityState
     : null;
-  // analyzed 由生命周期徽标承担表达，不额外重复一枚「已分析」。
+  // 每个处理阶段都单独展示：analyzed 表示已进入事件链，与生命周期（是否在
+  // 有效期内）是两个维度，不能互相替代。
   const processing = processingState !== null
     && processingState !== undefined
     && processingState !== ''
-    && processingState !== 'analyzed'
     ? processingState
     : null;
   if (lifecycle === null && processing === null) return null;

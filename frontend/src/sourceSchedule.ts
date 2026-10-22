@@ -55,6 +55,23 @@ function parseStepField(value: string): number | null {
   return step >= 1 && step <= 59 ? step : null;
 }
 
+// 解析逗号分隔的数字列表（如 7,37 / 8,20）：去重后升序返回；
+// 含非数字、越界值或不是列表形态时返回 null。
+function parseNumericList(value: string, min: number, max: number): number[] | null {
+  if (!value.includes(',')) {
+    return null;
+  }
+  const numbers: number[] = [];
+  for (const part of value.split(',')) {
+    const parsed = parseBoundedInteger(part.trim(), min, max);
+    if (parsed === null) {
+      return null;
+    }
+    numbers.push(parsed);
+  }
+  return [...new Set(numbers)].sort((left, right) => left - right);
+}
+
 // 解析星期字段：数字按 APScheduler 语义 0=周一 … 6=周日（7 及越界值不可识别），
 // 具名缩写 mon…sun 大小写不敏感。返回「一」…「日」中的字符或 null。
 function resolveWeekday(value: string): string | null {
@@ -94,6 +111,32 @@ function humanizeCron(fields: readonly string[]): string | null {
   const minuteStep = parseStepField(minute);
   if (minuteStep !== null && hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
     return `每 ${minuteStep} 分钟`;
+  }
+
+  // 每小时多个分钟：M,N,... * * * * → 每小时 7 分、37 分
+  const minuteList = parseNumericList(minute, 0, 59);
+  if (
+    minuteList !== null
+    && hour === '*'
+    && dayOfMonth === '*'
+    && month === '*'
+    && dayOfWeek === '*'
+  ) {
+    return `每小时 ${minuteList.join(' 分、')} 分`;
+  }
+
+  // 每天多个时刻：M H,H,... * * * → 每天 08:00、20:00
+  const hourList = parseNumericList(hour, 0, 23);
+  const listMinute = parseBoundedInteger(minute, 0, 59);
+  if (
+    hourList !== null
+    && listMinute !== null
+    && dayOfMonth === '*'
+    && month === '*'
+    && dayOfWeek === '*'
+  ) {
+    const times = hourList.map((value) => `${pad2(value)}:${pad2(listMinute)}`);
+    return `每天 ${times.join('、')}`;
   }
 
   // 每 N 小时：0 */N * * *（1 ≤ N ≤ 23）

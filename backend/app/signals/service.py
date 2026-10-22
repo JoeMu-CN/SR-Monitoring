@@ -18,15 +18,18 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import SIGNAL_PREFILTER_AT_COLLECT, SIGNAL_PRIORITY_ENABLED
 from app.signals.identity import compute_dedup_key
 from app.signals.ingestion import (
     LifecycleAuthority,
     SignalIngestion,
     merge_source_metadata,
-    persist_signal_ingestions,
+    persist_signal_ingestions_with_ids,
 )
 from app.signals.membership_persistence import apply_membership_snapshot
 from app.signals.models import CollectionRun, DataSource
+from app.signals.prefilter import prefilter_new_signals
+from app.signals.priority import assign_signal_priorities
 from app.signals.schemas import ManualSignalInput
 from app.signals.sources import PullSourceAdapter, RawSourceItem, SourceFetchError
 
@@ -113,7 +116,7 @@ async def collect_source_async(
                     raw_data=_reading_raw_data(signal, item),
                 )
             )
-        created = persist_signal_ingestions(session, ingestions)
+        created, created_ids = persist_signal_ingestions_with_ids(session, ingestions)
         stored_run = session.get(CollectionRun, run.id)
         assert stored_run is not None
         snapshot_keys = frozenset(
@@ -144,9 +147,38 @@ async def collect_source_async(
             raise
         _fail_run(session, run.id, f"采集异常: {exc}")
         raise CollectionFailed(str(exc)) from exc
+    # 采集事务已提交：此时预筛只会改写新信号状态，失败也不影响 CollectionRun 计数。
+    _prepare_collected_signals(session, source, created_ids)
     stored_run = session.get(CollectionRun, run.id)
     assert stored_run is not None
     return stored_run
+
+
+def _prepare_collected_signals(
+    session: Session, source: DataSource, signal_ids: list[int]
+) -> None:
+    """采集入库后做确定性预筛与优先级打分（各自可关闭，失败只告警）。"""
+    if not signal_ids:
+        return
+    kept_ids = list(signal_ids)
+    if SIGNAL_PREFILTER_AT_COLLECT:
+        try:
+            outcome = prefilter_new_signals(session, signal_ids)
+        except Exception as exc:  # noqa: BLE001 —— 预筛是优化，绝不影响采集结果
+            logger.warning("信息源 %s 采集后预筛失败: %s", source.code, exc)
+        else:
+            kept_ids = list(outcome.kept_ids)
+            logger.info(
+                "信息源 %s 预筛完成: filtered=%d kept=%d",
+                source.code,
+                outcome.filtered,
+                outcome.kept,
+            )
+    if SIGNAL_PRIORITY_ENABLED and kept_ids:
+        try:
+            assign_signal_priorities(session, kept_ids)
+        except Exception as exc:  # noqa: BLE001 —— 打分失败退化为默认优先级 50
+            logger.warning("信息源 %s 优先级打分失败: %s", source.code, exc)
 
 
 def _reading_raw_data(

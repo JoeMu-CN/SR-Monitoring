@@ -352,6 +352,37 @@ SIGNAL_ANALYZE_BATCH = _int_env(
 SIGNAL_RELEVANCE_FILTER_ENABLED = os.getenv(
     "SIGNAL_RELEVANCE_FILTER_ENABLED", "true"
 ).strip().lower() in {"1", "true", "yes", "on"}
+# 采集入队后立即做确定性预筛（相关性/清单/结构化分级）：把可免 LLM 的信号在入队前
+# 批量移出消费队列。关闭时回落到处理链内逐条过滤（旧行为）。
+SIGNAL_PREFILTER_AT_COLLECT = os.getenv(
+    "SIGNAL_PREFILTER_AT_COLLECT", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+# 独立消费循环：与采集触发解耦，按固定间隔 + 单轮时间预算消费待分析队列。
+SIGNAL_CONSUME_ENABLED = os.getenv("SIGNAL_CONSUME_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SIGNAL_CONSUME_INTERVAL_SECONDS = _int_env(
+    "SIGNAL_CONSUME_INTERVAL_SECONDS", 20, minimum=5, maximum=300
+)
+SIGNAL_CONSUME_TIME_BUDGET_SECONDS = _int_env(
+    "SIGNAL_CONSUME_TIME_BUDGET_SECONDS", 15, minimum=5, maximum=120
+)
+SIGNAL_CONSUME_BATCH_SIZE = _int_env(
+    "SIGNAL_CONSUME_BATCH_SIZE", 5, minimum=1, maximum=50
+)
+# 队列优先级排序与老化：低优先级信号等待超过阈值后逐步提权，避免被永久饿死。
+SIGNAL_PRIORITY_ENABLED = os.getenv("SIGNAL_PRIORITY_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SIGNAL_PRIORITY_AGING_HOURS = _int_env(
+    "SIGNAL_PRIORITY_AGING_HOURS", 2, minimum=1, maximum=72
+)
 # SIGNAL_ANALYZE_BATCH 同款口径：每次定时任务生成的情报报告条数（每条事件一次独立 LLM 调用）
 INTELLIGENCE_REPORT_BATCH = _int_env(
     "INTELLIGENCE_REPORT_BATCH", 10, minimum=1, maximum=100

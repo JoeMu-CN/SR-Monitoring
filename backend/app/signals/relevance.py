@@ -16,10 +16,11 @@
 """
 
 import re
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import PRIORITY_COUNTRIES
 from app.suppliers.models import Supplier
@@ -158,6 +159,35 @@ class FilterRules:
     priority_countries: frozenset[str]
     list_sources: frozenset[str]
     commodity_threshold_pct: float = 5.0
+    # 来源层级基准分：键可以是信源 code 或 source_type，供 priority.source_tier 使用。
+    # 缺省空字典时 source_tier 回落到 50（清单类仍按 list_sources 命中 10）。
+    source_tiers: dict[str, int] = field(default_factory=dict)
+
+
+# 来源层级分档：清单类实体信源最先处理（一次采集即可判定供应商命中），
+# 高频结构化数据次之，政策/监管类需要更长上下文与更完整的分析，排在最后。
+# 与 alembic 0065_raw_signal_priority 的回填口径保持一致。
+TIER_LIST_SOURCE = 10
+TIER_HIGH_FREQUENCY = 20
+TIER_DEFAULT = 50
+TIER_CONTEXTUAL = 70
+
+_HIGH_FREQUENCY_SOURCE_TYPES = frozenset({"weather", "official_api", "market_data"})
+_CONTEXTUAL_SOURCE_TYPES = frozenset(
+    {"policy", "regulatory", "incident", "geopolitical"}
+)
+
+
+def _default_source_tiers() -> dict[str, int]:
+    """默认来源层级表：清单类 code 10；高频源类型 20；政策类类型 70。"""
+    tiers: dict[str, int] = {code: TIER_LIST_SOURCE for code in _LIST_SOURCE_CODES}
+    tiers.update(
+        {source_type: TIER_HIGH_FREQUENCY for source_type in _HIGH_FREQUENCY_SOURCE_TYPES}
+    )
+    tiers.update(
+        {source_type: TIER_CONTEXTUAL for source_type in _CONTEXTUAL_SOURCE_TYPES}
+    )
+    return tiers
 
 
 FILTER_CONFIG_KEY = "signal-filter"
@@ -172,6 +202,7 @@ def _default_rules() -> FilterRules:
         priority_countries=PRIORITY_COUNTRIES,
         list_sources=_LIST_SOURCE_CODES,
         commodity_threshold_pct=5.0,
+        source_tiers=_default_source_tiers(),
     )
 
 
@@ -230,6 +261,32 @@ def load_filter_rules(session: Session) -> FilterRules:
                         return parsed
                 return fallback
 
+            def _tier_int(value: object) -> int | None:
+                """提取来源层级整数分；非整数/布尔/负数视为非法项。"""
+                if isinstance(value, bool):
+                    return None
+                if isinstance(value, int):
+                    return value if value >= 0 else None
+                if isinstance(value, str):
+                    try:
+                        parsed = int(value.strip())
+                    except ValueError:
+                        return None
+                    return parsed if parsed >= 0 else None
+                return None
+
+            def _tier_map(value: object, fallback: dict[str, int]) -> dict[str, int]:
+                """提取 {信源 code / source_type: 层级分}；非法项忽略，保留默认分档。"""
+                tiers = dict(fallback)
+                if isinstance(value, dict):
+                    for key, raw in value.items():
+                        if not isinstance(key, str) or not key.strip():
+                            continue
+                        tier = _tier_int(raw)
+                        if tier is not None:
+                            tiers[key.strip()] = tier
+                return tiers
+
             rules = FilterRules(
                 high_impact=_frozenset_of(
                     cfg.get("high_impact"), defaults.high_impact
@@ -246,6 +303,7 @@ def load_filter_rules(session: Session) -> FilterRules:
                     cfg.get("commodity_threshold_pct"),
                     defaults.commodity_threshold_pct,
                 ),
+                source_tiers=_tier_map(cfg.get("source_tiers"), defaults.source_tiers),
             )
     except Exception:  # noqa: BLE001 —— 配置读取失败回退默认（保守安全侧）
         rules = defaults
@@ -267,25 +325,69 @@ class RelevanceDecision:
     reason: str
 
 
-def assess_signal_relevance(
-    session: Session, title: str, content: str
+@dataclass(frozen=True)
+class SupplierProfile:
+    """相关性判定所需的供应商只读快照（避免逐条信号查库与 lazy load）。"""
+
+    legal_name: str
+    normalized_name: str
+    aliases: tuple[str, ...]
+    country_code: str | None
+
+
+def load_supplier_profiles(session: Session) -> tuple[SupplierProfile, ...]:
+    """加载启用供应商的主体/别名/国家快照，供批量判定与采集预筛复用。"""
+    profiles: list[SupplierProfile] = []
+    suppliers = session.scalars(
+        select(Supplier)
+        .where(Supplier.enabled.is_(True))
+        .options(selectinload(Supplier.aliases))
+    )
+    for supplier in suppliers:
+        profiles.append(
+            SupplierProfile(
+                legal_name=supplier.legal_name,
+                normalized_name=normalize_alias(supplier.legal_name),
+                aliases=tuple(
+                    alias.normalized_alias
+                    for alias in supplier.aliases
+                    if alias.normalized_alias
+                ),
+                country_code=supplier.country_code,
+            )
+        )
+    return tuple(profiles)
+
+
+def supplier_name_index(profiles: Sequence[SupplierProfile]) -> frozenset[str]:
+    """供应商主体名与别名的匹配集合（均已 normalize_alias）。"""
+    names: set[str] = set()
+    for profile in profiles:
+        names.add(profile.normalized_name)
+        names.update(profile.aliases)
+    return frozenset(names)
+
+
+def assess_text_relevance(
+    title: str,
+    content: str,
+    *,
+    rules: FilterRules,
+    suppliers: Sequence[SupplierProfile],
 ) -> RelevanceDecision:
-    """对原始信号文本做确定性相关性判定。relevant=False 表示明确不相关可跳过 LLM。"""
+    """纯函数版相关性判定（不触碰 DB），判定顺序与原有实现逐行等价。"""
     text = normalize_alias(f"{title} {content}")
-    rules = load_filter_rules(session)
     if any(keyword in text for keyword in rules.high_impact):
         return RelevanceDecision(True, "命中高影响主题，强制放行复核")
-    suppliers = list(
-        session.scalars(select(Supplier).where(Supplier.enabled.is_(True)))
-    )
 
     # 1. 供应商主体/别名命中 → 强相关
     for supplier in suppliers:
-        if normalize_alias(supplier.legal_name) in text:
+        if supplier.normalized_name in text:
             return RelevanceDecision(True, f"命中供应商主体：{supplier.legal_name}")
         for alias in supplier.aliases:
-            if alias.normalized_alias and alias.normalized_alias in text:
-                return RelevanceDecision(True, f"命中供应商别名：{alias.alias}")
+            if alias in text:
+                # 快照里保存的是 normalize_alias 结果，reason 用规范化后的别名。
+                return RelevanceDecision(True, f"命中供应商别名：{alias}")
 
     supplier_countries = {supplier.country_code for supplier in suppliers}
 
@@ -311,6 +413,18 @@ def assess_signal_relevance(
 
     # 4. 保守放行
     return RelevanceDecision(True, "未命中明确无关特征")
+
+
+def assess_signal_relevance(
+    session: Session, title: str, content: str
+) -> RelevanceDecision:
+    """对原始信号文本做确定性相关性判定。relevant=False 表示明确不相关可跳过 LLM。"""
+    return assess_text_relevance(
+        title,
+        content,
+        rules=load_filter_rules(session),
+        suppliers=load_supplier_profiles(session),
+    )
 
 
 def _foreign_countries(normalized_text: str, raw_text: str) -> set[str]:

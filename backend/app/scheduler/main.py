@@ -10,6 +10,7 @@ import logging
 import os
 from datetime import UTC, datetime, timedelta
 
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
@@ -28,16 +29,19 @@ from app.config import (
     SCHEDULER_COLLECT_CRON,
     SCHEDULER_EXPIRE_CRON,
     SCHEDULER_INTELLIGENCE_CRON,
+    SIGNAL_CONSUME_INTERVAL_SECONDS,
     get_notification_settings,
 )
 from app.database import SessionLocal
 from app.notification.monthly_report import monthly_report_job
 from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
+from app.scheduler.consume import consume_pending_signals_job
 from app.scheduler.events import attach_observability_listener
 from app.scheduler.health_rules import cron_to_apscheduler
 from app.scheduler.jobs import (
     TYC_SHARD_CRONS,
+    age_pending_signal_priorities,
     cleanup_job,
     collect_job,
     collect_source_job,
@@ -212,6 +216,38 @@ def _register_weekly_research_job(scheduler: BlockingScheduler) -> None:
         scheduler.reschedule_job(job_id, trigger=trigger)
 
 
+def _register_signal_consumption(scheduler: BlockingScheduler) -> None:
+    """注册独立信号消费循环与优先级老化 job（消费使用专用单线程执行器）。
+
+    采集与消费彻底解耦：消费按 ``SIGNAL_CONSUME_INTERVAL_SECONDS`` 周期拉队列，
+    单轮内按时间预算连续消费多批；``max_instances=1`` + ``coalesce`` 保证同一
+    Scheduler 进程不会堆叠消费轮次，跨进程/副本互斥由 advisory lock 兜底。
+    """
+    # APScheduler 3.x 只接受其 BaseExecutor（内部封装 concurrent.futures 线程池），
+    # 且 add_executor(executor, alias=...) 的别名必须用关键字参数。
+    scheduler.add_executor(ThreadPoolExecutor(max_workers=1), alias="signal_consume")
+    scheduler.add_job(
+        consume_pending_signals_job,
+        "interval",
+        seconds=SIGNAL_CONSUME_INTERVAL_SECONDS,
+        executor="signal_consume",
+        max_instances=1,
+        coalesce=True,
+        id="signal-consume",
+        name="待分析信号消费",
+        replace_existing=True,
+    )
+    # 低优先级老化：等待过久的信号逐步提权，避免被高优噪声永久饿死。
+    scheduler.add_job(
+        age_pending_signal_priorities,
+        "interval",
+        hours=1,
+        id="signal-priority-aging",
+        name="待分析信号优先级老化",
+        replace_existing=True,
+    )
+
+
 def main() -> None:
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
     # 排期快照与执行历史监听：必须在 scheduler.start() 前注册，使
@@ -221,6 +257,7 @@ def main() -> None:
     # 启动恢复：仅本进程启动时收尾一次遗留 running 采集运行，然后才注册周期
     # 任务；正常采集循环不再扫描 running，避免误伤仍在执行的长任务。
     _finalize_stale_collection_runs_on_startup()
+    _register_signal_consumption(scheduler)
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"
     )
@@ -235,6 +272,7 @@ def main() -> None:
         id="runtime-heartbeat",
         name="持久化调度器心跳",
     )
+    # 独立信号消费循环与优先级老化已在 _register_signal_consumption 注册（见上）。
     _register_source_jobs(scheduler)
     _register_weekly_research_job(scheduler)
     scheduler.add_job(
@@ -312,7 +350,7 @@ def main() -> None:
         )
     logger.info(
         "Scheduler 启动: collect=%s expire=%s cleanup=%s intelligence=%s research_daily=%s "
-        "research_weekly=%s research_monthly=%s notify=%s notify_monthly=%s",
+        "research_weekly=%s research_monthly=%s notify=%s notify_monthly=%s signal_consume=%ss",
         SCHEDULER_COLLECT_CRON,
         SCHEDULER_EXPIRE_CRON,
         SCHEDULER_CLEANUP_CRON,
@@ -343,6 +381,7 @@ def main() -> None:
             if _notification_settings.enabled
             else "disabled"
         ),
+        SIGNAL_CONSUME_INTERVAL_SECONDS,
     )
     scheduler.start()
 

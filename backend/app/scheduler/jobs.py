@@ -1,8 +1,8 @@
 """独立 Scheduler 进程（技术方案 5.1：Web 与调度分离）。
 
 定时任务：
-- collect_job：定时采集所有启用的拉取式信息源（nmc-weather），并处理新信号
-  （AI 解析 → 事件归并 → 匹配 → 评分 → 提醒）。
+- collect_job / collect_source_job / collect_tyc_shard_job：只负责采集入库，
+  不再在采集后同步消费队列（消费由 scheduler.consume 的独立循环负责）。
 - expire_job：定期将超过 expires_at 的提醒标记为 expired。
 - cleanup_job：每日数据保留清理（90 天 / 30 天轮转）。
 
@@ -14,11 +14,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, or_, select
+from sqlalchemy import Select, func, or_, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -49,6 +50,8 @@ from app.config import (
     RESEARCH_TOOL_RUN_STALE_SECONDS,
     RESEARCH_WEEKLY_TOPIC,
     SIGNAL_ANALYZE_BATCH,
+    SIGNAL_PRIORITY_AGING_HOURS,
+    SIGNAL_PRIORITY_ENABLED,
     SIGNAL_RELEVANCE_FILTER_ENABLED,
 )
 from app.database import SessionLocal
@@ -199,11 +202,10 @@ def _collect_enabled_sources(
 
 
 def collect_source_job(source_id: int) -> None:
-    """按信息源自己的 cron 触发一次采集，并处理本次新增信号。"""
+    """按信息源自己的 cron 触发一次采集（只入库，不阻塞消费队列）。"""
     try:
         summary = _collect_enabled_sources(source_ids=[source_id])
         if summary:
-            _process_pending_signals()
             logger.info("信息源独立调度完成: %s", summary)
     except Exception as exc:
         logger.exception("信息源 %s 独立调度异常: %s", source_id, exc)
@@ -226,8 +228,9 @@ def collect_tyc_shard_job(shard_index: int) -> None:
     按**真实桶门禁**校验 ``max_bucket × (1+len(dimensions)) ≤ daily_limit``，
     拒绝时记跳过日志、**不部分执行**；批次锁被占用（另一分片或手动核查运行中）
     同样跳过。批量逻辑复用 ``app.agent.tyc_batch.run_tyc_batch``（与手动单供应商
-    核查同一额度执行器）：逐工具写 ``tyc_usage_records``，多维度报告落信号池，
-    随后交由既有 ``_process_pending_signals`` 分析链生成 P1-P4 提醒。
+    核查同一额度执行器）：逐工具写 ``tyc_usage_records``，多维度报告落信号池。
+
+    采集只入库、不消费：新增信号交由独立消费循环（``scheduler.consume``）分析。
 
     本函数保持调度顶层边界：未启用/额度不可用/门禁拒绝/锁繁忙一律降级为跳过
     日志，异常不外抛。
@@ -276,8 +279,6 @@ def collect_tyc_shard_job(shard_index: int) -> None:
             result.failed_count,
             result.quota_exhausted,
         )
-        if result.created_count:
-            _process_pending_signals()
     except Exception as exc:
         logger.exception("天眼查分片核查异常: %s", exc)
 
@@ -352,16 +353,198 @@ def _evaluate_market_signal(
     return record, True
 
 
+@dataclass(frozen=True)
+class BatchResult:
+    """单批信号消费的计数结果（不含并发控制与观测写入）。"""
+
+    processed: int
+    filtered: int
+    failed: int
+
+
+def process_signal_batch(batch: int, *, now_utc: datetime | None = None) -> BatchResult:
+    """消费最多 ``batch`` 条候选信号，返回本批 processed/filtered/failed 计数。
+
+    事务主体与既有处理链逐字一致：候选查询 → 有效期收敛 → 可复用分析 →
+    确定性行情评估 → 相关性预过滤 → 清单未命中 → 结构化分级 → LLM → 事件链，
+    每个信号处理后的提交边界不变。
+
+    与旧 ``_process_pending_signals`` 的区别只有两点：**不自己取进程锁**、
+    **不写 job 观测结论**。并发控制与观测交给调用方（兼容入口
+    ``_process_pending_signals`` 或独立消费循环 ``scheduler.consume``），
+    使采集与消费解耦、消费侧可按时间预算连续拉多批。
+    """
+    now = now_utc or datetime.now(UTC)
+    processed = 0
+    filtered = 0
+    failed = 0
+    with SessionLocal() as session:
+        # 只取队首一小段候选：旧实现每轮全量加载（积压上万行），改为 20 秒一轮
+        # 消费后会放大成常态开销。留 20 倍余量，用于跳过循环中判定为过期的 active。
+        candidates = list(
+            session.execute(
+                pending_signal_candidate_select(now_utc=now).limit(batch * 20)
+            )
+        )
+        signal_ids: list[tuple[int, str]] = []
+        validity_updated = False
+        for signal_id, source_code in candidates:
+            signal = session.get(RawSignal, signal_id)
+            if signal is None:
+                continue
+            if signal.validity_state == "active" and not is_raw_signal_effective(
+                signal, now_utc=now
+            ):
+                expire_signal_if_due(signal, now_utc=now)
+                validity_updated = True
+                continue
+            signal_ids.append((signal_id, source_code))
+            if len(signal_ids) == batch:
+                break
+        if validity_updated:
+            session.commit()
+        for signal_id, source_code in signal_ids:
+            signal = session.get(RawSignal, signal_id)
+            if signal is None:
+                continue
+            # 处理前登记当前信号（独立短事务；写失败不影响业务）。
+            runtime.record_pending_signal_started(signal.id, now=now)
+            analysis = latest_reusable_analysis(session, signal.id)
+            # 行情分支优先：已登记指标由确定性评估接管（命中即终态，触发即带结果
+            # 继续处理链）；未命中则原样回落既有相关性/清单/分级链，顺序不变。
+            if analysis is None:
+                market_analysis, market_handled = _evaluate_market_signal(
+                    session, signal, source_code, now_utc=now
+                )
+                if market_handled:
+                    if market_analysis is None:
+                        filtered += 1
+                        continue
+                    analysis = market_analysis
+            if analysis is None and SIGNAL_RELEVANCE_FILTER_ENABLED:
+                decision = assess_signal_relevance(
+                    session, signal.title, signal.content
+                )
+                if not decision.relevant:
+                    session.add(
+                        AIAnalysisRecord(
+                            signal_id=signal.id,
+                            provider="deterministic-filter",
+                            model="relevance-v1",
+                            prompt_version="relevance-v1",
+                            status="succeeded",
+                            finished_at=datetime.now(UTC),
+                            duration_ms=0,
+                            result=None,
+                            error=f"filtered: {decision.reason}",
+                            needs_review=True,
+                            review_reason=f"预过滤结果待复核：{decision.reason}",
+                        )
+                    )
+                    _mark_signal_irrelevant(
+                        signal,
+                        filter_kind=RELEVANCE_FILTER_KIND,
+                        reason=decision.reason,
+                    )
+                    session.commit()
+                    filtered += 1
+                    continue
+            # 清单类信源（全量实体清单）：未命中任何供应商名则跳过 LLM
+            # （清单集合来自 signal-filter 配置，TTL 缓存热更新）
+            list_sources = load_filter_rules(session).list_sources
+            if (
+                analysis is None
+                and
+                source_code in list_sources
+                and not _matches_any_supplier(
+                    session, f"{signal.title} {signal.content}"
+                )
+            ):
+                session.add(
+                    AIAnalysisRecord(
+                        signal_id=signal.id,
+                        provider="deterministic-filter",
+                        model="entity-list-v1",
+                        prompt_version="entity-list-v1",
+                        status="succeeded",
+                        finished_at=datetime.now(UTC),
+                        duration_ms=0,
+                        result=None,
+                        error="filtered: 清单类信号未命中任何供应商",
+                        needs_review=True,
+                        review_reason="实体清单未命中任何供应商，跳过 LLM",
+                    )
+                )
+                _mark_signal_irrelevant(
+                    signal,
+                    filter_kind=ENTITY_LIST_FILTER_KIND,
+                    reason="清单类信号未命中任何供应商",
+                )
+                session.commit()
+                filtered += 1
+                continue
+            # 结构化宏观信号分级：commodity 涨跌幅低于阈值 → 免 LLM
+            rules = load_filter_rules(session)
+            grade_reason = (
+                grade_structured_signal(
+                    source_code, signal.title, signal.content, rules
+                )
+                if analysis is None
+                else None
+            )
+            if grade_reason is not None:
+                session.add(
+                    AIAnalysisRecord(
+                        signal_id=signal.id,
+                        provider="deterministic-filter",
+                        model="structured-grade-v1",
+                        prompt_version="structured-grade-v1",
+                        status="succeeded",
+                        finished_at=datetime.now(UTC),
+                        duration_ms=0,
+                        result=None,
+                        error=f"filtered: {grade_reason}",
+                        needs_review=True,
+                        review_reason=f"结构化分级跳过：{grade_reason}",
+                    )
+                )
+                _mark_signal_irrelevant(
+                    signal,
+                    filter_kind=STRUCTURED_GRADE_FILTER_KIND,
+                    reason=grade_reason,
+                )
+                session.commit()
+                filtered += 1
+                continue
+            try:
+                if analysis is None:
+                    analysis = asyncio.run(analyze_raw_signal(session, signal))
+                if analysis.status != "succeeded" or analysis.result is None:
+                    continue
+                process_analysis(session, signal, analysis, now_utc=now)
+                processed += 1
+            except Exception as exc:
+                session.rollback()
+                failed += 1
+                logger.error("信号 %s 处理失败: %s", signal_id, exc)
+    if filtered:
+        logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
+    return BatchResult(processed=processed, filtered=filtered, failed=failed)
+
+
 def _process_pending_signals(
     limit: int | None = None, *, now_utc: datetime | None = None
 ) -> int:
-    """领取尚未完成风险关联的有效信号，复用成功 AI 结果执行全链路。
+    """兼容入口：进程锁 + 单批处理 + 观测，返回本批 processed 条数。
 
     limit 为 None 时使用 SIGNAL_ANALYZE_BATCH 环境变量（默认 20）。
-    可复用的成功分析之后先做**确定性行情评估**：已登记指标免 LLM（未触发写终态
-    过滤记录，触发直接以确定性结果进入事件链）；未命中才继续既有链路——
-    相关性预过滤（SIGNAL_RELEVANCE_FILTER_ENABLED）、清单未命中、结构化分级，
-    顺序与语义不变。
+    业务主体全部在 ``process_signal_batch``：可复用的成功分析之后先做
+    **确定性行情评估**（已登记指标免 LLM，未触发写终态过滤记录，触发直接以
+    确定性结果进入事件链），未命中才继续既有链路——相关性预过滤
+    （SIGNAL_RELEVANCE_FILTER_ENABLED）、清单未命中、结构化分级，语义不变。
+
+    采集侧不再调用本函数（采集与消费解耦）；保留它是为了手动触发、
+    既有测试与旧调用点，行为与重构前一致。
     """
     if not _pending_signal_processing_lock.acquire(blocking=False):
         logger.info("已有待处理信号批次运行，跳过本次重复处理")
@@ -375,158 +558,8 @@ def _process_pending_signals(
     )
 
     batch = SIGNAL_ANALYZE_BATCH if limit is None else limit
-    now = now_utc or datetime.now(UTC)
-    processed = 0
-    filtered = 0
-    failed = 0
     try:
-        with SessionLocal() as session:
-            candidates = list(
-                session.execute(pending_signal_candidate_select(now_utc=now))
-            )
-            signal_ids: list[tuple[int, str]] = []
-            validity_updated = False
-            for signal_id, source_code in candidates:
-                signal = session.get(RawSignal, signal_id)
-                if signal is None:
-                    continue
-                if signal.validity_state == "active" and not is_raw_signal_effective(
-                    signal, now_utc=now
-                ):
-                    expire_signal_if_due(signal, now_utc=now)
-                    validity_updated = True
-                    continue
-                signal_ids.append((signal_id, source_code))
-                if len(signal_ids) == batch:
-                    break
-            if validity_updated:
-                session.commit()
-            for signal_id, source_code in signal_ids:
-                signal = session.get(RawSignal, signal_id)
-                if signal is None:
-                    continue
-                # 处理前登记当前信号（独立短事务；写失败不影响业务）。
-                runtime.record_pending_signal_started(signal.id, now=now)
-                analysis = latest_reusable_analysis(session, signal.id)
-                # 行情分支优先：已登记指标由确定性评估接管（命中即终态，触发即带结果
-                # 继续处理链）；未命中则原样回落既有相关性/清单/分级链，顺序不变。
-                if analysis is None:
-                    market_analysis, market_handled = _evaluate_market_signal(
-                        session, signal, source_code, now_utc=now
-                    )
-                    if market_handled:
-                        if market_analysis is None:
-                            filtered += 1
-                            continue
-                        analysis = market_analysis
-                if analysis is None and SIGNAL_RELEVANCE_FILTER_ENABLED:
-                    decision = assess_signal_relevance(
-                        session, signal.title, signal.content
-                    )
-                    if not decision.relevant:
-                        session.add(
-                            AIAnalysisRecord(
-                                signal_id=signal.id,
-                                provider="deterministic-filter",
-                                model="relevance-v1",
-                                prompt_version="relevance-v1",
-                                status="succeeded",
-                                finished_at=datetime.now(UTC),
-                                duration_ms=0,
-                                result=None,
-                                error=f"filtered: {decision.reason}",
-                                needs_review=True,
-                                review_reason=f"预过滤结果待复核：{decision.reason}",
-                            )
-                        )
-                        _mark_signal_irrelevant(
-                            signal,
-                            filter_kind=RELEVANCE_FILTER_KIND,
-                            reason=decision.reason,
-                        )
-                        session.commit()
-                        filtered += 1
-                        continue
-                # 清单类信源（全量实体清单）：未命中任何供应商名则跳过 LLM
-                # （清单集合来自 signal-filter 配置，TTL 缓存热更新）
-                list_sources = load_filter_rules(session).list_sources
-                if (
-                    analysis is None
-                    and
-                    source_code in list_sources
-                    and not _matches_any_supplier(
-                        session, f"{signal.title} {signal.content}"
-                    )
-                ):
-                    session.add(
-                        AIAnalysisRecord(
-                            signal_id=signal.id,
-                            provider="deterministic-filter",
-                            model="entity-list-v1",
-                            prompt_version="entity-list-v1",
-                            status="succeeded",
-                            finished_at=datetime.now(UTC),
-                            duration_ms=0,
-                            result=None,
-                            error="filtered: 清单类信号未命中任何供应商",
-                            needs_review=True,
-                            review_reason="实体清单未命中任何供应商，跳过 LLM",
-                        )
-                    )
-                    _mark_signal_irrelevant(
-                        signal,
-                        filter_kind=ENTITY_LIST_FILTER_KIND,
-                        reason="清单类信号未命中任何供应商",
-                    )
-                    session.commit()
-                    filtered += 1
-                    continue
-                # 结构化宏观信号分级：commodity 涨跌幅低于阈值 → 免 LLM
-                rules = load_filter_rules(session)
-                grade_reason = (
-                    grade_structured_signal(
-                        source_code, signal.title, signal.content, rules
-                    )
-                    if analysis is None
-                    else None
-                )
-                if grade_reason is not None:
-                    session.add(
-                        AIAnalysisRecord(
-                            signal_id=signal.id,
-                            provider="deterministic-filter",
-                            model="structured-grade-v1",
-                            prompt_version="structured-grade-v1",
-                            status="succeeded",
-                            finished_at=datetime.now(UTC),
-                            duration_ms=0,
-                            result=None,
-                            error=f"filtered: {grade_reason}",
-                            needs_review=True,
-                            review_reason=f"结构化分级跳过：{grade_reason}",
-                        )
-                    )
-                    _mark_signal_irrelevant(
-                        signal,
-                        filter_kind=STRUCTURED_GRADE_FILTER_KIND,
-                        reason=grade_reason,
-                    )
-                    session.commit()
-                    filtered += 1
-                    continue
-                try:
-                    if analysis is None:
-                        analysis = asyncio.run(analyze_raw_signal(session, signal))
-                    if analysis.status != "succeeded" or analysis.result is None:
-                        continue
-                    process_analysis(session, signal, analysis, now_utc=now)
-                    processed += 1
-                except Exception as exc:
-                    session.rollback()
-                    failed += 1
-                    logger.error("信号 %s 处理失败: %s", signal_id, exc)
-        if filtered:
-            logger.info("相关性预过滤跳过 %d 条不相关信号（未消耗 LLM）", filtered)
+        result = process_signal_batch(batch, now_utc=now_utc)
     except Exception:
         # 业务事务因基础设施异常失败：得出失败结论后，用独立短事务写观测再抛出。
         runtime.record_job_result(
@@ -541,11 +574,11 @@ def _process_pending_signals(
         runtime.record_job_result(
             runtime.PENDING_SIGNALS_JOB_KEY,
             succeeded=True,
-            processed=processed,
-            filtered=filtered,
-            failed=failed,
+            processed=result.processed,
+            filtered=result.filtered,
+            failed=result.failed,
         )
-        return processed
+        return result.processed
     finally:
         _pending_signal_processing_lock.release()
 
@@ -589,13 +622,19 @@ def pending_signal_candidate_filters(
 def pending_signal_candidate_select(
     *, now_utc: datetime | None = None
 ) -> Select[tuple[int, str]]:
-    """候选信号 ``(id, source_code)``，按采集时间升序；不施加任何 batch limit。"""
-    return (
+    """候选信号 ``(id, source_code)``，按消费顺序排序；不施加任何 batch limit。
+
+    启用优先级时按 ``priority DESC, collected_at ASC``（高优先级先消费，同级
+    先进先出）；关闭时保持纯 ``collected_at`` 升序的旧顺序。
+    """
+    statement = (
         select(RawSignal.id, DataSource.code)
         .join(DataSource, DataSource.id == RawSignal.source_id)
         .where(*pending_signal_candidate_filters(now_utc=now_utc))
-        .order_by(RawSignal.collected_at)
     )
+    if SIGNAL_PRIORITY_ENABLED:
+        return statement.order_by(RawSignal.priority.desc(), RawSignal.collected_at.asc())
+    return statement.order_by(RawSignal.collected_at)
 
 
 def pending_signal_candidate_id_select(
@@ -609,13 +648,50 @@ def pending_signal_candidate_id_select(
     )
 
 
+def age_pending_signal_priorities(
+    *, now_utc: datetime | None = None, limit: int = 5000
+) -> int:
+    """低优先级老化提权：等待超过阈值的最老候选信号优先 +5（上限 90）。
+
+    只处理仍在候选队列里的信号（复用同一份候选谓词），按 ``collected_at`` 取
+    最老 ``limit`` 条，单事务 ``UPDATE ... SET priority = LEAST(priority + 5, 90)``；
+    返回实际更新行数。每轮只提一档，由周期任务反复执行逐步抬高，避免一轮内
+    把积压全部抬到最高优先级、反而挤掉真正的新高优信号。
+    """
+    now = now_utc or datetime.now(UTC)
+    if not SIGNAL_PRIORITY_ENABLED:
+        return 0
+    cutoff = now - timedelta(hours=SIGNAL_PRIORITY_AGING_HOURS)
+    with SessionLocal() as session:
+        oldest_ids = list(
+            session.scalars(
+                select(RawSignal.id)
+                .where(
+                    RawSignal.id.in_(pending_signal_candidate_id_select(now_utc=now)),
+                    RawSignal.collected_at < cutoff,
+                    RawSignal.priority < 90,
+                )
+                .order_by(RawSignal.collected_at)
+                .limit(limit)
+            )
+        )
+        if not oldest_ids:
+            return 0
+        result = session.execute(
+            update(RawSignal)
+            .where(RawSignal.id.in_(oldest_ids))
+            .values(priority=func.least(RawSignal.priority + 5, 90))
+        )
+        session.commit()
+        return int(result.rowcount or 0)
+
+
 def collect_job() -> None:
+    """定时采集：只入库，不消费。分析由独立消费循环（signal-consume）负责。"""
     logger.info("定时采集开始: %s", datetime.now(UTC).isoformat())
     try:
         summary = _collect_enabled_sources(only_without_schedule=True)
-        logger.info("采集汇总: %s", summary)
-        processed = _process_pending_signals()
-        logger.info("本次处理新信号 %d 条", processed)
+        logger.info("采集汇总: %s（新信号已入队，等待独立消费循环分析）", summary)
     except Exception as exc:
         logger.exception("定时采集任务异常: %s", exc)
 

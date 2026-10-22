@@ -421,6 +421,11 @@ class RawSignal(Base):
     validity_reason: Mapped[dict[str, object]] = mapped_column(
         JSONB, server_default=text(PENDING_VALIDITY_REASON)
     )
+    # 消费优先级（0-100，越高越先分析）。采集入库时按来源层级/供应商命中/关键词/
+    # 时效计算；等待过久的低优先级信号由老化任务逐步提权，避免被饿死。
+    priority: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("50")
+    )
 
     source: Mapped[DataSource] = relationship(back_populates="signals")
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.scheduler.observability_models import JobRunStatus
 from app.scheduler.runtime_models import CurrentWorkKind, CurrentWorkStage
@@ -97,6 +97,8 @@ class ProcessingHealthRead(BaseModel):
     classification_failed: int
     backlog_over_1h: int
     oldest_pending_age_seconds: int | None
+    # 队列按信源类型拆解（source_type → 候选条数）；只增字段，缺失时为 {}。
+    queue_by_source_type: dict[str, int] = Field(default_factory=dict)
     last_run: ProcessingRunRead
 
 

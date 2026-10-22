@@ -540,9 +540,32 @@ def test_tyc_shard_registration_is_idempotent() -> None:
     assert str(scheduler.get_job("tyc-shard-0").trigger) == original  # type: ignore[union-attr]
 
 
-def test_collect_tyc_shard_job_passes_shard_index_and_processes(
+def test_signal_consume_and_aging_jobs_use_dedicated_executor() -> None:
+    """消费与老化 job 注册在专用单线程执行器上，且 max_instances/coalesce 正确。"""
+    from datetime import timedelta
+
+    scheduler = BlockingScheduler(timezone="Asia/Shanghai")
+
+    scheduler_main._register_signal_consumption(scheduler)
+
+    consume_job = scheduler.get_job("signal-consume")
+    assert consume_job is not None
+    assert consume_job.executor == "signal_consume"
+    assert consume_job.max_instances == 1
+    assert consume_job.coalesce is True
+    assert consume_job.trigger.interval == timedelta(  # type: ignore[attr-defined]
+        seconds=scheduler_main.SIGNAL_CONSUME_INTERVAL_SECONDS
+    )
+    aging_job = scheduler.get_job("signal-priority-aging")
+    assert aging_job is not None
+    assert aging_job.executor == "default"
+    assert aging_job.trigger.interval == timedelta(hours=1)  # type: ignore[attr-defined]
+
+
+def test_collect_tyc_shard_job_passes_shard_index_without_consuming(
     db_session, monkeypatch
 ) -> None:
+    """分片 job 只采集：分片参数正确传入，且不再顺手触发消费。"""
     from app.agent.tyc_batch import SHARD_COUNT
     from app.agent.tyc_batch_models import TycBatchResult
 
@@ -586,7 +609,8 @@ def test_collect_tyc_shard_job_passes_shard_index_and_processes(
         "shard_index": 1,
         "shard_count": SHARD_COUNT,
     }
-    assert processed == [1]
+    # 采集与消费解耦：分片采集不再触发待处理信号处理。
+    assert processed == []
 
 
 def test_collect_tyc_shard_job_skips_on_bucket_gate_rejection(
@@ -649,7 +673,7 @@ def test_collect_tyc_shard_job_skips_when_batch_lock_busy(
 def test_collect_tyc_shard_job_persists_usage_and_report_signal(
     db_session, committed_tyc_env, monkeypatch
 ) -> None:
-    """分片 job 复用 run_tyc_batch：逐工具真提交记账 + 报告信号 + 处理链。"""
+    """分片 job 复用 run_tyc_batch：逐工具真提交记账 + 报告信号入池（不消费）。"""
     from tyc_batch_support import (
         MultidimMcpStub,
         committed_tyc_daily_used,
@@ -705,7 +729,8 @@ def test_collect_tyc_shard_job_persists_usage_and_report_signal(
     )
     assert len(signals) == 1
     assert signals[0].raw_data["report_kind"] == "supplier_profile"
-    assert processed == [1]
+    # 采集落池后由独立消费循环分析；本 job 不再同步消费。
+    assert processed == []
 
 
 # ---------------------------------------------------------------------------

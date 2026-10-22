@@ -81,13 +81,27 @@ def persist_signal_ingestions(
     session: Session, ingestions: list[SignalIngestion]
 ) -> int:
     """在调用方事务中原子应用生命周期动作并写入信号快照。"""
+    return persist_signal_ingestions_with_ids(session, ingestions)[0]
+
+
+def persist_signal_ingestions_with_ids(
+    session: Session, ingestions: list[SignalIngestion]
+) -> tuple[int, list[int]]:
+    """同 ``persist_signal_ingestions``，额外返回本次真实新插入的信号 id。
+
+    采集侧需要在提交后对新增信号做确定性预筛，因此必须拿回主键；被唯一约束
+    挡下的重复项不会出现在返回列表中。
+    """
     created = 0
+    created_ids: list[int] = []
     rows: list[dict[str, object]] = []
     for ingestion in ingestions:
         snapshot = _resolve_validity_snapshot(ingestion)
         apply_lifecycle_action(session, ingestion, snapshot)
         row = _signal_row(ingestion, snapshot)
         if is_supersession_candidate(ingestion, snapshot):
+            # supersession 分支在自己内部 insert 并只回传计数，拿不到主键；
+            # 这类信号（按 validity_key 替代）由调用方按 collected_at 兜底识别。
             created += insert_supersession(session, ingestion, snapshot, row)
         else:
             rows.append(row)
@@ -100,8 +114,10 @@ def persist_signal_ingestions(
             )
             .returning(RawSignal.id)
         )
-        created += len(result.scalars().all())
-    return created
+        inserted_ids = list(result.scalars().all())
+        created += len(inserted_ids)
+        created_ids.extend(inserted_ids)
+    return created, created_ids
 
 
 def merge_source_metadata(

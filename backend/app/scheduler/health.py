@@ -44,7 +44,11 @@ from app.scheduler.health_schemas import (
     SourceHealthRead,
     SourceHealthStatus,
 )
-from app.scheduler.jobs import TYC_WEEKLY_SCHEDULE, pending_signal_candidate_id_select
+from app.scheduler.jobs import (
+    TYC_WEEKLY_SCHEDULE,
+    pending_signal_candidate_filters,
+    pending_signal_candidate_id_select,
+)
 from app.scheduler.observability_models import (
     JobRunStatus,
     SchedulerJobRegistry,
@@ -375,6 +379,18 @@ def _pending(
     oldest_utc = _as_utc(oldest)
     oldest_age = int((now - oldest_utc).total_seconds()) if oldest_utc is not None else None
 
+    # 队列按信源类型拆解（同一份候选谓词）：一眼看出积压来自哪类信源。
+    queue_rows = session.execute(
+        select(DataSource.source_type, func.count())
+        .select_from(RawSignal)
+        .join(DataSource, DataSource.id == RawSignal.source_id)
+        .where(*pending_signal_candidate_filters(now_utc=now))
+        .group_by(DataSource.source_type)
+    ).all()
+    queue_by_source_type = {
+        str(source_type): int(count) for source_type, count in queue_rows
+    }
+
     collect_row = runtime.get(PENDING_SIGNALS_JOB_KEY)
     if collect_row is None:
         last_run = ProcessingRunRead(
@@ -400,6 +416,7 @@ def _pending(
         classification_failed=int(classification_failed),
         backlog_over_1h=int(backlog),
         oldest_pending_age_seconds=oldest_age,
+        queue_by_source_type=queue_by_source_type,
         last_run=last_run,
     )
 

@@ -779,7 +779,7 @@ def test_dashboard_summary_snapshot_consistent_under_concurrent_write() -> None:
 
     def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
         del cursor, parameters, context, executemany  # noqa: PLR0913
-        if state["fired"] or "GROUP BY risk_alerts.level" not in statement:
+        if state["fired"] or "FROM risk_alerts JOIN supplier_event_matches" not in statement:
             return
         state["fired"] = True
         raw = conn.connection.dbapi_connection
@@ -824,7 +824,7 @@ def test_dashboard_summary_snapshot_consistent_under_concurrent_write() -> None:
         app.dependency_overrides.pop(get_session, None)
 
     # 5. writer 必须真的提交了，测试才有意义
-    assert state["fired"] is True, "未捕获到 level_counts 查询，事件监听未触发"
+    assert state["fired"] is True, "未捕获到当前提醒读取查询，事件监听未触发"
     verify = SessionLocal()
     try:
         assert verify.get(RiskAlert, state["writer_alert_id"]) is not None
@@ -1021,7 +1021,7 @@ def test_dashboard_summary_business_queries_run_in_readonly_repeatable_read_snap
         conn, cursor, statement, parameters, context, executemany
     ):
         del cursor, parameters, context, executemany  # noqa: PLR0913
-        if probe["fired"] or "GROUP BY risk_alerts.level" not in statement:
+        if probe["fired"] or "FROM risk_alerts JOIN supplier_event_matches" not in statement:
             return
         probe["fired"] = True
         raw = conn.connection.dbapi_connection
@@ -1058,7 +1058,7 @@ def test_dashboard_summary_business_queries_run_in_readonly_repeatable_read_snap
         app.dependency_overrides.pop(get_session, None)
 
     assert response.status_code == 200, response.text
-    assert probe["fired"] is True, "未捕获到 dashboard 的 level_counts 查询"
+    assert probe["fired"] is True, "未捕获到 dashboard 的当前提醒读取查询"
     assert probe["read_only"] == "on", (
         f"业务查询事务并非只读：{probe.get('read_only')!r}"
     )

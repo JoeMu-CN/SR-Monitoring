@@ -165,6 +165,48 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
         </div>
       </header>
 
+      {(alert.merged_count ?? 1) > 1 && (
+        <section
+          aria-label="合并显示的事件"
+          className="rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/80"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+              同组事件 {alert.merged_count} 个
+            </h2>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              同供应商、同区域、时间重叠且事件类型相同 → 合并展示，等级取最高
+            </p>
+          </div>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            当前页为等级最高的代表事件；以下为同组其余事件，事件与提醒均完整保留。
+          </p>
+          <ul className="mt-3 space-y-2">
+            {(alert.merged_events ?? []).map((item) => (
+              <li
+                key={item.alert_id}
+                className="flex flex-col gap-1 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/60"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold text-white ${levelClassName[item.level]}`}>
+                    {item.level}
+                  </span>
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    {item.source_title}
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-400">
+                    {formatDateTime(item.published_at)}
+                  </span>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                  {item.event_summary}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {eventLoading && (
         <section className="flex items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/80 p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950/80" role="status">
           <span className="sr-only">正在加载事件证据</span>

@@ -17,6 +17,13 @@ from app.auth.security import (
 )
 from app.database import get_session
 from app.risks.dashboard import CURRENT_LEVELS, build_dashboard_aggregate
+from app.risks.grouping_queries import (
+    current_alert_rows as _current_alert_rows,
+)
+from app.risks.grouping_queries import group_current_rows as _group_current_rows
+from app.risks.grouping_queries import (
+    representative_rows as _representative_rows,
+)
 from app.risks.models import (
     EventEntity,
     EventLocation,
@@ -25,12 +32,12 @@ from app.risks.models import (
     RiskEventSignal,
     SupplierEventMatch,
 )
-from app.risks.query_validity import current_alert_condition
 from app.risks.schemas import (
     DashboardSummary,
     EventDetailRead,
     EventSignalEvidence,
     LevelCount,
+    MergedEventRead,
     RiskAlertListResponse,
     RiskAlertRead,
     RiskAlertSummary,
@@ -49,9 +56,19 @@ AnalysisRun = Annotated[User, Depends(require_permission(PERM_ANALYSIS_RUN))]
 CsrfGuard = Annotated[None, Depends(verify_csrf)]
 
 
-def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertRead]:
-    """将 (alert, match, event, supplier) 行组装为响应结构。"""
-    event_ids = [event.id for _, _, event, _ in rows]
+def _build_alert_reads(
+    session: Session,
+    rows: Sequence[Any],
+    groups: dict[int, list[tuple[Any, Any, Any, Any]]] | None = None,
+) -> list[RiskAlertRead]:
+    """将 (alert, match, event, supplier) 行组装为响应结构。
+
+    ``groups`` 为 alert_id → 同组全部行（含自身）；提供时填充合并展示字段，
+    不提供则按未合并处理（历史行为）。
+    """
+    grouped_rows = [row for group in (groups or {}).values() for row in group]
+    all_rows = list({id(row): row for row in [*rows, *grouped_rows]}.values())
+    event_ids = [event.id for _, _, event, _ in all_rows]
     signal_rows = session.execute(
         select(RiskEventSignal.event_id, RawSignal)
         .join(RawSignal, RiskEventSignal.signal_id == RawSignal.id)
@@ -66,19 +83,43 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
     for event_id, signal in signal_rows:
         signals_by_event.setdefault(event_id, signal)
 
-    items: list[RiskAlertRead] = []
-    for alert, match, event, supplier in rows:
+    def _source_of(event: RiskEvent) -> tuple[str, str | None, datetime | None]:
         # event 仍可能存在但 risk_event_signals 已被 CASCADE 清空（历史信号删除），
         # 此时用安全默认值兜底，避免 500 拖垮整个列表。
         signal = signals_by_event.get(event.id)
         if signal is None:
-            source_title = "信号源已失效"
-            source_url: str | None = None
-            published_at: datetime | None = None
-        else:
-            source_title = signal.title
-            source_url = signal.url
-            published_at = signal.published_at
+            return "信号源已失效", None, None
+        return signal.title, signal.url, signal.published_at
+
+    def _merged_events(alert_id: int) -> list[MergedEventRead]:
+        group = (groups or {}).get(alert_id, [])
+        items: list[MergedEventRead] = []
+        for member_alert, _member_match, member_event, _supplier in group:
+            if member_alert.id == alert_id:
+                continue
+            title, url, published = _source_of(member_event)
+            items.append(
+                MergedEventRead(
+                    alert_id=member_alert.id,
+                    event_id=member_event.id,
+                    level=member_alert.level,
+                    score=member_alert.score,
+                    event_type=member_event.event_type,
+                    event_subtype=member_event.event_subtype,
+                    event_summary=member_event.summary,
+                    event_start_at=member_event.start_at,
+                    event_end_at=member_event.end_at,
+                    source_title=title,
+                    source_url=url,
+                    published_at=published,
+                )
+            )
+        return items
+
+    items: list[RiskAlertRead] = []
+    for alert, match, event, supplier in rows:
+        source_title, source_url, published_at = _source_of(event)
+        merged = _merged_events(alert.id)
         items.append(
             RiskAlertRead(
                 id=alert.id,
@@ -104,12 +145,18 @@ def _build_alert_reads(session: Session, rows: Sequence[Any]) -> list[RiskAlertR
                 expires_at=alert.expires_at,
                 expiry_kind=alert.expiry_kind,
                 validity_state=event.validity_state,
-                processing_state=signal.processing_state if signal is not None else None,
+                processing_state=(
+                    signals_by_event[event.id].processing_state
+                    if event.id in signals_by_event
+                    else None
+                ),
                 valid_until=event.valid_until,
                 review_due_at=event.review_due_at,
                 validity_policy_version=event.validity_policy_version,
                 validity_reason=ValidityReasonRead.model_validate(event.validity_reason),
                 updated_at=alert.updated_at,
+                merged_count=len(merged) + 1,
+                merged_events=merged,
             )
         )
     return items
@@ -157,11 +204,24 @@ def list_risk_alerts(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> RiskAlertListResponse:
     now_utc = datetime.now(UTC)
-    filters = [
-        current_alert_condition(now_utc)
-        if alert_status == "current"
-        else RiskAlert.status == "expired"
-    ]
+    if alert_status == "current":
+        rows = _current_alert_rows(session, now_utc=now_utc)
+        reps, groups = _representative_rows(session, rows)
+        if level:
+            reps = [row for row in reps if row[0].level == level]
+        reps.sort(
+            key=lambda row: (
+                row[0].level,
+                -row[0].updated_at.timestamp(),
+                -row[0].id,
+            )
+        )
+        total = len(reps)
+        page = reps[offset : offset + limit]
+        items = _build_alert_reads(session, page, groups)
+        return RiskAlertListResponse(items=items, total=total, limit=limit, offset=offset)
+
+    filters = [RiskAlert.status == "expired"]
     if level:
         filters.append(RiskAlert.level == level)
     total = session.scalar(select(func.count()).select_from(RiskAlert).where(*filters)) or 0
@@ -189,12 +249,11 @@ def risk_alert_summary(session: SessionDependency, _user: RiskView) -> RiskAlert
     必须声明在 /risk-alerts/{alert_id} 之前：否则 "summary" 会被 int 路径参数
     抢先匹配并以 422 拒绝。
     """
-    level_rows = session.execute(
-        select(RiskAlert.level, func.count())
-        .where(current_alert_condition(datetime.now(UTC)))
-        .group_by(RiskAlert.level)
-    ).all()
-    level_map = {level: count for level, count in level_rows}
+    rows = _current_alert_rows(session, now_utc=datetime.now(UTC))
+    reps, _groups = _representative_rows(session, rows)
+    level_map: dict[str, int] = {}
+    for alert, _match, _event, _supplier in reps:
+        level_map[alert.level] = level_map.get(alert.level, 0) + 1
     return RiskAlertSummary(
         level_counts=[
             LevelCount(level=level, count=level_map.get(level, 0))
@@ -208,7 +267,7 @@ def risk_alert_summary(session: SessionDependency, _user: RiskView) -> RiskAlert
 def get_risk_alert(
     alert_id: int, session: SessionDependency, _user: RiskView
 ) -> RiskAlertRead:
-    """风险详情：评分明细、匹配理由、证据与原始来源。"""
+    """风险详情：评分明细、匹配理由、证据与原始来源（含同组其他事件）。"""
     row = session.execute(
         select(RiskAlert, SupplierEventMatch, RiskEvent, Supplier)
         .join(SupplierEventMatch, RiskAlert.match_id == SupplierEventMatch.id)
@@ -218,7 +277,15 @@ def get_risk_alert(
     ).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险提醒不存在")
-    items = _build_alert_reads(session, [row])
+    alert, _match, _event, supplier = row
+    groups: dict[int, list[Any]] | None = None
+    if alert.status == "current":
+        # 同一供应商的当前提醒规模很小，按供应商取行再分组即可拿到上下文。
+        current_rows = _current_alert_rows(
+            session, now_utc=datetime.now(UTC), supplier_id=supplier.id
+        )
+        groups = _group_current_rows(session, current_rows)
+    items = _build_alert_reads(session, [row], groups)
     if not items:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="风险提醒不存在")
     return items[0]

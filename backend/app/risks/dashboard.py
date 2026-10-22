@@ -15,6 +15,7 @@ from sqlalchemy import Row, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_retention_settings
+from app.risks.grouping_queries import current_alert_rows, representative_rows
 from app.risks.models import RiskAlert, RiskEvent, RiskEventSignal, SupplierEventMatch
 from app.risks.query_validity import current_alert_condition
 from app.risks.schemas import EventTypeCount, LevelCount, SourceDistributionItem
@@ -64,12 +65,14 @@ def build_dashboard_aggregate(
     window_start = as_of - timedelta(days=days)
     current_condition = current_alert_condition(as_of)
 
-    level_rows = session.execute(
-        select(RiskAlert.level, func.count())
-        .where(current_condition)
-        .group_by(RiskAlert.level)
-    ).all()
-    level_map = {level: count for level, count in level_rows}
+    # 与提醒列表共用同一读侧聚合：概览计数按"合并后的组"统计，避免列表 44 条、
+    # 概览 70 条的口径不一致。
+    representatives, _groups = representative_rows(
+        session, current_alert_rows(session, now_utc=as_of)
+    )
+    level_map: dict[str, int] = {}
+    for alert, _match, _event, _supplier in representatives:
+        level_map[alert.level] = level_map.get(alert.level, 0) + 1
     level_counts = [
         LevelCount(level=level, count=level_map.get(level, 0))
         for level in CURRENT_LEVELS
@@ -89,17 +92,12 @@ def build_dashboard_aggregate(
         or 0
     )
 
-    type_rows = session.execute(
-        select(RiskEvent.event_type, func.count())
-        .join(SupplierEventMatch, SupplierEventMatch.event_id == RiskEvent.id)
-        .join(RiskAlert, RiskAlert.match_id == SupplierEventMatch.id)
-        .where(current_condition)
-        .group_by(RiskEvent.event_type)
-        .order_by(func.count().desc())
-    ).all()
+    type_map: dict[str, int] = {}
+    for _alert, _match, event, _supplier in representatives:
+        type_map[event.event_type] = type_map.get(event.event_type, 0) + 1
     type_distribution = [
         EventTypeCount(event_type=event_type, count=count)
-        for event_type, count in type_rows
+        for event_type, count in sorted(type_map.items(), key=lambda item: (-item[1], item[0]))
     ]
 
     period_new_count = (

@@ -242,6 +242,26 @@ export interface RiskAlertRead {
   review_due_at: string | null;
   validity_policy_version: string | null;
   validity_reason: ValidityReasonRead;
+  /** 同供应商 + 同区域 + 时间重叠 + 同事件类型的提醒合并展示数（含自身）。 */
+  merged_count?: number;
+  /** 组内其他事件；不含当前这条提醒自身的事件。 */
+  merged_events?: MergedEventRead[];
+}
+
+/** 合并展示组内的单个事件（事件与提醒都保留，仅展示层聚合）。 */
+export interface MergedEventRead {
+  alert_id: number;
+  event_id: number;
+  level: RiskLevel;
+  score: number;
+  event_type: string;
+  event_subtype: string | null;
+  event_summary: string;
+  event_start_at: string | null;
+  event_end_at: string | null;
+  source_title: string;
+  source_url: string | null;
+  published_at: string | null;
 }
 
 export interface EventSignalEvidence {

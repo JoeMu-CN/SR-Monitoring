@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.signals.schemas import ValidityReasonRead
 
@@ -11,6 +11,23 @@ class RiskProcessResult(BaseModel):
     event_created: bool
     signal_linked: bool
     alert_ids: list[int]
+
+
+class MergedEventRead(BaseModel):
+    """合并展示组内的单个事件（提醒仍各自保留，不写回数据库）。"""
+
+    alert_id: int
+    event_id: int
+    level: str
+    score: int
+    event_type: str
+    event_subtype: str | None = None
+    event_summary: str
+    event_start_at: datetime | None = None
+    event_end_at: datetime | None = None
+    source_title: str
+    source_url: str | None = None
+    published_at: datetime | None = None
 
 
 class RiskAlertRead(BaseModel):
@@ -45,6 +62,10 @@ class RiskAlertRead(BaseModel):
     validity_policy_version: str | None
     validity_reason: ValidityReasonRead
     updated_at: datetime
+    # 展示聚合：同供应商 + 同区域 + 时间重叠 + 同事件类型时合并为一条。
+    # merged_count=1 表示没有合并；merged_events 只含组内其他事件（不含自身）。
+    merged_count: int = 1
+    merged_events: list[MergedEventRead] = Field(default_factory=list)
 
 
 class RiskAlertListResponse(BaseModel):

@@ -426,6 +426,19 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
   const healthBySource = monitoringHealth.status === 'ready'
     ? new Map(monitoringHealth.health.sources.map((item) => [item.source_id, item]))
     : null;
+  // 运行提示的唯一出口：运行状态异常（warning/error）在前，健康聚合补充的异常在后。
+  // 健康聚合已含各来源的采集态，按 source_id 去重只并入运行状态未覆盖的项
+  // （如运行状态仍为 normal 但已错过计划采集、或仅有健康侧可见的 failed），避免同一信源出现两遍。
+  const delayedSourceIds = new Set(delayedSources.map((source) => Number(source.id)));
+  const healthIssues = monitoringHealth.status === 'ready'
+    ? monitoringHealth.health.sources
+      .filter((item) => (item.state === 'failed' || item.state === 'overdue') && !delayedSourceIds.has(item.source_id))
+      .map((item) => `${displaySourceName(item.name)}：${item.state === 'overdue' ? '错过计划采集' : '采集失败'}`)
+    : [];
+  const sourceIssues = [
+    ...delayedSources.map((source) => `${displaySourceName(source.name)}：${source.latency}`),
+    ...healthIssues,
+  ];
 
   return (
     <div className="space-y-5 pb-20 lg:pb-8">
@@ -452,7 +465,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
 
       {error && <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      {!warningDismissed && delayedSources.length > 0 && (
+      {!warningDismissed && sourceIssues.length > 0 && (
         <motion.div
           initial={{opacity: 0, y: -6}}
           animate={{opacity: 1, y: 0}}
@@ -463,7 +476,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             <div>
               <h4 className="text-[13px] font-bold text-amber-900 dark:text-amber-200">信息源运行提示</h4>
               <p className="mt-0.5 text-[12px] leading-relaxed text-amber-800/90 dark:text-amber-300/80">
-                {delayedSources.map((source) => `${displaySourceName(source.name)}：${source.latency}`).join('；')}
+                {sourceIssues.join('；')}
               </p>
             </div>
           </div>

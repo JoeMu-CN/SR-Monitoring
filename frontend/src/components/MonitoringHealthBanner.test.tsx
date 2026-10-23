@@ -1,8 +1,13 @@
 import {cleanup, render, screen} from '@testing-library/react';
 import {afterEach, describe, expect, it} from 'vitest';
-import type {MonitoringHealthRead} from '../api';
+import type {MonitoringHealthRead, MonitoringSourceHealth} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
-import {MonitoringHealthBanner, MonitoringSourceFreshness, MonitoringSourceStateBadge} from './MonitoringHealthBanner';
+import {
+  MonitoringHealthBanner,
+  MonitoringSourceFreshness,
+  MonitoringSourceStateBadge,
+  ProcessingHealthDetailBanner,
+} from './MonitoringHealthBanner';
 
 const baseHealth: MonitoringHealthRead = {
   as_of: '2026-09-11T06:00:00Z',
@@ -40,6 +45,16 @@ const baseHealth: MonitoringHealthRead = {
 
 const ready = (health: MonitoringHealthRead): MonitoringHealthSnapshot => ({status: 'ready', health});
 
+// degraded 场景统一入口：基础健康数据本身健康，逐例只注入需要成立的异常事实。
+const degraded = (health: MonitoringHealthRead): MonitoringHealthSnapshot => ready({...health, overall: 'degraded'});
+
+const source = (overrides: Partial<MonitoringSourceHealth> & {source_id: number}): MonitoringSourceHealth => ({
+  ...baseHealth.sources[0],
+  ...overrides,
+});
+
+const bannerText = (): string => screen.getByTestId('monitoring-health-banner').textContent ?? '';
+
 // 与组件同源的 Intl 格式化：断言时间数据流，而不是硬编码某台机器的时区字符串。
 const expectedTime = (value: string) => new Date(value).toLocaleString('zh-CN', {hour12: false});
 
@@ -75,12 +90,17 @@ describe('MonitoringHealthBanner 四态文案（总览空风险）', () => {
     expect(banner.textContent).toContain('尚无法确认监控状态');
   });
 
-  it('degraded：显示「部分链路异常，结果可能不完整」且以告警语义（role=alert）表达', () => {
-    renderBanner(ready({...baseHealth, overall: 'degraded'}));
+  it('degraded：以告警语义（role=alert）只报异常大类，细节留给模块页', () => {
+    renderBanner(degraded({
+      ...baseHealth,
+      sources: [source({source_id: 17, name: '海关总署', state: 'failed', reason_code: 'last_attempt_failed'})],
+    }));
     const banner = screen.getByTestId('monitoring-health-banner');
     expect(banner).toHaveAttribute('data-state', 'degraded');
-    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
     expect(banner).toHaveAttribute('role', 'alert');
+    expect(banner.textContent).toContain('当前信源采集有部分异常');
+    expect(banner.textContent).not.toContain('海关总署');
+    expect(banner.textContent).not.toContain('1 个采集失败');
   });
 
   it('inactive：显示「未开启自动监控」', () => {
@@ -100,11 +120,139 @@ describe('MonitoringHealthBanner 非空风险时展示数据新鲜度', () => {
     expect(banner.textContent).not.toContain('暂无当前风险');
   });
 
-  it('degraded 且存在当前风险：降级文案与数据截至并存，风险数据不被横幅清空语义替代', () => {
-    renderBanner(ready({...baseHealth, overall: 'degraded'}), true);
+  it('degraded 且存在当前风险：异常大类与数据截至并存，风险数据不被横幅清空语义替代', () => {
+    renderBanner(degraded({...baseHealth, scheduler: {...baseHealth.scheduler, status: 'stale', age_seconds: 600}}), true);
     const banner = screen.getByTestId('monitoring-health-banner');
-    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
+    expect(banner.textContent).toContain('当前调度器心跳异常');
     expect(banner.textContent).toContain('数据截至');
+  });
+});
+
+// 总览 degraded 只报大类：每例只让一类成立，验证固定拼接顺序与「不泄露细节」。
+describe('MonitoringHealthBanner degraded 异常大类', () => {
+  it('调度器心跳超时或未上报：报「当前调度器心跳异常」，不含时长细节', () => {
+    const stale = renderBanner(degraded({...baseHealth, scheduler: {...baseHealth.scheduler, status: 'stale', age_seconds: 600}}));
+    expect(bannerText()).toBe(`当前调度器心跳异常 · 数据截至${expectedTime(baseHealth.as_of)}`);
+    expect(bannerText()).not.toContain('10 分钟');
+    stale.unmount();
+
+    renderBanner(degraded({
+      ...baseHealth,
+      scheduler: {...baseHealth.scheduler, status: 'unknown', last_heartbeat_at: null, age_seconds: null},
+    }));
+    expect(bannerText()).toContain('当前调度器心跳异常');
+  });
+
+  it('信源 failed / overdue：只报「当前信源采集有部分异常」，不出现条数与来源名', () => {
+    renderBanner(degraded({
+      ...baseHealth,
+      sources: [
+        source({source_id: 17, name: '海关总署', state: 'failed', reason_code: 'last_attempt_failed'}),
+        source({source_id: 18, name: '中央气象台预警', state: 'overdue', reason_code: 'missed_expected_trigger'}),
+      ],
+    }));
+    const text = bannerText();
+    expect(text).toBe(`当前信源采集有部分异常 · 数据截至${expectedTime(baseHealth.as_of)}`);
+    expect(text).not.toContain('海关总署');
+    expect(text).not.toContain('中央气象台预警');
+    expect(text).not.toContain('1 个');
+  });
+
+  it('信号处理三类异常：只报「当前信号处理异常」，不出现积压量与分类失败条数', () => {
+    renderBanner(degraded({
+      ...baseHealth,
+      processing: {
+        ...baseHealth.processing,
+        total: 1234,
+        oldest_pending_age_seconds: 2 * 86400,
+        classification_failed: 7,
+        last_run: {...baseHealth.processing.last_run, status: 'failed', failed: 3},
+      },
+    }));
+    const text = bannerText();
+    expect(text).toContain('当前信号处理异常');
+    expect(text).not.toContain('积压');
+    expect(text).not.toContain('1234');
+    expect(text).not.toContain('分类失败');
+  });
+
+  it('待处理未超过 1 小时且无其他异常：回退兜底大类「当前监控链路异常」', () => {
+    renderBanner(degraded({
+      ...baseHealth,
+      processing: {...baseHealth.processing, total: 42, oldest_pending_age_seconds: 600},
+    }));
+    expect(bannerText()).toContain('当前监控链路异常');
+    expect(bannerText()).not.toContain('积压');
+  });
+
+  it('多类合并按「调度器 → 信源 → 信号处理」顺序用「；」连接', () => {
+    renderBanner(degraded({
+      ...baseHealth,
+      scheduler: {...baseHealth.scheduler, status: 'stale', age_seconds: 600},
+      sources: [source({source_id: 17, name: '中央气象台预警', state: 'overdue', reason_code: 'missed_expected_trigger'})],
+      processing: {...baseHealth.processing, total: 1234, oldest_pending_age_seconds: 2 * 86400},
+    }));
+    const text = bannerText();
+    expect(text).toBe(
+      `当前调度器心跳异常；当前信源采集有部分异常；当前信号处理异常 · 数据截至${expectedTime(baseHealth.as_of)}`,
+    );
+    expect(text.split('；')).toHaveLength(3);
+    expect(text).not.toContain('中央气象台预警');
+    expect(text).not.toContain('积压 1234 条');
+  });
+});
+
+describe('ProcessingHealthDetailBanner 信号处理细节（调度器实况页）', () => {
+  it('积压 / 上一轮失败 / 分类失败按顺序合并，并格式化最旧积压时长', () => {
+    render(
+      <ProcessingHealthDetailBanner
+        snapshot={ready({
+          ...baseHealth,
+          overall: 'degraded',
+          processing: {
+            ...baseHealth.processing,
+            total: 5,
+            oldest_pending_age_seconds: 2 * 86400 + 3 * 3600,
+            classification_failed: 7,
+            last_run: {...baseHealth.processing.last_run, status: 'failed', failed: 3},
+          },
+        })}
+      />,
+    );
+
+    const banner = screen.getByTestId('processing-health-detail-banner');
+    expect(banner).toHaveAttribute('role', 'alert');
+    expect(banner.textContent).toBe('信号处理异常：积压 5 条（最旧 2 天 3 小时）；上一轮处理失败；7 条分类失败待复核');
+  });
+
+  it('只有积压时也报出条数与最旧时长', () => {
+    render(
+      <ProcessingHealthDetailBanner
+        snapshot={ready({
+          ...baseHealth,
+          processing: {...baseHealth.processing, total: 1234, oldest_pending_age_seconds: 2 * 86400},
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId('processing-health-detail-banner').textContent).toBe('信号处理异常：积压 1234 条（最旧 2 天）');
+  });
+
+  it('无信号处理异常（含积压未满 1 小时）时返回 null', () => {
+    render(
+      <ProcessingHealthDetailBanner
+        snapshot={ready({...baseHealth, processing: {...baseHealth.processing, total: 42, oldest_pending_age_seconds: 600}})}
+      />,
+    );
+    expect(screen.queryByTestId('processing-health-detail-banner')).not.toBeInTheDocument();
+  });
+
+  it('快照非 ready 时返回 null', () => {
+    for (const snapshot of [{status: 'loading'}, {status: 'hidden'}, {status: 'unknown'}] as const) {
+      const view = render(<ProcessingHealthDetailBanner snapshot={snapshot} />);
+      expect(screen.queryByTestId('processing-health-detail-banner')).not.toBeInTheDocument();
+      view.unmount();
+    }
   });
 });
 

@@ -3,6 +3,7 @@ import {CircleHelp, Loader2, ShieldQuestion, type LucideIcon} from 'lucide-react
 import {useReducedMotion} from 'motion/react';
 import type {MonitoringScheduledJob} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
+import {ProcessingHealthDetailBanner} from './MonitoringHealthBanner';
 import {ScheduleList, formatDateTime} from './SchedulerActivityPanels';
 import {StaleNotice} from './SchedulerLivePanels';
 import {StreamSection} from './SchedulerLiveStream';
@@ -131,6 +132,9 @@ export const SchedulerLiveView = ({snapshot}: SchedulerLiveViewProps) => {
           </div>
         )}
       </header>
+
+      {/* 信号处理细节：心跳细节已由本页心跳区与 StaleNotice 展示，不重复。 */}
+      <ProcessingHealthDetailBanner snapshot={snapshot}/>
 
       {snapshot.status === 'loading' && (
         <StatePanel

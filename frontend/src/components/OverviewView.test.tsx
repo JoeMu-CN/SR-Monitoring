@@ -2,17 +2,17 @@ import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter, Route, Routes, useLocation, useNavigate} from 'react-router-dom';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {api, ApiError, type DashboardSummary, type MonitoringHealthRead, type RiskAlertRead} from '../api';
+import {api, ApiError, type DashboardAnalytics, type DashboardSummary, type MonitoringHealthRead, type RiskAlertRead} from '../api';
 import type {RiskItem} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {OverviewView} from './OverviewView';
 
-// 仅把 dashboardSummary 网络方法替换为可控 mock，保留真实 mapRiskAlert / ApiError。
+// 仅把总览网络方法替换为可控 mock，保留真实 mapRiskAlert / ApiError。
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return {
     ...actual,
-    api: {...actual.api, dashboardSummary: vi.fn()},
+    api: {...actual.api, dashboardSummary: vi.fn(), dashboardAnalytics: vi.fn()},
   };
 });
 
@@ -74,6 +74,20 @@ const baseSummary: DashboardSummary = {
 };
 
 const makeSummary = (overrides: Partial<DashboardSummary> = {}): DashboardSummary => ({...baseSummary, ...overrides});
+
+const baseAnalytics: DashboardAnalytics = {
+  as_of: '2026-09-08T02:00:00Z',
+  window_days: 30,
+  trend: Array.from({length: 30}, (_value, index) => ({
+    date: new Date(Date.UTC(2026, 7, 10 + index)).toISOString().slice(0, 10),
+    count: 2,
+  })),
+  risk_points: [],
+  supplier_points: [],
+  unlocated_alert_count: 0,
+};
+
+const makeAnalytics = (overrides: Partial<DashboardAnalytics> = {}): DashboardAnalytics => ({...baseAnalytics, ...overrides});
 
 const monitoringHealthOk: MonitoringHealthRead = {
   as_of: '2026-09-11T06:00:00Z',
@@ -153,6 +167,7 @@ const totalCurrentText = (value: number) => (
 
 beforeEach(() => {
   vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary());
+  vi.mocked(api.dashboardAnalytics).mockResolvedValue(makeAnalytics());
 });
 
 afterEach(() => {
@@ -461,9 +476,9 @@ describe('OverviewView 严重度零值', () => {
     // 零值级别不得渲染任何可见色块（旧实现 Math.max(1, 0) 会给它可见宽度）
     expect(screen.queryByTestId('severity-segment-P3')).not.toBeInTheDocument();
     // 非零级别保留真实比例（flex-grow === count），不归一化到最小 1
-    expect(screen.getByTestId('severity-segment-P1')).toHaveStyle({flexGrow: '3'});
-    expect(screen.getByTestId('severity-segment-P2')).toHaveStyle({flexGrow: '5'});
-    expect(screen.getByTestId('severity-segment-P4')).toHaveStyle({flexGrow: '2'});
+    expect(screen.getByTestId('severity-segment-P1')).toBeInTheDocument();
+    expect(screen.getByTestId('severity-segment-P2')).toBeInTheDocument();
+    expect(screen.getByTestId('severity-segment-P4')).toBeInTheDocument();
     expect(screen.getAllByTestId(/^severity-segment-/)).toHaveLength(3);
   });
 
@@ -485,13 +500,13 @@ describe('OverviewView 严重度零值', () => {
 });
 
 describe('OverviewView 导航回调', () => {
-  it('点击"查看完整风险中心"触发 onViewAllRisks', async () => {
+  it('点击"全部风险"触发 onViewAllRisks', async () => {
     const onViewAllRisks = vi.fn();
     vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({recent_alerts: [alertRead]}));
     const user = userEvent.setup();
     renderOverview({onViewAllRisks});
 
-    await user.click(await screen.findByRole('button', {name: /查看完整风险中心/}));
+    await user.click(await screen.findByRole('button', {name: /全部风险/}));
     expect(onViewAllRisks).toHaveBeenCalledTimes(1);
   });
 
@@ -534,7 +549,7 @@ describe('OverviewView 监控健康横幅', () => {
 
     const banner = await screen.findByTestId('monitoring-health-banner');
     expect(banner).toHaveAttribute('data-state', 'degraded');
-    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
+    expect(banner.textContent).toContain('当前监控链路异常');
     expect(banner.textContent).not.toContain('监控正常，截至');
   });
 

@@ -1,10 +1,72 @@
 import {AlertTriangle, CircleHelp, Info, ShieldCheck} from 'lucide-react';
-import type {MonitoringOverallStatus, MonitoringSourceHealth, MonitoringSourceState} from '../api';
+import type {
+  MonitoringHealthRead,
+  MonitoringOverallStatus,
+  MonitoringSourceHealth,
+  MonitoringSourceState,
+} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 
 const formatHealthTime = (value: string): string => (
   Number.isNaN(new Date(value).getTime()) ? '未知' : new Date(value).toLocaleString('zh-CN', {hour12: false})
 );
+
+/**
+ * 时长格式化：秒 → 「秒 / 分钟 / 小时 / 天（+ 小时）」。
+ * 缺省值（null）只说「未知」，不猜 0 秒；负数按 0 处理，避免出现「-1 秒」。
+ */
+const formatHealthDuration = (seconds: number | null): string => {
+  if (seconds === null || !Number.isFinite(seconds)) return '未知';
+  const total = Math.max(0, Math.floor(seconds));
+  if (total < 60) return `${total} 秒`;
+  if (total < 3600) return `${Math.floor(total / 60)} 分钟`;
+  if (total < 86400) return `${Math.floor(total / 3600)} 小时`;
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  return hours > 0 ? `${days} 天 ${hours} 小时` : `${days} 天`;
+};
+
+/**
+ * 信号处理异常明细（顺序固定：积压 → 上一轮失败 → 分类失败）。
+ * 总览横幅只判断「是否存在异常」，调度器实况页横幅展示这些具体原因。
+ */
+const processingIssues = (processing: MonitoringHealthRead['processing']): string[] => {
+  const issues: string[] = [];
+  const oldestPending = processing.oldest_pending_age_seconds ?? 0;
+  if (processing.total > 0 && oldestPending > 3600) {
+    issues.push(`积压 ${processing.total} 条（最旧 ${formatHealthDuration(processing.oldest_pending_age_seconds)}）`);
+  }
+  if (processing.last_run.status === 'failed') {
+    issues.push('上一轮处理失败');
+  }
+  if (processing.classification_failed > 0) {
+    issues.push(`${processing.classification_failed} 条分类失败待复核`);
+  }
+  return issues;
+};
+
+/**
+ * 总览 degraded 只报「大类」（顺序固定：调度器 → 信源 → 信号处理），不暴露条数与来源名。
+ * 具体细节由对应模块页承担：信源采集细节已合并进信息源页既有的「信息源运行提示」，
+ * 不再单独提供横幅；信号处理细节由调度器实况页的 ProcessingHealthDetailBanner 承担。
+ * 三类都不成立时兜底说明链路异常，避免出现空原因。
+ */
+const degradedCategories = (health: MonitoringHealthRead | null): string[] => {
+  if (health === null) return ['当前监控链路异常'];
+  const categories: string[] = [];
+
+  if (health.scheduler.status === 'stale' || health.scheduler.status === 'unknown') {
+    categories.push('当前调度器心跳异常');
+  }
+  if (health.sources.some((source) => source.state === 'failed' || source.state === 'overdue')) {
+    categories.push('当前信源采集有部分异常');
+  }
+  if (processingIssues(health.processing).length > 0) {
+    categories.push('当前信号处理异常');
+  }
+
+  return categories.length > 0 ? categories : ['当前监控链路异常'];
+};
 
 // 四态文案（计划行213）：空风险时 ok 才允许说「暂无当前风险」，其余状态不得用无风险冒充正常。
 interface BannerCopy {
@@ -12,7 +74,12 @@ interface BannerCopy {
   readonly tone: 'ok' | 'degraded' | 'unknown' | 'inactive';
 }
 
-const bannerCopy = (overall: MonitoringOverallStatus, asOfText: string | null, hasCurrentRisks: boolean): BannerCopy => {
+const bannerCopy = (
+  overall: MonitoringOverallStatus,
+  health: MonitoringHealthRead | null,
+  asOfText: string | null,
+  hasCurrentRisks: boolean,
+): BannerCopy => {
   const freshness = asOfText === null ? '' : ` · 数据截至${asOfText}`;
   switch (overall) {
     case 'ok':
@@ -21,7 +88,8 @@ const bannerCopy = (overall: MonitoringOverallStatus, asOfText: string | null, h
         ? {text: `监控正常${freshness}`, tone: 'ok'}
         : {text: `监控正常，截至${asOfText ?? ''}暂无当前风险`, tone: 'ok'};
     case 'degraded':
-      return {text: `部分链路异常，结果可能不完整${freshness}`, tone: 'degraded'};
+      // 总览只报异常大类；条数、来源名与积压量等细节下放到对应模块页。
+      return {text: `${degradedCategories(health).join('；')}${freshness}`, tone: 'degraded'};
     case 'unknown':
       // 无论后端返回 unknown 还是诊断请求失败，都只说「无法确认」，不带任何新鲜度断言。
       return {text: '尚无法确认监控状态', tone: 'unknown'};
@@ -66,9 +134,10 @@ export const MonitoringHealthBanner = ({snapshot, hasCurrentRisks}: {
 }) => {
   // hidden（403/无权限）与首载中不渲染；诊断失败（unknown）必须渲染「尚无法确认监控状态」。
   if (snapshot.status === 'hidden' || snapshot.status === 'loading') return null;
-  const overall = snapshot.status === 'unknown' ? 'unknown' : snapshot.health.overall;
-  const asOfText = snapshot.status === 'unknown' ? null : formatHealthTime(snapshot.health.as_of);
-  const copy = bannerCopy(overall, asOfText, hasCurrentRisks);
+  const health = snapshot.status === 'ready' ? snapshot.health : null;
+  const overall = health === null ? 'unknown' : health.overall;
+  const asOfText = health === null ? null : formatHealthTime(health.as_of);
+  const copy = bannerCopy(overall, health, asOfText, hasCurrentRisks);
   const Icon = BANNER_ICONS[copy.tone];
   const styles = BANNER_STYLES[copy.tone];
   return (
@@ -76,10 +145,35 @@ export const MonitoringHealthBanner = ({snapshot, hasCurrentRisks}: {
       data-testid="monitoring-health-banner"
       data-state={overall}
       role={copy.tone === 'degraded' ? 'alert' : 'status'}
-      className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-medium ${styles.container}`}
+      className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-[12px] font-medium ${styles.container}`}
     >
-      <Icon aria-hidden="true" className="h-3.5 w-3.5 shrink-0"/>
-      <span>{copy.text}</span>
+      <Icon aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
+      {/* min-w-0：多原因长文案在窄屏正常换行，不被 flex 子项撑出容器。 */}
+      <span className="min-w-0">{copy.text}</span>
+    </div>
+  );
+};
+
+// 模块页细节横幅与总览 degraded 横幅同款琥珀色容器，保证同一异常的视觉语义一致。
+const DEGRADED_DETAIL_CLASSES =
+  `flex items-start gap-2 rounded-xl border px-3 py-2 text-[12px] font-medium ${BANNER_STYLES.degraded.container}`;
+
+const DetailBannerIcon = () => (
+  <AlertTriangle aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#D97706]"/>
+);
+
+/**
+ * 调度器实况页横幅：展示信号处理的具体异常（积压量/上一轮失败/分类失败）。
+ * 调度器心跳细节由该页既有心跳区与 StaleNotice 承担，这里不重复。
+ */
+export const ProcessingHealthDetailBanner = ({snapshot}: {readonly snapshot: MonitoringHealthSnapshot}) => {
+  if (snapshot.status !== 'ready') return null;
+  const issues = processingIssues(snapshot.health.processing);
+  if (issues.length === 0) return null;
+  return (
+    <div data-testid="processing-health-detail-banner" role="alert" className={DEGRADED_DETAIL_CLASSES}>
+      <DetailBannerIcon/>
+      <span className="min-w-0">信号处理异常：{issues.join('；')}</span>
     </div>
   );
 };

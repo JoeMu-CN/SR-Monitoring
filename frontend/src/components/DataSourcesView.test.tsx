@@ -787,6 +787,77 @@ describe('信息源健康新鲜度（任务8 只读诊断）', () => {
     expect(badge).not.toHaveTextContent('采集正常');
   });
 
+  it('健康聚合的 overdue 异常并入「信息源运行提示」，不再单独渲染信源采集横幅', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+
+          monitoringHealth={monitoringHealthWith({
+            ...healthySource,
+            state: 'overdue',
+            reason_code: 'missed_expected_trigger',
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    // 同一信源只出现一次：由页面原有的运行提示承载，标题与可关闭行为不变。
+    expect(screen.getByText('信息源运行提示')).toBeInTheDocument();
+    expect(screen.getByText('官方风险源：错过计划采集')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '关闭警告'})).toBeInTheDocument();
+    // 新增的健康细节横幅已删除，避免同一失败信源出现两个横幅。
+    expect(screen.queryByTestId('source-health-detail-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText(/信源采集异常/)).not.toBeInTheDocument();
+  });
+
+  it('运行状态与健康聚合指向同一失败信源时，运行提示不重复列出', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[{...source, status: 'error', latency: '运行失败'}]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+
+          monitoringHealth={monitoringHealthWith({
+            ...healthySource,
+            state: 'failed',
+            reason_code: 'last_attempt_failed',
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    // 运行状态已覆盖该信源，健康聚合按 source_id 去重后不再追加第二条。
+    expect(screen.getByText('官方风险源：运行失败')).toBeInTheDocument();
+    expect(screen.queryByText('官方风险源：采集失败')).not.toBeInTheDocument();
+  });
+
+  it('仅有健康聚合可见的 failed 来源也进入「信息源运行提示」', () => {
+    render(
+      <MemoryRouter>
+        <DataSourcesView
+          dataSources={[source]}
+          role="viewer"
+          onUpdateSource={vi.fn()}
+          onRefreshSources={vi.fn()}
+
+          monitoringHealth={monitoringHealthWith({
+            ...healthySource,
+            state: 'failed',
+            reason_code: 'last_attempt_failed',
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('官方风险源：采集失败')).toBeInTheDocument();
+  });
+
   it('停用与外部核查来源不出现红色故障标签', () => {
     const view = render(
       <MemoryRouter>

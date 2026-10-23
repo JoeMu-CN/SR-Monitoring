@@ -72,7 +72,10 @@ const recentRun = (overrides: Partial<RecentRun> = {}): RecentRun => ({
   ...overrides,
 });
 
-const readySnapshot = (schedulerOverrides: Partial<Scheduler> = {}): MonitoringHealthSnapshot => ({
+const readySnapshot = (
+  schedulerOverrides: Partial<Scheduler> = {},
+  processingOverrides: Partial<MonitoringHealthRead['processing']> = {},
+): MonitoringHealthSnapshot => ({
   status: 'ready',
   health: {
     as_of: '2026-09-11T06:00:00Z',
@@ -94,6 +97,7 @@ const readySnapshot = (schedulerOverrides: Partial<Scheduler> = {}): MonitoringH
       backlog_over_1h: 0,
       oldest_pending_age_seconds: null,
       last_run: {status: 'succeeded', started_at: '2026-09-11T05:58:00Z', finished_at: '2026-09-11T05:58:20Z', processed: 5, filtered: 1, failed: 0},
+      ...processingOverrides,
     },
     sources: [],
   },
@@ -217,6 +221,23 @@ describe('调度器实况页（SchedulerLiveView）', () => {
     // 执行流与计划任务流保留可访问名称。
     expect(screen.getByRole('list', {name: '实时执行流'})).toBeInTheDocument();
     expect(screen.getByRole('list', {name: '计划任务流'})).toBeInTheDocument();
+  });
+
+  it('信号处理积压时渲染处理细节横幅，且不重复调度器心跳细节', () => {
+    renderLive(readySnapshot({}, {total: 5, oldest_pending_age_seconds: 7200}));
+
+    const banner = screen.getByTestId('processing-health-detail-banner');
+    expect(banner).toHaveAttribute('role', 'alert');
+    expect(banner).toHaveTextContent('信号处理异常');
+    expect(banner).toHaveTextContent('积压 5 条');
+    expect(banner).toHaveTextContent('最旧 2 小时');
+    // 心跳细节仍只由页头心跳区承担，不在处理横幅内重复。
+    expect(banner.textContent).not.toContain('心跳');
+  });
+
+  it('无信号处理异常时不渲染处理细节横幅', () => {
+    renderLive(readySnapshot());
+    expect(screen.queryByTestId('processing-health-detail-banner')).not.toBeInTheDocument();
   });
 
   it('移除三处说明：页头快照说明、执行完成澄清与执行流 caption 均不再渲染', () => {

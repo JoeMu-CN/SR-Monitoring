@@ -5,6 +5,7 @@ import {api, ApiError, VALIDITY_MODE_LABELS, type SourceSignalListResponse} from
 import {routePaths, type SourceSignalScope} from '../routes';
 import {SourceSignalsTable} from './SourceSignalsTable';
 import {SourceSignalReportModal, type ActiveSourceSignal} from './SourceSignalReportModal';
+import {displaySourceName} from '../sourceDisplay';
 
 const PAGE_SIZE = 100;
 
@@ -114,7 +115,7 @@ export const SourceSignalsView = ({onRequestError}: SourceSignalsViewProps) => {
           <ArrowLeft aria-hidden="true" className="h-4 w-4" />返回信息源清单
         </Link>
         <div>
-          <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">{data.source.name} · 已采集记录</h1>
+          <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">{displaySourceName(data.source.name)} · 已采集记录</h1>
           <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
             编码 <span className="font-mono font-bold">{data.source.code}</span> · {data.source.validity_policy
               ? `${VALIDITY_MODE_LABELS[data.source.validity_policy.mode] ?? data.source.validity_policy.mode}${data.source.validity_policy.fixed_days != null ? ` ${data.source.validity_policy.fixed_days} 天` : ''}`

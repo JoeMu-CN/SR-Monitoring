@@ -3,6 +3,7 @@ import {Link} from 'react-router-dom';
 import type {DimensionInputsRead} from '../api';
 import {sourceSignalsPath} from '../routes';
 import type {MonitoringDimension} from '../types';
+import {displaySourceName} from '../sourceDisplay';
 
 interface RuleEngineDimensionSourcesProps {
   dimension: MonitoringDimension;
@@ -61,10 +62,10 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
             <div key={source.code} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
               <Link
                 to={sourceSignalsPath(source.code, 'valid')}
-                aria-label={`${source.name} 有效信号 ${source.validSignalCount ?? 0} 条`}
+                aria-label={`${displaySourceName(source.name)} 有效信号 ${source.validSignalCount ?? 0} 条`}
                 className="rounded-sm text-pretty text-slate-700 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-300"
               >
-                {source.name}
+                {displaySourceName(source.name)}
               </Link>
               <span className="flex shrink-0 items-center gap-1.5">
                 <span className={`shrink-0 rounded-full px-2 py-0.5 font-bold ${
@@ -102,7 +103,7 @@ export const RuleEngineDimensionSources: React.FC<RuleEngineDimensionSourcesProp
             </p>
             {inputs.observed.map((item) => (
               <div key={item.code} className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                <span>{item.name}</span>
+                <span>{displaySourceName(item.name)}</span>
                 <span className="font-mono">{item.signal_count} 条 · {formatDateTime(item.latest_at)}</span>
               </div>
             ))}

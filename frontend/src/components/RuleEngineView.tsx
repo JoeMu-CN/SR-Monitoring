@@ -29,6 +29,7 @@ import {
 } from './RuleEngineContext';
 import {RULE_ENGINE_EXPLAINERS} from './ruleEngineExplainerCopy';
 import {routePaths} from '../routes';
+import {displaySourceName} from '../sourceDisplay';
 
 interface EventTypeConflict {
   event_type: string;
@@ -809,7 +810,7 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
                         data-testid="rule-engine-dim-input-note"
                         className="mt-0.5 break-words font-mono text-[11px] font-normal text-slate-500 dark:text-slate-400"
                       >
-                        {data.inputs.observed.map((item) => `${item.name} ${item.signal_count} 条`).join(' · ')}
+                        {data.inputs.observed.map((item) => `${displaySourceName(item.name)} ${item.signal_count} 条`).join(' · ')}
                       </dd>
                     )}
                   </div>

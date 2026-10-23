@@ -172,6 +172,17 @@ describe('信息源采集记录清单', () => {
     expect(request).toHaveBeenCalledWith(17, 'valid', 0, PAGE_SIZE);
   });
 
+  it('页头信源名称去掉括号内容（存量未清理前的展示兜底）', async () => {
+    vi.spyOn(api, 'sourceSignals').mockResolvedValue({
+      ...emptyResponse,
+      source: {...emptyResponse.source, name: '统计局制造业 PMI（E1 宏观经济）'},
+    });
+
+    renderView('/sources/17/signals');
+
+    expect(await screen.findByRole('heading', {name: '统计局制造业 PMI · 已采集记录'})).toBeInTheDocument();
+  });
+
   it('每页请求 100 条，翻页偏移量为 (页码-1)×100', async () => {
     const user = userEvent.setup();
     const request = vi.spyOn(api, 'sourceSignals')

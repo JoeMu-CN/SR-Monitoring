@@ -269,6 +269,22 @@ describe('输入健康度区块保留（两态共用的只读组件）', () => {
     expect(within(health).getByText(/12 条/)).toBeInTheDocument();
   });
 
+  it('信源名称去掉括号内容：引用列表与输入健康度同口径', () => {
+    const bracketed = '中央气象台（E1 天气）';
+    renderSources(
+      makeDimension({dataSources: [{...nmcSource, name: bracketed}]}),
+      inputs({
+        declared_total: 1, declared_linked: 1, declared_enabled: 1,
+        observed: [{code: 'nmc-weather', name: bracketed, signal_count: 3, latest_at: '2026-09-01T08:00:00Z'}],
+        has_input: true,
+      }),
+    );
+
+    expect(screen.getByRole('link', {name: '中央气象台 有效信号 12 条'})).toBeInTheDocument();
+    expect(within(screen.getByTestId('rule-engine-input-health')).getByText('中央气象台')).toBeInTheDocument();
+    expect(screen.queryByText(bracketed)).not.toBeInTheDocument();
+  });
+
   it('has_input=false 渲染「当前无输入」', () => {
     renderSources(makeDimension({dataSources: [nmcSource]}), inputs({declared_total: 1, declared_linked: 1}));
 

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type {DimensionInputsRead, DimensionTraceRead} from '../api';
 import type {MonitoringDimension} from '../types';
+import {displaySourceName} from '../sourceDisplay';
 
 /**
  * 观察态-规则运行流水线（todo 5）。
@@ -632,13 +633,13 @@ export const RuleEnginePipeline: React.FC<RuleEnginePipelineProps> = ({
                         data-testid="rule-engine-pipeline-source"
                         className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
                       >
-                        {asText(source?.name, asText(source?.code, '未知信源'))} · {asNumber(source?.signal_count, 0)} 条 · {formatMoment(source?.latest_at)}
+                        {displaySourceName(asText(source?.name, asText(source?.code, '未知信源')))} · {asNumber(source?.signal_count, 0)} 条 · {formatMoment(source?.latest_at)}
                       </li>
                     ))}
                   </ul>
                 ) : linkedSources.length > 0 ? (
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    近 30 天没有信号：已接入的 {linkedSources.map((source) => source.name).join('、')} 当前没有产出，不会产生新提醒。
+                    近 30 天没有信号：已接入的 {linkedSources.map((source) => displaySourceName(source.name)).join('、')} 当前没有产出，不会产生新提醒。
                   </p>
                 ) : (
                   <p className="text-[11px] text-amber-700 dark:text-amber-300">无已接入信源，当前不会产生提醒。</p>

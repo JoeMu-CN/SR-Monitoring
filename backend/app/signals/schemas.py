@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
@@ -25,6 +26,19 @@ from app.signals.validity import (
 )
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+# 信源名称中的半角/全角括号及其内容只承载技术标识（如「（E1 宏观经济）」），
+# 展示统一以去括号后的名称为准；写入入口在此一次性规范化，避免存量与新增不一致。
+_SOURCE_NAME_PARENS = re.compile(r"[（(][^）)]*[）)]")
+
+
+def _strip_source_name_parentheses(value: object) -> object:
+    """去掉名称中的括号内容并压缩空白；结果为空时回退原值，避免产生空名称。"""
+    if value is None:
+        return None
+    raw = str(value)
+    cleaned = re.sub(r"\s+", " ", _SOURCE_NAME_PARENS.sub("", raw)).strip()
+    return cleaned or raw
 
 
 class SourceValidityPolicy(BaseModel):
@@ -325,6 +339,11 @@ class DataSourceWrite(BaseModel):
     signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
     validity_policy: SourceValidityPolicy | None = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name_parentheses(cls, value: object) -> object:
+        return _strip_source_name_parentheses(value)
+
     @model_validator(mode="after")
     def normalize_legacy_validity_days(self) -> Self:
         self.validity_policy = _normalize_validity_policy(
@@ -359,6 +378,11 @@ class DataSourceUpdate(BaseModel):
     # 信源级信号有效期（天）：None=永久；>=1=信号 N 天后过期（仅留库不生效）。
     signal_validity_days: int | None = Field(default=None, ge=1, le=3650)
     validity_policy: SourceValidityPolicy | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name_parentheses(cls, value: object) -> object:
+        return _strip_source_name_parentheses(value)
 
     @model_validator(mode="after")
     def normalize_legacy_validity_days(self) -> Self:

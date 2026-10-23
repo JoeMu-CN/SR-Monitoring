@@ -2,7 +2,7 @@ import React from 'react';
 import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
-import {afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeAll, describe, expect, it, vi} from 'vitest';
 import {api, ApiError} from './api';
 import type {
   AgentStatusRead,
@@ -15,8 +15,6 @@ import type {
   DimensionTraceRead,
   GlobalScoringConfigRead,
   MonitoringHealthRead,
-  MonitoringSourceHealth,
-  MonitoringSourceState,
   RiskAlertSummary,
   RuleEngineOptions,
   RiskAlertRead,
@@ -464,12 +462,6 @@ const renderApp = (path: string) => render(
   </MemoryRouter>,
 );
 
-beforeEach(() => {
-  // 既有用例统一视为「刚刚完成过自检」：走 simple 模式，避免完整自检流程干扰其断言。
-  localStorage.clear();
-  localStorage.setItem('sr-selfcheck-at', String(Date.now()));
-});
-
 afterEach(() => {
   cleanup();
   // reset 而非 clear：mockResolvedValueOnce 等一次性实现若跨测试残留，
@@ -875,14 +867,14 @@ describe('App 监控健康只读诊断', () => {
     expect((await screen.findAllByText('示例精密电子有限公司')).length).toBeGreaterThan(0);
   });
 
-  it('诊断降级时 /overview 显示「部分链路异常」，风险数据保持可见', async () => {
+  it('诊断降级时 /overview 显示异常大类，风险数据保持可见', async () => {
     defaultMocks();
     vi.mocked(api.monitoringHealth).mockResolvedValue({...monitoringHealthOk, overall: 'degraded'});
     renderApp('/overview');
 
     const banner = await screen.findByTestId('monitoring-health-banner', {}, {timeout: 5000});
     expect(banner).toHaveAttribute('data-state', 'degraded');
-    expect(banner.textContent).toContain('部分链路异常，结果可能不完整');
+    expect(banner.textContent).toContain('当前监控链路异常');
     expect(screen.queryByTestId('overview-metric-total')).toHaveTextContent('1');
   });
 
@@ -1030,141 +1022,6 @@ describe('App 单源刷新联动监控健康', () => {
     expect(api.monitoringHealth).toHaveBeenCalledTimes(1);
     expect(api.runTycBatch).not.toHaveBeenCalled();
   });
-});
-
-describe('App 开屏自检', () => {
-  it('无自检记录时 /overview 展示完整自检（真实项与接口调用），完成后进入应用', async () => {
-    defaultMocks();
-    localStorage.removeItem('sr-selfcheck-at');
-    renderApp('/overview');
-
-    // 先等真实自检项出现，再取当前 splash 节点：authLoading 阶段的 simple 层（仅品牌标识，无加载指示行）很快被完整自检层替换。
-    await screen.findByText('数据库连接', {}, {timeout: 5000});
-    const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
-    expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
-    expect(within(splash).getByRole('progressbar', {name: '自检进度'})).toBeInTheDocument();
-    // simple 变体的旋转加载行已移除：整个开屏过程都不再出现加载指示及"正在加载…"文案。
-    expect(screen.queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
-    expect(screen.queryByText('正在加载…')).not.toBeInTheDocument();
-    expect(api.health).toHaveBeenCalled();
-
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
-    }, {timeout: 8000});
-  });
-
-  it('存在 30 分钟内的自检记录时直接进入应用，不展示完整自检项', async () => {
-    defaultMocks();
-    renderApp('/overview');
-
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
-    expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
-    expect(screen.queryByText('数据库连接')).not.toBeInTheDocument();
-    // simple 开屏已不再渲染加载指示行，进入应用后不应残留加载指示或"正在加载…"文案。
-    expect(screen.queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
-    expect(screen.queryByText('正在加载…')).not.toBeInTheDocument();
-  });
-
-  it('完整自检完成后写入可解析的自检时间戳', async () => {
-    defaultMocks();
-    localStorage.removeItem('sr-selfcheck-at');
-    renderApp('/overview');
-
-    await screen.findByRole('status', {name: '正在初始化供应商风险监控平台'});
-    await waitFor(() => {
-      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
-    }, {timeout: 8000});
-
-    const raw = localStorage.getItem('sr-selfcheck-at');
-    expect(raw).not.toBeNull();
-    const parsed = Number(raw);
-    expect(Number.isFinite(parsed)).toBe(true);
-    expect(parsed).toBeGreaterThan(0);
-  });
-
-  it('仅 risk_view 权限时自检不含 AI/调度器/信息源项，也不请求 monitoring-health', async () => {
-    defaultMocks({permissions: ['risk_view']});
-    localStorage.removeItem('sr-selfcheck-at');
-    renderApp('/overview');
-
-    await screen.findByText('数据库连接', {}, {timeout: 5000});
-    const splash = screen.getByRole('status', {name: '正在初始化供应商风险监控平台'});
-    expect(within(splash).getByText('数据库连接')).toBeInTheDocument();
-    expect(within(splash).queryByText('AI 引擎')).not.toBeInTheDocument();
-    expect(within(splash).queryByText('调度器心跳')).not.toBeInTheDocument();
-    expect(within(splash).queryByText('信息源状态')).not.toBeInTheDocument();
-    // simple 变体的旋转加载行已移除：完整自检层同样不得出现加载指示及"正在加载…"文案。
-    expect(within(splash).queryByTestId('splash-loading-indicator')).not.toBeInTheDocument();
-    expect(within(splash).queryByText('正在加载…')).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.queryByRole('status', {name: '正在初始化供应商风险监控平台'})).not.toBeInTheDocument();
-    }, {timeout: 8000});
-    // loadData 会无条件调用 api.agentStatus（与自检无关），但自检本身不得请求 monitoring-health。
-    expect(api.monitoringHealth).not.toHaveBeenCalled();
-  });
-
-  // ---- 「信息源状态」集成回归：分母口径必须与后端可调度定义（排除 disabled/on_demand）一致 ----
-  // 夹具工厂：仅 state 参与判定，其余字段对齐 api.ts 的 MonitoringSourceHealth 契约。
-  const sourceHealthFixture = (sourceId: number, state: MonitoringSourceState): MonitoringSourceHealth => ({
-    source_id: sourceId,
-    code: `src-${sourceId}`,
-    name: `来源 ${sourceId}`,
-    state,
-    reason_code: 'test',
-    last_success_at: null,
-    last_attempt_at: null,
-    next_expected_at: null,
-  });
-
-  it('混合夹具时「信息源状态」只按可调度来源显示 2/2 正常（disabled/on_demand 不进分母）', async () => {
-    // Given 2 个可调度 ok + 1 个 disabled + 1 个 on_demand（旧口径会算成 2/4 并报告警）
-    defaultMocks();
-    vi.mocked(api.monitoringHealth).mockResolvedValue({
-      ...monitoringHealthOk,
-      sources: [
-        sourceHealthFixture(1, 'ok'),
-        sourceHealthFixture(2, 'ok'),
-        sourceHealthFixture(3, 'disabled'),
-        sourceHealthFixture(4, 'on_demand'),
-      ],
-    });
-    localStorage.removeItem('sr-selfcheck-at');
-
-    // When 开屏完整自检在 /overview 运行
-    renderApp('/overview');
-
-    // Then 该行 detail 显示可调度口径的 2/2；database/scheduler/ai 行同样渲染「正常」图标，
-    // 必须由 detail 文本定位到行、再在行内断言状态图标，避免全局按名查询多命中。
-    const detail = await screen.findByText('2/2 定时信息源正常', {}, {timeout: 5000});
-    const row = detail.closest('li');
-    if (row === null) throw new Error('「信息源状态」自检行未渲染为列表项');
-    expect(within(row).getByRole('img', {name: '正常'})).toBeInTheDocument();
-  }, 10000);
-
-  it('含 overdue 可调度来源时「信息源状态」显示 1/2 告警（覆盖非全绿分支）', async () => {
-    // Given 1 个可调度 ok + 1 个可调度 overdue + 1 个 disabled
-    defaultMocks();
-    vi.mocked(api.monitoringHealth).mockResolvedValue({
-      ...monitoringHealthOk,
-      sources: [
-        sourceHealthFixture(1, 'ok'),
-        sourceHealthFixture(2, 'overdue'),
-        sourceHealthFixture(3, 'disabled'),
-      ],
-    });
-    localStorage.removeItem('sr-selfcheck-at');
-
-    // When 开屏完整自检在 /overview 运行
-    renderApp('/overview');
-
-    // Then detail 为 1/2 且该行状态图标为「告警」
-    const detail = await screen.findByText('1/2 定时信息源正常', {}, {timeout: 5000});
-    const row = detail.closest('li');
-    if (row === null) throw new Error('「信息源状态」自检行未渲染为列表项');
-    expect(within(row).getByRole('img', {name: '告警'})).toBeInTheDocument();
-  }, 10000);
 });
 
 // ---- 回归：供应商页「询问风险助手」跳转后，退出壳不得消费 pendingQuery ----

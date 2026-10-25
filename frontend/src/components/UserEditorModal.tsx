@@ -163,7 +163,7 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 p-5 dark:border-slate-700">
           <div className="min-w-0">
             <h2 id="user-editor-title" className="text-lg font-bold text-[#101d28] dark:text-white">{isEditing ? '编辑用户' : '创建用户'}</h2>
-            <p className="mt-1 text-sm text-[#424751] dark:text-slate-400">{isEditing ? '角色或状态变更将撤销该用户会话。' : '新建用户会以已启用状态创建。'}</p>
+            {isEditing && <p className="mt-1 text-sm text-[#424751] dark:text-slate-400">角色或状态变更将撤销该用户会话。</p>}
           </div>
           <button type="button" aria-label="关闭用户编辑弹窗" onClick={onClose} disabled={saving} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:hover:bg-slate-800"><X aria-hidden="true" className="h-5 w-5" /></button>
         </header>
@@ -198,12 +198,9 @@ export const UserEditorModal = (props: UserEditorModalProps) => {
               <label htmlFor={supplierSearchId} className="block text-sm font-bold text-[#101d28] dark:text-white">负责供应商</label>
               {supplierError && <p role="alert" className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{supplierError}</p>}
               <SupplierMultiSelect inputId={supplierSearchId} value={suppliers} onChange={setSuppliers} disabled={saving} />
-              <p className="text-xs text-[#727782] dark:text-slate-400">仅决定该分析员收到的实时风险邮件范围。</p>
             </div>
           )}
           {error && <p role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-[#ffdad6] p-3 text-sm text-[#93000a]"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />{error}</p>}
-          <p className="text-xs text-slate-500">推送方案（P1/P2/P3、月报）在『推送管理』中配置。</p>
-          <p className="text-xs text-[#727782] dark:text-slate-400">密码不会在用户列表或编辑表单中显示。</p>
           <footer className="flex flex-col-reverse gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end dark:border-slate-700">
             <button type="button" onClick={onClose} disabled={saving} className="min-h-11 rounded-xl border border-[#c2c6d2] px-5 text-sm font-bold text-[#424751] hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">取消</button>
             <button type="submit" disabled={saving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#007aff] px-5 text-sm font-bold text-white hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff] focus:ring-offset-2 disabled:opacity-40"><>{isEditing ? <Save aria-hidden="true" className="h-4 w-4" /> : <UserPlus aria-hidden="true" className="h-4 w-4" />}</>{saving ? '正在保存…' : isEditing ? '保存更改' : '创建用户'}</button>

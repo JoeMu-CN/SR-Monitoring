@@ -48,7 +48,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               <option value="light">浅色模式</option>
               <option value="dark">深色模式</option>
             </select>
-            <p className="mt-1.5 text-[11px] text-slate-500">仅影响当前浏览器的视觉显示，不改变风险规则或业务数据。</p>
           </div>
 
           <div className="pt-2 border-t border-slate-100">
@@ -61,7 +60,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
               />
               <span className="font-bold">减少页面过渡与脉冲动效</span>
             </label>
-            <p className="mt-1.5 pl-6 text-[11px] text-slate-500">适合对动态效果敏感或希望降低设备资源占用的用户。</p>
           </div>
         </div>
 

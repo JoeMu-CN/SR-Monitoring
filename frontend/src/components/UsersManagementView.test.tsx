@@ -72,7 +72,7 @@ describe('UsersManagementView', () => {
     renderView();
 
     expect((await screen.findAllByText('platform-admin')).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('请使用个人设置修改本人密码')).toHaveLength(2);
+    expect(screen.queryByText('请使用个人设置修改本人密码')).toBeNull();
     expect(screen.getAllByRole('button', {name: '重置密码'})).toHaveLength(2);
   });
 

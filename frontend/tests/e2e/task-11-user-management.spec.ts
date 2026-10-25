@@ -105,12 +105,10 @@ test('管理员主链路：创建→编辑资料→重置他人密码→本人�
   // 显示「不能修改本人角色或状态」文案
   await expect(page.getByText('不能修改本人角色或状态')).toBeVisible();
 
-  // 重置按钮位置显示「请使用个人设置修改本人密码」
-  // （在操作列中，非弹窗内）
+  // 本人行不再展示重置密码入口，仅保留「编辑」
   await page.getByRole('button', {name: '关闭用户编辑弹窗'}).click();
 
-  // 检查 admin 行的操作区域中包含「请使用个人设置修改本人密码」文案
-  await expect(adminRow.getByText('请使用个人设置修改本人密码')).toBeVisible();
+  await expect(adminRow.getByRole('button', {name: '重置密码'})).toHaveCount(0);
 
   // 10. 截图（主链路完成后）
   await waitForSettledRoute(page);

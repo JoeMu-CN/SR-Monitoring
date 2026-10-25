@@ -8,13 +8,15 @@ import {
   type IntelligenceReportListResponse,
   type MarketIndicatorItem,
   type MarketIndicatorListResponse,
+  type MarketIndicatorPoint,
+  type MarketIndicatorSeriesResponse,
   type MarketIndicatorThresholds,
 } from '../api';
 import {MarketIndicatorPanel} from './MarketIndicatorPanel';
 
 const GENERATED_AT = '2026-10-19T08:00:00Z';
 
-/** 生效阈值：与后端内置 FX 口径一致（min_observations=10），用于断言「数据积累中 x/min」。 */
+/** 阈值仍随接口下发，但前端已不再据此展示任何判定语义；只用于构造合法响应。 */
 const FX_THRESHOLDS: MarketIndicatorThresholds = {
   sustained_change_pct: 3,
   sustained_window: 20,
@@ -30,7 +32,7 @@ const FX_THRESHOLDS: MarketIndicatorThresholds = {
   ],
 };
 
-/** 生成 `count` 个等间隔观察点，base + i*step；跨度固定为 29 分钟以便时间戳可预测。 */
+/** 生成 `count` 个等间隔观察点，base + i*step；跨度固定为分钟级以便时间戳可预测。 */
 const buildSeries = (count: number, base: number, step: number) => (
   Array.from({length: count}, (_, index) => ({
     observed_at: new Date(Date.UTC(2026, 9, 19, 8, index)).toISOString(),
@@ -52,6 +54,17 @@ const item = (overrides: Partial<MarketIndicatorItem> & Pick<MarketIndicatorItem
 
 const listResponse = (items: MarketIndicatorItem[]): MarketIndicatorListResponse => ({generated_at: GENERATED_AT, items});
 
+const seriesResponse = (
+  indicator: Pick<MarketIndicatorItem, 'code' | 'label' | 'unit'>,
+  points: MarketIndicatorPoint[],
+): MarketIndicatorSeriesResponse => ({
+  code: indicator.code,
+  label: indicator.label,
+  unit: indicator.unit,
+  days: 90,
+  points,
+});
+
 const emptyIntelligenceResponse: IntelligenceReportListResponse = {items: [], total: 0, offset: 0, limit: 20};
 
 const fxTripped = item({
@@ -65,22 +78,11 @@ const fxTripped = item({
   latest_alert_id: 4821,
 });
 
-const fxAccumulating = item({
-  code: 'fx-JPY',
-  label: '美元兑日元汇率',
-  source_code: 'fx-rates',
-  status: 'accumulating',
-  latest: {observed_at: '2026-10-19T08:00:00Z', value: 149.52, change_pct: null},
-  stats: {observations: 3, sustained_change_pct: null, shock_max_day_pct: null},
-  series: buildSeries(3, 149.5, 0.02),
-});
-
 const fxNormal = item({
   code: 'fx-EUR',
   label: '美元兑欧元汇率',
   source_code: 'fx-rates',
   latest: {observed_at: '2026-10-19T08:00:00Z', value: 0.9128, change_pct: 0.11},
-  stats: {observations: 20, sustained_change_pct: 0.44, shock_max_day_pct: 0.3},
   series: buildSeries(30, 0.91, 0.0002),
 });
 
@@ -89,9 +91,7 @@ const copper = item({
   label: '沪铜主力',
   source_code: 'commodity-futures',
   unit: '元/吨',
-  status: 'tripped',
   latest: {observed_at: '2026-10-19T08:00:00Z', value: 78_450, change_pct: 2.4},
-  stats: {observations: 15, sustained_change_pct: 6.1, shock_max_day_pct: 2.4},
   series: buildSeries(30, 72_000, 210),
   latest_alert_id: 7,
 });
@@ -102,7 +102,6 @@ const semiconductor = item({
   source_code: 'semiconductor-index',
   unit: '点位',
   latest: {observed_at: '2026-10-19T08:00:00Z', value: 3120.55, change_pct: -0.8},
-  stats: {observations: 30, sustained_change_pct: -2.2, shock_max_day_pct: 1.1},
   series: buildSeries(30, 3_200, -2.5),
 });
 
@@ -110,7 +109,6 @@ const semiconductor = item({
 const expectedValue = (value: number) => (
   value.toLocaleString('zh-CN', {minimumFractionDigits: Math.abs(value) < 10 ? 4 : 2, maximumFractionDigits: Math.abs(value) < 10 ? 4 : 2})
 );
-const expectedPct = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 
 const renderPanel = (active = true) => render(
   <MemoryRouter initialEntries={['/intelligence']}>
@@ -123,60 +121,50 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('行情监控面板：三个阈值状态', () => {
-  it('触发中：显示「触发中」徽标、读数、单日变化、窗口累计与最近提醒入口', async () => {
+describe('行情监控面板：只做记录', () => {
+  it('卡片只给读数、单位与读数时间，不再出现状态徽标、涨跌与提醒入口', async () => {
     vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxTripped, copper]));
 
     renderPanel();
 
     await screen.findByText('美元兑人民币汇率');
-    expect(screen.getByTestId('market-indicator-status-fx-CNY')).toHaveTextContent('触发中');
-    // 单日变化与窗口累计是两个独立口径，不共用一个数。
-    expect(screen.getByTestId('market-indicator-day-change-fx-CNY')).toHaveTextContent(expectedPct(-1.86));
-    expect(screen.getByTestId('market-indicator-window-change-fx-CNY')).toHaveTextContent(expectedPct(-3.42));
     expect(screen.getByTestId('market-indicator-value-fx-CNY')).toHaveTextContent(expectedValue(7.1234));
     expect(screen.getByTestId('market-indicator-unit-fx-CNY')).toHaveTextContent('汇率');
+    expect(screen.getByTestId('market-indicator-observed-fx-CNY')).toHaveTextContent('2026');
+
+    // 判定与提醒语义全部移除：不再有徽标、单日变化、窗口累计、最近提醒。
+    expect(screen.queryByTestId('market-indicator-status-fx-CNY')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('market-indicator-day-change-fx-CNY')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('market-indicator-window-change-fx-CNY')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('market-indicator-alert-fx-CNY')).not.toBeInTheDocument();
+    expect(screen.queryByText('触发中')).not.toBeInTheDocument();
+    expect(screen.queryByText('数据积累中 3/10')).not.toBeInTheDocument();
+    expect(screen.queryByText('正常')).not.toBeInTheDocument();
+    expect(screen.queryByText(/最近提醒/)).not.toBeInTheDocument();
   });
 
-  it('数据积累中：徽标给出已积累观察点数/所需最小观察点数，并说明尚未判定', async () => {
-    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxAccumulating]));
+  it('无观察点的指标：读数时间显示「暂无读数」，不用当前时间冒充', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([
+      item({code: 'fx-GBP', label: '美元兑英镑汇率', source_code: 'fx-rates', latest: {observed_at: null, value: null, change_pct: null}, series: []}),
+    ]));
 
     renderPanel();
 
-    await screen.findByText('美元兑日元汇率');
-    expect(screen.getByTestId('market-indicator-status-fx-JPY')).toHaveTextContent('数据积累中 3/10');
-    expect(screen.getByTestId('market-indicator-status-fx-JPY')).not.toHaveTextContent('触发中');
-    // 未形成窗口统计时不得用 0 冒充累计值。
-    expect(screen.getByTestId('market-indicator-window-change-fx-JPY')).toHaveTextContent('—');
-    expect(screen.getByTestId('market-indicator-day-change-fx-JPY')).toHaveTextContent('—');
+    await screen.findByText('美元兑英镑汇率');
+    expect(screen.getByTestId('market-indicator-observed-fx-GBP')).toHaveTextContent('暂无读数');
+    expect(screen.getByTestId('market-indicator-value-fx-GBP')).toHaveTextContent('—');
   });
 
-  it('正常：徽标显示「正常」，不挂载最近提醒入口', async () => {
-    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
+  it('页脚说明只声明记录口径，并给出指标数与生成时间', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal, copper]));
 
     renderPanel();
 
     await screen.findByText('美元兑欧元汇率');
-    expect(screen.getByTestId('market-indicator-status-fx-EUR')).toHaveTextContent('正常');
-    expect(screen.getByTestId('market-indicator-status-fx-EUR')).not.toHaveTextContent('触发中');
-    expect(screen.queryByTestId('market-indicator-alert-fx-EUR')).not.toBeInTheDocument();
-  });
-
-  it('最近提醒入口链接到对应风险详情 /risks/:id，仅在 latest_alert_id 存在时出现', async () => {
-    const user = userEvent.setup();
-    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxTripped, copper, fxNormal]));
-
-    renderPanel();
-
-    await screen.findByText('美元兑人民币汇率');
-    const alertLink = screen.getByTestId('market-indicator-alert-fx-CNY');
-    expect(alertLink).toHaveAttribute('href', '/risks/4821');
-    expect(alertLink).toHaveTextContent('最近提醒');
-    // 大宗商品是另一个分类页签：先切过去再断言，避免依赖跨组同屏渲染。
-    await user.click(screen.getByTestId('market-group-tab-commodity-futures'));
-    expect(await screen.findByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
-    // 无 alert_id 的正常指标不渲染空链接，避免给出跳转到 /risks/null 的假入口。
-    expect(screen.queryByTestId('market-indicator-alert-fx-EUR')).not.toBeInTheDocument();
+    const footer = screen.getByTestId('market-indicator-footer-note');
+    expect(footer).toHaveTextContent('共 2 个指标');
+    expect(footer).toHaveTextContent('读数生成于');
+    expect(footer).toHaveTextContent('行情数据仅记录走势，暂不参与风险判定');
   });
 });
 
@@ -291,7 +279,7 @@ describe('行情监控面板：分组与走势', () => {
 
   it('空序列：仍渲染走势容器但没有折线，不产生 NaN 路径', async () => {
     vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([
-      item({code: 'fx-GBP', label: '美元兑英镑汇率', source_code: 'fx-rates', series: [], status: 'accumulating', stats: {observations: 0, sustained_change_pct: null, shock_max_day_pct: null}}),
+      item({code: 'fx-GBP', label: '美元兑英镑汇率', source_code: 'fx-rates', series: [], latest: {observed_at: null, value: null, change_pct: null}}),
     ]));
 
     renderPanel();
@@ -306,7 +294,7 @@ describe('行情监控面板：分组与走势', () => {
 
   it('单点序列：退化为一个点标记，不抛除零错误', async () => {
     vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([
-      item({code: 'fx-AUD', label: '美元兑澳元汇率', source_code: 'fx-rates', series: buildSeries(1, 0.66, 0), status: 'accumulating', stats: {observations: 1, sustained_change_pct: null, shock_max_day_pct: null}}),
+      item({code: 'fx-AUD', label: '美元兑澳元汇率', source_code: 'fx-rates', series: buildSeries(1, 0.66, 0)}),
     ]));
 
     renderPanel();
@@ -333,6 +321,154 @@ describe('行情监控面板：分组与走势', () => {
   });
 });
 
+describe('行情监控面板：放大走势弹窗', () => {
+  const openDialog = async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
+    const series = vi.spyOn(api.market, 'series').mockResolvedValue(
+      seriesResponse(fxNormal, buildSeries(12, 0.9, 0.001)),
+    );
+
+    renderPanel();
+    await screen.findByText('美元兑欧元汇率');
+    const trigger = screen.getByRole('button', {name: '查看 美元兑欧元汇率 完整走势'});
+    await user.click(trigger);
+    return {user, trigger, series};
+  };
+
+  it('点击折线打开弹窗，并按需请求 90 天序列', async () => {
+    const {series} = await openDialog();
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-labelledby', 'market-indicator-dialog-title');
+    expect(within(dialog).getByText('美元兑欧元汇率')).toBeInTheDocument();
+    expect(within(dialog).getByText('汇率')).toBeInTheDocument();
+    expect(screen.getByTestId('market-indicator-dialog')).toBe(dialog);
+
+    expect(series).toHaveBeenCalledTimes(1);
+    expect(series).toHaveBeenCalledWith('fx-EUR', 90);
+    await waitFor(() => expect(screen.getByTestId('market-indicator-dialog-chart')).toBeInTheDocument());
+    expect(screen.getByTestId('market-indicator-dialog-subtitle')).toHaveTextContent('共 12 个观察点');
+  });
+
+  it('打开期间必须请求序列；加载中有独立占位，不误报空数据', async () => {
+    let settle!: (value: MarketIndicatorSeriesResponse) => void;
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
+    vi.spyOn(api.market, 'series').mockReturnValue(new Promise<MarketIndicatorSeriesResponse>((resolve) => {
+      settle = resolve;
+    }));
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('美元兑欧元汇率');
+    await user.click(screen.getByRole('button', {name: '查看 美元兑欧元汇率 完整走势'}));
+
+    expect(await screen.findByTestId('market-indicator-series-loading')).toHaveTextContent('正在加载近 90 天走势');
+    expect(screen.queryByText('暂无观察点')).not.toBeInTheDocument();
+
+    settle(seriesResponse(fxNormal, buildSeries(5, 0.9, 0.001)));
+    await screen.findByTestId('market-indicator-dialog-chart');
+    expect(screen.queryByTestId('market-indicator-series-loading')).not.toBeInTheDocument();
+  });
+
+  it('序列请求失败：显示错误与重试按钮，重试后回到图表', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
+    const series = vi.spyOn(api.market, 'series')
+      .mockRejectedValueOnce(new ApiError(500, '走势服务不可用'))
+      .mockResolvedValueOnce(seriesResponse(fxNormal, buildSeries(4, 0.9, 0.001)));
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('美元兑欧元汇率');
+    await user.click(screen.getByRole('button', {name: '查看 美元兑欧元汇率 完整走势'}));
+
+    const error = await screen.findByTestId('market-indicator-series-error');
+    expect(error).toHaveTextContent('走势序列加载失败');
+    expect(error).toHaveTextContent('走势服务不可用');
+    expect(screen.queryByTestId('market-indicator-dialog-chart')).not.toBeInTheDocument();
+
+    await user.click(within(error).getByRole('button', {name: '重试'}));
+    await screen.findByTestId('market-indicator-dialog-chart');
+    expect(series).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId('market-indicator-series-error')).not.toBeInTheDocument();
+  });
+
+  it('空序列：退化为虚线基线并给出「暂无观察点」', async () => {
+    vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
+    vi.spyOn(api.market, 'series').mockResolvedValue(seriesResponse(fxNormal, []));
+
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText('美元兑欧元汇率');
+    await user.click(screen.getByRole('button', {name: '查看 美元兑欧元汇率 完整走势'}));
+
+    await screen.findByTestId('market-indicator-dialog-chart');
+    expect(screen.getByTestId('market-indicator-dialog-subtitle')).toHaveTextContent('0 个观察点');
+    expect(within(screen.getByTestId('market-indicator-dialog-chart')).getByText('暂无观察点')).toBeInTheDocument();
+    expect(screen.getByTestId('market-indicator-dialog').querySelectorAll('polyline')).toHaveLength(0);
+  });
+
+  it('悬停观察点显示 tooltip：只有时间与数值，不含涨跌幅', async () => {
+    const {user} = await openDialog();
+    await screen.findByTestId('market-indicator-dialog-chart');
+
+    const point0 = screen.getByTestId('market-indicator-dialog-point-0');
+    await user.hover(point0);
+
+    const tooltip = await screen.findByTestId('market-indicator-dialog-tooltip');
+    expect(tooltip).toHaveTextContent(expectedValue(0.9));
+    expect(tooltip).toHaveTextContent('2026');
+    // 只记录不分析：tooltip 不得出现涨跌幅。
+    expect(tooltip).not.toHaveTextContent('%');
+  });
+
+  it('Esc 关闭弹窗并把焦点交还给触发折线', async () => {
+    const {user, trigger} = await openDialog();
+    await screen.findByTestId('market-indicator-dialog-chart');
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByTestId('market-indicator-dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('右上关闭按钮关闭弹窗，且焦点回归折线', async () => {
+    const {user, trigger} = await openDialog();
+    await screen.findByTestId('market-indicator-dialog-chart');
+
+    await user.click(screen.getByTestId('market-indicator-dialog-close'));
+
+    await waitFor(() => expect(screen.queryByTestId('market-indicator-dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('点击遮罩关闭；点击弹窗内部不关闭', async () => {
+    const {user} = await openDialog();
+    await screen.findByTestId('market-indicator-dialog-chart');
+
+    const dialog = screen.getByTestId('market-indicator-dialog');
+    await user.click(dialog);
+    expect(screen.getByTestId('market-indicator-dialog')).toBeInTheDocument();
+
+    // 遮罩是 dialog 的父节点：直接点它的空白区域。
+    const backdrop = dialog.parentElement;
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop as HTMLElement);
+    await waitFor(() => expect(screen.queryByTestId('market-indicator-dialog')).not.toBeInTheDocument());
+  });
+
+  it('打开时锁定 body 滚动，关闭后恢复', async () => {
+    const {user} = await openDialog();
+    await screen.findByTestId('market-indicator-dialog-chart');
+    expect(document.body.style.overflow).toBe('hidden');
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByTestId('market-indicator-dialog')).not.toBeInTheDocument());
+    expect(document.body.style.overflow).not.toBe('hidden');
+  });
+});
+
 describe('行情监控面板：加载 / 错误 / 空态', () => {
   it('加载中：先给状态占位，不闪现空态', async () => {
     // 手工控制 resolve：断言「请求在飞」期间不出现空态/错误态。
@@ -344,12 +480,12 @@ describe('行情监控面板：加载 / 错误 / 空态', () => {
 
     renderPanel();
 
-    expect(screen.getByRole('status')).toHaveTextContent('正在加载行情指标…');
+    expect(screen.getByTestId('market-indicator-loading')).toHaveTextContent('正在加载行情指标…');
     expect(screen.queryByText('暂无行情指标')).not.toBeInTheDocument();
 
     settle(listResponse([fxNormal]));
     await screen.findByText('美元兑欧元汇率');
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('market-indicator-loading')).not.toBeInTheDocument();
   });
 
   it('接口失败：显示错误面板与重试按钮，重试后恢复数据', async () => {
@@ -366,7 +502,7 @@ describe('行情监控面板：加载 / 错误 / 空态', () => {
     // 失败态不得残留上一次的数据视图。
     expect(screen.queryByText('美元兑人民币汇率')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', {name: '重试'}));
+    await user.click(within(alert).getByRole('button', {name: '重试'}));
 
     await screen.findByText('美元兑人民币汇率');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -398,15 +534,16 @@ describe('行情监控面板：加载 / 错误 / 空态', () => {
 describe('行情监控面板：数据源约束', () => {
   it('只调用行情指标接口，不复用情报接口', async () => {
     const market = vi.spyOn(api.market, 'indicators').mockResolvedValue(listResponse([fxNormal]));
-    const intelligence = vi.spyOn(api, 'intelligence').mockResolvedValue(
-      emptyIntelligenceResponse,
-    );
+    const series = vi.spyOn(api.market, 'series');
+    const intelligence = vi.spyOn(api, 'intelligence').mockResolvedValue(emptyIntelligenceResponse);
 
     renderPanel();
 
     await screen.findByText('美元兑欧元汇率');
     expect(market).toHaveBeenCalledTimes(1);
     expect(market).toHaveBeenCalledWith();
+    // 序列只在点击折线后按需请求，面板挂载时不预取。
+    expect(series).not.toHaveBeenCalled();
     expect(intelligence).not.toHaveBeenCalled();
   });
 
@@ -419,7 +556,6 @@ describe('行情监控面板：数据源约束', () => {
     expect(panel).toHaveAttribute('hidden');
     expect(panel).toHaveAttribute('role', 'tabpanel');
     await waitFor(() => expect(screen.getByTestId('market-indicator-group-fx-rates')).toBeInTheDocument());
-    // hidden 面板对无障碍树不可见，因此 role=status 查不到，只能用 testid 断言加载占位存在过。
     expect(request).toHaveBeenCalledTimes(1);
   });
 });

@@ -109,7 +109,11 @@ const formatEvidenceValue = (key: string, value: unknown): string => {
 };
 
 const formatValidityReason = (reason: ValidityReasonRead): string => {
-  // 行情指标观察点不足：过滤原因细节是 market_indicator/accumulating，按「数据积累中」呈现。
+  // 行情只做记录：终态细节是 filtered_out / market_recorded，读作「仅记录（未判定）」。
+  if (reason.code === 'filtered_out' && reason.details.filter === 'market_recorded') {
+    return '仅记录（未判定）';
+  }
+  // 兼容旧数据：行情指标观察点不足时细节是 market_indicator/accumulating。
   if (reason.code === 'filtered_out' && reason.details.filter === 'market_indicator' && reason.details.reason === 'accumulating') {
     return '数据积累中';
   }

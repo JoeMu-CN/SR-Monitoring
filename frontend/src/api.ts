@@ -84,10 +84,14 @@ export const VALIDITY_REASON_LABELS: Record<string, string> = {
 
 /**
  * 未知原因码不裸露英文码，统一回落到中文说明。
- * 行情指标在数据积累期的过滤原因（filtered_out + market_indicator/accumulating）
- * 表达为「数据积累中」，避免被读成“不相关”。
+ * 行情只做记录、不做分析：新行情信号被后端放行到「仅记录」终态时，
+ * 过滤细节是 `filtered_out / field=market_recorded`，必须读成「仅记录（未判定）」，
+ * 不能被读成「已过滤/不相关」。旧的 `market_indicator/accumulating` 继续保留兼容。
  */
 export const formatValidityReasonLabel = (code: string, details?: Record<string, unknown>): string => {
+  if (code === 'filtered_out' && details?.filter === 'market_recorded') {
+    return '仅记录（未判定）';
+  }
   if (code === 'filtered_out' && details?.filter === 'market_indicator' && details?.reason === 'accumulating') {
     return '数据积累中';
   }
@@ -424,7 +428,7 @@ export interface DashboardSummary {
   readonly history_may_be_partial: boolean;
 }
 
-/** 大屏按日趋势点；date 为 UTC 自然日 YYYY-MM-DD。 */
+/** 大屏按日趋势点；date 为 UTC 自然日 YYYY-MM-DD，count 为当日新增的当前有效提醒组数。 */
 export interface DashboardTrendPoint {
   readonly date: string;
   readonly count: number;
@@ -1373,6 +1377,15 @@ export interface MarketIndicatorListResponse {
   items: MarketIndicatorItem[];
 }
 
+/** 单指标放大走势：按天数回看观察点，只用于「记录」展示，不含任何判定结论。 */
+export interface MarketIndicatorSeriesResponse {
+  code: string;
+  label: string;
+  unit: string;
+  days: number;
+  points: MarketIndicatorPoint[];
+}
+
 export interface MarketConfigIndicator {
   code: string;
   label: string;
@@ -1388,6 +1401,8 @@ export interface MarketConfigRead {
   key: string;
   source: MarketConfigSource;
   updated_at: string | null;
+  /** 判定总开关（默认 false）：关闭时行情只记录，不产事件与提醒。 */
+  analysis_enabled: boolean;
   indicators: MarketConfigIndicator[];
 }
 
@@ -1409,6 +1424,8 @@ export interface MarketConfigIndicatorPatch {
 }
 
 export interface MarketConfigUpdatePayload {
+  /** 顶层总开关；省略则本次不改。 */
+  analysis_enabled?: boolean;
   indicators: Record<string, MarketConfigIndicatorPatch>;
 }
 
@@ -1561,6 +1578,8 @@ export const api = {
   market: {
     // 启用中的指标列表（停用视同未登记）；只读请求不携带 CSRF。
     indicators: () => request<MarketIndicatorListResponse>('/api/v1/market/indicators'),
+    series: (code: string, days = 90) =>
+      request<MarketIndicatorSeriesResponse>(`/api/v1/market/indicators/${encodeURIComponent(code)}/series?days=${days}`),
     configGet: () => request<MarketConfigRead>('/api/v1/market/config'),
     // 合并语义：只覆盖补丁里出现的字段，空补丁是 no-op，不清空既有覆盖。
     configUpdate: (payload: MarketConfigUpdatePayload) => request<MarketConfigRead>('/api/v1/market/config', {

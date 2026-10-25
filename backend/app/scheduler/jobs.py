@@ -123,6 +123,9 @@ STRUCTURED_GRADE_FILTER_KIND = "structured_grade"
 # 行情指标评估：不写 filtered 语义的过滤记录，而是自带 deterministic 结果的
 # 成功分析记录（未触发时结果为空），因此 filter_kind 独立于上面三类。
 MARKET_FILTER_KIND = "market_indicator"
+# 判定总开关关闭时的终态：只记录读数、不做结论。与上面的 filter_kind 区分开，
+# 前端据此显示「仅记录（未判定）」而不是「已过滤/不相关」。
+MARKET_RECORD_KIND = "market_recorded"
 # 确定性行情评估的模型与提示版本标识（纯统计复算，不对应任何真实模型）。
 MARKET_PROMPT_VERSION = "market-eval-v1"
 
@@ -309,9 +312,36 @@ def _evaluate_market_signal(
     """
     raw_data = signal.raw_data
     extra = raw_data.get("source_extra") if isinstance(raw_data, dict) else None
-    spec = resolve_indicator(source_code, extra, load_market_config(session))
+    config = load_market_config(session)
+    spec = resolve_indicator(source_code, extra, config)
     if spec is None:
         return None, False
+    if not config.analysis_enabled:
+        # 判定总开关关闭（默认）：行情只做记录。仍写一条确定性记录并终结该信号，
+        # 否则它会以 pending 滞留、被队列反复捞取，或回落进 AI 相关性分析。
+        # 不调用 evaluate_series：不计算涨跌幅、不触发事件、不产提醒。
+        session.add(
+            AIAnalysisRecord(
+                signal_id=signal.id,
+                provider=DETERMINISTIC_PROVIDER,
+                model=MARKET_PROMPT_VERSION,
+                prompt_version=MARKET_PROMPT_VERSION,
+                status="succeeded",
+                finished_at=now_utc,
+                duration_ms=0,
+                result=None,
+                error="recorded: 行情指标仅记录，判定总开关已关闭",
+                needs_review=False,
+            )
+        )
+        _mark_signal_irrelevant(
+            signal,
+            filter_kind=MARKET_RECORD_KIND,
+            reason="行情指标仅记录，不参与阈值判定与风险提醒",
+            state=ProcessingState.NO_TRIGGER,
+        )
+        session.commit()
+        return None, True
     series = load_series(session, spec, source_id=signal.source_id)
     verdict = evaluate_series(spec, series)
     if not verdict.triggered:

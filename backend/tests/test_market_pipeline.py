@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 import app.scheduler.jobs as scheduler_jobs
 from app.ai.models import AIAnalysisRecord
 from app.ai.schemas import OrganizationReference, SignalAnalysisResult
-from app.market.config_store import invalidate_market_config_cache
+from app.market.config_store import MARKET_CONFIG_KEY, invalidate_market_config_cache
 from app.market.evaluation import DETERMINISTIC_CONFIDENCE, DETERMINISTIC_PROVIDER
 from app.risks.engine.event_identity import find_or_create_event, refresh_result_fields
 from app.risks.models import (
@@ -230,6 +230,34 @@ def no_llm(monkeypatch: MonkeyPatch) -> None:
         raise AssertionError("行情分支不得调用 AI Provider")
 
     monkeypatch.setattr(scheduler_jobs, "analyze_raw_signal", _boom)
+
+
+@pytest.fixture(autouse=True)
+def _market_analysis_enabled(db_session: Session) -> Iterator[None]:
+    """本文件锁定"判定总开关开启"时的既有链路契约。
+
+    生产默认已改为关闭（只记录）；这里的用例验证关闭后仍可用的历史行为，
+    因此显式写入 ``analysis_enabled=true``，默认值另有用例覆盖。
+    """
+    row = db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == MARKET_CONFIG_KEY)
+    )
+    if row is None:
+        db_session.add(
+            RuleDimensionConfig(
+                key=MARKET_CONFIG_KEY,
+                label="行情指标运行配置",
+                enabled=True,
+                config={"analysis_enabled": True},
+            )
+        )
+    else:
+        row.enabled = True
+        row.config = {"analysis_enabled": True}
+    db_session.commit()
+    invalidate_market_config_cache()
+    yield
+    invalidate_market_config_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -516,14 +544,12 @@ def test_disabled_indicator_falls_back_to_legacy_path(
 ) -> None:
     # Given：运行期把 fut-CU 停用（视同未登记）
     invalidate_market_config_cache()
-    db_session.add(
-        RuleDimensionConfig(
-            key="market-config",
-            label="行情指标配置",
-            enabled=True,
-            config={"indicators": {"fut-CU": {"enabled": False}}},
-        )
+    row = db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == MARKET_CONFIG_KEY)
     )
+    assert row is not None
+    row.config = {"indicators": {"fut-CU": {"enabled": False}}}
+    db_session.commit()
     source = _source(db_session, "commodity-futures")
     signal = _pending(
         db_session,
@@ -744,6 +770,44 @@ def test_non_market_event_keeps_first_snapshot_on_same_key_reuse(
     assert event is not None
     assert event.summary == "首次司法摘要"
     assert event.severity == "medium"
+
+
+def test_analysis_disabled_only_records_without_events_or_alerts(
+    db_session: Session, monkeypatch: MonkeyPatch, no_llm: None
+) -> None:
+    """判定总开关关闭（生产默认）：只落记录、终结信号，不判涨跌幅、不产事件/提醒。"""
+    # Given：序列已满足持续触发条件（20 点累计 +8%），开关关闭时也不得判定。
+    source = _source(db_session, "commodity-futures")
+    signal = _seed_series(
+        db_session, source, index=1, first=70000.0, last=75600.0,
+        count=20, change=0.5,
+    )
+    row = db_session.scalar(
+        select(RuleDimensionConfig).where(RuleDimensionConfig.key == MARKET_CONFIG_KEY)
+    )
+    assert row is not None
+    row.config = {"analysis_enabled": False}
+    db_session.commit()
+    invalidate_market_config_cache()
+    monkeypatch.setattr(scheduler_jobs, "SessionLocal", lambda: nullcontext(db_session))
+    monkeypatch.setattr(scheduler_jobs, "SIGNAL_RELEVANCE_FILTER_ENABLED", True)
+
+    # When
+    processed = scheduler_jobs._process_pending_signals(limit=20, now_utc=NOW)
+
+    # Then：终态 + 仅记录原因，且全库没有任何事件或提醒。
+    assert processed == 0
+    db_session.refresh(signal)
+    assert signal.processing_state == ProcessingState.NO_TRIGGER
+    assert (
+        signal.validity_reason["details"]["filter"] == scheduler_jobs.MARKET_RECORD_KIND
+    )
+    records = _analyses(db_session, signal)
+    assert len(records) == 1
+    assert records[0].result is None
+    assert records[0].error is not None and records[0].error.startswith("recorded:")
+    assert db_session.scalar(select(func.count()).select_from(RiskEvent)) == 0
+    assert db_session.scalar(select(func.count()).select_from(RiskAlert)) == 0
 
 
 def test_profile_override_still_refreshes_snapshot_and_keeps_key(

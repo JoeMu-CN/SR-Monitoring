@@ -461,6 +461,69 @@ def _config_entry(body: dict[str, object], code: str) -> dict[str, object]:
     raise AssertionError(f"配置响应缺少指标 {code}")
 
 
+def test_series_endpoint_returns_points_without_verdict_fields(
+    client: TestClient, db_session: Session
+) -> None:
+    """放大走势按需拉序列：只回时间与现值，不夹带判定结论。"""
+    source = _source(db_session, FUTURES_SOURCE_CODE, "期货行情（测试）")
+    _observation(db_session, source, index=0, value=70000.0, days_ago=40)
+    _observation(db_session, source, index=1, value=70001.0, days_ago=10)
+    _observation(db_session, source, index=2, value=70002.0, days_ago=0)
+    db_session.commit()
+
+    response = client.get(f"{INDICATORS_URL}/{CU_CODE}/series")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["code"] == CU_CODE
+    assert body["days"] == 90
+    assert [point["value"] for point in body["points"]] == [70000.0, 70001.0, 70002.0]
+    assert set(body["points"][0]) == SERIES_KEYS
+
+
+def test_series_endpoint_truncates_by_days(
+    client: TestClient, db_session: Session
+) -> None:
+    source = _source(db_session, FUTURES_SOURCE_CODE, "期货行情（测试）")
+    _observation(db_session, source, index=0, value=70000.0, days_ago=40)
+    _observation(db_session, source, index=1, value=70001.0, days_ago=0)
+    db_session.commit()
+
+    body = client.get(f"{INDICATORS_URL}/{CU_CODE}/series?days=5").json()
+    assert [point["value"] for point in body["points"]] == [70001.0]
+    assert body["days"] == 5
+
+
+def test_series_endpoint_rejects_unknown_disabled_and_out_of_range(
+    client: TestClient, db_session: Session
+) -> None:
+    assert client.get(f"{INDICATORS_URL}/nope/series").status_code == 404
+    _put_config(client, {CU_CODE: {"enabled": False}})
+    assert client.get(f"{INDICATORS_URL}/{CU_CODE}/series").status_code == 404
+    assert client.get(f"{INDICATORS_URL}/{CU_CODE}/series?days=0").status_code == 422
+    assert client.get(f"{INDICATORS_URL}/{CU_CODE}/series?days=91").status_code == 422
+
+
+def test_series_endpoint_requires_authentication(anon_client: TestClient) -> None:
+    assert anon_client.get(f"{INDICATORS_URL}/{CU_CODE}/series").status_code == 401
+
+
+def test_config_analysis_toggle_round_trip(client: TestClient) -> None:
+    """总开关可写可读：开启后回显 true，关闭后回显 false 且保留配置行。"""
+    opened = client.put(
+        CONFIG_URL, json={"analysis_enabled": True, "indicators": {}}
+    )
+    assert opened.status_code == 200
+    assert opened.json()["analysis_enabled"] is True
+    assert client.get(CONFIG_URL).json()["analysis_enabled"] is True
+
+    closed = client.put(
+        CONFIG_URL, json={"analysis_enabled": False, "indicators": {}}
+    )
+    assert closed.status_code == 200
+    assert closed.json()["analysis_enabled"] is False
+    assert client.get(CONFIG_URL).json()["analysis_enabled"] is False
+
+
 def test_config_view_reports_defaults_and_override_state(client: TestClient) -> None:
     """未配置时 source=default、overridden=false、effective 等于 defaults。"""
     body = client.get(CONFIG_URL).json()
@@ -468,6 +531,8 @@ def test_config_view_reports_defaults_and_override_state(client: TestClient) -> 
     assert body["key"] == MARKET_CONFIG_KEY
     assert body["source"] == "default"
     assert body["updated_at"] is None
+    # 判定总开关默认关闭：行情只记录，不产事件与提醒。
+    assert body["analysis_enabled"] is False
     assert {entry["code"] for entry in body["indicators"]} == set(INDICATORS_BY_CODE)
 
     entry = _config_entry(body, CU_CODE)

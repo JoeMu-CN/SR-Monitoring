@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 import app.scheduler.jobs as scheduler_jobs
 from app.ai.models import AIAnalysisRecord
 from app.ai.schemas import SignalAnalysisResult
-from app.market.config_store import invalidate_market_config_cache
+from app.market.config_store import MARKET_CONFIG_KEY, invalidate_market_config_cache
+from app.risks.models import RuleDimensionConfig
 from app.risks.service import process_analysis
 from app.risks.signal_validity import classify_pending_signal, expire_signal_if_due
 from app.signals.identity import compute_dedup_key
@@ -279,6 +280,16 @@ def test_market_not_triggered_sets_no_trigger_and_keeps_lifecycle(
     db_session: Session,
 ) -> None:
     # Given：已登记指标（沪铜）的单点读数，涨幅远低于触发线，生命周期 active。
+    # 判定总开关默认关闭（只记录），本用例验证"开启后未触发"的既有语义。
+    db_session.add(
+        RuleDimensionConfig(
+            key=MARKET_CONFIG_KEY,
+            label="行情指标运行配置",
+            enabled=True,
+            config={"analysis_enabled": True},
+        )
+    )
+    db_session.commit()
     invalidate_market_config_cache()
     source = _source(db_session, "commodity-futures")
     signal = _insert_signal(

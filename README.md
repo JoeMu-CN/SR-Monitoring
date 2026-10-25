@@ -50,9 +50,9 @@ D8 前端页面、D9 真实信息源与独立调度器，以及 D10 验收收口
 - 监控健康聚合：`GET /api/v1/system/monitoring-health` 报告 Scheduler 心跳与每来源新鲜度/积压；`/api/v1/system/health` 保持数据库存活语义。
 - 通知可靠性：扫描结果显式提交、按 alert×channel 去重、摘要保留全部成员关联、详情链接指向 `/risks/{id}`；外部渠道重复窗口已如实披露。
 - 数据保留清理保护有效及保留期内提醒所引用的完整证据闭包，共享 match/event 不被级联误删。
-- 行情监控：19 个内置指标（14 个期货品种、4 个汇率、国证半导体芯片指数 980017）每日采集，按可配置阈值做确定性窗口判定（免 LLM）；越阈自动生成/复用事件，并分别经行业柱、币种柱关联供应商，形成 P1–P4 提醒。行情信源默认停用，需运营在信息源控制台启用。
+- 行情监控：19 个内置指标（14 个期货品种、4 个汇率、国证半导体芯片指数 980017）每日采集并**只做记录**（读数 + 走势）。阈值判定与风险提醒由总开关 `analysis_enabled` 控制，**默认关闭**；打开后才按可配置阈值做确定性窗口判定（免 LLM），越阈生成/复用事件并经行业柱、币种柱关联供应商。行情信源默认停用，需运营在信息源控制台启用。
 - 供应商结算币种：`settlement_currency`（ISO 4217 三字母、可空），用于汇率敞口匹配；创建、编辑、无损编辑与 Excel 导入全链路支持。
-- 行情监控 API 与页面：`GET /api/v1/market/indicators`、`GET|PUT|DELETE /api/v1/market/config`；「情报聚合」页新增「行情监控」子页签（读数、阈值状态、近 30 观察点走势、提醒入口）；面板内再按汇率 / 大宗商品 / 半导体（以及兜底的「其他指标」）分类页签切换，一次只展示一类指标。
+- 行情监控 API 与页面：`GET /api/v1/market/indicators`、`GET /api/v1/market/indicators/{code}/series?days=90`、`GET|PUT|DELETE /api/v1/market/config`；「情报聚合 → 行情监控」展示读数、读数时间与近 30 观察点走势，点击折线可放大查看 90 天并横向拖动；面板内按汇率 / 大宗商品 / 半导体（以及兜底的「其他指标」）分类页签切换。
 - 情报门控（三段式：确定性规则 → LLM 判定 → 报告）：先跑 `app/risks/intelligence_filter.py` 的制造业硬门槛，命中高置信度非制造业类别（食品农产品、动物检疫、粮食、环保督察动态、环评程序、纯勘误与解读、反恐制裁名单、AI 系统标准等）直接落 `skipped` 且不调用模型；未命中再交给 LLM 做相关性判定，关注域取维度主题 + 启用供应商的行业/原材料/产品关键词/国家（通用品类词如「添加剂」「化工原料」「工业耗材」不进入关注域，避免字面误命中）。LLM 判定不相关的事件同样落 `skipped` 并在列表隐藏（`GET /api/v1/intelligence?tab=policy&status=skipped` 可抽查依据），门控失败落 `failed` 走既有冷却重试。默认只对政策情报开启，配置见 `INTELLIGENCE_GATE_*`；口径升级后用 `scripts/rejudge_intelligence_gate.py` 重判历史行。
 
 ## 本地启动
@@ -404,9 +404,11 @@ cd frontend; npm test
 1. 应用迁移 `0061`（供应商结算币种）与 `0062`（行情信源播种）。迁移只播种信源，**默认停用**，不会自动开启采集。
 2. 在信息源控制台启用三个信源：`commodity-futures`、`fx-rates`、`semiconductor-index`。
 3. 在隔离测试栈内执行 `scripts/seed_source_validity_policies.py` 的 dry-run → `--apply` → `--verify`；预期 `校验通过: 20/20 条`，其中 `semiconductor-index` 为 `until_superseded` + 3 天（见 `.omo/evidence/task-14-market-indicator-monitoring.md`）。
-4. 采集到首批读数后，在「情报聚合 → 行情监控」查看读数与状态；不足 `min_observations`（默认 10 个观察点）时显示「数据积累中」。
+4. 采集到首批读数后，在「情报聚合 → 行情监控」查看读数与走势；当前口径是**只记录、不判定**（`analysis_enabled=false`），界面不再显示阈值状态、涨跌统计或提醒入口。点击折线可放大查看近 90 天序列并横向拖动。
 
-### 阈值与判定口径（默认值，可运行时覆盖）
+### 阈值与判定口径（默认关闭，可运行时开启）
+
+> 以下阈值默认**不生效**：行情信号只落记录，不计算涨跌、不生成事件与提醒。需要恢复判定链路时，先把 `analysis_enabled` 设为 `true`（见下方配置 API）。
 
 | 类别 | 持续偏离 | 单日冲击 | 严重性分档 |
 | --- | --- | --- | --- |
@@ -426,14 +428,17 @@ cd frontend; npm test
 # 只读：当前生效配置（含默认值、覆盖状态与启停）
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/market/config
 
-# 只读：全部指标读数、阈值状态与近 30 观察点序列
+# 只读：全部指标读数与近 30 观察点序列（判定字段仍返回，界面不再展示）
 Invoke-RestMethod http://127.0.0.1:8080/api/v1/market/indicators
+
+# 只读：单指标近 90 天观察点（放大走势图按需拉取）
+Invoke-RestMethod "http://127.0.0.1:8080/api/v1/market/indicators/fut-CU/series?days=90"
 ```
 
 写接口 `PUT /api/v1/market/config`（合并覆盖）与 `DELETE /api/v1/market/config`（回退默认）需要登录会话、`rule_manage` 权限与 Origin + CSRF。覆盖载荷示例：
 
 ```json
-{"indicators":{"fut-CU":{"sustained_change_pct":6,"sustained_window":15}}}
+{"analysis_enabled": true, "indicators": {"fut-CU": {"sustained_change_pct": 6, "sustained_window": 15}}}
 ```
 
 ### 验证

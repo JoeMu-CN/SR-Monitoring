@@ -237,4 +237,19 @@ describe('RiskDetailEvidenceSections 生命周期与处理状态并列展示', (
     expect(screen.getByText('数据积累中')).toBeInTheDocument();
     expect(screen.queryByText('已过滤（锚定发布时间）')).not.toBeInTheDocument();
   });
+
+  it('行情仅记录终态显示「仅记录（未判定）」', () => {
+    renderSections({
+      alert: {
+        validity_reason: {
+          code: 'filtered_out',
+          anchor_source: 'published_at',
+          details: {filter: 'market_recorded'},
+        },
+      },
+    });
+
+    expect(screen.getByText('仅记录（未判定）')).toBeInTheDocument();
+    expect(screen.queryByText('已过滤（锚定发布时间）')).not.toBeInTheDocument();
+  });
 });

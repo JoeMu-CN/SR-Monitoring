@@ -69,10 +69,16 @@ def _now() -> float:
 
 @dataclass(frozen=True, slots=True)
 class MarketConfig:
-    """合并后的运行时视图：``specs`` 只含注册表内指标，``disabled`` 为停用集合。"""
+    """合并后的运行时视图：``specs`` 只含注册表内指标，``disabled`` 为停用集合。
+
+    ``analysis_enabled`` 是总开关：默认 ``False``（只采集入库、只读走势，
+    **不做阈值判定、不生成事件与提醒**）。未来要接回风险判定链路时，
+    通过 ``/api/v1/market/config`` 打开即可，无需改代码。
+    """
 
     specs: Mapping[str, IndicatorSpec]
     disabled: frozenset[str]
+    analysis_enabled: bool = False
 
     def is_enabled(self, code: str) -> bool:
         """指标是否处于启用状态（未登记或被停用均视为未启用）。"""
@@ -93,8 +99,14 @@ class MarketConfig:
 
 
 def default_market_config() -> MarketConfig:
-    """代码内置默认视图（无任何 DB 覆盖）。"""
-    return MarketConfig(specs=INDICATORS_BY_CODE, disabled=frozenset())
+    """代码内置默认视图（无任何 DB 覆盖）。
+
+    判定默认关闭：行情只做记录，避免在接入风险链路的口径未定时
+    每天产出可能误报的供应商提醒。
+    """
+    return MarketConfig(
+        specs=INDICATORS_BY_CODE, disabled=frozenset(), analysis_enabled=False
+    )
 
 
 def _number(value: object) -> float | None:
@@ -198,9 +210,12 @@ def _merge_spec(spec: IndicatorSpec, override: Mapping[str, object]) -> Indicato
 def _merge(defaults: MarketConfig, config: object) -> MarketConfig:
     if not isinstance(config, Mapping):
         return defaults
+    # 总开关是顶层布尔字段：非法值回退默认（False），不因手写配置把判定偷偷打开。
+    flag = config.get("analysis_enabled")
+    analysis_enabled = flag if isinstance(flag, bool) else defaults.analysis_enabled
     overrides = config.get(_INDICATORS_KEY)
     if not isinstance(overrides, Mapping):
-        return defaults
+        return dataclasses.replace(defaults, analysis_enabled=analysis_enabled)
     specs = dict(defaults.specs)
     disabled = set(defaults.disabled)
     for code, override in overrides.items():
@@ -212,7 +227,11 @@ def _merge(defaults: MarketConfig, config: object) -> MarketConfig:
             disabled.add(code)
             continue
         specs[code] = _merge_spec(specs[code], override)
-    return MarketConfig(specs=MappingProxyType(specs), disabled=frozenset(disabled))
+    return MarketConfig(
+        specs=MappingProxyType(specs),
+        disabled=frozenset(disabled),
+        analysis_enabled=analysis_enabled,
+    )
 
 
 _config_cache: MarketConfig | None = None

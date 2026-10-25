@@ -841,6 +841,7 @@ describe('行情指标只读视图与运行配置 API 请求契约', () => {
     key: 'market-indicators',
     source: 'configured',
     updated_at: '2026-10-18T08:05:00Z',
+    analysis_enabled: false,
     indicators: [
       {
         code: 'semi-980017',

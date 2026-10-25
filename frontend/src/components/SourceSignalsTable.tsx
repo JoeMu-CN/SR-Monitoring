@@ -69,10 +69,14 @@ const ANCHOR_SOURCE_LABELS: Record<Exclude<ValidityAnchorSource, 'legacy'>, stri
 
 /**
  * 常见原因取易懂中文，未知原因保留后端原文；时间依据统一说明“依据哪个时间算的”。
- * 行情指标处于观察点积累期时，`filtered_out` 的细节是 market_indicator/accumulating，
- * 这里必须表达为「数据积累中」而不是「已过滤/不相关」。
+ * 行情只做记录不做分析：新行情信号的终态细节是 `filtered_out / market_recorded`，
+ * 这里必须表达为「仅记录（未判定）」而不是「已过滤/不相关」；旧的
+ * `market_indicator/accumulating` 细节继续兼容为「数据积累中」。
  */
 const formatValidityReason = ({code, anchor_source, details}: ValidityReasonRead): string => {
+  if (code === 'filtered_out' && details.filter === 'market_recorded') {
+    return '仅记录（未判定）';
+  }
   if (code === 'filtered_out' && details.filter === 'market_indicator' && details.reason === 'accumulating') {
     return '数据积累中';
   }

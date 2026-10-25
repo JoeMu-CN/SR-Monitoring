@@ -16,10 +16,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -53,6 +53,7 @@ from app.market.schemas import (
     IndicatorLatestRead,
     IndicatorListResponse,
     IndicatorPointRead,
+    IndicatorSeriesResponse,
     IndicatorStatsRead,
     IndicatorStatus,
     IndicatorThresholdsRead,
@@ -106,6 +107,48 @@ def list_market_indicators(
         for spec in specs
     ]
     return IndicatorListResponse(generated_at=now, items=items)
+
+
+@router.get("/indicators/{code}/series", response_model=IndicatorSeriesResponse)
+def market_indicator_series(
+    code: str,
+    session: SessionDependency,
+    _user: RiskView,
+    days: int = Query(default=90, ge=1, le=90),
+) -> IndicatorSeriesResponse:
+    """单指标观察点序列（只读记录，不含判定结论）。
+
+    放大走势图按需拉取：``load_series`` 本身按 90 天保留期读取，这里再按
+    ``days`` 截断。未登记或运行期停用的指标与列表视图同口径（404），
+    避免"详情能看、列表里没有"的两套可见性。
+    """
+    now = datetime.now(UTC)
+    spec = load_market_config(session).spec_for(code)
+    if spec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"未登记或已停用的行情指标：{code}",
+        )
+    source_id = session.scalar(
+        select(DataSource.id).where(DataSource.code == spec.source_code)
+    )
+    series = (
+        load_series(session, spec, source_id=source_id, now=now)
+        if source_id is not None
+        else ()
+    )
+    cutoff = now - timedelta(days=days)
+    return IndicatorSeriesResponse(
+        code=spec.code,
+        label=spec.label,
+        unit=spec.unit,
+        days=days,
+        points=[
+            IndicatorPointRead(observed_at=point.collected_at, value=point.value)
+            for point in series
+            if point.collected_at >= cutoff
+        ],
+    )
 
 
 def _source_index(
@@ -248,6 +291,8 @@ def update_market_config(
         )
     row = _config_row(session)
     merged: dict[str, object] = dict(row.config) if row is not None else {}
+    if payload.analysis_enabled is not None:
+        merged["analysis_enabled"] = payload.analysis_enabled
     stored = merged.get(_INDICATORS_KEY)
     overrides: dict[str, object] = dict(stored) if isinstance(stored, dict) else {}
     for code, patch in payload.indicators.items():
@@ -339,6 +384,7 @@ def _config_read(
         key=MARKET_CONFIG_KEY,
         source="configured" if row is not None and row.enabled else "default",
         updated_at=row.updated_at if row is not None else None,
+        analysis_enabled=effective.analysis_enabled,
         indicators=indicators,
     )
 

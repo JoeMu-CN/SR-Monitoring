@@ -230,19 +230,15 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
   await expect(page.getByTestId('market-group-panel-commodity-futures')).toBeHidden();
   await expect(page.getByTestId('market-group-panel-semiconductor-index')).toBeHidden();
 
-  // 汇率分类三态：触发中 / 数据积累中 3/10 / 正常。
-  await expect(page.getByTestId('market-indicator-status-fx-CNY')).toHaveText('触发中');
-  await expect(page.getByTestId('market-indicator-status-fx-JPY')).toHaveText('数据积累中 3/10');
-  await expect(page.getByTestId('market-indicator-status-fx-EUR')).toHaveText('正常');
+  // 只做记录：卡片只给读数、单位与读数时间，不再出现任何判定/提醒语义。
+  await expect(page.getByTestId('market-indicator-status-fx-CNY')).toHaveCount(0);
+  await expect(page.getByTestId('market-indicator-day-change-fx-CNY')).toHaveCount(0);
+  await expect(page.getByTestId('market-indicator-window-change-fx-CNY')).toHaveCount(0);
+  await expect(page.getByTestId('market-indicator-alert-fx-CNY')).toHaveCount(0);
 
-  // 单日变化与窗口累计是两个口径；未形成统计时不得用 0 冒充。
-  await expect(page.getByTestId('market-indicator-day-change-fx-CNY')).toContainText('-1.86%');
-  await expect(page.getByTestId('market-indicator-window-change-fx-CNY')).toContainText('-3.42%');
-  await expect(page.getByTestId('market-indicator-window-change-fx-JPY')).toHaveText('—');
-
-  // 提醒入口只在 latest_alert_id 存在时出现，且指向风险详情。
-  await expect(page.getByTestId('market-indicator-alert-fx-CNY')).toHaveAttribute('href', '/risks/4821');
-  await expect(page.getByTestId('market-indicator-alert-fx-EUR')).toHaveCount(0);
+  await expect(page.getByTestId('market-indicator-value-fx-CNY')).toHaveText('7.1234');
+  await expect(page.getByTestId('market-indicator-observed-fx-CNY')).not.toBeEmpty();
+  await expect(page.getByTestId('market-indicator-footer-note')).toContainText('行情数据仅记录走势，暂不参与风险判定');
 
   // 走势为内联 SVG：30 点折线有几何。
   const spark = page.getByTestId('market-indicator-spark-fx-CNY');
@@ -252,18 +248,18 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
   expect(polyline).not.toContain('NaN');
   expect((polyline ?? '').trim().split(/\s+/)).toHaveLength(30);
 
-  // 切到大宗商品：提醒入口指向 /risks/:id；空序列没有折线也没有 NaN。
+  // 切到大宗商品：不再有提醒入口；空序列没有折线也没有 NaN。
   await page.getByTestId('market-group-tab-commodity-futures').click();
   await expect(page.getByTestId('market-group-tab-commodity-futures')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('market-group-panel-commodity-futures')).toBeVisible();
-  await expect(page.getByTestId('market-indicator-alert-fut-CU')).toHaveAttribute('href', '/risks/7');
+  await expect(page.getByTestId('market-indicator-alert-fut-CU')).toHaveCount(0);
   await expect(page.getByTestId('market-indicator-spark-fut-ZN')).toHaveAttribute('data-points', '0');
   expect(await page.getByTestId('market-indicator-spark-fut-ZN').locator('polyline').count()).toBe(0);
 
   // 切到半导体：latest 全空不得编造现值。
   await page.getByTestId('market-group-tab-semiconductor-index').click();
   await expect(page.getByTestId('market-indicator-value-semi-980017')).toHaveText('—');
-  await expect(page.getByTestId('market-indicator-day-change-semi-980017')).toHaveText('—');
+  await expect(page.getByTestId('market-indicator-observed-semi-980017')).toHaveText('暂无读数');
 
   await page.screenshot({path: resolve(evidenceDirectory, 'task18-desktop-1280-market-tab.png'), fullPage: true});
   await assertNoHorizontalOverflow(page);
@@ -284,7 +280,7 @@ test('平板768 / 移动375 / 最小320：三态卡片与走势图在窄屏不�
     await expect(page.getByRole('heading', {name: '情报聚合'})).toBeVisible({timeout: 15_000});
     await settleRoute(page);
     await tab(page, '行情监控').click();
-    await expect(page.getByTestId('market-indicator-status-fx-CNY')).toBeVisible();
+    await expect(page.getByTestId('market-indicator-value-fx-CNY')).toBeVisible();
 
     // 宽带不变，窄屏下四个（含兜底）分类页签必须能换行/收缩，不撑破容器。
     await expect(page.getByTestId('market-indicator-group-tabs')).toBeVisible();
@@ -363,7 +359,7 @@ test('失败后重试：首个请求 500 走错误面板，重试后恢复三态
 
   await page.getByRole('button', {name: '重试'}).click();
 
-  await expect(page.getByTestId('market-indicator-status-fx-CNY')).toHaveText('触发中');
+  await expect(page.getByTestId('market-indicator-value-fx-CNY')).toHaveText('7.1234');
   await expect(alert).toHaveCount(0);
 
   await context.close();

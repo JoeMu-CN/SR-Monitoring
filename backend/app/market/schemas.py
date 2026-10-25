@@ -118,6 +118,21 @@ class IndicatorListResponse(BaseModel):
     items: list[IndicatorItemRead]
 
 
+class IndicatorSeriesResponse(BaseModel):
+    """单指标的观察点序列（只读记录，不含任何判定字段）。
+
+    供放大走势图按需拉取更长历史；``days`` 回显实际请求的回看天数。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    label: str
+    unit: str
+    days: int
+    points: list[IndicatorPointRead]
+
+
 class MarketConfigIndicatorRead(BaseModel):
     """单个指标的生效配置与默认值对照。
 
@@ -148,6 +163,8 @@ class MarketConfigRead(BaseModel):
     key: str
     source: ConfigSource
     updated_at: datetime | None = None
+    #: 判定总开关（默认关闭）：关闭时行情只采集/记录，不产事件与提醒。
+    analysis_enabled: bool
     indicators: list[MarketConfigIndicatorRead]
 
 
@@ -203,8 +220,12 @@ class MarketConfigIndicatorPatch(BaseModel):
 
 
 class MarketConfigUpdate(BaseModel):
-    """配置写入载荷：按指标代码给出补丁；空字典是 no-op，不清空既有覆盖。"""
+    """配置写入载荷：按指标代码给出补丁；空字典是 no-op，不清空既有覆盖。
+
+    ``analysis_enabled`` 是顶层总开关，与逐指标覆盖并列；``None`` 表示本次不改。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    analysis_enabled: bool | None = None
     indicators: dict[str, MarketConfigIndicatorPatch]

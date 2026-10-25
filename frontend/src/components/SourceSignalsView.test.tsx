@@ -723,6 +723,14 @@ describe('采集记录有效期原因显示', () => {
     })).toBe('数据积累中');
   });
 
+  it('行情仅记录终态显示「仅记录（未判定）」，不读成已过滤/不相关', async () => {
+    expect(await renderValidityReason({
+      code: 'filtered_out',
+      anchor_source: 'published_at',
+      details: {filter: 'market_recorded'},
+    })).toBe('仅记录（未判定）');
+  });
+
   it('未知原因保留后端原文并照常标注时间依据', async () => {
     expect(await renderValidityReason({code: 'brand_new_reason', anchor_source: 'published_at', details: {}}))
       .toBe('brand_new_reason（以发布时间为依据）');

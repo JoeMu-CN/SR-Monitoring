@@ -445,9 +445,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight lg:text-2xl">信息源清单</h1>
-          <p className="text-xs text-[#424751] dark:text-slate-400 mt-0.5">
-            监控多维数据 API 接口连通度、网络延迟及全网累计采集记录。
-          </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <span className="text-xs text-slate-500 mr-1">当前权限：{role === 'admin' ? '风险运营管理' : '只读'}</span>

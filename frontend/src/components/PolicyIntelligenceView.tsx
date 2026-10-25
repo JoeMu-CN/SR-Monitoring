@@ -171,7 +171,6 @@ export const PolicyIntelligenceView = () => {
     <div className="space-y-3 pb-20 sm:space-y-5 lg:pb-8">
       <div>
         <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">情报聚合</h1>
-        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">政策与行业维度的宏观情报解读，以及行情指标越阈监控：简要报告、风险提醒建议与指标触发状态</p>
       </div>
 
       <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">

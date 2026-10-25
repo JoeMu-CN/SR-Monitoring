@@ -82,7 +82,7 @@ export const UsersManagementView = ({currentUser, onRequestError, onCurrentUserU
   return (
     <div className="space-y-5 pb-20 lg:pb-8">
       <header className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
-        <div><h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">用户管理</h1><p className="mt-0.5 text-xs text-[#424751] dark:text-slate-400">管理平台账号、角色和访问状态。</p></div>
+        <div><h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">用户管理</h1></div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           {currentUser.role === 'platform_admin' && <button type="button" onClick={() => setPushMatrixOpen(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#c2c6d2] bg-white px-4 text-sm font-bold text-[#007aff] hover:bg-[#eef6ff] focus:outline-none focus:ring-2 focus:ring-[#007aff] dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800 sm:w-auto"><BellRing aria-hidden="true" className="h-4 w-4" />推送管理</button>}
           <button type="button" onClick={() => setEditor({mode: 'create'})} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#007aff] px-4 text-sm font-bold text-white hover:bg-[#0062cc] focus:outline-none focus:ring-2 focus:ring-[#007aff] focus:ring-offset-2 sm:w-auto"><UserPlus aria-hidden="true" className="h-4 w-4" />创建用户</button>

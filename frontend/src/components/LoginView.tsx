@@ -28,7 +28,6 @@ export function LoginView({onSubmit, error}: LoginViewProps) {
           <img src="/logo.svg" alt="SR Monitoring" className="w-12 h-12 rounded-xl" />
           <div>
             <h1 className="text-xl font-extrabold">供应商风险监控平台</h1>
-            <p className="text-xs text-slate-500 mt-1">登录后访问风险数据与助手</p>
           </div>
         </div>
         <form onSubmit={submit} className="space-y-4">

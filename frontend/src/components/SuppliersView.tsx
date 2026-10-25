@@ -112,7 +112,6 @@ export const SuppliersView = ({
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-xl font-black tracking-tight text-slate-900 lg:text-2xl dark:text-white">供应商管理</h1>
-          <p className="mt-0.5 text-xs text-[#424751] dark:text-slate-400">全网一级供应商主表及实时风险监控状态</p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <button

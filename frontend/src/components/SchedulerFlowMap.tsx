@@ -280,8 +280,8 @@ interface FlowParticlesProps {
   readonly onArrive: (key: string, kind: ParticleKind) => void;
 }
 
-const AMBIENT_INTERVAL_SECONDS = 2.6;
-const AMBIENT_SPEED = 1 / 4.2;
+const AMBIENT_INTERVAL_SECONDS = 3.2;
+const AMBIENT_SPEED = 1 / 3.6;
 const TRIGGER_SPEED = 1 / 2.4;
 
 const FlowParticles = ({
@@ -364,12 +364,12 @@ const FlowParticles = ({
             context.fill();
           }
         }
-        context.globalAlpha = isTrigger ? 0.98 : 0.55;
+        context.globalAlpha = isTrigger ? 0.98 : 0.7;
         context.beginPath();
         context.fillStyle = color;
         context.shadowColor = color;
-        context.shadowBlur = isTrigger ? 10 : 4;
-        context.arc(point.x, point.y, isTrigger ? 4 : 1.8, 0, Math.PI * 2);
+        context.shadowBlur = isTrigger ? 10 : 5;
+        context.arc(point.x, point.y, isTrigger ? 4 : 2.2, 0, Math.PI * 2);
         context.fill();
         context.shadowBlur = 0;
         context.globalAlpha = 1;
@@ -789,7 +789,10 @@ export const SchedulerFlowMap = ({model, asOf, live}: SchedulerFlowMapProps) => 
             />
             <svg className="sflow-ports" width={layout.width || '100%'} height={layout.height || '100%'} aria-hidden="true">
               {layout.ports.map((port, index) => (
-                <circle key={`${index}-${port.x}-${port.y}`} cx={port.x} cy={port.y} r={3} className={`sflow-port sflow-state--${port.state}`} />
+                <g key={`${index}-${port.x}-${port.y}`}>
+                  <circle cx={port.x} cy={port.y} r={3} className={`sflow-port sflow-state--${port.state}`} />
+                  <circle cx={port.x} cy={port.y} r={5.4} className={`sflow-port-ring sflow-state--${port.state}`} />
+                </g>
               ))}
             </svg>
 

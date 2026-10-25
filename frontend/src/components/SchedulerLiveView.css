@@ -16,7 +16,9 @@
   border-radius: 16px;
   background: #0b131e;
   color: #e2e8f0;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.24);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.05), 0 18px 40px rgba(0, 0, 0, 0.24);
 }
 
 .scheduler-live::-webkit-scrollbar {
@@ -41,6 +43,7 @@
   border: 1px solid #2b3b52;
   border-radius: 12px;
   background: #0e1726;
+  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.045);
 }
 
 .scheduler-live-head-main {
@@ -150,12 +153,33 @@
 }
 
 .scheduler-live-stats {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid #2b3b52;
   border-radius: 12px;
   background: #0e1726;
+  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.045);
+}
+
+/* 快照刷新微光：绝对定位、1px 高，只重挂载不参与布局。 */
+.scheduler-live-stats-refresh {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 32%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.6), transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: scheduler-live-stats-refresh 600ms ease-out 1;
+}
+
+@keyframes scheduler-live-stats-refresh {
+  0% { opacity: 0; transform: translateX(-100%); }
+  20% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateX(320%); }
 }
 
 .scheduler-live-stat {
@@ -170,9 +194,9 @@
 
 .scheduler-live-stat-label {
   display: block;
-  color: #64748b;
-  font-size: 8.5px;
-  letter-spacing: 0.13em;
+  color: #8294aa;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -183,8 +207,8 @@
   margin-top: 2px;
   color: #f1f5f9;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 21px;
-  font-weight: 800;
+  font-size: 22px;
+  font-weight: 700;
   line-height: 1.05;
 }
 
@@ -201,7 +225,7 @@
   margin-top: 2px;
   overflow: hidden;
   color: #94a3b8;
-  font-size: 9px;
+  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -258,9 +282,9 @@
 
 .scheduler-live-next {
   overflow: hidden;
-  color: #64748b;
+  color: #7d8ea3;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8.5px;
+  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -321,6 +345,7 @@
   border-radius: 12px;
   background: #0e1726;
   text-align: center;
+  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.045);
 }
 
 .scheduler-live-state-icon {
@@ -357,6 +382,7 @@
 .scheduler-live-paused .scheduler-live-ecg-sweep,
 .scheduler-live-paused .scheduler-live-heartbeat-dot,
 .scheduler-live-paused .scheduler-live-spin,
+.scheduler-live-paused .sflow-edge--active,
 .scheduler-live-paused .sflow-node.sflow-state--running::after {
   animation-play-state: paused !important;
 }
@@ -432,6 +458,8 @@
   .scheduler-live-ecg-sweep,
   .scheduler-live-heartbeat-dot,
   .scheduler-live-spin,
+  .scheduler-live-stats-refresh,
+  .sflow-edge--active,
   .sflow-node.sflow-state--running::after {
     animation: none !important;
   }

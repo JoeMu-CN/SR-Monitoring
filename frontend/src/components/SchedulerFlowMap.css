@@ -3,6 +3,8 @@
 .sflow {
   min-width: 0;
   color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 
 .sflow-toolbar {
@@ -60,8 +62,48 @@
 }
 
 .sflow-canvas {
+  position: relative;
   min-width: 1080px;
   width: 100%;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  /* 底板：24px 测量网格 + 上下轻微暗角，让网络区从卡片变成独立仪表窗口。 */
+  background-color: #0a1220;
+  background-image:
+    linear-gradient(
+      180deg,
+      rgba(2, 7, 14, 0.45) 0,
+      rgba(2, 7, 14, 0) 32px,
+      rgba(2, 7, 14, 0) calc(100% - 32px),
+      rgba(2, 7, 14, 0.45) 100%
+    ),
+    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 24px);
+}
+
+/* 低对比角标：落在标签行的空白带与底边，回字形太满，这里只用 12×4 的拐角裁切记号。 */
+.sflow-canvas::before,
+.sflow-canvas::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  pointer-events: none;
+}
+
+.sflow-canvas::before {
+  top: -1px;
+  left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.sflow-canvas::after {
+  right: 0;
+  bottom: -1px;
+  border-top: 0;
+  border-left: 0;
 }
 
 .sflow-grid {
@@ -81,26 +123,31 @@
   gap: 6px;
   min-width: 0;
   grid-row: 1;
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #64748b;
+  color: #8294aa;
   white-space: nowrap;
 }
 
 .sflow-label b {
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8px;
+  font-size: 8.5px;
   font-weight: 700;
-  color: #52647c;
+  color: #7a8ca1;
   letter-spacing: 0;
 }
 
+/* 分隔线改为 8px 刻度尺：不新增文字，只把占位线变成测量刻度。 */
 .sflow-label span {
   flex: 1;
-  height: 1px;
-  background: #2b3b52;
+  height: 8px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.2) 0 1px,
+    transparent 1px 8px
+  );
 }
 
 .sflow-label--collect { grid-column: 1; }
@@ -124,27 +171,45 @@
 
 .sflow-edge {
   fill: none;
-  stroke: #31445e;
+  stroke: #4d6178;
   stroke-width: 1.25;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.sflow-edge--active { stroke: #3f7fa8; }
-.sflow-edge--warn { stroke: #7a4a32; }
-.sflow-edge--done { stroke: #455a75; }
-.sflow-edge--idle { stroke: #2c3d52; }
+/* 活动边：更亮、更粗，并叠加一条 1.4s 的流动虚线；静止（减少动效）时仍是可读虚线。 */
+.sflow-edge--active {
+  stroke: #5d84a7;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 5;
+  animation: sflow-edge-flow 1.4s linear infinite;
+}
 
+.sflow-edge--warn { stroke: #9a5c3f; stroke-width: 1.35; }
+.sflow-edge--done { stroke: #556b84; }
+.sflow-edge--idle { stroke: #4d6178; }
+
+/* 端口改为“闸口”语言：实心 + 环 / 实心 + 虚环 / 空心 + 环，颜色之外再给一层形状差异。 */
 .sflow-port {
-  fill: #0b131e;
-  stroke: #5b748f;
+  fill: #0a1220;
+  stroke: #6b7f96;
   stroke-width: 1.2;
 }
 
-.sflow-port.sflow-state--running { fill: #38bdf8; stroke: #0b131e; }
-.sflow-port.sflow-state--error { fill: #ff3b30; stroke: #0b131e; }
-.sflow-port.sflow-state--missed { fill: #ff9500; stroke: #0b131e; }
-.sflow-port.sflow-state--completed { fill: #94a3b8; stroke: #0b131e; }
+.sflow-port-ring {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 1;
+}
+
+.sflow-port.sflow-state--running { fill: #38bdf8; stroke: #0a1220; }
+.sflow-port.sflow-state--error { fill: #ff3b30; stroke: #0a1220; }
+.sflow-port.sflow-state--missed { fill: #0a1220; stroke: #ff9500; stroke-width: 1.4; }
+.sflow-port.sflow-state--completed { fill: #94a3b8; stroke: #0a1220; }
+
+.sflow-port-ring.sflow-state--running { stroke: rgba(56, 189, 248, 0.55); }
+.sflow-port-ring.sflow-state--error { stroke: rgba(255, 59, 48, 0.6); stroke-dasharray: 1.8 1.8; }
+.sflow-port-ring.sflow-state--missed { stroke: rgba(255, 149, 0, 0.65); }
 
 .sflow-slot {
   position: relative;
@@ -175,7 +240,7 @@
   gap: 2px;
   width: 100%;
   height: 100%;
-  padding: 7px 8px 6px;
+  padding: 7px 8px 6px 11px;
   overflow: hidden;
   border: 1px solid #354863;
   border-radius: 10px;
@@ -183,12 +248,24 @@
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+/* 左侧 2px 状态轨：状态色从边框迁移到轨道，卡片边框回归中性。 */
+.sflow-node::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: #31445c;
 }
 
 .sflow-node:hover {
-  border-color: #3a4c66;
-  background: #132136;
+  border-color: #3d5170;
+  background-color: #132136;
 }
 
 .sflow-node:focus-visible {
@@ -196,15 +273,26 @@
   outline-offset: 2px;
 }
 
+/* 选中：加粗状态轨 + 顶部 1px 亮线，不再与运行中的青色抢同一个视觉信号。 */
 .sflow-node.is-selected {
-  border-color: rgba(56, 189, 248, 0.62);
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.16);
-  background: #11243a;
+  border-color: rgba(148, 163, 184, 0.5);
+  background-color: #11203a;
+  background-image: linear-gradient(180deg, rgba(226, 232, 240, 0.13) 0, rgba(226, 232, 240, 0) 7px);
 }
 
+.sflow-node.is-selected::before {
+  width: 3px;
+}
+
+/* 未注册：只降级边框与底色，不为整卡降透明度（否则 9px 次级文字会先失效）。 */
 .sflow-node.is-unregistered {
   border-style: dashed;
-  opacity: 0.6;
+  border-color: #2f4058;
+  background-color: #0c1421;
+}
+
+.sflow-node.is-unregistered .sflow-node-name {
+  color: #cbd5e1;
 }
 
 .sflow-node-top {
@@ -230,9 +318,9 @@
   display: block;
   overflow: hidden;
   margin-top: 1px;
-  color: #64748b;
+  color: #7d8ea3;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8px;
+  font-size: 9.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -245,7 +333,7 @@
   gap: 6px;
   margin-top: 3px;
   color: #94a3b8;
-  font-size: 8.5px;
+  font-size: 9.5px;
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -253,7 +341,7 @@
 .sflow-node-foot b {
   color: #aebbd0;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8.5px;
+  font-size: 9.5px;
   font-weight: 600;
 }
 
@@ -267,7 +355,7 @@
   bottom: 5px;
   color: #38bdf8;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -312,16 +400,31 @@
 }
 
 .sflow-node.sflow-state--running {
-  border-color: rgba(56, 189, 248, 0.3);
-  background: #102132;
+  border-color: rgba(56, 189, 248, 0.26);
+  background-color: #102132;
 }
 
 .sflow-node.sflow-state--error {
-  border-color: rgba(255, 59, 48, 0.3);
+  border-color: rgba(255, 59, 48, 0.26);
 }
 
 .sflow-node.sflow-state--missed {
-  border-color: rgba(255, 149, 0, 0.26);
+  border-color: rgba(255, 149, 0, 0.22);
+}
+
+/* 状态色落在左侧轨道上，卡片边框只保留极弱提示。 */
+.sflow-node.sflow-state--running::before { background: #38bdf8; }
+.sflow-node.sflow-state--error::before { background: #ff3b30; }
+.sflow-node.sflow-state--missed::before { background: #ff9500; }
+.sflow-node.sflow-state--completed::before { background: #94a3b8; }
+.sflow-node.sflow-state--max_instances::before { background: #8e8e93; }
+.sflow-node.sflow-state--no_record::before { background: #475569; }
+.sflow-node.is-unregistered::before { background: #3a4b60; }
+
+/* 选中态底色优先于状态底色（状态仍由轨道颜色表达）。 */
+.sflow-node.is-selected,
+.sflow-hub.is-selected {
+  background-color: #11203a;
 }
 
 .sflow-node.sflow-state--running::after {
@@ -329,12 +432,12 @@
   position: absolute;
   left: 8px;
   bottom: 2px;
-  width: 24%;
+  width: 30%;
   height: 1.5px;
   border-radius: 2px;
   background: #38bdf8;
-  opacity: 0.75;
-  animation: sflow-scan 2.4s ease-in-out infinite;
+  opacity: 0.7;
+  animation: sflow-scan 3.2s ease-in-out infinite;
 }
 
 .sflow-badge {
@@ -348,7 +451,7 @@
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.08);
   color: #cbd5e1;
-  font-size: 8px;
+  font-size: 8.5px;
   font-weight: 700;
   line-height: 1.2;
   white-space: nowrap;
@@ -388,7 +491,7 @@
 
 .sflow-badge--no_record,
 .sflow-badge--unregistered {
-  color: #64748b;
+  color: #8294aa;
 }
 
 .sflow-badge--data {
@@ -407,7 +510,7 @@
   width: 100%;
   height: 192px;
   max-height: 100%;
-  padding: 12px 14px;
+  padding: 12px 14px 12px 16px;
   overflow: hidden;
   border: 1px solid #3b506b;
   border-radius: 12px;
@@ -415,11 +518,23 @@
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+
+/* 信号池同属四列节点语言：左侧状态轨在数据节点上固定为冷蓝。 */
+.sflow-hub::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: #4a6d8f;
 }
 
 .sflow-hub:hover {
-  border-color: #3c526f;
+  border-color: #415774;
 }
 
 .sflow-hub:focus-visible {
@@ -428,8 +543,12 @@
 }
 
 .sflow-hub.is-selected {
-  border-color: rgba(56, 189, 248, 0.62);
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.16);
+  border-color: rgba(148, 163, 184, 0.5);
+  background-image: linear-gradient(180deg, rgba(226, 232, 240, 0.13) 0, rgba(226, 232, 240, 0) 7px);
+}
+
+.sflow-hub.is-selected::before {
+  width: 3px;
 }
 
 .sflow-hub-tag {
@@ -439,17 +558,17 @@
   padding: 1px 4px;
   border: 1px solid #354863;
   border-radius: 4px;
-  color: #64748b;
-  font-size: 7.5px;
-  letter-spacing: 0.08em;
+  color: #7d8ea3;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
 }
 
 .sflow-hub-label {
   display: block;
   color: #7dd3fc;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
@@ -458,8 +577,8 @@
   margin-top: 2px;
   color: #f1f5f9;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 21px;
-  font-weight: 800;
+  font-size: 22px;
+  font-weight: 700;
   line-height: 1.1;
 }
 
@@ -477,11 +596,11 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  max-width: 170px;
+  max-width: 176px;
   padding-top: 6px;
   border-top: 1px solid #2c3d52;
   color: #94a3b8;
-  font-size: 9px;
+  font-size: 9.5px;
 }
 
 .sflow-hub-row b {
@@ -497,8 +616,8 @@
 .sflow-hub-foot {
   display: block;
   margin-top: 4px;
-  color: #64748b;
-  font-size: 8px;
+  color: #7d8ea3;
+  font-size: 9px;
   line-height: 1.4;
 }
 
@@ -520,15 +639,15 @@
 }
 
 .sflow-aux-label {
-  color: #64748b;
-  font-size: 8px;
-  letter-spacing: 0.13em;
+  color: #7d8ea3;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .sflow-aux-empty {
-  color: #475569;
-  font-size: 9px;
+  color: #64748b;
+  font-size: 9.5px;
 }
 
 .sflow-aux-chip {
@@ -542,7 +661,7 @@
   border-radius: 999px;
   background: #0d1a2a;
   color: #cbd5e1;
-  font-size: 9px;
+  font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
@@ -554,8 +673,9 @@
 }
 
 .sflow-aux-chip.is-selected {
-  border-color: rgba(56, 189, 248, 0.55);
-  color: #e0f2fe;
+  border-color: rgba(203, 213, 225, 0.5);
+  color: #e2e8f0;
+  background: #11203a;
 }
 
 .sflow-aux-chip:focus-visible {
@@ -600,6 +720,7 @@
   border: 1px solid #2b3b52;
   border-radius: 12px;
   background: #0e1726;
+  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.045);
 }
 
 .sflow-detail-head {
@@ -625,17 +746,17 @@
 }
 
 .sflow-detail-head > code {
-  color: #64748b;
+  color: #7d8ea3;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8.5px;
+  font-size: 9px;
   white-space: nowrap;
 }
 
 .sflow-detail-stage {
   margin-left: auto;
-  color: #64748b;
-  font-size: 8px;
-  letter-spacing: 0.1em;
+  color: #7d8ea3;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -655,16 +776,16 @@
 }
 
 .sflow-detail-grid span {
-  color: #64748b;
-  font-size: 7.5px;
-  letter-spacing: 0.08em;
+  color: #7d8ea3;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .sflow-detail-grid b {
   color: #cbd5e1;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -784,15 +905,21 @@
 }
 
 .sflow-member-next {
-  color: #64748b;
+  color: #7d8ea3;
   font-family: "IBM Plex Mono", "Consolas", monospace;
-  font-size: 8px;
+  font-size: 8.5px;
   white-space: nowrap;
 }
 
 @keyframes sflow-scan {
   0%, 100% { transform: translateX(0); opacity: 0.25; }
-  50% { transform: translateX(280%); opacity: 0.85; }
+  50% { transform: translateX(215%); opacity: 0.8; }
+}
+
+/* dasharray 周期为 9，整周期位移保证无缝循环。 */
+@keyframes sflow-edge-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -9; }
 }
 
 @media (max-width: 720px) {
@@ -820,6 +947,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .sflow-node.sflow-state--running::after {
+    animation: none;
+  }
+
+  /* 减少动效：活动边保留可读虚线，不再流动。 */
+  .sflow-edge--active {
     animation: none;
   }
 

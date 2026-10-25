@@ -111,6 +111,8 @@ const Stats = ({
   recentRunCount,
   attentionCount,
   stale,
+  asOf,
+  reduced,
 }: {
   readonly runningCount: number;
   readonly workCount: number;
@@ -118,8 +120,12 @@ const Stats = ({
   readonly recentRunCount: number;
   readonly attentionCount: number;
   readonly stale: boolean;
+  readonly asOf: string;
+  readonly reduced: boolean;
 }) => (
   <div className="scheduler-live-stats" aria-label="调度器概览">
+    {/* 每次快照到达播放一次 600ms 微光；key 变化即重放，不加定时器、不做循环。 */}
+    {!reduced && <span key={asOf} aria-hidden="true" className="scheduler-live-stats-refresh" />}
     <div className={`scheduler-live-stat ${runningCount > 0 ? 'is-running' : ''}`}>
       <span className="scheduler-live-stat-label">运行中</span>
       <strong className="scheduler-live-stat-value">{runningCount}<em>个任务</em></strong>
@@ -237,6 +243,8 @@ export const SchedulerLiveView = ({snapshot, canViewLogs = false, onRequestError
             recentRunCount={flowModel.recentRunCount}
             attentionCount={flowModel.attentionCount}
             stale={stale}
+            asOf={asOf}
+            reduced={reduceMotion}
           />
 
           {stale && <StaleNotice workCount={workCount} lastHeartbeatAt={lastHeartbeatAt} />}

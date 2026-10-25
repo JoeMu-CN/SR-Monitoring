@@ -1,10 +1,19 @@
 import {useMemo, useState} from 'react';
 import {AnimatePresence, motion} from 'motion/react';
 import {ChevronRight, MapPin, RotateCcw, Search, SearchX} from 'lucide-react';
-import {formatProcessingState, formatValidityReasonLabel, formatValidityState, type RiskAlertSummary} from '../api';
+import {EVENT_TYPE_LABELS, formatProcessingState, formatValidityReasonLabel, formatValidityState, type RiskAlertSummary} from '../api';
 import type {RiskItem} from '../types';
 
 const RISK_LEVELS = ['P1', 'P2', 'P3', 'P4'] as const;
+/** 无异常的有效期原因：每个当前有效事件都会带，展示出来只是噪音。 */
+const SILENT_VALIDITY_REASONS = new Set(['effective_signal_support', 'active']);
+
+/** 风险类型筛选键：优先后端事件大类原始码，缺失时回落到中文标签。 */
+const riskTypeKey = (item: RiskItem) => item.eventType ?? item.riskType;
+
+/** 无异常原因没有信息量，卡片只展示有诊断价值的异常原因。 */
+const showValidityReason = (reason: RiskItem['validityReason']) =>
+  Boolean(reason && !SILENT_VALIDITY_REASONS.has(reason.code));
 
 interface CurrentRisksViewProps {
   riskItems: RiskItem[];
@@ -25,7 +34,7 @@ const countByLevel = (levels: readonly {readonly level: string; readonly count: 
 export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisksViewProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLevel, setSelectedLevel] = useState('all');
-  const [selectedSource, setSelectedSource] = useState('all');
+  const [selectedType, setSelectedType] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'valid' | 'invalid'>('valid');
 
   // 已加载单页的分级计数：仅作为汇总不可用时的降级口径。
@@ -38,22 +47,29 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
   const overviewCounts = summary === null ? loadedCounts : countByLevel(summary.level_counts);
   const totalCurrent = summary?.total_current ?? riskItems.length;
 
-  const sourceOptions = useMemo(
-    () => Array.from(new Set(riskItems.map((item) => item.source).filter((s): s is string => Boolean(s)))).sort((a, b) => a.localeCompare(b, 'zh-CN')),
-    [riskItems],
-  );
+  // 风险类型选项取已加载页实际出现的类型，标签复用事件类型中文表（与规则引擎口径一致）。
+  const typeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of riskItems) {
+      const key = riskTypeKey(item);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([code, count]) => ({code, label: EVENT_TYPE_LABELS[code] ?? code, count}))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+  }, [riskItems]);
 
   const filtered = riskItems.filter((item) => {
     const query = searchTerm.trim().toLowerCase();
     const matchesQuery = !query || [item.companyName, item.riskType, item.summary, item.location ?? '', item.source ?? ''].some((value) => value.toLowerCase().includes(query));
-    const matchesSource = selectedSource === 'all' || item.source === selectedSource;
-    return matchesQuery && (selectedLevel === 'all' || item.level === selectedLevel) && matchesSource && item.status === statusFilter;
+    const matchesType = selectedType === 'all' || riskTypeKey(item) === selectedType;
+    return matchesQuery && (selectedLevel === 'all' || item.level === selectedLevel) && matchesType && item.status === statusFilter;
   });
 
   const reset = () => {
     setSearchTerm('');
     setSelectedLevel('all');
-    setSelectedSource('all');
+    setSelectedType('all');
     setStatusFilter('valid');
   };
 
@@ -87,6 +103,7 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
           <label className="flex items-center gap-1.5 text-slate-500">
             风险等级
             <select
+              aria-label="风险等级"
               value={selectedLevel}
               onChange={(event) => setSelectedLevel(event.target.value)}
               className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"
@@ -98,18 +115,19 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
               <option value="P4">P4 轻微</option>
             </select>
           </label>
-          {sourceOptions.length > 1 && (
+          {typeOptions.length > 1 && (
             <label className="flex items-center gap-1.5 text-slate-500">
-              信源
+              风险类型
               <select
-                value={selectedSource}
-                onChange={(event) => setSelectedSource(event.target.value)}
+                aria-label="风险类型"
+                value={selectedType}
+                onChange={(event) => setSelectedType(event.target.value)}
                 className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 font-bold text-[#185fa5] outline-none dark:border-slate-700 dark:bg-slate-900"
               >
-                <option value="all">全部信源（已加载 {riskItems.length}）</option>
-                {sourceOptions.map((source) => (
-                  <option key={source} value={source}>
-                    {source}（{riskItems.filter((item) => item.source === source).length}）
+                <option value="all">全部类型（已加载 {riskItems.length}）</option>
+                {typeOptions.map(({code, label, count}) => (
+                  <option key={code} value={code}>
+                    {label}（{count}）
                   </option>
                 ))}
               </select>
@@ -194,11 +212,11 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
                   </div>
                   <span className="flex items-center gap-1 font-bold text-[#185fa5]">查看详情<ChevronRight className="h-3.5 w-3.5" /></span>
                 </div>
-                {(item.validUntil || item.reviewDueAt || item.validityReason) && (
+                {(item.validUntil || item.reviewDueAt || showValidityReason(item.validityReason)) && (
                   <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800">
                     {item.validUntil && <div><dt className="inline font-bold">截止</dt> <dd className="inline font-mono">{formatDateTime(item.validUntil)}</dd></div>}
                     {item.reviewDueAt && <div><dt className="inline font-bold">复核</dt> <dd className="inline font-mono">{formatDateTime(item.reviewDueAt)}</dd></div>}
-                    {item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline">{formatValidityReasonLabel(item.validityReason.code, item.validityReason.details)}</dd></div>}
+                    {showValidityReason(item.validityReason) && item.validityReason && <div><dt className="inline font-bold">原因</dt> <dd className="inline">{formatValidityReasonLabel(item.validityReason.code, item.validityReason.details)}</dd></div>}
                   </dl>
                 )}
               </motion.button>

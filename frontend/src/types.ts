@@ -8,7 +8,9 @@ export interface RiskItem {
   country?: string;
   level: RiskLevel;
   levelName: string; // e.g. "严重", "高风险", "中度", "轻微关注"
-  riskType: string; // e.g. "被列入失信被执行人", "重大劳资纠纷诉讼", "环保处罚"
+  riskType: string; // 事件类型中文标签，e.g. "自然灾害", "司法风险"
+  /** 事件类型原始码（后端 event_type），用于按风险类型筛选；历史数据可能缺失。 */
+  eventType?: string;
   summary: string;
   aiConfidence: number; // e.g. 99.8
   updatedTime: string;

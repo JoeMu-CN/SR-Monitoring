@@ -10,7 +10,8 @@ const baseItem = (overrides: Partial<RiskItem> = {}): RiskItem => ({
   companyName: '示例供应商',
   level: 'P2',
   levelName: '高风险',
-  riskType: '运输中断',
+  riskType: '物流',
+  eventType: 'logistics',
   summary: '供应链运输中断风险',
   aiConfidence: 99.8,
   updatedTime: '2026-09-01 09:00',
@@ -82,7 +83,7 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
-  it('展示截止时间、复核时间与中文原因，且不暴露策略版本', () => {
+  it('展示截止时间与复核时间；无异常的「存在有效信号支撑」不再展示，且不暴露策略版本', () => {
     render(
       <CurrentRisksView
         riskItems={[baseItem({validityReason: {code: 'effective_signal_support', anchor_source: 'published_at', details: {}}})]}
@@ -93,8 +94,8 @@ describe('当前风险列表有效期状态展示', () => {
 
     expect(screen.getByText('截止')).toBeInTheDocument();
     expect(screen.getByText('复核')).toBeInTheDocument();
-    expect(screen.getByText('原因')).toBeInTheDocument();
-    expect(screen.getByText('存在有效信号支撑')).toBeInTheDocument();
+    expect(screen.queryByText('原因')).not.toBeInTheDocument();
+    expect(screen.queryByText('存在有效信号支撑')).not.toBeInTheDocument();
     expect(screen.queryByText('effective_signal_support')).not.toBeInTheDocument();
     expect(screen.queryByText('策略版本')).not.toBeInTheDocument();
     expect(screen.queryByText('v1')).not.toBeInTheDocument();
@@ -153,6 +154,40 @@ describe('当前风险列表有效期状态展示', () => {
     await user.click(screen.getByRole('button', {name: '已失效'}));
     expect(screen.getByText('过期供应商')).toBeInTheDocument();
     expect(screen.queryByText('示例供应商')).not.toBeInTheDocument();
+  });
+});
+
+describe('风险类型筛选', () => {
+  it('按事件类型筛选，且下拉不再罗列每条独立的信源', async () => {
+    const user = userEvent.setup();
+    const items: RiskItem[] = [
+      baseItem({id: '1', companyName: '物流供应商', eventType: 'logistics', riskType: '物流', source: '信源 A'}),
+      baseItem({id: '2', companyName: '司法供应商', eventType: 'judicial', riskType: '司法', source: '信源 B'}),
+    ];
+
+    render(<CurrentRisksView riskItems={items} summary={null} onSelectRisk={vi.fn()} />);
+
+    const typeSelect = screen.getByRole('combobox', {name: '风险类型'});
+    expect(screen.queryByRole('combobox', {name: '信源'})).not.toBeInTheDocument();
+    expect(within(typeSelect).getByRole('option', {name: '物流（1）'})).toBeInTheDocument();
+    expect(within(typeSelect).getByRole('option', {name: '司法（1）'})).toBeInTheDocument();
+
+    await user.selectOptions(typeSelect, 'judicial');
+
+    expect(screen.getByText('司法供应商')).toBeInTheDocument();
+    expect(screen.queryByText('物流供应商')).not.toBeInTheDocument();
+  });
+
+  it('只有一种风险类型时不渲染类型下拉，避免无意义的单选项', () => {
+    render(
+      <CurrentRisksView
+        riskItems={[baseItem({id: '1'}), baseItem({id: '2', companyName: '另一供应商'})]}
+        summary={null}
+        onSelectRisk={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('combobox', {name: '风险类型'})).not.toBeInTheDocument();
   });
 });
 

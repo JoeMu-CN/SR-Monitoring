@@ -1618,8 +1618,8 @@ export const api = {
 
 const levelNames: Record<RiskLevel, string> = {P1: '重大风险', P2: '高风险', P3: '中风险', P4: '低风险'};
 // 事件类型与事件细类共用同一张中文表（对齐后端 workbench_router 的标签口径）；
-// 未登记的值一律回落到原始码，不裸露空白。
-const eventLabels: Record<string, string> = {
+// 未登记的值一律回落到原始码，不裸露空白。风险类型筛选复用同一张表，不再另建词表。
+export const EVENT_TYPE_LABELS: Record<string, string> = {
   weather: '天气', geological: '地质灾害', logistics: '物流', trade_policy: '贸易政策',
   geopolitical: '地缘政治', corporate: '企业经营', judicial: '司法', compliance: '合规', other: '其他',
   market: '市场行情', exchange_rate: '汇率波动',
@@ -1655,11 +1655,12 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
   const eventCategoryRaw = alert.event_subtype ?? alert.event_type;
   return {
     id: String(alert.id), companyName: alert.supplier_name, vendorId: String(alert.supplier_id),
-    level: alert.level, levelName: levelNames[alert.level], riskType: eventLabels[alert.event_type] ?? alert.event_type,
+    level: alert.level, levelName: levelNames[alert.level], riskType: EVENT_TYPE_LABELS[alert.event_type] ?? alert.event_type,
+    eventType: alert.event_type,
     summary: alert.event_summary, aiConfidence: Math.round(alert.confidence * 1000) / 10,
     updatedTime: formatDateTime(alert.updated_at), matchType: alert.match_type,
     source: alert.source_title || '来源未披露',
-    tags: [eventLabels[alert.event_type] ?? alert.event_type, ...alert.match_reasons.slice(0, 2)],
+    tags: [EVENT_TYPE_LABELS[alert.event_type] ?? alert.event_type, ...alert.match_reasons.slice(0, 2)],
     status: alert.status === 'current' ? 'valid' : 'invalid', overallScore: alert.score,
     validityState: alert.validity_state ?? undefined,
     processingState: alert.processing_state ?? undefined,
@@ -1667,7 +1668,7 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     reviewDueAt: alert.review_due_at,
     validityReason: alert.validity_reason,
     validityPolicyVersion: alert.validity_policy_version,
-    eventCategory: eventLabels[eventCategoryRaw] ?? eventCategoryRaw, impactScope: evidenceText(alert.match_evidence),
+    eventCategory: EVENT_TYPE_LABELS[eventCategoryRaw] ?? eventCategoryRaw, impactScope: evidenceText(alert.match_evidence),
     evidenceChain: {
       sourceName: alert.source_title || '来源未披露', sourceType: '风险信号', eventSummary: alert.event_summary,
       matchStatus: alert.match_reasons.join('；') || alert.match_type,

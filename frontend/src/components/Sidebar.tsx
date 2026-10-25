@@ -88,6 +88,8 @@ export const Sidebar = ({
   const desktopRoutes = visibleNavigationRoutes(permissions, 'desktop');
   const mainItems = desktopRoutes.filter((route) => route.navigation.section === 'main');
   const systemItems = desktopRoutes.filter((route) => route.navigation.section === 'system');
+  // 主区与系统区合并为同一序列：组内与组间使用完全相同的行间距，避免两段之间出现更大的空隙。
+  const navItems = [...mainItems, ...systemItems];
   const compact = stage > 0;
   const [hovered, setHovered] = useState(false);
   const [toggleVisible, setToggleVisible] = useState(true);
@@ -109,6 +111,10 @@ export const Sidebar = ({
 
   const toggleLabel = stage === 0 ? '收起导航到一级' : stage === 1 ? '继续收起到二级' : '展开导航';
   const widthClass = stage === 0 ? 'w-[240px] p-3.5' : 'w-[72px] p-2';
+  // 底部三个入口共用同一外观：展开态为等宽「图标 + 文本」，折叠态为同尺寸（36×36）的方图标按钮。
+  const footerEntryClass = `flex items-center justify-center whitespace-nowrap rounded-lg text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800 ${
+    compact ? 'h-9 w-9 shrink-0' : 'h-8 flex-1 gap-1 text-[11px] font-medium'
+  }`;
 
   const toggleButton = (placement: string) => (
     <button
@@ -170,12 +176,9 @@ export const Sidebar = ({
         )}
       </div>
 
-      <div className={`flex flex-1 flex-col gap-4 overflow-y-auto ${compact ? 'items-center' : 'pr-0.5'}`}>
+      <div className={`flex flex-1 flex-col overflow-y-auto ${compact ? 'items-center' : 'pr-0.5'}`}>
         <div className={`space-y-1 ${compact ? 'w-full' : ''}`}>
-          {mainItems.map((route) => <SidebarItem key={route.id} route={route} p1RiskCount={p1RiskCount} compact={compact} />)}
-        </div>
-        <div className={`space-y-1 ${compact ? 'w-full' : ''}`}>
-          {systemItems.map((route) => <SidebarItem key={route.id} route={route} p1RiskCount={p1RiskCount} compact={compact} />)}
+          {navItems.map((route) => <SidebarItem key={route.id} route={route} p1RiskCount={p1RiskCount} compact={compact} />)}
         </div>
       </div>
 
@@ -187,23 +190,22 @@ export const Sidebar = ({
           onClick={onOpenSettingsModal}
           aria-label={compact ? '设置' : undefined}
           title={compact ? '设置' : undefined}
-          className={`flex items-center rounded-lg text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800 ${
-            compact ? 'h-9 w-9 justify-center' : 'flex-1 justify-center gap-1.5 p-1.5 text-[12px] font-medium'
-          }`}
+          className={footerEntryClass}
         >
-          <Settings className="h-[15px] w-[15px]" />
-          {!compact && <span>设置</span>}
+          <Settings className="h-[15px] w-[15px] shrink-0" />
+          {!compact && <span className="truncate">设置</span>}
         </button>
         <button
           type="button"
           aria-label="帮助"
           title="帮助"
           onClick={() => alert('如需技术支持，请联系 SR 风险监控团队 support@srmonitoring.com')}
-          className="grid h-8 w-8 place-items-center rounded-lg text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800"
+          className={footerEntryClass}
         >
-          <HelpCircle className="h-[15px] w-[15px]" />
+          <HelpCircle className="h-[15px] w-[15px] shrink-0" />
+          {!compact && <span className="truncate">帮助</span>}
         </button>
-        <UserMenu user={user} onLogout={onLogout} compact menuAlign={compact ? 'left' : 'right'} />
+        <UserMenu user={user} onLogout={onLogout} compact={compact} appearance={compact ? 'iconOnly' : 'iconLabel'} menuAlign={compact ? 'left' : 'right'} />
       </div>
     </nav>
   );

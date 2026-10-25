@@ -43,6 +43,9 @@ describe('Sidebar 桌面导航两段折叠', () => {
 
     expect(screen.getByText('风险总览')).toBeInTheDocument();
     expect(screen.getByRole('link', {name: '风险总览'})).toHaveClass('bg-[#185fa5]');
+    expect(screen.getByRole('button', {name: '设置'})).toHaveTextContent('设置');
+    expect(screen.getByRole('button', {name: '帮助'})).toHaveTextContent('帮助');
+    expect(screen.getByRole('button', {name: '打开账户菜单'})).toHaveTextContent('个人中心');
     await actor.click(screen.getByRole('button', {name: '收起导航到一级'}));
 
     expect(onAdvanceStage).toHaveBeenCalledTimes(1);
@@ -56,6 +59,9 @@ describe('Sidebar 桌面导航两段折叠', () => {
     expect(screen.queryByText('风险总览')).not.toBeInTheDocument();
     expect(screen.getByAltText('供应商风险监控平台')).toBeInTheDocument();
     expect(screen.getByRole('link', {name: '风险总览'})).toHaveAttribute('title', '风险总览');
+    expect(screen.getByRole('button', {name: '设置'})).toHaveAttribute('title', '设置');
+    expect(screen.getByRole('button', {name: '帮助'})).toHaveAttribute('title', '帮助');
+    expect(screen.getByRole('button', {name: '打开账户菜单'})).toHaveAttribute('title', '个人中心');
     await actor.click(screen.getByRole('button', {name: '继续收起到二级'}));
 
     expect(onAdvanceStage).toHaveBeenCalledTimes(1);

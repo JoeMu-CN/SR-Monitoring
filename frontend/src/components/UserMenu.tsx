@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {ExternalLink, LogOut} from 'lucide-react';
+import {ExternalLink, LogOut, UserRound} from 'lucide-react';
 import type {AuthUser} from '../api';
 
 interface UserMenuProps {
@@ -8,30 +8,53 @@ interface UserMenuProps {
   readonly compact?: boolean;
   readonly menuPlacement?: 'up' | 'down';
   readonly menuAlign?: 'left' | 'right';
+  /**
+   * 入口外观：
+   * - avatar（默认）：圆形缩写头像，移动端浮动入口与紧凑模式沿用；
+   * - iconLabel：展开态侧栏使用，「图标 + 个人中心」文本，与底部其它入口等宽对齐；
+   * - iconOnly：一级折叠侧栏使用，仅线性图标，与底部其它入口同为 36×36 方形按钮。
+   */
+  readonly appearance?: 'avatar' | 'iconLabel' | 'iconOnly';
 }
 
 /** 账户入口：桌面侧栏左下角与移动端浮动头像共用；只负责资料、接口文档与退出。 */
-export const UserMenu = ({user, onLogout, compact = false, menuPlacement = 'up', menuAlign = 'right'}: UserMenuProps) => {
+export const UserMenu = ({user, onLogout, compact = false, menuPlacement = 'up', menuAlign = 'right', appearance = 'avatar'}: UserMenuProps) => {
   const [open, setOpen] = useState(false);
   const initials = (user.display_name || user.username || 'SR').slice(0, 2).toUpperCase();
+  const labeled = appearance === 'iconLabel' && !compact;
+  const iconOnly = appearance === 'iconOnly' && compact;
   const menuPosition = menuPlacement === 'down' ? 'top-full mt-2' : 'bottom-full mb-2';
   const menuAlignment = menuAlign === 'left' ? 'left-0' : 'right-0';
 
   return (
-    <div className="relative">
+    <div className={`relative ${labeled ? 'min-w-0 flex-1' : iconOnly ? 'shrink-0' : ''}`}>
       <button
         type="button"
         aria-label="打开账户菜单"
+        title={labeled || iconOnly ? '个人中心' : undefined}
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className={`flex items-center rounded-lg text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800 ${compact ? 'h-8 w-8 justify-center' : 'gap-2 px-2 py-1.5'}`}
+        className={`flex items-center whitespace-nowrap rounded-lg text-slate-600 transition-colors hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800 ${
+          iconOnly ? 'h-9 w-9 justify-center' : compact ? 'h-8 w-8 justify-center' : labeled ? 'h-8 w-full justify-center gap-1 text-[11px] font-medium' : 'gap-2 px-2 py-1.5'
+        }`}
       >
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#004782] text-[10px] font-black text-white">{initials}</span>
-        {!compact && (
-          <span className="min-w-0 text-left">
-            <span className="block truncate text-[11px] font-bold">{user.display_name || user.username}</span>
-            <span className="block truncate text-[9px] text-slate-500 dark:text-slate-400">{user.role}</span>
-          </span>
+        {labeled ? (
+          <>
+            <UserRound className="h-[15px] w-[15px] shrink-0" />
+            <span className="truncate">个人中心</span>
+          </>
+        ) : iconOnly ? (
+          <UserRound className="h-[15px] w-[15px] shrink-0" />
+        ) : (
+          <>
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#004782] text-[10px] font-black text-white">{initials}</span>
+            {!compact && (
+              <span className="min-w-0 text-left">
+                <span className="block truncate text-[11px] font-bold">{user.display_name || user.username}</span>
+                <span className="block truncate text-[9px] text-slate-500 dark:text-slate-400">{user.role}</span>
+              </span>
+            )}
+          </>
         )}
       </button>
 

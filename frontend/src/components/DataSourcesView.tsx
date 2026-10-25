@@ -713,7 +713,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         >
                           {/* 文案固定为「刷新」：刷新态只用图标旋转与 disabled 反馈，
                               避免文案变长把三个按钮挤出 184px 操作列而换行。 */}
-                          <span aria-hidden="true" className={`material-symbols-outlined inline-flex w-[14px] items-center justify-center text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
+                          <span aria-hidden="true" className={`material-symbols-outlined shrink-0 text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
                           刷新
                         </button>
                       </span>

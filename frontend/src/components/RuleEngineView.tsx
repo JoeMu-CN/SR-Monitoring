@@ -617,8 +617,10 @@ export const RuleEngineView: React.FC<RuleEngineViewProps> = ({
         </div>
 
         {/* Tab 栏与面板容器：维度选择器已迁入维度 Tab（#1，对齐原型 scheme-b-two-tabs.html:605-614），
-            页面级左栏维度列表与其中重复的沙箱入口整体移除；页面收敛为单列布局。 */}
-        <div className="min-w-0 space-y-6">
+            页面级左栏维度列表与其中重复的沙箱入口整体移除；页面收敛为单列布局。
+            外层按全站统一卡片样式（同 PolicyIntelligenceView / CurrentRisksView 的 section）加一圈边框，
+            让「维度视图 / 全局规则」两个 tabpanel 与 Tab 栏同属一张卡，不再直接裸露在页面背景上。 */}
+        <div className="min-w-0 space-y-6 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
             {/* 一级 Tab 栏（下划线式，原型 scheme-b-two-tabs.html:589-594 + CSS :131-145）：
                 与「观察态/配置态」模式切换正交——Tab 决定看哪一层内容，模式只决定是否可编辑。
                 保持既有无障碍契约：role=tablist / role=tab / aria-selected / aria-controls /

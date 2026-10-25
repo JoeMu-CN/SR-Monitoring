@@ -24,12 +24,14 @@ category 取**声明该事件信源的监控维度键**（policy / industry）�
 ``generate_intelligence_report`` 的能力（人工补生成），不改变 policy / industry
 文本事件既有的生成与幂等语义。
 
-生成前的相关性门控（两段式）
-----------------------------
-``gate_event_for_intelligence`` 先判「这条公告是否值得进入情报页」，判定不相关时
-以 ``status='skipped'`` 落库并**不发起报告调用**；判定失败落 ``failed``，进入既有
-冷却重试。关注域由 ``load_intelligence_scope`` 组装：维度静态主题 + 启用供应商的
-行业/原材料/产品关键词/国家。门控只拦截调度批量入口，人工补生成仍绕过门控。
+生成前的相关性门控（三段式：确定性规则 → LLM 门控 → 报告）
+----------------------------------------------------------
+门控先跑 ``intelligence_filter.manufacturing_exclusion_reason`` 的确定性规则：
+命中即判「与制造业供应链无关」并落 ``skipped``，不消耗任何模型调用。未命中才走
+``gate_event_for_intelligence`` 的 LLM 判定；两者都不相关时同样落 ``skipped``，
+门控调用失败落 ``failed`` 并进入既有冷却重试。关注域由
+``load_intelligence_scope`` 组装：维度静态主题 + 启用供应商的行业/原材料/产品
+关键词/国家。门控只拦截调度批量入口，人工补生成仍绕过门控。
 
 幂等
 ----
@@ -60,6 +62,7 @@ from app.ai.intelligence_schemas import (
     INTELLIGENCE_PROMPT_VERSION,
     IntelligenceCategory,
     IntelligenceGateInput,
+    IntelligenceGateOutput,
     IntelligenceInput,
     IntelligenceScope,
 )
@@ -70,6 +73,7 @@ from app.config import (
     get_ai_settings,
 )
 from app.risks.engine.dimensions import default_dimensions
+from app.risks.intelligence_filter import manufacturing_exclusion_reason
 from app.risks.intelligence_models import IntelligenceReport
 from app.risks.models import RiskEvent, RiskEventSignal
 from app.signals.models import DataSource, RawSignal
@@ -297,6 +301,52 @@ def _report_row(
             suggestions=[],
         )
         session.add(report)
+    return report
+
+
+def deterministic_gate_verdict(
+    session: Session, event: RiskEvent, category: IntelligenceCategory
+) -> IntelligenceGateOutput | None:
+    """确定性制造业规则判定；命中返回「不相关」判定，未命中返回 None。
+
+    只读标题与事件摘要，不调用模型，因此调度与重判脚本零成本复用同一口径。
+    """
+    signals = primary_signal_rows(session, [event.id])
+    signal = signals.get(event.id)
+    reason = manufacturing_exclusion_reason(
+        category, signal.title if signal is not None else "", event.summary
+    )
+    if reason is None:
+        return None
+    return IntelligenceGateOutput(relevant=False, reason_zh=reason)
+
+
+def apply_deterministic_gate(
+    session: Session,
+    event: RiskEvent,
+    category: IntelligenceCategory,
+    *,
+    provider_name: str,
+    model: str,
+) -> IntelligenceReport | None:
+    """规则命中则落 skipped 行并返回；未命中返回 None（继续交给 LLM 门控）。"""
+    verdict = deterministic_gate_verdict(session, event, category)
+    if verdict is None:
+        return None
+    report = _report_row(
+        session, event, category, provider_name=provider_name, model=model
+    )
+    report.status = "skipped"
+    report.gate_reason = verdict.reason_zh
+    report.gate_prompt_version = GATE_PROMPT_VERSION
+    report.report_zh = None
+    report.suggestions = []
+    report.error = None
+    report.generated_at = None
+    session.commit()
+    logger.info(
+        "情报规则过滤: event=%s category=%s: %s", event.id, category, verdict.reason_zh
+    )
     return report
 
 

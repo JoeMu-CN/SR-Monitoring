@@ -28,7 +28,9 @@ INTELLIGENCE_PROMPT_VERSION = "intelligence-report-v1"
 #: 门控提示词版本；落库到 intelligence_reports.gate_prompt_version，口径调整时递增，
 #: 重判脚本以版本差异判定哪些历史行需要重新过门控。
 #: v2：关注域剔除通用品类词（添加剂/化工原料/工业耗材），减少字面误命中。
-GATE_PROMPT_VERSION = "intelligence-gate-v2"
+#: v3：加制造业供应链硬门槛，明确「主题/国别单独命中不构成相关」，并配合
+#:     ``risks/intelligence_filter.py`` 的确定性规则拦掉食品、检疫、环保程序等噪声。
+GATE_PROMPT_VERSION = "intelligence-gate-v3"
 
 #: 门控判定依据的字数上限；超出按确定性规则截断，不让整条判定作废。
 GATE_REASON_MAX_CHARS = 200

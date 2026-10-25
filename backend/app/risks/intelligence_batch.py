@@ -15,11 +15,12 @@
 全部信号必须同分类」与第 4 条需要 Python 判定，因此粗筛结果要乘以扫描倍数再
 截断到批大小。
 
-两段式门控
-----------
+两段式门控（规则 → 模型）
+--------------------------
 ``INTELLIGENCE_GATE_ENABLED`` 且分类落在 ``INTELLIGENCE_GATE_CATEGORIES`` 时，逐条先
-跑门控：放行才生成报告，不相关落 skipped，门控失败落 failed。关注域每批只组装一次
-（同分类共享），避免每条事件重复查供应商画像。
+跑确定性制造业规则（``intelligence_filter``）：命中即落 skipped，不消耗模型调用；
+未命中再跑 LLM 门控：放行才生成报告，不相关落 skipped，门控失败落 failed。关注域
+每批只组装一次（同分类共享），避免每条事件重复查供应商画像。
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from app.config import (
 from app.database import SessionLocal
 from app.risks.intelligence_models import IntelligenceReport
 from app.risks.intelligence_service import (
+    apply_deterministic_gate,
     gate_event_for_intelligence,
     generate_intelligence_report,
     intelligence_source_categories,
@@ -177,6 +179,16 @@ def generate_pending_intelligence_reports(
                     category in INTELLIGENCE_GATE_CATEGORIES
                 )
                 if gated:
+                    filtered = apply_deterministic_gate(
+                        session,
+                        event,
+                        category,
+                        provider_name=provider.provider_name,
+                        model=provider.model,
+                    )
+                    if filtered is not None:
+                        skipped += 1
+                        continue
                     scope = scopes.get(category)
                     if scope is None:
                         scope = load_intelligence_scope(session, category)

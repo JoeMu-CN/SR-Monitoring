@@ -456,5 +456,7 @@ def test_gate_prompt_covers_scope_and_category() -> None:
     assert "拿不准" in policy_prompt
     assert "scope" in policy_prompt
     assert "政策与法规类情报" in policy_prompt
+    assert "制造业供应链" in policy_prompt
+    assert "scope.themes" in policy_prompt
     assert "产业与供应市场类情报" in industry_prompt
     assert "政策与法规类情报" not in industry_prompt

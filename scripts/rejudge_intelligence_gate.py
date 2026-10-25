@@ -13,6 +13,9 @@
       现行口径重新生成报告（脚本本身不生成报告）。
     - 门控调用失败 → 保持原状态、只记失败数：已有内容的行不因一次调用失败降级。
 
+    确定性制造业规则（``app/risks/intelligence_filter.py``）先于模型判定：命中即
+    视为不相关且不消耗调用，因此重判与调度入口使用完全相同的收录口径。
+
 二、边界
     - 不采集、不重启服务、不改信源配置、不打印任何 .env / Token / 密码 / 连接串。
     - 默认 dry-run：只统计候选与判定分布，不写库；`--apply` 才落库。
@@ -59,6 +62,7 @@ from app.database import SessionLocal
 from app.risks.intelligence_models import IntelligenceReport
 from app.risks.intelligence_service import (
     build_gate_input,
+    deterministic_gate_verdict,
     load_intelligence_scope,
 )
 from app.risks.models import RiskEvent
@@ -112,7 +116,14 @@ def _judge(
     provider: IntelligenceProvider,
     scopes: dict[IntelligenceCategory, IntelligenceScope],
 ) -> IntelligenceGateOutput | None:
-    """返回门控结果；None 表示事件无可用信号或调用失败（由调用方计入失败）。"""
+    """返回门控结果；None 表示事件无可用信号或调用失败（由调用方计入失败）。
+
+    确定性制造业规则先判：命中直接返回不相关，与调度入口共用同一口径且不消耗
+    模型调用；未命中才构建门控输入调用模型。
+    """
+    verdict = deterministic_gate_verdict(session, event, category)
+    if verdict is not None:
+        return verdict
     scope = scopes.get(category)
     if scope is None:
         scope = load_intelligence_scope(session, category)

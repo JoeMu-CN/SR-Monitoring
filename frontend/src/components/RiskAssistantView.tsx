@@ -483,7 +483,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                           {msg.data.riskCards.map((risk) => (
                             <div
                               key={risk.id}
-                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] transition-all"
+                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] dark:hover:border-blue-700 transition-all"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div className="flex items-center gap-2">
@@ -539,7 +539,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
                           {msg.data.supplierCards.map((sup) => (
                             <div
                               key={sup.id}
-                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] transition-all"
+                              className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-[#c2c6d2] dark:border-slate-800 shadow-xs hover:border-[#004782] dark:hover:border-blue-700 transition-all"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div>

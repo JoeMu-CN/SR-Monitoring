@@ -8,6 +8,8 @@ import {
 } from '../supplierEdit';
 import {Supplier} from '../types';
 
+const FIELD_CLASS = 'w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500';
+
 interface SupplierModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -188,7 +190,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
               <span className="material-symbols-outlined text-[#004782] text-[22px]">factory</span>
               <span>{titleText}</span>
             </div>
-            <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg">
+            <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg dark:text-slate-400 dark:hover:bg-slate-800">
               <span className="material-symbols-outlined text-[20px] text-slate-400">close</span>
             </button>
           </div>
@@ -207,7 +209,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: SUP-0001"
                   value={supplierCode}
                   onChange={(e) => setSupplierCode(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-mono text-[12px] focus:outline-none focus:ring-2 focus:ring-[#004782] disabled:bg-slate-100 disabled:text-slate-500"
+                  className={`${FIELD_CLASS} font-mono text-[12px] focus:outline-none focus:ring-2 focus:ring-[#004782] disabled:bg-slate-100 disabled:text-slate-500 dark:disabled:bg-slate-700/60 dark:disabled:text-slate-300`}
                 />
                 {codeLocked && <p className="mt-1 text-[10px] text-slate-400">编码作为唯一标识，编辑时不可修改</p>}
               </div>
@@ -222,7 +224,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="CN"
                   value={countryCode}
                   onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-mono text-[12px] uppercase focus:outline-none focus:ring-2 focus:ring-[#004782]"
+                  className={`${FIELD_CLASS} font-mono text-[12px] uppercase focus:outline-none focus:ring-2 focus:ring-[#004782]`}
                 />
               </div>
 
@@ -236,7 +238,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: 杭州智芯半导体有限公司"
                   value={legalName}
                   onChange={(e) => setLegalName(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium focus:outline-none focus:ring-2 focus:ring-[#004782]"
+                  className={`${FIELD_CLASS} font-medium focus:outline-none focus:ring-2 focus:ring-[#004782]`}
                 />
               </div>
 
@@ -249,7 +251,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="91330100MA2XXXXXX"
                   value={registrationNo}
                   onChange={(e) => setRegistrationNo(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-mono text-[12px]"
+                  className={`${FIELD_CLASS} font-mono text-[12px]`}
                 />
               </div>
               <div>
@@ -261,7 +263,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: 广东省深圳市南山区科技园1号"
                   value={registrationAddress}
                   onChange={(e) => setRegistrationAddress(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
 
@@ -273,7 +275,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   type="text"
                   value={productionRegion}
                   onChange={(e) => setProductionRegion(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
               <div>
@@ -284,7 +286,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   type="text"
                   value={productionCity}
                   onChange={(e) => setProductionCity(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
 
@@ -296,7 +298,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   type="text"
                   value={productionDistrict}
                   onChange={(e) => setProductionDistrict(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
               <div>
@@ -308,7 +310,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: 西丽街道留仙洞工业区2号厂房"
                   value={productionAddress}
                   onChange={(e) => setProductionAddress(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
 
@@ -322,7 +324,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: 功率半导体, 光学镜片"
                   value={suppliedProduct}
                   onChange={(e) => setSuppliedProduct(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
               <div>
@@ -334,7 +336,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   placeholder="例如: 电子元器件"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-medium"
+                  className={`${FIELD_CLASS} font-medium`}
                 />
               </div>
 
@@ -349,7 +351,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   value={settlementCurrency}
                   onChange={(e) => setSettlementCurrency(e.target.value.toUpperCase())}
                   aria-describedby="settlement-currency-hint"
-                  className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-mono text-[12px] uppercase focus:outline-none focus:ring-2 focus:ring-[#004782]"
+                  className={`${FIELD_CLASS} font-mono text-[12px] uppercase focus:outline-none focus:ring-2 focus:ring-[#004782]`}
                 />
                 <p id="settlement-currency-hint" className="mt-1 text-[10px] text-slate-400">
                   ISO 4217 三位大写字母，常见：USD / JPY / EUR / CNY；非必填，留空表示不设置。
@@ -357,33 +359,33 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
               </div>
             </div>
 
-            <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-[#004782] flex items-center gap-2">
+            <div className="md:col-span-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-[#004782] flex items-center gap-2 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
               <span className="material-symbols-outlined text-[18px]">verified</span>
               <span>{hintText}</span>
             </div>
 
             {isEdit && extraSiteCount > 0 && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
                 <span className="material-symbols-outlined text-[18px]">info</span>
                 <span>另有 {extraSiteCount} 条地点，保存不会覆盖。如需修改全部地点，请使用 Excel 导入。</span>
               </div>
             )}
             {isEdit && extraProductCount > 0 && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-center gap-2 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
                 <span className="material-symbols-outlined text-[18px]">info</span>
                 <span>另有 {extraProductCount} 条产品，保存不会覆盖。如需修改全部产品，请使用 Excel 导入。</span>
               </div>
             )}
 
             {showImpactSection && deletionImpactError !== null && (
-              <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
+              <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
                 <p>{deletionImpactError}</p>
-                <p className="mt-1 text-red-600">无法预览删除影响时，服务端仍会执行安全检查。</p>
+                <p className="mt-1 text-red-600 dark:text-red-300">无法预览删除影响时，服务端仍会执行安全检查。</p>
               </div>
             )}
             {showImpactSection && deletionImpactError === null && deletionImpact && (
               impactBlocked ? (
-                <div role="alert" className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800">
+                <div role="alert" className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
                   <p className="font-bold">
                     该供应商存在风险关联 {deletionImpact.match_count} 条、提醒 {deletionImpact.alert_count} 条，删除将被服务端阻止（{deletionImpact.blocked_reason}）。
                   </p>
@@ -391,7 +393,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                   <p className="mt-1">暂停监控可保留全部历史。</p>
                 </div>
               ) : (
-                <div role="status" className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-[#004782]">
+                <div role="status" className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-[11px] text-[#004782] dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
                   <p>该供应商暂无风险关联，可安全删除。</p>
                   <p className="mt-1">{childCountText}</p>
                 </div>
@@ -399,7 +401,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
             )}
 
             {submitError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">{submitError}</div>
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">{submitError}</div>
             )}
 
             <div className="pt-2 flex items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800">
@@ -409,7 +411,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                     type="button"
                     onClick={() => void handleDelete()}
                     disabled={isSaving || isDeleting}
-                    className="px-3 py-2 text-[12px] font-bold text-[#ba1a1a] hover:bg-red-50 disabled:opacity-50 rounded-lg flex items-center gap-1.5"
+                    className="px-3 py-2 text-[12px] font-bold text-[#ba1a1a] hover:bg-red-50 disabled:opacity-50 rounded-lg flex items-center gap-1.5 dark:hover:bg-red-950/40"
                   >
                     <span aria-hidden="true" className="material-symbols-outlined text-[16px]">delete</span>
                     <span>{isDeleting ? '正在删除…' : '删除供应商'}</span>
@@ -420,7 +422,7 @@ export const NewSupplierModal: React.FC<SupplierModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 border border-[#c2c6d2] rounded-xl font-medium text-slate-600 hover:bg-slate-50"
+                  className="px-4 py-2 border border-[#c2c6d2] rounded-xl font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                 >
                   取消
                 </button>

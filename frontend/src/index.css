@@ -49,37 +49,70 @@ textarea:focus-visible {
   }
 }
 
-/* Google AI Studio / macOS Sonoma palette compatibility for legacy utility classes. */
-[class~="bg-[#004782]"],
-[class~="bg-[#185fa5]"] { background-color: #007aff !important; }
-[class~="hover:bg-[#185fa5]"]:hover { background-color: #0062cc !important; }
-[class~="text-[#004782]"],
-[class~="text-[#185fa5]"] { color: #007aff !important; }
-[class~="border-[#004782]"],
-[class~="border-[#185fa5]"] { border-color: #007aff !important; }
-[class~="focus:ring-[#004782]"]:focus,
-[class~="focus-visible:ring-[#004782]"]:focus-visible { --tw-ring-color: #007aff !important; }
-[class~="bg-[#C92A2A]"] { background-color: #ff3b30 !important; }
-[class~="text-[#C92A2A]"] { color: #ff3b30 !important; }
-[class~="border-[#C92A2A]"] { border-color: #ff3b30 !important; }
-[class~="bg-[#D97706]"] { background-color: #ff9500 !important; }
-[class~="text-[#D97706]"] { color: #ff9500 !important; }
-[class~="border-[#D97706]"] { border-color: #ff9500 !important; }
-[class~="bg-[#10B981]"] { background-color: #34c759 !important; }
-[class~="text-[#10B981]"] { color: #34c759 !important; }
-[class~="bg-[#64748B]"] { background-color: #8e8e93 !important; }
-[class~="text-[#64748B]"] { color: #8e8e93 !important; }
-[class~="bg-[#2563EB]"] { background-color: #007aff !important; }
-[class~="text-[#2563EB]"] { color: #007aff !important; }
-[class~="bg-emerald-600"],
-[class~="bg-emerald-500"] { background-color: #34c759 !important; }
-[class~="text-emerald-600"] { color: #248a3d !important; }
-[class~="bg-amber-500"],
-[class~="bg-amber-600"] { background-color: #ff9500 !important; }
-[class~="text-amber-600"] { color: #b25000 !important; }
-[class~="bg-[#f7f9ff]"] { background-color: #f8fafc !important; }
-[class~="bg-[#ecf4ff]"] { background-color: #eef6ff !important; }
-[class~="border-[#c2c6d2]"] { border-color: #e2e8f0 !important; }
+/* Google AI Studio / macOS Sonoma palette compatibility for legacy utility classes.
+   这些映射带 !important，会压过组件里的 dark:* 变体；因此必须限定在亮色主题
+   （html 未带 .dark 时）生效，否则深色模式下会出现「浅底 + 浅字」「白底输入框」。
+   深色模式的对照值见下方 .dark 规则。 */
+html:not(.dark) [class~="bg-[#004782]"],
+html:not(.dark) [class~="bg-[#185fa5]"] { background-color: #007aff !important; }
+html:not(.dark) [class~="hover:bg-[#185fa5]"]:hover { background-color: #0062cc !important; }
+html:not(.dark) [class~="text-[#004782]"],
+html:not(.dark) [class~="text-[#185fa5]"] { color: #007aff !important; }
+html:not(.dark) [class~="border-[#004782]"],
+html:not(.dark) [class~="border-[#185fa5]"] { border-color: #007aff !important; }
+html:not(.dark) [class~="focus:ring-[#004782]"]:focus,
+html:not(.dark) [class~="focus-visible:ring-[#004782]"]:focus-visible { --tw-ring-color: #007aff !important; }
+html:not(.dark) [class~="bg-[#C92A2A]"] { background-color: #ff3b30 !important; }
+html:not(.dark) [class~="text-[#C92A2A]"] { color: #ff3b30 !important; }
+html:not(.dark) [class~="border-[#C92A2A]"] { border-color: #ff3b30 !important; }
+html:not(.dark) [class~="bg-[#D97706]"] { background-color: #ff9500 !important; }
+html:not(.dark) [class~="text-[#D97706]"] { color: #ff9500 !important; }
+html:not(.dark) [class~="border-[#D97706]"] { border-color: #ff9500 !important; }
+html:not(.dark) [class~="bg-[#10B981]"] { background-color: #34c759 !important; }
+html:not(.dark) [class~="text-[#10B981]"] { color: #34c759 !important; }
+html:not(.dark) [class~="bg-[#64748B]"] { background-color: #8e8e93 !important; }
+html:not(.dark) [class~="text-[#64748B]"] { color: #8e8e93 !important; }
+html:not(.dark) [class~="bg-[#2563EB]"] { background-color: #007aff !important; }
+html:not(.dark) [class~="text-[#2563EB]"] { color: #007aff !important; }
+html:not(.dark) [class~="bg-emerald-600"],
+html:not(.dark) [class~="bg-emerald-500"] { background-color: #34c759 !important; }
+html:not(.dark) [class~="text-emerald-600"] { color: #248a3d !important; }
+html:not(.dark) [class~="bg-amber-500"],
+html:not(.dark) [class~="bg-amber-600"] { background-color: #ff9500 !important; }
+html:not(.dark) [class~="text-amber-600"] { color: #b25000 !important; }
+html:not(.dark) [class~="bg-[#f7f9ff]"] { background-color: #f8fafc !important; }
+html:not(.dark) [class~="bg-[#ecf4ff]"] { background-color: #eef6ff !important; }
+html:not(.dark) [class~="border-[#c2c6d2]"] { border-color: #e2e8f0 !important; }
+
+/* 深色模式对照：legacy 语义色换成深色下可读的值（品牌蓝提亮、浅底不再浅）。
+   这些规则未分层，优先级高于组件里的 dark:* 工具类，值是统一的深色取值。 */
+.dark [class~="bg-[#004782]"],
+.dark [class~="bg-[#185fa5]"] { background-color: #007aff !important; }
+.dark [class~="hover:bg-[#185fa5]"]:hover { background-color: #0062cc !important; }
+.dark [class~="text-[#004782]"],
+.dark [class~="text-[#185fa5]"] { color: #60a5fa !important; }
+.dark [class~="border-[#004782]"],
+.dark [class~="border-[#185fa5]"] { border-color: #007aff !important; }
+.dark [class~="focus:ring-[#004782]"]:focus,
+.dark [class~="focus-visible:ring-[#004782]"]:focus-visible { --tw-ring-color: #007aff !important; }
+.dark [class~="bg-[#C92A2A]"] { background-color: #ff3b30 !important; }
+.dark [class~="text-[#C92A2A]"] { color: #ff453a !important; }
+.dark [class~="border-[#C92A2A]"] { border-color: #ff3b30 !important; }
+.dark [class~="bg-[#D97706]"] { background-color: #ff9500 !important; }
+.dark [class~="text-[#D97706]"] { color: #ff9f0a !important; }
+.dark [class~="border-[#D97706]"] { border-color: #ff9500 !important; }
+.dark [class~="bg-[#10B981]"] { background-color: #34c759 !important; }
+.dark [class~="text-[#10B981]"] { color: #30d158 !important; }
+.dark [class~="bg-[#64748B]"] { background-color: #8e8e93 !important; }
+.dark [class~="text-[#64748B]"] { color: #8e8e93 !important; }
+.dark [class~="bg-[#2563EB]"] { background-color: #007aff !important; }
+.dark [class~="text-[#2563EB]"] { color: #0a84ff !important; }
+.dark [class~="bg-emerald-600"],
+.dark [class~="bg-emerald-500"] { background-color: #34c759 !important; }
+.dark [class~="text-emerald-600"] { color: #30d158 !important; }
+.dark [class~="bg-amber-500"],
+.dark [class~="bg-amber-600"] { background-color: #ff9500 !important; }
+.dark [class~="text-amber-600"] { color: #ff9f0a !important; }
 
 .dark { color-scheme: dark; }
 .dark [class~="dark:bg-[#101d28]"] { background-color: #0b131e !important; }

@@ -119,7 +119,7 @@ export const SuppliersView = ({
             type="button"
             onClick={onOpenNewSupplierModal}
             disabled={!canManage}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#c2c6d2] bg-white px-4 text-[13px] font-bold text-[#007aff] hover:bg-[#eef6ff] focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#c2c6d2] bg-white px-4 text-[13px] font-bold text-[#007aff] hover:bg-[#eef6ff] focus:outline-none focus:ring-2 focus:ring-[#007aff] disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:hover:bg-slate-800"
           >
             <span aria-hidden="true" className="material-symbols-outlined text-[18px]">add_business</span>
             <span>新增供应商</span>
@@ -138,7 +138,7 @@ export const SuppliersView = ({
 
       <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md sm:flex-row dark:border-slate-700/60 dark:bg-slate-800/60">
         <div className="relative w-full sm:w-80">
-          <span aria-hidden="true" className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-[#727782]">search</span>
+          <span aria-hidden="true" className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[20px] text-[#727782] dark:text-slate-400">search</span>
           <input
             type="search"
             aria-label="搜索供应商"
@@ -149,7 +149,7 @@ export const SuppliersView = ({
           />
         </div>
         <div className="flex w-full items-center justify-end gap-2 text-[12px] font-medium sm:w-auto">
-          <label className="text-[#727782]" htmlFor="supplier-status-filter">监控状态:</label>
+          <label className="text-[#727782] dark:text-slate-400" htmlFor="supplier-status-filter">监控状态:</label>
           <select
             id="supplier-status-filter"
             value={statusFilter}

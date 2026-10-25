@@ -42,7 +42,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             <select
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
-              className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-bold text-[#004782]"
+              className="w-full bg-[#f7f9ff] border border-[#c2c6d2] rounded-lg p-2.5 font-bold text-[#004782] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <option value="system">跟随系统</option>
               <option value="light">浅色模式</option>

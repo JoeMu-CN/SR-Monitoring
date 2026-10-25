@@ -1,21 +1,26 @@
 """总览汇总聚合：当前统计与期间新增的明确口径。
 
-当前统计全部共享同一 as_of 的 current_alert_condition；期间新增统计
-窗口内创建的全部提醒行（含已失效），两者命名与语义明确分离。
+当前统计与趋势图全部共享同一 as_of 的 current_alert_condition 和同一读侧
+分组去重；期间新增 ``period_new_count`` 仍统计窗口内创建的全部提醒行（含已
+失效、含规则版本重算副本），仅用于运维侧写入量核对。
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Final
 
-from sqlalchemy import Date, Row, cast, func, select
+from sqlalchemy import Row, func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_retention_settings
-from app.risks.grouping_queries import current_alert_rows, representative_rows
+from app.risks.grouping_queries import (
+    AlertRow,
+    current_alert_rows,
+    representative_rows,
+)
 from app.risks.models import (
     RiskAlert,
     RiskEvent,
@@ -537,26 +542,47 @@ def _build_supplier_points(session: Session) -> list[GeoSupplierPoint]:
     return points
 
 
+def _group_first_seen(group: Sequence[AlertRow]) -> datetime | None:
+    """组首次入库时间：组内事件 ``created_at`` 的最早值。
+
+    用事件入库时间而不是提醒行时间：规则版本切换会为同一批匹配新建提醒行，
+    按提醒行计时会把老事件重复算进新日期。
+    """
+    earliest: datetime | None = None
+    for _alert, _match, event, _supplier in group:
+        created_at = event.created_at
+        if not isinstance(created_at, datetime):
+            continue
+        if earliest is None or created_at < earliest:
+            earliest = created_at
+    return earliest
+
+
 def _build_trend(
-    session: Session,
     *,
-    window_start: datetime,
+    representatives: Sequence[AlertRow],
+    groups: Mapping[int, Sequence[AlertRow]],
     as_of: datetime,
     days: int,
 ) -> list[TrendPoint]:
-    """按 UTC 自然日补零，保证前端拿到连续 days 个点。"""
-    # 先显式转 UTC 再截日期：不依赖数据库会话时区，避免跨时区部署时趋势日期偏移。
-    day_expr = cast(func.timezone("UTC", RiskAlert.created_at), Date)
-    rows = session.execute(
-        select(
-            day_expr.label("day"),
-            func.count(),
-        )
-        .where(RiskAlert.created_at >= window_start, RiskAlert.created_at < as_of)
-        .group_by(day_expr)
-    ).all()
-    counts = {day: int(count) for day, count in rows if day is not None}
+    """按"组首次入库日"归集当前有效提醒，补零成连续 days 个点。
+
+    与 KPI 共用同一读侧聚合：只统计 current_alert_condition 命中的代表行，
+    每组只计一次；已失效行（含规则版本重算留下的 expired 副本）不进入趋势。
+    """
     start = (as_of - timedelta(days=days - 1)).date()
+    end = as_of.astimezone(UTC).date()
+    counts: dict[date, int] = {}
+    for alert, match, event, supplier in representatives:
+        group = groups.get(alert.id) or ((alert, match, event, supplier),)
+        first_seen = _group_first_seen(group)
+        if first_seen is None:
+            continue
+        # 先显式转 UTC 再截日期：事件入库时间可能带其它时区偏移。
+        day = first_seen.astimezone(UTC).date()
+        if day < start or day > end:
+            continue
+        counts[day] = counts.get(day, 0) + 1
     return [
         TrendPoint(
             date=start + timedelta(days=offset),
@@ -575,8 +601,7 @@ def build_dashboard_analytics(
     口径，保证地图/趋势与 KPI 不出现两套统计。本函数只读，不写库。
     """
     as_of = now_utc if now_utc is not None else utc_now()
-    window_start = as_of - timedelta(days=days)
-    representatives, _groups = representative_rows(
+    representatives, groups = representative_rows(
         session, current_alert_rows(session, now_utc=as_of)
     )
     risk_points, unlocated = _build_risk_points(session, representatives)
@@ -584,8 +609,8 @@ def build_dashboard_analytics(
         as_of=as_of,
         window_days=days,
         trend=_build_trend(
-            session,
-            window_start=window_start,
+            representatives=representatives,
+            groups=groups,
             as_of=as_of,
             days=days,
         ),

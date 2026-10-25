@@ -78,6 +78,8 @@ def _make_alert(
     *,
     level: str = "P2",
     created_at: datetime | None = None,
+    event_created_at: datetime | None = None,
+    alert_status: str = "current",
     locations: tuple[tuple[str, str | None, str | None], ...] = (),
 ) -> RiskAlert:
     event = RiskEvent(
@@ -95,6 +97,8 @@ def _make_alert(
             "details": {},
         },
     )
+    if event_created_at is not None:
+        event.created_at = event_created_at
     db_session.add(event)
     db_session.flush()
     for index, (region, country_code, city) in enumerate(locations):
@@ -123,7 +127,7 @@ def _make_alert(
         level=level,
         score=_LEVEL_SCORES[level],
         score_detail={"rule_version": "rule-v1"},
-        status="current",
+        status=alert_status,
         expires_at=None,
         expiry_kind="unbounded",
     )
@@ -255,7 +259,8 @@ def test_dashboard_analytics_trend_supplier_geo_and_supplier_points(
     payload = response.json()
     assert payload["window_days"] == 30
     assert len(payload["trend"]) == 30
-    assert payload["trend"][-1]["count"] >= 3
+    # 4 条提醒分属 4 个展示组（上海供应商 3 条因区域键不交集各自成组），全部今天入库。
+    assert payload["trend"][-1]["count"] == 4
     # 所有提醒都能按供应商站点落到地图，不再以事件地点判断是否可定位。
     assert payload["unlocated_alert_count"] == 0
 
@@ -322,3 +327,96 @@ def test_dashboard_analytics_supplier_multiple_sites_is_non_exclusive(
         assert point["alert_count"] == 1
         assert point["max_level"] == "P3"
     assert payload["unlocated_alert_count"] == 0
+
+
+def test_dashboard_analytics_trend_counts_current_groups_once(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """趋势只统计当前有效提醒、每组一次，并按组首次入库日归集。
+
+    覆盖三种不该被计入的写入：规则重算留下的 expired 行、同组内的重复提醒、
+    以及入库日在窗口外的历史事件。
+    """
+    supplier = _make_supplier(db_session, "TREND", region="上海市", city="上海市")
+    now = datetime.now(UTC)
+    two_days_ago = now - timedelta(days=2)
+    one_day_ago = now - timedelta(days=1)
+    sixty_days_ago = now - timedelta(days=60)
+
+    # 同供应商 + 同区域 + 同类型 + 时间重叠：两条提醒合并成一组，趋势只计 1 条，
+    # 日期取组内更早的事件入库日。
+    _make_alert(
+        db_session,
+        "merge-newer",
+        supplier,
+        level="P3",
+        event_created_at=two_days_ago,
+        locations=(("上海市", "CN", "上海市"),),
+    )
+    _make_alert(
+        db_session,
+        "merge-older",
+        supplier,
+        level="P2",
+        event_created_at=one_day_ago,
+        locations=(("上海市", "CN", "上海市"),),
+    )
+    # 规则版本切换留下的失效行：同一批写入，不改口径会把趋势翻倍。
+    _make_alert(
+        db_session,
+        "superseded",
+        supplier,
+        level="P2",
+        event_created_at=now,
+        alert_status="expired",
+        locations=(("上海市", "CN", "上海市"),),
+    )
+    # 历史事件：仍是当前有效提醒，但入库日在 60 天前，不算窗口内新增。
+    _make_alert(
+        db_session,
+        "historic",
+        supplier,
+        level="P3",
+        event_created_at=sixty_days_ago,
+        locations=(("北京市", "CN", "北京市"),),
+    )
+
+    response = client.get("/api/v1/dashboard/analytics", params={"days": 7})
+
+    assert response.status_code == 200
+    trend = response.json()["trend"]
+    assert len(trend) == 7
+    counts = {point["date"]: point["count"] for point in trend}
+    assert counts[two_days_ago.date().isoformat()] == 1
+    assert counts[one_day_ago.date().isoformat()] == 0
+    # 7 天窗口合计 = 窗口内首次出现的组数；历史组与失效行都不计。
+    assert sum(counts.values()) == 1
+
+    summary = client.get("/api/v1/dashboard/summary", params={"days": 7}).json()
+    # 当前总数含历史组（2 组），因此窗口新增 1 条小于当前总数，两者不再互相冒充。
+    assert summary["total_current"] == 2
+
+
+def test_dashboard_analytics_trend_matches_total_current_when_all_groups_are_recent(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """窗口覆盖全部当前组时，趋势合计与 KPI 的 total_current 同口径同数值。"""
+    supplier = _make_supplier(db_session, "SAME", region="上海市", city="上海市")
+    now = datetime.now(UTC)
+    for index in range(3):
+        _make_alert(
+            db_session,
+            f"recent-{index}",
+            supplier,
+            level="P3",
+            event_created_at=now - timedelta(days=index),
+            locations=((f"测试区域{index}", "CN", f"测试城市{index}"),),
+        )
+
+    analytics = client.get("/api/v1/dashboard/analytics", params={"days": 7}).json()
+    summary = client.get("/api/v1/dashboard/summary", params={"days": 7}).json()
+
+    assert sum(point["count"] for point in analytics["trend"]) == summary["total_current"]
+    assert summary["total_current"] == 3

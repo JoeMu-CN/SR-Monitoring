@@ -136,7 +136,7 @@ class DashboardSummary(BaseModel):
 
 
 class TrendPoint(BaseModel):
-    """按 UTC 自然日聚合的窗口内新增提醒数（含已失效，与 period_new_count 同口径）。"""
+    """按 UTC 自然日聚合的当前有效提醒组数（组首次入库日归集，与 total_current 同口径）。"""
 
     date: date
     count: int

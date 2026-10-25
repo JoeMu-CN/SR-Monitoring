@@ -61,7 +61,7 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     id: 'risks',
     path: routePaths.risks,
     permission: routePermissions.riskView,
-    navigation: {surfaces: ['desktop', 'mobile'], section: 'main', desktopLabel: '当前风险监控', mobileLabel: '风险', icon: 'risks', end: false},
+    navigation: {surfaces: ['desktop', 'mobile'], section: 'main', desktopLabel: '全部风险事件', mobileLabel: '风险', icon: 'risks', end: false},
   },
   {
     // 情报聚合：政策/行业维度的宏观报告页。两个 Tab 是页内状态，不是独立路径，

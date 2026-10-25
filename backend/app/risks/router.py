@@ -216,8 +216,9 @@ def list_risk_alerts(
             reps = [row for row in reps if row[0].level == level]
         reps.sort(
             key=lambda row: (
-                row[0].level,
+                # 时间优先：列表默认按卡片上展示的更新时间倒序，等级只做同级次序。
                 -row[0].updated_at.timestamp(),
+                row[0].level,
                 -row[0].id,
             )
         )
@@ -236,7 +237,9 @@ def list_risk_alerts(
         .join(RiskEvent, SupplierEventMatch.event_id == RiskEvent.id)
         .join(Supplier, SupplierEventMatch.supplier_id == Supplier.id)
         .where(*filters)
-        .order_by(RiskAlert.level, RiskAlert.updated_at.desc(), RiskAlert.id.desc())
+        .order_by(
+            RiskAlert.updated_at.desc(), RiskAlert.level, RiskAlert.id.desc()
+        )
         .limit(limit)
         .offset(offset)
     ).all()

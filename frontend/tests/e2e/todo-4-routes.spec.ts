@@ -78,7 +78,7 @@ test('uses the production preview router without business-service requests', asy
   await expect(page).toHaveURL(/\/overview$/);
   await expect(page.getByText('全网供应链风险概览')).toBeVisible();
   await capture(page, 'desktop-overview');
-  await page.getByRole('link', {name: /当前风险监控/}).click();
+  await page.getByRole('link', {name: /全部风险事件/}).click();
   await expect(page).toHaveURL(/\/risks$/);
   await capture(page, 'desktop-navigation-risks');
   await page.goBack();

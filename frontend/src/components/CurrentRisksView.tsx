@@ -76,7 +76,7 @@ export const CurrentRisksView = ({riskItems, summary, onSelectRisk}: CurrentRisk
   return (
     <div className="space-y-3 pb-20 sm:space-y-5 lg:pb-8">
       <div>
-        <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全网风险监控中心</h1>
+        <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">全部风险事件</h1>
       </div>
 
       <section className="space-y-3 rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">

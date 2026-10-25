@@ -157,6 +157,39 @@ describe('RiskDetailEvidenceSections 币种关联标签（todo 19）', () => {
   });
 });
 
+describe('RiskDetailEvidenceSections 关联地点只展示与该供应商地点匹配上的地点', () => {
+  const locations: EventDetailRead['locations'] = [
+    {name: '浙江东北部', country_code: 'CN', region: '浙江省', city: null, district: null, latitude: null, longitude: null, radius_km: null},
+    {name: '上海沿海', country_code: 'CN', region: '上海市', city: null, district: null, latitude: null, longitude: null, radius_km: null},
+  ];
+
+  it('只保留匹配证据 event_location 命中的事件地点，未命中的覆盖范围不展示', () => {
+    renderSections({
+      alert: {
+        match_evidence: [
+          {object_type: 'site', site_id: 220, site_name: '上海宝山', event_location: '上海沿海', precision: 'region'},
+        ],
+      },
+      event: {locations},
+    });
+
+    const card = screen.getByRole('heading', {name: '关联地点'}).closest('section');
+    if (card === null) throw new Error('关联地点卡片未渲染');
+    expect(within(card).getByText('上海沿海')).toBeInTheDocument();
+    expect(within(card).queryByText('浙江东北部')).not.toBeInTheDocument();
+  });
+
+  it('匹配证据里没有地点命中时整张关联地点卡不渲染', () => {
+    renderSections({
+      alert: {match_evidence: [{object_type: 'supplier', supplier_id: 12, legal_name: '示例供应商'}]},
+      event: {locations},
+    });
+
+    expect(screen.queryByRole('heading', {name: '关联地点'})).not.toBeInTheDocument();
+    expect(screen.queryByText('上海沿海')).not.toBeInTheDocument();
+  });
+});
+
 describe('RiskDetailEvidenceSections 生命周期与处理状态并列展示', () => {
   const signal = {
     signal_id: 1,

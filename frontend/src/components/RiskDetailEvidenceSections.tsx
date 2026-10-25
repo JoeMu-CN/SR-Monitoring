@@ -143,6 +143,23 @@ const formatAdministrativeArea = (location: EventLocationEvidence): string =>
     .join(' · ');
 
 /**
+ * 与该供应商地点匹配上的事件地点名称（来自匹配证据 `object_type=site`）。
+ * 天气类事件常一次覆盖十几个省市/海区，未命中供应商地点的只是事件覆盖范围，
+ * 不是该供应商的关联地点，卡片里不展示。
+ */
+const matchedEventLocationNames = (
+  evidence: ReadonlyArray<Record<string, unknown>>,
+): Set<string> => {
+  const names = new Set<string>();
+  for (const entry of evidence) {
+    if (entry.object_type !== 'site') continue;
+    const name = entry.event_location;
+    if (typeof name === 'string' && normalizeWhitespace(name) !== '') names.add(normalizeWhitespace(name));
+  }
+  return names;
+};
+
+/**
  * 规则评分明细：后端 `score_detail` 的键是英文，且 JSONB 不保证键顺序；
  * 这里统一定义中文标题与分组顺序，未知键兜底到「其他」，一个都不丢。
  */
@@ -409,27 +426,37 @@ const SupplierAssociation = ({alert, event}: RiskDetailEvidenceSectionsProps) =>
       </section>
     )}
 
-    {event.locations.length > 0 && (
-      <section className={PANEL_CLASS}>
-        <SectionTitle icon={<MapPin className="h-5 w-5 text-[#004782]" />}>关联地点</SectionTitle>
-        <ul className="space-y-3">
-          {event.locations.map((location, index) => {
-            const metrics = formatLocationMetrics(location);
-            return (
-              <li key={`${location.name}-${index}`} className={`${SUBTLE_PANEL_CLASS} text-xs`}>
-                <p className="font-bold text-slate-900 dark:text-white">{location.name}</p>
-                <p className="mt-1 break-words text-slate-600 dark:text-slate-300">
-                  {formatAdministrativeArea(location) || '行政区划未披露'}
-                </p>
-                {metrics !== null && <p className="mt-0.5 break-words text-slate-600 dark:text-slate-300">{metrics}</p>}
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    )}
+    <MatchedLocationsSection alert={alert} event={event} />
   </div>
 );
+
+/** 关联地点：只展示命中该供应商生产地点的事件地点，一张都没命中时整卡不渲染。 */
+const MatchedLocationsSection = ({alert, event}: RiskDetailEvidenceSectionsProps) => {
+  const matchedNames = matchedEventLocationNames(alert.match_evidence);
+  const locations = event.locations.filter(
+    (location) => matchedNames.has(normalizeWhitespace(location.name)),
+  );
+  if (locations.length === 0) return null;
+  return (
+    <section className={PANEL_CLASS}>
+      <SectionTitle icon={<MapPin className="h-5 w-5 text-[#004782]" />}>关联地点</SectionTitle>
+      <ul className="space-y-3">
+        {locations.map((location, index) => {
+          const metrics = formatLocationMetrics(location);
+          return (
+            <li key={`${location.name}-${index}`} className={`${SUBTLE_PANEL_CLASS} text-xs`}>
+              <p className="font-bold text-slate-900 dark:text-white">{location.name}</p>
+              <p className="mt-1 break-words text-slate-600 dark:text-slate-300">
+                {formatAdministrativeArea(location) || '行政区划未披露'}
+              </p>
+              {metrics !== null && <p className="mt-0.5 break-words text-slate-600 dark:text-slate-300">{metrics}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+};
 
 const ScoreDetailSection = ({alert}: {readonly alert: RiskAlertRead}) => (
   <section className={PANEL_CLASS}>

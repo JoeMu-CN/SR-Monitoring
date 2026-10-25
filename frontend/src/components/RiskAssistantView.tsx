@@ -282,7 +282,7 @@ export const RiskAssistantView: React.FC<RiskAssistantViewProps> = ({
             id: `asst-refresh-${Date.now()}`,
             sender: 'assistant',
             timestamp: new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'}),
-            content: `风险列表刷新失败：${reason}。当前风险监控页仍显示核查前的数据，请手动刷新页面。`,
+            content: `风险列表刷新失败：${reason}。全部风险事件页仍显示核查前的数据，请手动刷新页面。`,
           }]);
         }
       }

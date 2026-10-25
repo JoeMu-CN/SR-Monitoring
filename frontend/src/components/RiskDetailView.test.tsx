@@ -1,4 +1,4 @@
-import {cleanup, render, screen, waitFor} from '@testing-library/react';
+import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter, Route, Routes, useNavigate} from 'react-router-dom';
 import {afterEach, describe, expect, it, vi} from 'vitest';
@@ -71,6 +71,22 @@ const event = (id: number, overrides: Partial<EventDetailRead> = {}): EventDetai
   ...overrides,
 });
 
+/** 关联地点只展示命中供应商地点的那些：按地点名构造对应的 site 匹配证据。 */
+const alertWithSiteMatch = (id: number, locationName: string): RiskAlertRead => ({
+  ...alert(id),
+  match_evidence: [
+    ...alert(id).match_evidence,
+    {object_type: 'site', site_id: 1, site_name: '上海工厂', event_location: locationName, precision: 'district'},
+  ],
+});
+
+/** 关联地点卡片：卡内地点名与匹配证据里的「事件地点」同名，断言需限定在卡片内。 */
+const locationCard = (): HTMLElement => {
+  const card = screen.getByRole('heading', {name: '关联地点'}).closest('section');
+  if (card === null) throw new Error('关联地点卡片未渲染');
+  return card as HTMLElement;
+};
+
 const renderAt = (path: string, onRequestError = vi.fn()) => render(
   <MemoryRouter initialEntries={[path]}>
     <Routes>
@@ -99,7 +115,7 @@ afterEach(() => {
 describe('RiskDetailView', () => {
   it('先加载提醒再加载事件，并展示 API 返回的证据', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response(alertWithSiteMatch(7, '上海生产地点')))
       .mockResolvedValueOnce(response(event(70)));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -108,7 +124,7 @@ describe('RiskDetailView', () => {
     expect(await screen.findByText('原始信号 70')).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([path]) => path)).toEqual(['/api/v1/risk-alerts/7', '/api/v1/events/70']);
     expect(screen.getByText(/规范名称：关联主体有限公司/)).toBeInTheDocument();
-    expect(screen.getByText('上海生产地点')).toBeInTheDocument();
+    expect(within(locationCard()).getByText('上海生产地点')).toBeInTheDocument();
   });
 
   it('生命周期为 null 时只展示处理状态，不出现空徽标或 undefined', async () => {
@@ -240,17 +256,18 @@ describe('RiskDetailView', () => {
 
   it('无坐标无半径时隐藏该行，有值时完整保留', async () => {
     const withoutMetrics = vi.fn()
-      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response(alertWithSiteMatch(7, '仅有地名的地点')))
       .mockResolvedValueOnce(response(event(70, {locations: [{name: '仅有地名的地点', country_code: 'CN', region: null, city: null, district: null, latitude: null, longitude: null, radius_km: null}]})));
     vi.stubGlobal('fetch', withoutMetrics);
 
     const {container: firstRender} = renderAt('/risks/7');
-    expect(await screen.findByText('仅有地名的地点')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', {name: '关联地点'})).toBeInTheDocument();
+    expect(within(locationCard()).getByText('仅有地名的地点')).toBeInTheDocument();
     expect(firstRender.textContent).not.toContain('坐标：');
     cleanup();
 
     const withMetrics = vi.fn()
-      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response(alertWithSiteMatch(7, '带坐标的地点')))
       .mockResolvedValueOnce(response(event(70, {locations: [{name: '带坐标的地点', country_code: 'CN', region: '上海', city: '上海', district: '浦东', latitude: 31.2, longitude: 121.5, radius_km: 25}]})));
     vi.stubGlobal('fetch', withMetrics);
 
@@ -264,7 +281,7 @@ describe('RiskDetailView', () => {
     ['仅半径独立展示', {latitude: null, longitude: null, radius_km: 40}, '范围：40 km'],
   ] as const)('%s 时保留已有值不丢弃', async (_label, metrics, expected) => {
     const partial = vi.fn()
-      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response(alertWithSiteMatch(7, '部分坐标地点')))
       .mockResolvedValueOnce(response(event(70, {locations: [{name: '部分坐标地点', country_code: 'CN', region: null, city: null, district: null, ...metrics}]})));
     vi.stubGlobal('fetch', partial);
 
@@ -367,7 +384,7 @@ describe('RiskDetailView', () => {
 
   it('窄屏 DOM 顺序为概览 → 事件原始证据 → 供应商关联 → 评分 → 技术明细', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(alert(7)))
+      .mockResolvedValueOnce(response(alertWithSiteMatch(7, '上海生产地点')))
       .mockResolvedValueOnce(response(event(70)));
     vi.stubGlobal('fetch', fetchMock);
 

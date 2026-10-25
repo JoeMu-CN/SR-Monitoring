@@ -770,7 +770,7 @@ describe('App 当前风险监控：概览卡使用全量汇总，与单页列表
     vi.mocked(api.alertSummary).mockRejectedValue(new ApiError(503, '当前风险汇总服务不可用'));
     renderApp('/risks');
 
-    expect(await screen.findByText('全网风险监控中心')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', {name: '全部风险事件'})).toBeInTheDocument();
     expect(screen.getByText('共 1 条（本页已加载）')).toBeInTheDocument();
     expect(screen.getByText('本页显示 1 条，已加载 1 条（全库当前计数暂不可用）')).toBeInTheDocument();
     // 独立降级：不得触发全局错误横幅
@@ -1094,7 +1094,7 @@ describe('App 助手核查写入告警后自动同步风险监控数据', () => 
 
     // 真实行为：初始 1 条被替换为 2 条，无需任何页面刷新。
     await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(2), {timeout: 5000});
-    await userEvent.setup().click(screen.getByRole('link', {name: /当前风险监控/}));
+    await userEvent.setup().click(screen.getByRole('link', {name: /全部风险事件/}));
     expect(await screen.findByText('核查新增风险企业有限公司', {}, {timeout: 5000})).toBeInTheDocument();
   }, 15000);
 

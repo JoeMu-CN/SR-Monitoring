@@ -616,7 +616,7 @@ test.describe('移动端390宽度视觉验收', () => {
 
   test('390宽度风险列表无横向溢出且深色主题持久化', async ({page}) => {
     const evidence = collectBrowserEvidence(page);
-    await loginAs(page, testUsername, '/risks', '全网风险监控中心');
+    await loginAs(page, testUsername, '/risks', '全部风险事件');
     await waitForSettledRoute(page);
     await expect(page.getByText('当前风险概览')).toBeVisible();
     await assertNoHorizontalOverflow(page);

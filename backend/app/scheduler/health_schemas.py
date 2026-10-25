@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.scheduler.log_tail import LogUnavailableReason
 from app.scheduler.observability_models import JobRunStatus
 from app.scheduler.runtime_models import CurrentWorkKind, CurrentWorkStage
 
@@ -121,3 +122,15 @@ class MonitoringHealthRead(BaseModel):
     scheduler: SchedulerHealthRead
     processing: ProcessingHealthRead
     sources: list[SourceHealthRead]
+
+
+class SchedulerLogRead(BaseModel):
+    """Scheduler 原始日志的只读窗口；不含日志路径等部署信息。"""
+
+    available: bool
+    reason: LogUnavailableReason | None
+    lines: list[str]
+    next_cursor: str | None
+    reset: bool
+    truncated: bool
+    updated_at: datetime | None

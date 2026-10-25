@@ -1129,6 +1129,19 @@ export interface MonitoringHealthRead {
   sources: MonitoringSourceHealth[];
 }
 
+// 原始调度日志：由 scheduler 容器写入共享卷，Web 只读 tail；不含日志目录或路径。
+export type SchedulerLogUnavailableReason = 'not_configured' | 'missing' | 'unreadable';
+
+export interface SchedulerLogPage {
+  readonly available: boolean;
+  readonly reason: SchedulerLogUnavailableReason | null;
+  readonly lines: readonly string[];
+  readonly next_cursor: string | null;
+  readonly reset: boolean;
+  readonly truncated: boolean;
+  readonly updated_at: string | null;
+}
+
 export interface AIReviewSummary {
   needs_review: number;
   filtered: number;
@@ -1560,6 +1573,14 @@ export const api = {
   monitoringHealth: (signal?: AbortSignal) => request<MonitoringHealthRead>(
     '/api/v1/system/monitoring-health', signal ? {signal} : {},
   ),
+  schedulerLogs: (cursor: string | null, limit = 200, signal?: AbortSignal) => {
+    const params = new URLSearchParams({limit: String(limit)});
+    if (cursor !== null) params.set('cursor', cursor);
+    return request<SchedulerLogPage>(
+      `/api/v1/system/scheduler-logs?${params.toString()}`,
+      signal ? {signal} : {},
+    );
+  },
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
   aiReviewSummary: () => request<AIReviewSummary>('/api/v1/ai-review-summary'),
   aiReviewItems: () => request<AIReviewItem[]>('/api/v1/ai-review-items?limit=5'),

@@ -1,98 +1,438 @@
-/* SchedulerLiveView 私有动画：只动 transform / opacity / stroke-dashoffset。
-   循环动画同时受三层约束：index.css 的全局 prefers-reduced-motion 与 .reduce-motion 降级、
-   根节点的 .scheduler-live-paused（document 隐藏时由组件添加）暂停、
-   以及 useReducedMotion 为 true 时心跳光点不渲染、波形不加扫掠类。 */
+/* 调度器实况页：深色只读控制台外壳。网络图与日志抽屉的样式各自独立。 */
 
-@keyframes scheduler-live-ecg-sweep {
-  from {
-    stroke-dashoffset: 132;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes scheduler-live-scan-dot {
-  0% {
-    transform: translateX(0);
-    opacity: 0.1;
-  }
-  8% {
-    opacity: 1;
-  }
-  88% {
-    opacity: 1;
-  }
-  100% {
-    transform: translateX(90px);
-    opacity: 0.1;
-  }
-}
-
-@keyframes scheduler-live-enter {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 心跳波形从左到右扫掠，与扫描光点同周期同步。 */
-.scheduler-live-ecg {
-  stroke-dasharray: 132;
-  animation: scheduler-live-ecg-sweep 2.6s linear infinite;
-}
-
-.scheduler-live-heartbeat-dot {
-  animation: scheduler-live-scan-dot 2.6s linear infinite;
-}
-
-/* 新执行记录入场：CSS 动画只在元素挂载时播放，已验证记录随 React 复用 DOM 不重播。 */
-.scheduler-live-enter {
-  animation: scheduler-live-enter 0.36s ease-out both;
-}
-
-/* document 隐藏：暂停全部循环动画，不隐藏任何数据。 */
-.scheduler-live-paused .scheduler-live-ecg,
-.scheduler-live-paused .scheduler-live-heartbeat-dot,
-.scheduler-live-paused .scheduler-live-pulse,
-.scheduler-live-paused .scheduler-live-spin,
-.scheduler-live-paused .scheduler-live-enter {
-  animation-play-state: paused !important;
-}
-
-/* 减少动效：与全局媒体查询同向的组件级兜底，任何循环动画直接静止。 */
-@media (prefers-reduced-motion: reduce) {
-  .scheduler-live-ecg,
-  .scheduler-live-heartbeat-dot,
-  .scheduler-live-pulse,
-  .scheduler-live-spin,
-  .scheduler-live-enter {
-    animation: none !important;
-  }
-}
-
-/* 执行流滚动容器：终端质感扫描线 + 细滚动条，不遮蔽任何数据行。 */
-.scheduler-live-stream {
-  background-image: repeating-linear-gradient(
-    0deg,
-    rgba(148, 163, 184, 0.04) 0,
-    rgba(148, 163, 184, 0.04) 1px,
-    transparent 1px,
-    transparent 28px
-  );
+.scheduler-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  max-height: calc(100vh - 3rem);
+  padding: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: #334155 transparent;
+  scrollbar-color: #475569 transparent;
+  border: 1px solid #2b3b52;
+  border-radius: 16px;
+  background: #0b131e;
+  color: #e2e8f0;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.24);
 }
 
-.scheduler-live-stream::-webkit-scrollbar {
+.scheduler-live::-webkit-scrollbar {
   width: 8px;
 }
 
-.scheduler-live-stream::-webkit-scrollbar-thumb {
-  border-radius: 9999px;
-  background-color: #334155;
+.scheduler-live::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #475569;
+}
+
+.scheduler-live::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scheduler-live-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 13px;
+  border: 1px solid #2b3b52;
+  border-radius: 12px;
+  background: #0e1726;
+}
+
+.scheduler-live-head-main {
+  min-width: 0;
+}
+
+.scheduler-live-title {
+  margin: 2px 0 0;
+  color: #f8fafc;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.scheduler-live-refresh {
+  margin: 5px 0 0;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.scheduler-live-refresh span {
+  margin: 0 6px;
+  color: #475569;
+}
+
+.scheduler-live-refresh b {
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.scheduler-live-heartbeat-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+.scheduler-live-heartbeat-trace {
+  position: relative;
+  width: 96px;
+  height: 24px;
+  overflow: hidden;
+  color: #34c759;
+}
+
+.scheduler-live-ecg {
+  width: 100%;
+  height: 100%;
+}
+
+.scheduler-live-ecg-sweep {
+  stroke-dasharray: 132;
+  animation: scheduler-live-ecg 2.6s linear infinite;
+}
+
+.scheduler-live-heartbeat-dot {
+  position: absolute;
+  top: calc(50% - 3px);
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34c759;
+  box-shadow: 0 0 8px rgba(52, 199, 89, 0.9);
+  animation: scheduler-live-scan-dot 2.6s linear infinite;
+}
+
+.scheduler-live-heartbeat-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: #34c759;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scheduler-live-heartbeat-meta > span:last-child {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.scheduler-live-heartbeat-meta b {
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.scheduler-live-heartbeat-dot-static {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #34c759;
+}
+
+.scheduler-live-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.scheduler-live-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #2b3b52;
+  border-radius: 12px;
+  background: #0e1726;
+}
+
+.scheduler-live-stat {
+  min-width: 0;
+  padding: 9px 12px;
+  border-right: 1px solid #2b3b52;
+}
+
+.scheduler-live-stat:last-child {
+  border-right: 0;
+}
+
+.scheduler-live-stat-label {
+  display: block;
+  color: #64748b;
+  font-size: 8.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.scheduler-live-stat-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 2px;
+  color: #f1f5f9;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+.scheduler-live-stat-value em {
+  color: #94a3b8;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.scheduler-live-stat-sub {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduler-live-stat.is-running .scheduler-live-stat-value {
+  color: #38bdf8;
+}
+
+.scheduler-live-stat.is-attention .scheduler-live-stat-value {
+  color: #ffb340;
+}
+
+.scheduler-live-stat.is-attention .scheduler-live-stat-sub {
+  color: #b89464;
+}
+
+.scheduler-live-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.scheduler-live-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.scheduler-live-live-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.75);
+}
+
+.scheduler-live-live-dot.is-stale {
+  background: #ff9500;
+  box-shadow: none;
+}
+
+.scheduler-live-toolbar-title {
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scheduler-live-next {
+  overflow: hidden;
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduler-live-log-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 1px solid #3b506b;
+  border-radius: 8px;
+  background: #0e1726;
+  color: #cbd5e1;
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scheduler-live-log-button svg {
+  width: 13px;
+  height: 13px;
+  color: #7dd3fc;
+}
+
+.scheduler-live-log-button:hover {
+  border-color: #3d5572;
+  background: #132136;
+  color: #f1f5f9;
+}
+
+.scheduler-live-log-button:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.scheduler-live-log-live {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 5px rgba(56, 189, 248, 0.7);
+}
+
+.scheduler-live-body > .sflow {
+  margin-top: 0;
+}
+
+.scheduler-live-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 170px;
+  padding: 24px 16px;
+  border: 1px solid #2b3b52;
+  border-radius: 12px;
+  background: #0e1726;
+  text-align: center;
+}
+
+.scheduler-live-state-icon {
+  width: 20px;
+  height: 20px;
+  color: #64748b;
+}
+
+.scheduler-live-spin {
+  animation: scheduler-live-spin 1s linear infinite;
+}
+
+.scheduler-live-state-title {
+  margin: 0;
+  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.scheduler-live-state-desc {
+  max-width: 460px;
+  margin: 0;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+/* StaleNotice 是既有组件（Tailwind），在深色页内统一给一点上方间距。 */
+.scheduler-live [data-testid="scheduler-live-stale-notice"] {
+  margin-top: 0;
+}
+
+/* 页面隐藏时暂停页面级循环动画；网络光点由组件自身暂停。 */
+.scheduler-live-paused .scheduler-live-ecg-sweep,
+.scheduler-live-paused .scheduler-live-heartbeat-dot,
+.scheduler-live-paused .scheduler-live-spin,
+.scheduler-live-paused .sflow-node.sflow-state--running::after {
+  animation-play-state: paused !important;
+}
+
+@keyframes scheduler-live-ecg {
+  from { stroke-dashoffset: 132; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes scheduler-live-scan-dot {
+  0% { transform: translateX(0); opacity: 0.1; }
+  8% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(90px); opacity: 0.1; }
+}
+
+@keyframes scheduler-live-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1023px) {
+  .scheduler-live {
+    max-height: calc(100vh - 7.5rem);
+  }
+}
+
+@media (max-width: 720px) {
+  .scheduler-live {
+    max-height: calc(100vh - 8rem);
+    padding: 9px;
+    border-radius: 14px;
+  }
+
+  .scheduler-live-head {
+    align-items: flex-start;
+    padding: 10px;
+  }
+
+  .scheduler-live-title {
+    font-size: 18px;
+  }
+
+  .scheduler-live-heartbeat-wrap {
+    display: none;
+  }
+
+  .scheduler-live-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scheduler-live-stat:nth-child(2) {
+    border-right: 0;
+  }
+
+  .scheduler-live-stat:nth-child(-n + 2) {
+    border-bottom: 1px solid #2b3b52;
+  }
+
+  .scheduler-live-next {
+    display: none;
+  }
+
+  .scheduler-live-toolbar {
+    align-items: flex-start;
+  }
+
+  .scheduler-live-log-button {
+    margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-live-ecg-sweep,
+  .scheduler-live-heartbeat-dot,
+  .scheduler-live-spin,
+  .sflow-node.sflow-state--running::after {
+    animation: none !important;
+  }
 }

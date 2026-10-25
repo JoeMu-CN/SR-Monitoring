@@ -20,6 +20,7 @@ PERM_BUSINESS_AUDIT_VIEW = "business_audit_view"
 PERM_USER_MANAGE = "user_manage"
 PERM_SESSION_REVOKE = "session_revoke"
 PERM_SECURITY_AUDIT_VIEW = "security_audit_view"
+PERM_SYSTEM_LOG_VIEW = "system_log_view"
 PERM_AUTH_CONFIG_MANAGE = "auth_config_manage"
 PERM_RESEARCH_TASK_CREATE = "research_task_create"
 PERM_RESEARCH_SCHEDULE_MANAGE = "research_schedule_manage"
@@ -62,6 +63,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PERM_SOURCE_AGENT_USE,
         PERM_RULE_MANAGE,
         PERM_BUSINESS_AUDIT_VIEW,
+        PERM_SYSTEM_LOG_VIEW,
     },
     "platform_admin": {
         PERM_RISK_VIEW,
@@ -83,6 +85,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         PERM_SESSION_REVOKE,
         PERM_SECURITY_AUDIT_VIEW,
         PERM_AUTH_CONFIG_MANAGE,
+        PERM_SYSTEM_LOG_VIEW,
         PERM_RESEARCH_TASK_CREATE,
         PERM_RESEARCH_SCHEDULE_MANAGE,
         PERM_RESEARCH_CLAIM_PROMOTE,

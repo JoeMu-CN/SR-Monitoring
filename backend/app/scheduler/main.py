@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -52,6 +53,7 @@ from app.scheduler.jobs import (
     intelligence_report_job,
     recover_capacity_blocked_research_batches_job,
 )
+from app.scheduler.log_tail import scheduler_log_path
 from app.scheduler.runtime import (
     HEARTBEAT_INTERVAL_SECONDS,
     record_heartbeat,
@@ -64,11 +66,45 @@ from app.signals.service import (
 )
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    format=LOG_FORMAT,
 )
 logger = logging.getLogger("scheduler.main")
+
+# 文件日志句柄名：用于幂等判断，避免重复调用时挂多个 handler。
+FILE_LOG_HANDLER_NAME = "scheduler-log-file"
+FILE_LOG_MAX_BYTES = 10 * 1024 * 1024
+FILE_LOG_BACKUP_COUNT = 5
+
+
+def _configure_file_logging() -> None:
+    """将 scheduler 日志同时写入共享卷中的滚动文件。
+
+    由 Web API 的 ``/api/v1/system/scheduler-logs`` 只读 tail；目录不可写或
+    挂载缺失时只告警，绝不影响调度器启动。仅在 ``main()`` 中调用，导入与
+    测试不会创建日志文件。
+    """
+    path = scheduler_log_path()
+    root = logging.getLogger()
+    if any(handler.name == FILE_LOG_HANDLER_NAME for handler in root.handlers):
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=FILE_LOG_MAX_BYTES,
+            backupCount=FILE_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.warning("Scheduler 文件日志初始化失败，仅保留 stdout 输出: %s", path, exc_info=True)
+        return
+    handler.set_name(FILE_LOG_HANDLER_NAME)
+    handler.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(handler)
 
 
 def _trigger(expr: str) -> CronTrigger:
@@ -249,6 +285,7 @@ def _register_signal_consumption(scheduler: BlockingScheduler) -> None:
 
 
 def main() -> None:
+    _configure_file_logging()
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
     # 排期快照与执行历史监听：必须在 scheduler.start() 前注册，使
     # SCHEDULER_STARTED 后立即落真实 next_run_time，并随 JOB_ADDED /

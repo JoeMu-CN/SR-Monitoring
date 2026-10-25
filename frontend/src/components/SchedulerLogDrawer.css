@@ -1,0 +1,535 @@
+/* 调度器原始日志抽屉：终端读数、只读、每 2 秒 tail。 */
+
+.slog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(2, 6, 12, 0.66);
+  animation: slog-fade 0.14s ease-out;
+}
+
+.slog-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(900px, 92vw);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid #2b3b52;
+  background: #070d16;
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.45);
+  color: #e2e8f0;
+  animation: slog-slide 0.18s ease-out;
+}
+
+.slog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  min-height: 54px;
+  padding: 8px 12px 8px 14px;
+  border-bottom: 1px solid #2b3b52;
+  background: #0b131e;
+}
+
+.slog-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.slog-title-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: #7dd3fc;
+}
+
+.slog-title h2 {
+  margin: 0;
+  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.slog-title p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slog-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.slog-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid #354863;
+  border-radius: 999px;
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.slog-status i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.slog-status.is-live {
+  border-color: rgba(56, 189, 248, 0.32);
+  background: rgba(56, 189, 248, 0.07);
+  color: #38bdf8;
+}
+
+.slog-status.is-offline {
+  border-color: rgba(148, 163, 184, 0.26);
+  color: #94a3b8;
+}
+
+.slog-status.is-error {
+  border-color: rgba(255, 59, 48, 0.32);
+  background: rgba(255, 59, 48, 0.07);
+  color: #ff453a;
+}
+
+.slog-updated {
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.slog-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #354863;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.slog-close svg {
+  width: 15px;
+  height: 15px;
+}
+
+.slog-close:hover {
+  border-color: #3b4c66;
+  color: #f1f5f9;
+}
+
+.slog-close:focus-visible,
+.slog-toolbar button:focus-visible,
+.slog-state button:focus-visible,
+.slog-return:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.slog-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid #26364a;
+  background: #0b131e;
+}
+
+.slog-filters {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid #354863;
+  border-radius: 8px;
+  background: #070d16;
+}
+
+.slog-filters button {
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.slog-filters button[aria-pressed="true"] {
+  background: #152337;
+  color: #e2e8f0;
+}
+
+.slog-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 180px;
+  flex: 1;
+  max-width: 300px;
+  padding: 0 8px;
+  border: 1px solid #354863;
+  border-radius: 8px;
+  background: #070d16;
+}
+
+.slog-search svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: #64748b;
+}
+
+.slog-search input {
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9px;
+}
+
+.slog-search input::placeholder {
+  color: #475569;
+}
+
+.slog-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.slog-toolbar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid #354863;
+  border-radius: 7px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.slog-toolbar-actions button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.slog-toolbar-actions button:hover {
+  border-color: #3b4c66;
+  color: #e2e8f0;
+}
+
+.slog-toolbar-actions button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.slog-follow.is-on {
+  border-color: rgba(56, 189, 248, 0.38);
+  background: rgba(56, 189, 248, 0.07);
+  color: #7dd3fc;
+}
+
+.slog-terminal-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #050a12;
+}
+
+.slog-terminal {
+  height: 100%;
+  overflow: auto;
+  padding: 9px 12px 42px;
+  outline: 0;
+  font-family: "IBM Plex Mono", "JetBrains Mono", "Consolas", monospace;
+  font-size: 10.5px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+  overscroll-behavior: contain;
+}
+
+.slog-terminal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.slog-terminal::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #475569;
+}
+
+.slog-terminal:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.55);
+}
+
+.slog-line {
+  display: grid;
+  grid-template-columns: 92px 62px 122px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+.slog-line:hover {
+  background: #0a1420;
+}
+
+.slog-time {
+  color: #52647c;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.slog-level {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.slog-logger {
+  overflow: hidden;
+  color: #6f8aa6;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slog-message {
+  min-width: 0;
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.slog-line.is-error .slog-level,
+.slog-line.is-error .slog-message {
+  color: #ff6b62;
+}
+
+.slog-line.is-warn .slog-level {
+  color: #ffb340;
+}
+
+.slog-line.is-debug .slog-level,
+.slog-line.is-debug .slog-message {
+  color: #64748b;
+}
+
+.slog-line.is-info .slog-level {
+  color: #7dd3fc;
+}
+
+.slog-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  margin: 3px 0 0 2px;
+  border-radius: 1px;
+  background: #38bdf8;
+  animation: slog-cursor 1.1s steps(2, start) infinite;
+}
+
+.slog-return {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 999px;
+  background: #0e2134;
+  color: #7dd3fc;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.slog-return:hover {
+  background: #12304a;
+}
+
+.slog-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 1;
+  min-height: 0;
+  padding: 30px 24px;
+  background: #050a12;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.slog-state svg {
+  width: 22px;
+  height: 22px;
+  color: #475569;
+}
+
+.slog-state p {
+  max-width: 520px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.slog-state button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid #3b506b;
+  border-radius: 7px;
+  background: #0e1726;
+  color: #cbd5e1;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.slog-state.is-error p {
+  color: #ff8a80;
+}
+
+.slog-state.is-error button {
+  border-color: rgba(255, 59, 48, 0.35);
+}
+
+.slog-no-match {
+  margin: 12px 0;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.slog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: none;
+  flex-wrap: wrap;
+  min-height: 30px;
+  padding: 5px 12px;
+  border-top: 1px solid #2b3b52;
+  background: #0b131e;
+  color: #52647c;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+@keyframes slog-slide {
+  from { transform: translateX(28px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slog-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slog-cursor {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
+@media (max-width: 720px) {
+  .slog-drawer {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .slog-header {
+    align-items: flex-start;
+    padding: 8px 10px;
+  }
+
+  .slog-header-right {
+    gap: 5px;
+  }
+
+  .slog-updated {
+    display: none;
+  }
+
+  .slog-toolbar {
+    padding: 7px 9px;
+  }
+
+  .slog-search {
+    order: 3;
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .slog-toolbar-actions {
+    margin-left: 0;
+  }
+
+  .slog-line {
+    grid-template-columns: 74px 46px minmax(0, 1fr);
+    gap: 6px;
+    font-size: 10px;
+  }
+
+  .slog-logger {
+    display: none;
+  }
+
+  .slog-footer {
+    font-size: 7.5px;
+  }
+
+  .slog-footer span:last-child {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slog-overlay,
+  .slog-drawer,
+  .slog-cursor {
+    animation: none !important;
+  }
+}

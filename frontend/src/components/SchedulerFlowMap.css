@@ -1,0 +1,830 @@
+/* 调度器实况四列网络图：深色面板、固定行高、正交总线走线。 */
+
+.sflow {
+  min-width: 0;
+  color: #e2e8f0;
+}
+
+.sflow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 2px 8px;
+}
+
+.sflow-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  min-width: 0;
+}
+
+.sflow-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.sflow-legend-dot,
+.sflow-node-dot,
+.sflow-member-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.sflow-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 1px 5px;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+.sflow-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.sflow-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #475569;
+}
+
+.sflow-canvas {
+  min-width: 1080px;
+  width: 100%;
+}
+
+.sflow-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(210px, 1.05fr) minmax(220px, 1.1fr) minmax(190px, 0.95fr) minmax(240px, 1.2fr);
+  grid-template-rows: 24px repeat(3, 76px);
+  column-gap: 58px;
+  row-gap: 14px;
+  min-width: 1080px;
+  padding: 0 2px;
+}
+
+.sflow-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  grid-row: 1;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.sflow-label b {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  font-weight: 700;
+  color: #52647c;
+  letter-spacing: 0;
+}
+
+.sflow-label span {
+  flex: 1;
+  height: 1px;
+  background: #2b3b52;
+}
+
+.sflow-label--collect { grid-column: 1; }
+.sflow-label--signal { grid-column: 2; }
+.sflow-label--process { grid-column: 3; }
+.sflow-label--output { grid-column: 4; }
+
+.sflow-edges,
+.sflow-ports,
+.sflow-particles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.sflow-edges { z-index: 0; overflow: visible; }
+.sflow-particles { z-index: 1; }
+.sflow-ports { z-index: 3; overflow: visible; }
+
+.sflow-edge {
+  fill: none;
+  stroke: #31445e;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sflow-edge--active { stroke: #3f7fa8; }
+.sflow-edge--warn { stroke: #7a4a32; }
+.sflow-edge--done { stroke: #455a75; }
+.sflow-edge--idle { stroke: #2c3d52; }
+
+.sflow-port {
+  fill: #0b131e;
+  stroke: #5b748f;
+  stroke-width: 1.2;
+}
+
+.sflow-port.sflow-state--running { fill: #38bdf8; stroke: #0b131e; }
+.sflow-port.sflow-state--error { fill: #ff3b30; stroke: #0b131e; }
+.sflow-port.sflow-state--missed { fill: #ff9500; stroke: #0b131e; }
+.sflow-port.sflow-state--completed { fill: #94a3b8; stroke: #0b131e; }
+
+.sflow-slot {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sflow-slot--collect { grid-column: 1; grid-row: 2; }
+.sflow-slot--source { grid-column: 1; grid-row: 3; }
+.sflow-slot--tyc { grid-column: 1; grid-row: 4; }
+.sflow-slot--hub {
+  grid-column: 2;
+  grid-row: 2 / span 3;
+  display: flex;
+  align-items: center;
+}
+.sflow-slot--consume { grid-column: 3; grid-row: 3; }
+.sflow-slot--notify { grid-column: 4; grid-row: 2; }
+.sflow-slot--expire { grid-column: 4; grid-row: 3; }
+.sflow-slot--intel { grid-column: 4; grid-row: 4; }
+
+.sflow-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  padding: 7px 8px 6px;
+  overflow: hidden;
+  border: 1px solid #354863;
+  border-radius: 10px;
+  background: #0e1726;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.sflow-node:hover {
+  border-color: #3a4c66;
+  background: #132136;
+}
+
+.sflow-node:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.sflow-node.is-selected {
+  border-color: rgba(56, 189, 248, 0.62);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.16);
+  background: #11243a;
+}
+
+.sflow-node.is-unregistered {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.sflow-node-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sflow-node-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #f1f5f9;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-node-id {
+  display: block;
+  overflow: hidden;
+  margin-top: 1px;
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-node-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 8.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.sflow-node-foot b {
+  color: #aebbd0;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8.5px;
+  font-weight: 600;
+}
+
+.sflow-node-error-count {
+  color: #ff453a !important;
+}
+
+.sflow-node-running-count {
+  position: absolute;
+  right: 7px;
+  bottom: 5px;
+  color: #38bdf8;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.sflow-state--running .sflow-node-dot,
+.sflow-member-dot.sflow-state--running,
+.sflow-legend-dot.sflow-state--running {
+  background: #38bdf8;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12), 0 0 7px rgba(56, 189, 248, 0.7);
+}
+
+.sflow-state--error .sflow-node-dot,
+.sflow-member-dot.sflow-state--error,
+.sflow-legend-dot.sflow-state--error {
+  background: #ff3b30;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.1);
+}
+
+.sflow-state--missed .sflow-node-dot,
+.sflow-member-dot.sflow-state--missed,
+.sflow-legend-dot.sflow-state--missed {
+  background: #ff9500;
+  box-shadow: 0 0 0 3px rgba(255, 149, 0, 0.1);
+}
+
+.sflow-state--completed .sflow-node-dot,
+.sflow-member-dot.sflow-state--completed,
+.sflow-legend-dot.sflow-state--completed {
+  background: #94a3b8;
+}
+
+.sflow-state--max_instances .sflow-node-dot,
+.sflow-member-dot.sflow-state--max_instances,
+.sflow-legend-dot.sflow-state--max_instances {
+  background: #8e8e93;
+}
+
+.sflow-state--no_record .sflow-node-dot,
+.sflow-state--unregistered .sflow-node-dot,
+.sflow-member-dot.sflow-state--no_record,
+.sflow-legend-dot.sflow-state--unregistered {
+  background: #475569;
+}
+
+.sflow-node.sflow-state--running {
+  border-color: rgba(56, 189, 248, 0.3);
+  background: #102132;
+}
+
+.sflow-node.sflow-state--error {
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+.sflow-node.sflow-state--missed {
+  border-color: rgba(255, 149, 0, 0.26);
+}
+
+.sflow-node.sflow-state--running::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  bottom: 2px;
+  width: 24%;
+  height: 1.5px;
+  border-radius: 2px;
+  background: #38bdf8;
+  opacity: 0.75;
+  animation: sflow-scan 2.4s ease-in-out infinite;
+}
+
+.sflow-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  margin-left: auto;
+  padding: 2px 5px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.08);
+  color: #cbd5e1;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.sflow-badge::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sflow-badge--running {
+  border-color: rgba(56, 189, 248, 0.32);
+  background: rgba(56, 189, 248, 0.08);
+  color: #38bdf8;
+}
+
+.sflow-badge--error {
+  border-color: rgba(255, 59, 48, 0.32);
+  background: rgba(255, 59, 48, 0.08);
+  color: #ff453a;
+}
+
+.sflow-badge--missed {
+  border-color: rgba(255, 149, 0, 0.32);
+  background: rgba(255, 149, 0, 0.08);
+  color: #ffb340;
+}
+
+.sflow-badge--max_instances {
+  border-color: rgba(142, 142, 147, 0.3);
+  background: rgba(142, 142, 147, 0.08);
+  color: #a8b0ba;
+}
+
+.sflow-badge--no_record,
+.sflow-badge--unregistered {
+  color: #64748b;
+}
+
+.sflow-badge--data {
+  border-color: rgba(56, 189, 248, 0.28);
+  background: rgba(56, 189, 248, 0.06);
+  color: #7dd3fc;
+}
+
+/* 信号池：跨三行，作为数据节点单独处理。 */
+.sflow-hub {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  height: 192px;
+  max-height: 100%;
+  padding: 12px 14px;
+  overflow: hidden;
+  border: 1px solid #3b506b;
+  border-radius: 12px;
+  background: #0f1d30;
+  color: #e2e8f0;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.sflow-hub:hover {
+  border-color: #3c526f;
+}
+
+.sflow-hub:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.sflow-hub.is-selected {
+  border-color: rgba(56, 189, 248, 0.62);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.16);
+}
+
+.sflow-hub-tag {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  padding: 1px 4px;
+  border: 1px solid #354863;
+  border-radius: 4px;
+  color: #64748b;
+  font-size: 7.5px;
+  letter-spacing: 0.08em;
+}
+
+.sflow-hub-label {
+  display: block;
+  color: #7dd3fc;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.sflow-hub-count {
+  display: block;
+  margin-top: 2px;
+  color: #f1f5f9;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.sflow-hub-count em {
+  margin-left: 4px;
+  color: #94a3b8;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.sflow-hub-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 170px;
+  padding-top: 6px;
+  border-top: 1px solid #2c3d52;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.sflow-hub-row b {
+  color: #ffb340;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-weight: 700;
+}
+
+.sflow-hub-row--muted b {
+  color: #94a3b8;
+}
+
+.sflow-hub-foot {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.sflow-hub-foot b {
+  color: #aebbd0;
+  font-weight: 600;
+}
+
+/* 独立排期。 */
+.sflow-aux {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 1080px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed #354863;
+}
+
+.sflow-aux-label {
+  color: #64748b;
+  font-size: 8px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.sflow-aux-empty {
+  color: #475569;
+  font-size: 9px;
+}
+
+.sflow-aux-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border: 1px solid #354863;
+  border-radius: 999px;
+  background: #0d1a2a;
+  color: #cbd5e1;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sflow-aux-chip:hover {
+  border-color: #3d506a;
+  color: #f1f5f9;
+}
+
+.sflow-aux-chip.is-selected {
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #e0f2fe;
+}
+
+.sflow-aux-chip:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.sflow-aux-status {
+  margin-left: 2px;
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+}
+
+.sflow-aux-chip.sflow-state--running .sflow-aux-status { color: #38bdf8; }
+.sflow-aux-chip.sflow-state--error .sflow-aux-status { color: #ff453a; }
+.sflow-aux-chip.sflow-state--missed .sflow-aux-status { color: #ffb340; }
+
+.sflow-aux-chip {
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
+}
+
+/* 光点到达节点时的短暂微闪；黄色用于真实任务触发。 */
+.sflow-node.is-flash-white,
+.sflow-hub.is-flash-white,
+.sflow-aux-chip.is-flash-white {
+  border-color: rgba(232, 240, 251, 0.78);
+  box-shadow: 0 0 0 3px rgba(232, 240, 251, 0.08), 0 0 16px rgba(232, 240, 251, 0.2);
+}
+
+.sflow-node.is-flash-yellow,
+.sflow-hub.is-flash-yellow,
+.sflow-aux-chip.is-flash-yellow {
+  border-color: rgba(255, 214, 10, 0.9);
+  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.13), 0 0 18px rgba(255, 214, 10, 0.3);
+}
+
+/* 选中节点明细。 */
+.sflow-detail {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid #2b3b52;
+  border-radius: 12px;
+  background: #0e1726;
+}
+
+.sflow-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.sflow-detail-head > b {
+  max-width: 260px;
+  overflow: hidden;
+  color: #f1f5f9;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-detail-head > .sflow-badge {
+  margin-left: 0;
+}
+
+.sflow-detail-head > code {
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8.5px;
+  white-space: nowrap;
+}
+
+.sflow-detail-stage {
+  margin-left: auto;
+  color: #64748b;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sflow-detail-grid {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 7px;
+}
+
+.sflow-detail-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 70px;
+}
+
+.sflow-detail-grid span {
+  color: #64748b;
+  font-size: 7.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sflow-detail-grid b {
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sflow-detail-grid b.is-error { color: #ff453a; }
+.sflow-detail-grid b.is-warn { color: #ffb340; }
+
+.sflow-processing-note {
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 8.5px;
+  line-height: 1.6;
+}
+
+.sflow-state-counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px dashed #354863;
+}
+
+.sflow-state-counts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8294ab;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.sflow-state-counts i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.sflow-state-counts b {
+  color: #cbd5e1;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.sflow-state-counts .sflow-processing--pending_classification i { background: #ffb340; }
+.sflow-state-counts .sflow-processing--analyzed i { background: #38bdf8; }
+.sflow-state-counts .sflow-processing--filtered i { background: #64748b; }
+.sflow-state-counts .sflow-processing--no_trigger i { background: #475569; }
+.sflow-state-counts .sflow-processing--classification_failed i { background: #ff453a; }
+
+.sflow-detail-grid > div.is-work {
+  min-width: 170px;
+}
+
+.sflow-detail-grid .is-work b {
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.sflow-members {
+  max-height: 148px;
+  margin: 8px 0 0;
+  padding: 5px 0 0;
+  overflow-y: auto;
+  border-top: 1px dashed #354863;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+.sflow-members::-webkit-scrollbar { width: 5px; }
+.sflow-members::-webkit-scrollbar-thumb { border-radius: 9px; background: #475569; }
+
+.sflow-member {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  border-bottom: 1px dashed #26364a;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.sflow-member:last-child { border-bottom: 0; }
+
+.sflow-member-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sflow-member-name {
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-member-main code {
+  overflow: hidden;
+  color: #52647c;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 7.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-member .sflow-badge {
+  margin-left: 0;
+  font-size: 7.5px;
+}
+
+.sflow-member-next {
+  color: #64748b;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+@keyframes sflow-scan {
+  0%, 100% { transform: translateX(0); opacity: 0.25; }
+  50% { transform: translateX(280%); opacity: 0.85; }
+}
+
+@media (max-width: 720px) {
+  .sflow-toolbar {
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .sflow-detail {
+    padding: 9px 10px;
+  }
+
+  .sflow-detail-stage {
+    margin-left: 0;
+  }
+
+  .sflow-member {
+    grid-template-columns: 6px minmax(0, 1fr) auto;
+  }
+
+  .sflow-member-next {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sflow-node.sflow-state--running::after {
+    animation: none;
+  }
+
+  .sflow-node,
+  .sflow-hub {
+    transition: none;
+  }
+}

@@ -37,7 +37,7 @@ import {OverviewView} from './components/OverviewView';
 import {PolicyIntelligenceView} from './components/PolicyIntelligenceView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
-import {SchedulerLiveView} from './components/SchedulerLiveView';
+import {SCHEDULER_LOG_PERMISSION, SchedulerLiveView} from './components/SchedulerLiveView';
 import {SuppliersView} from './components/SuppliersView';
 import {UsersManagementView} from './components/UsersManagementView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
@@ -457,8 +457,14 @@ export function App() {
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} onAlertsChanged={refreshRiskAlerts} />,
     suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,
     sources: <DataSourcesView dataSources={dataSources} role={canManageSources ? 'admin' : 'viewer'} onUpdateSource={handleUpdateSource} onRefreshSources={refreshSources} monitoringHealth={monitoringHealth} />,
-    // 独立调度器实况页：只消费同一 hook 的 monitoringHealth 快照，不自带请求或轮询。
-    scheduler: <SchedulerLiveView snapshot={monitoringHealth} />,
+    // 独立调度器实况页：只消费同一 hook 的 monitoringHealth 快照；原始日志入口单独鉴权。
+    scheduler: (
+      <SchedulerLiveView
+        snapshot={monitoringHealth}
+        canViewLogs={permissions.includes(SCHEDULER_LOG_PERMISSION)}
+        onRequestError={handleDetailRequestError}
+      />
+    ),
     sourceSignals: <SourceSignalsView onRequestError={handleDetailRequestError} />,
     rules: <RuleEngineView dimensions={dimensions} onToggleDimension={handleToggleDimension} onUpdateDimension={handleUpdateDimension} role={canManageRules ? 'admin' : 'viewer'} />,
     userSettings: auth ? <UsersManagementView currentUser={auth.user} onRequestError={handleDetailRequestError} onCurrentUserUpdated={handleCurrentUserUpdated} /> : null,

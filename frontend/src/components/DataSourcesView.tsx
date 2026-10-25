@@ -150,7 +150,9 @@ const RETIRED_SOURCE_CODE = 'mofcom-entity-control';
 //   调度周期    minmax(200px, 1fr)   容纳「每周日、周一 06:00（分片）」这类最长中文周期
 //   有效期策略  minmax(104px, 0.5fr) 容纳「固定天数 30 天」与表头，取合理下限
 //   记录数      minmax(112px, 0.6fr) 容纳「72,341 / 251,234 条」与两行表头，取合理下限
-//   操作        184px                按刷新/编辑/停用三个按钮实测宽度（72+44+44+2×8=176）分配
+//   操作        184px                按刷新/编辑/停用三个按钮实测宽度（72+44+44+2×8=176）分配；
+//                                     三个按钮的文案在刷新/停用处理中保持恒定（只切图标旋转与 disabled），
+//                                     宽度不变，才不会被 flex-wrap 挤到第二行
 //
 // 断点用 xl（1280px）而不是 md：768px 塞六列会同时挤爆连通胶囊与调度文本；即便 1024px，
 // 六个最小列宽之和（980px）加 5×12px 间距仍超出该宽度下的可用行宽（936px），必然横向溢出。
@@ -584,7 +586,6 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
             const isRefreshing = refreshingId === source.id;
             const refreshBlocked = refreshBlockedReason(source, role, refreshingId);
             const runTitle = isRefreshing ? '正在触发采集，请稍候' : (refreshBlocked ?? '立即触发一次采集');
-            const runLabel = isRefreshing ? '刷新中…' : '刷新';
             const scheduleDisplay = describeSourceSchedule(source);
             return (
               <motion.div
@@ -705,12 +706,15 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                           type="button"
                           onClick={() => void handleRunSource(source)}
                           disabled={refreshBlocked !== null || isRefreshing}
+                          aria-busy={isRefreshing}
                           aria-label={`刷新${displayName}`}
                           title={runTitle}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#004782]/40 text-[#004782] hover:bg-[#ecf4ff] disabled:opacity-40 disabled:cursor-not-allowed dark:border-blue-400/40 dark:text-blue-300 dark:hover:bg-slate-800 transition-colors"
+                          className="inline-flex items-center gap-1 whitespace-nowrap px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#004782]/40 text-[#004782] hover:bg-[#ecf4ff] disabled:opacity-40 disabled:cursor-not-allowed dark:border-blue-400/40 dark:text-blue-300 dark:hover:bg-slate-800 transition-colors"
                         >
-                          <span aria-hidden="true" className={`material-symbols-outlined text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
-                          {runLabel}
+                          {/* 文案固定为「刷新」：刷新态只用图标旋转与 disabled 反馈，
+                              避免文案变长把三个按钮挤出 184px 操作列而换行。 */}
+                          <span aria-hidden="true" className={`material-symbols-outlined inline-flex w-[14px] items-center justify-center text-[14px] ${isRefreshing ? 'animate-spin' : ''}`}>{isRefreshing ? 'sync' : 'refresh'}</span>
+                          刷新
                         </button>
                       </span>
                     )}
@@ -719,7 +723,7 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         type="button"
                         onClick={() => openEdit(source)}
                         aria-label={`编辑${displayName}`}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-colors"
+                        className="whitespace-nowrap px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#c2c6d2] dark:border-slate-700 text-[#004782] dark:text-blue-300 hover:bg-[#ecf4ff] dark:hover:bg-slate-800 transition-colors"
                         title="编辑信息源配置（API Key / 调度周期 / 适配器）"
                       >
                         编辑
@@ -730,12 +734,14 @@ export const DataSourcesView: React.FC<DataSourcesViewProps> = ({
                         type="button"
                         onClick={() => void handleToggleSource(source)}
                         disabled={role !== 'admin' || togglingId !== null}
+                        aria-busy={isToggling}
                         aria-pressed={source.enabled}
                         aria-label={`${source.enabled ? '停用' : '启用'}${displayName}`}
                         title={source.enabled ? '停用该信息源，停止自动采集' : '启用该信息源，恢复自动采集'}
-                        className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}
+                        className={`whitespace-nowrap px-2.5 py-1 text-[11px] font-bold rounded-lg border disabled:opacity-40 ${source.enabled ? 'border-amber-300 text-amber-800 dark:text-amber-300' : 'border-emerald-300 text-emerald-800 dark:text-emerald-300'}`}
                       >
-                        {isToggling ? '处理中...' : source.enabled ? '停用' : '启用'}
+                        {/* 同刷新按钮：处理中只靠 disabled 表达，文案长度恒定，避免换行。 */}
+                        {source.enabled ? '停用' : '启用'}
                       </button>
                     )}
                     {refreshMsg?.sourceId === source.id && (

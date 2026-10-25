@@ -424,6 +424,50 @@ export interface DashboardSummary {
   readonly history_may_be_partial: boolean;
 }
 
+/** 大屏按日趋势点；date 为 UTC 自然日 YYYY-MM-DD。 */
+export interface DashboardTrendPoint {
+  readonly date: string;
+  readonly count: number;
+}
+
+/**
+ * 大屏供应商省/地区点位。有供应商但无命中提醒时 alert_count=0、max_level=null，
+ * 前端以空心圆展示；同一供应商多个站点会落在多个省/地区，各点计数非互斥。
+ */
+export interface DashboardGeoRiskPoint {
+  readonly name: string;
+  readonly country_code: string | null;
+  readonly region: string | null;
+  readonly city: string | null;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly supplier_count: number;
+  readonly site_count: number;
+  readonly alert_count: number;
+  readonly level_counts: readonly DashboardLevelCount[];
+  readonly max_level: RiskLevel | null;
+}
+
+/** 供应商站点城市聚合点；仅统计启用供应商且有完整坐标的站点。 */
+export interface DashboardGeoSupplierPoint {
+  readonly city: string;
+  readonly country_code: string;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly supplier_count: number;
+  readonly site_count: number;
+}
+
+/** GET /api/v1/dashboard/analytics?days=7|30|90：地图与趋势补充数据。 */
+export interface DashboardAnalytics {
+  readonly as_of: string;
+  readonly window_days: number;
+  readonly trend: readonly DashboardTrendPoint[];
+  readonly risk_points: readonly DashboardGeoRiskPoint[];
+  readonly supplier_points: readonly DashboardGeoSupplierPoint[];
+  readonly unlocated_alert_count: number;
+}
+
 export interface SupplierRead {
   id: number;
   supplier_code: string;
@@ -1407,6 +1451,8 @@ export const api = {
   alertSummary: () => request<RiskAlertSummary>('/api/v1/risk-alerts/summary'),
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
   dashboardSummary: (days: DashboardWindowDays) => request<DashboardSummary>(`/api/v1/dashboard/summary?days=${days}`),
+  // 大屏地图与趋势：与 summary 分开请求，失败时主面板仍可展示。
+  dashboardAnalytics: (days: DashboardWindowDays) => request<DashboardAnalytics>(`/api/v1/dashboard/analytics?days=${days}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
   intelligence: (tab: IntelligenceCategory, limit = 20, offset = 0) => request<IntelligenceReportListResponse>(
     `/api/v1/intelligence?tab=${tab}&limit=${limit}&offset=${offset}`,

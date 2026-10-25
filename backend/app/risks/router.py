@@ -16,7 +16,11 @@ from app.auth.security import (
     verify_csrf,
 )
 from app.database import get_session
-from app.risks.dashboard import CURRENT_LEVELS, build_dashboard_aggregate
+from app.risks.dashboard import (
+    CURRENT_LEVELS,
+    build_dashboard_aggregate,
+    build_dashboard_analytics,
+)
 from app.risks.grouping_queries import (
     current_alert_rows as _current_alert_rows,
 )
@@ -33,6 +37,7 @@ from app.risks.models import (
     SupplierEventMatch,
 )
 from app.risks.schemas import (
+    DashboardAnalytics,
     DashboardSummary,
     EventDetailRead,
     EventSignalEvidence,
@@ -476,6 +481,25 @@ def dashboard_summary(
             read_txn.rollback()
     finally:
         read_conn.close()
+
+
+@router.get("/dashboard/analytics", response_model=DashboardAnalytics)
+def dashboard_analytics(
+    session: SessionDependency,
+    _user: RiskView,
+    window_days: Annotated[int, Query(alias="days")] = 30,
+) -> DashboardAnalytics:
+    """总览大屏补充数据：按日趋势、风险地图点位、供应商城市点位。
+
+    与 /dashboard/summary 分开请求：地图或趋势失败时，KPI、告警流与信源健康
+    仍可正常展示。days 白名单与 summary 保持一致。
+    """
+    if window_days not in (7, 30, 90):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="days must be 7, 30 or 90",
+        )
+    return build_dashboard_analytics(session, days=window_days)
 
 
 @router.post("/risk-alerts/expire")

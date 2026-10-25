@@ -196,3 +196,145 @@ textarea {
     display: block !important;
   }
 }
+
+/* 总览大屏：点位脉冲、飞线流动、地图扫描。全局 reduce-motion 规则会统一降级。 */
+@keyframes overview-pulse {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.85;
+  }
+  70% {
+    opacity: 0.18;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.overview-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: overview-pulse 2.8s ease-out infinite;
+}
+
+/* 风险地图：Leaflet 深色底图与常驻点位标签。 */
+.overview-leaflet {
+  background: #04111f;
+  position: relative;
+}
+
+.overview-leaflet .leaflet-tile-pane {
+  filter: none;
+}
+
+.overview-leaflet .leaflet-control-container {
+  display: none;
+}
+
+/* 有命中风险的点位：两圈从中心向外扩散的波纹；空心供应商点不参与动画。 */
+.overview-risk-ripple {
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
+  animation: overview-risk-ripple 2.4s ease-out infinite;
+}
+
+.overview-risk-ripple-delayed {
+  animation-delay: -1.2s;
+}
+
+@keyframes overview-risk-ripple {
+  0% {
+    opacity: 0.78;
+    transform: scale(0.6);
+  }
+  70% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.35);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overview-risk-ripple {
+    animation: none;
+    opacity: 0.22;
+    transform: scale(1.15);
+  }
+}
+
+.overview-map-label {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: #dbeafe !important;
+  font-size: 10px;
+  padding: 0;
+  text-shadow: 0 0 4px #04111f, 0 0 2px #04111f;
+}
+
+.overview-map-label::before {
+  display: none !important;
+}
+
+/* 总览卡片滚动条：默认隐藏，鼠标进入卡片后再显示。 */
+.overview-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.overview-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.overview-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overview-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.scroll-card:hover .overview-scroll {
+  scrollbar-color: rgba(56, 189, 248, 0.4) transparent;
+}
+
+.scroll-card:hover .overview-scroll::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.4);
+}
+
+@keyframes overview-flow {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+.overview-flow {
+  animation: overview-flow 4.5s linear infinite;
+}
+
+/* 只在地图内容区扫描：top 从 0 走到 100%，由地图容器 overflow-hidden 裁切。 */
+@keyframes overview-scan {
+  0% {
+    top: 0;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+.overview-scan {
+  animation: overview-scan 9s linear infinite;
+}

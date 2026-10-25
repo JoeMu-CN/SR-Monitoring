@@ -1,3 +1,4 @@
+import {useState} from 'react';
 import {AlertTriangle, CircleHelp, Info, ShieldCheck} from 'lucide-react';
 import type {
   MonitoringHealthRead,
@@ -150,6 +151,57 @@ export const MonitoringHealthBanner = ({snapshot, hasCurrentRisks}: {
       <Icon aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0"/>
       {/* min-w-0：多原因长文案在窄屏正常换行，不被 flex 子项撑出容器。 */}
       <span className="min-w-0">{copy.text}</span>
+    </div>
+  );
+};
+
+/**
+ * 总览页紧凑告警入口：异常时在「实时监测」左侧显示方形感叹号，悬停/点击展开原因。
+ * ok 不显示图标，但保留隐藏文案供无障碍与既有测试读取。
+ */
+export const MonitoringHealthIndicator = ({snapshot, hasCurrentRisks}: {
+  readonly snapshot: MonitoringHealthSnapshot;
+  readonly hasCurrentRisks: boolean;
+}) => {
+  const [open, setOpen] = useState(false);
+  if (snapshot.status === 'hidden' || snapshot.status === 'loading') return null;
+  const health = snapshot.status === 'ready' ? snapshot.health : null;
+  const overall = health === null ? 'unknown' : health.overall;
+  const asOfText = health === null ? null : formatHealthTime(health.as_of);
+  const copy = bannerCopy(overall, health, asOfText, hasCurrentRisks);
+
+  if (copy.tone === 'ok') {
+    return <span data-testid="monitoring-health-banner" data-state={overall} role="status" className="sr-only">{copy.text}</span>;
+  }
+
+  return (
+    <div
+      data-testid="monitoring-health-banner"
+      data-state={overall}
+      role={copy.tone === 'degraded' ? 'alert' : 'status'}
+      className="relative"
+    >
+      <button
+        type="button"
+        aria-label="查看监控异常"
+        aria-expanded={open}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen(true)}
+        className="grid h-6 w-6 place-items-center rounded border border-amber-400/50 bg-amber-400/10 text-amber-300 transition-colors hover:bg-amber-400/20"
+      >
+        <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div role="tooltip" className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-amber-400/35 bg-[#04111f]/95 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100/90 shadow-2xl backdrop-blur">
+          {copy.text.split(' · ').map((line, index) => (
+            <p key={index} className={index === 0 ? '' : 'mt-0.5 text-amber-200/70'}>{line}</p>
+          ))}
+        </div>
+      )}
+      <span className="sr-only">{copy.text}</span>
     </div>
   );
 };

@@ -26,7 +26,7 @@ import {ExportReportModal} from './components/ExportReportModal';
 import {MobileNav} from './components/MobileNav';
 import {NewSupplierModal} from './components/NewSupplierModal';
 import {SettingsModal} from './components/SettingsModal';
-import {Sidebar} from './components/Sidebar';
+import {Sidebar, type SidebarStage} from './components/Sidebar';
 import {SystemSplashScreen} from './components/SystemSplashScreen';
 import {UserMenu} from './components/UserMenu';
 import {LoginView} from './components/LoginView';
@@ -42,6 +42,19 @@ import {SuppliersView} from './components/SuppliersView';
 import {UsersManagementView} from './components/UsersManagementView';
 import {riskDetailPath, routePaths, routePermissions} from './routes';
 import {monitoringHealthRefreshMsForPath, useMonitoringHealth} from './useMonitoringHealth';
+
+const SIDEBAR_STAGE_STORAGE_KEY = 'sr-sidebar-collapsed';
+
+const readSidebarStage = (): SidebarStage => {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_STAGE_STORAGE_KEY);
+    if (stored === '2') return 2;
+    if (stored === '1' || stored === 'true') return 1;
+    return 0;
+  } catch {
+    return 0;
+  }
+};
 
 export function App() {
   const location = useLocation();
@@ -75,6 +88,7 @@ export function App() {
   const [deletionImpactError, setDeletionImpactError] = useState<string | null>(null);
   const editSupplierAbortRef = useRef<AbortController | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [sidebarStage, setSidebarStage] = useState<SidebarStage>(readSidebarStage);
   const permissions = auth?.permissions ?? [];
   const canManageSources = permissions.includes(routePermissions.sourceManage);
   const canManageSuppliers = permissions.includes(routePermissions.supplierManage);
@@ -166,6 +180,18 @@ export function App() {
     setSuppliers([]);
     setDataSources([]);
     setDimensions([]);
+  };
+
+  const advanceSidebarStage = () => {
+    setSidebarStage((current) => {
+      const next: SidebarStage = current === 0 ? 1 : current === 1 ? 2 : 0;
+      try {
+        window.localStorage.setItem(SIDEBAR_STAGE_STORAGE_KEY, String(next));
+      } catch {
+        // 隐私模式/存储被禁用时只影响下次打开，不阻塞本次折叠。
+      }
+      return next;
+    });
   };
 
   const handleCurrentUserUpdated = (updatedUser: AuthUser) => {
@@ -454,13 +480,17 @@ export function App() {
         p1RiskCount={p1RiskCount}
         user={auth.user}
         onLogout={() => void handleLogout()}
+        stage={sidebarStage}
+        onAdvanceStage={advanceSidebarStage}
       />
       <div className="fixed right-3 top-3 z-40 lg:hidden">
         <UserMenu user={auth.user} onLogout={() => void handleLogout()} compact menuPlacement="down" />
       </div>
 
-      <div className="lg:pl-[240px] flex-1 flex flex-col min-w-0 transition-all">
-        <main className="mx-auto w-full max-w-[1440px] flex-1 overflow-x-clip p-4 pb-28 sm:p-6 sm:pb-24 lg:p-6">
+      <div className={`flex min-w-0 flex-1 flex-col transition-all ${
+        sidebarStage === 0 ? 'lg:pl-[240px]' : sidebarStage === 1 ? 'lg:pl-[72px]' : 'lg:pl-0'
+      }`}>
+        <main className={`mx-auto w-full flex-1 overflow-x-clip p-4 pb-28 sm:p-6 sm:pb-24 lg:p-6 ${sidebarStage === 2 ? 'max-w-none' : 'max-w-[1440px]'}`}>
           {error && (
             <div className="mb-4 bg-[#ffdad6] border border-[#ba1a1a] text-[#93000a] rounded-xl px-4 py-3 flex items-center justify-between gap-3 text-[13px]">
               <span>{error}</span>

@@ -498,18 +498,11 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     defaultMocks({agentStatus: async () => { throw denied403; }});
     renderApp('/overview');
 
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
     // 最近风险提醒（来自 dashboardSummary.recent_alerts）正常渲染
     expect((await screen.findAllByText('示例精密电子有限公司')).length).toBeGreaterThan(0);
-    // 总览统计（来自 dashboardSummary）正常渲染：总监控企业 1 家、当前风险提醒 1 条
-    const supplierStat = screen.getByText((_content, element) => (
-      element?.tagName === 'SPAN' && element.textContent === '总监控企业：1 家'
-    ));
-    const riskStat = screen.getByText((_content, element) => (
-      element?.tagName === 'SPAN' && element.textContent === '当前风险提醒：1 条'
-    ));
-    expect(supplierStat).toBeInTheDocument();
-    expect(riskStat).toBeInTheDocument();
+    // 总览统计（来自 dashboardSummary）正常渲染：当前风险总计 1 条
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('1');
     expect(screen.queryByText('权限不足')).not.toBeInTheDocument();
   });
 
@@ -792,7 +785,7 @@ describe('App /overview 与 loadData 解耦', () => {
     vi.mocked(api.suppliers).mockImplementation(() => new Promise<never>(() => {}));
     renderApp('/overview');
 
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
     expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
     expect(screen.queryByText('正在加载供应链风险数据…')).not.toBeInTheDocument();
   });
@@ -803,7 +796,7 @@ describe('App /overview 与 loadData 解耦', () => {
     vi.mocked(api.sourcesAdmin).mockRejectedValue(new ApiError(503, '信息源服务不可用'));
     renderApp('/overview');
 
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
+    expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
     expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
   });
 
@@ -830,7 +823,7 @@ describe('App 监控健康只读诊断', () => {
     defaultMocks({permissions: ['risk_view']});
     renderApp('/overview');
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(api.monitoringHealth).not.toHaveBeenCalled();
     expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
   });
@@ -848,7 +841,7 @@ describe('App 监控健康只读诊断', () => {
     vi.mocked(api.monitoringHealth).mockRejectedValue(new ApiError(403, '权限不足'));
     renderApp('/overview');
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
     expect(screen.queryByText('尚无法确认监控状态')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', {name: '重新加载'})).not.toBeInTheDocument();

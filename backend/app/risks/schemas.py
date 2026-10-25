@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -133,6 +133,51 @@ class DashboardSummary(BaseModel):
     source_distribution: list[SourceDistributionItem]
     retention_window_days: int
     history_may_be_partial: bool
+
+
+class TrendPoint(BaseModel):
+    """按 UTC 自然日聚合的窗口内新增提醒数（含已失效，与 period_new_count 同口径）。"""
+
+    date: date
+    count: int
+
+
+class GeoRiskPoint(BaseModel):
+    """供应商省/地区点位：有供应商但无提醒时 alert_count=0，前端以空心圆展示。"""
+
+    name: str
+    country_code: str | None
+    region: str | None
+    city: str | None
+    latitude: float
+    longitude: float
+    supplier_count: int
+    site_count: int
+    alert_count: int
+    level_counts: list[LevelCount]
+    max_level: str | None
+
+
+class GeoSupplierPoint(BaseModel):
+    """供应商站点城市聚合点位；仅统计启用供应商且有经纬度的站点。"""
+
+    city: str
+    country_code: str
+    latitude: float
+    longitude: float
+    supplier_count: int
+    site_count: int
+
+
+class DashboardAnalytics(BaseModel):
+    """大屏地理与趋势数据；与 /dashboard/summary 分开请求，失败不影响主面板。"""
+
+    as_of: datetime
+    window_days: int
+    trend: list[TrendPoint]
+    risk_points: list[GeoRiskPoint]
+    supplier_points: list[GeoSupplierPoint]
+    unlocated_alert_count: int
 
 
 class EventSignalEvidence(BaseModel):

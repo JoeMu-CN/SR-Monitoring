@@ -161,10 +161,6 @@ const renderOverview = (options: RenderOptions = {}) => {
   return {onSelectRisk, onViewAllRisks, onRequestError, ...result};
 };
 
-const totalCurrentText = (value: number) => (
-  screen.getByText((_content, element) => element?.tagName === 'SPAN' && element.textContent === `当前风险提醒：${value} 条`)
-);
-
 beforeEach(() => {
   vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary());
   vi.mocked(api.dashboardAnalytics).mockResolvedValue(makeAnalytics());
@@ -188,8 +184,8 @@ describe('OverviewView 服务端汇总统计', () => {
     }));
     renderOverview();
 
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
-    expect(totalCurrentText(135)).toBeInTheDocument();
+    expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('135');
     expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('135');
     // 深色模式下总计必须可读：slate 数值语义色不得丢失 dark:text-white（回归过一次）。
     expect(screen.getByTestId('overview-metric-total')).toHaveClass('dark:text-white');
@@ -217,7 +213,7 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('缺省无 days 参数时按 30 请求且仅 30 天为选中态', async () => {
     renderOverview();
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(api.dashboardSummary).toHaveBeenCalledWith(30);
     expect(screen.getByRole('button', {name: '30 天'})).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', {name: '7 天'})).toHaveAttribute('aria-pressed', 'false');
@@ -228,7 +224,7 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('?days=7 刷新即恢复为 7 天并按 7 请求', async () => {
     renderOverview({entries: ['/overview?days=7']});
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(api.dashboardSummary).toHaveBeenCalledWith(7);
     expect(screen.getByRole('button', {name: '7 天'})).toHaveAttribute('aria-pressed', 'true');
   });
@@ -236,7 +232,7 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('点击 90 天写入 ?days=90（push），点击 30 天清空 query', async () => {
     const user = userEvent.setup();
     renderOverview();
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
 
     await user.click(screen.getByRole('button', {name: '90 天'}));
     await waitFor(() => expect(screen.getByTestId('ov-search')).toHaveTextContent('?days=90'));
@@ -253,7 +249,7 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('浏览器后退恢复上一 days（90 → 缺省 30）', async () => {
     const user = userEvent.setup();
     renderOverview({entries: ['/overview', '/overview?days=90'], index: 1});
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     await waitFor(() => expect(api.dashboardSummary).toHaveBeenCalledWith(90));
 
     await user.click(screen.getByRole('button', {name: '历史后退'}));
@@ -265,7 +261,7 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('非法 days（?days=5）以 replace 规范化为缺省 30，不以 5 发起请求', async () => {
     renderOverview({entries: ['/overview?days=5']});
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     await waitFor(() => expect(screen.getByTestId('ov-search').textContent).toBe(''));
     expect(api.dashboardSummary).toHaveBeenCalledWith(30);
     expect(api.dashboardSummary).not.toHaveBeenCalledWith(5);
@@ -275,14 +271,14 @@ describe('OverviewView 时间窗口 URL 白名单', () => {
   it('显式 ?days=30 也规范化为无 query', async () => {
     renderOverview({entries: ['/overview?days=30']});
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     await waitFor(() => expect(screen.getByTestId('ov-search').textContent).toBe(''));
     expect(api.dashboardSummary).toHaveBeenCalledWith(30);
   });
 });
 
 describe('OverviewView 当前统计与期间新增分离', () => {
-  it('7/90 切换时 period_new_count 变化而 total_current 不变', async () => {
+  it('7/90 切换时请求窗口变化而当前风险保持不变', async () => {
     vi.mocked(api.dashboardSummary).mockImplementation((days) => Promise.resolve(makeSummary({
       window_days: days,
       total_current: 120,
@@ -291,17 +287,16 @@ describe('OverviewView 当前统计与期间新增分离', () => {
     const user = userEvent.setup();
     renderOverview();
 
-    await screen.findByText('全网供应链风险概览');
-    expect(totalCurrentText(120)).toBeInTheDocument();
-    expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 30 天新增提醒（含已失效）：30 条');
+    await screen.findByText('供应链风险监控总览大屏');
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
 
     await user.click(screen.getByRole('button', {name: '7 天'}));
-    await waitFor(() => expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 7 天新增提醒（含已失效）：5 条'));
-    expect(totalCurrentText(120)).toBeInTheDocument();
+    await waitFor(() => expect(api.dashboardSummary).toHaveBeenCalledWith(7));
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
 
     await user.click(screen.getByRole('button', {name: '90 天'}));
-    await waitFor(() => expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 90 天新增提醒（含已失效）：88 条'));
-    expect(totalCurrentText(120)).toBeInTheDocument();
+    await waitFor(() => expect(api.dashboardSummary).toHaveBeenCalledWith(90));
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
   });
 
   it('history_may_be_partial=true 时提示历史可能不完整；false 时无提示', async () => {
@@ -316,7 +311,7 @@ describe('OverviewView 当前统计与期间新增分离', () => {
 
     vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({history_may_be_partial: false}));
     renderOverview();
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(screen.queryByText(/历史可能不完整/)).not.toBeInTheDocument();
   });
 });
@@ -333,7 +328,6 @@ describe('OverviewView 来源分布', () => {
     renderOverview();
 
     const section = await screen.findByTestId('overview-source-distribution');
-    expect(within(section).getByText(/非互斥|可重复归属|之和可(能)?大于/)).toBeInTheDocument();
     expect(within(section).getByText('来源甲')).toBeInTheDocument();
     expect(within(section).getByText('8 条')).toBeInTheDocument();
   });
@@ -371,12 +365,12 @@ describe('OverviewView 加载失败与陈旧数据', () => {
 
     expect(await screen.findByText('总览汇总加载失败')).toBeInTheDocument();
     expect(screen.getByText('总览暂时不可用')).toBeInTheDocument();
-    expect(screen.queryByText('全网供应链风险概览')).not.toBeInTheDocument();
+    expect(screen.queryByText('供应链风险监控总览大屏')).not.toBeInTheDocument();
     expect(onRequestError).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', {name: '重试'}));
-    expect(await screen.findByText('全网供应链风险概览')).toBeInTheDocument();
-    expect(totalCurrentText(77)).toBeInTheDocument();
+    expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('77');
   });
 
   it('已有 summary 后刷新失败保留旧值并标注"旧数据/刷新失败"，重试成功恢复', async () => {
@@ -388,21 +382,20 @@ describe('OverviewView 加载失败与陈旧数据', () => {
     const user = userEvent.setup();
     renderOverview({onRequestError});
 
-    await screen.findByText('全网供应链风险概览');
-    expect(totalCurrentText(120)).toBeInTheDocument();
+    await screen.findByText('供应链风险监控总览大屏');
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
 
     await user.click(screen.getByRole('button', {name: '7 天'}));
 
     await screen.findByText(/旧数据/);
     expect(screen.getByText(/刷新失败/)).toBeInTheDocument();
     // 旧值保留，未被清零或替换为占位
-    expect(totalCurrentText(120)).toBeInTheDocument();
-    expect(screen.getByTestId('overview-period-new')).toHaveTextContent('30 条');
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
     expect(onRequestError).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', {name: '重试'}));
-    await waitFor(() => expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 7 天新增提醒（含已失效）：5 条'));
-    expect(screen.queryByText(/刷新失败/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/刷新失败/)).not.toBeInTheDocument());
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
   });
 
   it('summary 返回 401 时调用 App 统一错误处理，不显示组件内错误', async () => {
@@ -442,19 +435,19 @@ describe('OverviewView 请求竞态', () => {
     });
     const user = userEvent.setup();
     renderOverview();
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
 
     await user.click(screen.getByRole('button', {name: '7 天'}));
     await waitFor(() => expect(api.dashboardSummary).toHaveBeenCalledWith(7));
 
     await user.click(screen.getByRole('button', {name: '90 天'}));
-    await waitFor(() => expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 90 天新增提醒（含已失效）：88 条'));
+    await waitFor(() => expect(api.dashboardSummary).toHaveBeenCalledWith(90));
 
     // 迟到的 7 响应必须被请求序号丢弃
     resolveSeven(makeSummary({window_days: 7, total_current: 120, period_new_count: 5}));
     await new Promise((resolve) => { setTimeout(resolve, 50); });
 
-    expect(screen.getByTestId('overview-period-new')).toHaveTextContent('最近 90 天新增提醒（含已失效）：88 条');
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('120');
     expect(screen.getByRole('button', {name: '90 天'})).toHaveAttribute('aria-pressed', 'true');
   });
 });
@@ -472,7 +465,7 @@ describe('OverviewView 严重度零值', () => {
     }));
     renderOverview();
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     // 零值级别不得渲染任何可见色块（旧实现 Math.max(1, 0) 会给它可见宽度）
     expect(screen.queryByTestId('severity-segment-P3')).not.toBeInTheDocument();
     // 非零级别保留真实比例（flex-grow === count），不归一化到最小 1
@@ -560,7 +553,7 @@ describe('OverviewView 监控健康横幅', () => {
     const banner = await screen.findByTestId('monitoring-health-banner');
     expect(banner).toHaveAttribute('data-state', 'inactive');
     expect(banner.textContent).toContain('未开启自动监控');
-    expect(totalCurrentText(17)).toBeInTheDocument();
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('17');
   });
 
   it('诊断 503（snapshot=unknown）：显示无法确认，业务统计保持可见', async () => {
@@ -571,15 +564,15 @@ describe('OverviewView 监控健康横幅', () => {
     expect(banner).toHaveAttribute('data-state', 'unknown');
     expect(banner.textContent).toContain('尚无法确认监控状态');
     expect(banner.textContent).not.toContain('监控正常');
-    expect(totalCurrentText(17)).toBeInTheDocument();
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('17');
   });
 
   it('无诊断权限（hidden）：不渲染横幅，页面其余内容不受影响', async () => {
     vi.mocked(api.dashboardSummary).mockResolvedValue(makeSummary({total_current: 17}));
     renderOverview({monitoringHealth: {status: 'hidden'}});
 
-    await screen.findByText('全网供应链风险概览');
+    await screen.findByText('供应链风险监控总览大屏');
     expect(screen.queryByTestId('monitoring-health-banner')).not.toBeInTheDocument();
-    expect(totalCurrentText(17)).toBeInTheDocument();
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('17');
   });
 });

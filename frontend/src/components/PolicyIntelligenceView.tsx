@@ -15,10 +15,10 @@ type IntelligenceTab = IntelligenceCategory;
  */
 type PageTab = IntelligenceTab | 'market';
 
-const TAB_ITEMS: ReadonlyArray<{tab: PageTab; label: string; hint: string}> = [
-  {tab: 'policy', label: '政策情报', hint: '监管、进出口政策与供应链合规法规的宏观解读'},
-  {tab: 'industry', label: '行业情报', hint: '原材料、产能、物流与劳动力市场的供需传导'},
-  {tab: 'market', label: '行情监控', hint: '行情越阈会生成供应商风险提醒，与情报报告不同'},
+const TAB_ITEMS: ReadonlyArray<{tab: PageTab; label: string}> = [
+  {tab: 'policy', label: '政策情报'},
+  {tab: 'industry', label: '行业情报'},
+  {tab: 'market', label: '行情监控'},
 ];
 
 const formatDateTime = (value: string | null) => (
@@ -98,7 +98,6 @@ const IntelligenceCard = ({report, tab}: {readonly report: IntelligenceReportLis
 
 const IntelligencePanel = ({tab, active}: {readonly tab: IntelligenceTab; readonly active: boolean}) => {
   const {data, error, loading, retry} = useIntelligenceReports(tab);
-  const hint = TAB_ITEMS.find((item) => item.tab === tab)?.hint ?? '';
 
   return (
     <div
@@ -108,7 +107,6 @@ const IntelligencePanel = ({tab, active}: {readonly tab: IntelligenceTab; readon
       data-testid={`intelligence-tabpanel-${tab}`}
       hidden={!active}
     >
-      <p className="mb-3 text-[12px] text-slate-500 dark:text-slate-400">{hint}：报告由调度任务自动生成，不含供应商匹配与风险等级。</p>
       {loading ? (
         <div role="status" className="rounded-2xl border border-slate-200/80 bg-white/80 p-12 text-center shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60">
           <span className="text-[13px] text-slate-500 dark:text-slate-400">正在加载情报报告…</span>

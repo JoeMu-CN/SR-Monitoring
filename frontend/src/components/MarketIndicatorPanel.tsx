@@ -325,9 +325,6 @@ export const MarketIndicatorPanel = ({active}: {readonly active: boolean}) => {
       data-testid="intelligence-tabpanel-market"
       hidden={!active}
     >
-      <p className="mb-3 text-[12px] text-slate-500 dark:text-slate-400">
-        行情越阈会生成供应商风险提醒，与情报报告不同：本页只展示读数、阈值判定与走势，提醒请从「最近提醒」进入风险详情。
-      </p>
       {loading ? (
         <div
           role="status"

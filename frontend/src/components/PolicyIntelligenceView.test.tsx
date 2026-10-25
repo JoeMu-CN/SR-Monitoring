@@ -105,7 +105,7 @@ describe('情报聚合页签结构', () => {
     expect(tabByName('政策情报')).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('行情监控页签的 hint 明确「越阈生成供应商风险提醒，与情报报告不同」', async () => {
+  it('切到行情监控页签后展示行情面板且不再渲染说明文案', async () => {
     mockAll();
     renderView();
 
@@ -116,7 +116,7 @@ describe('情报聚合页签结构', () => {
     await userEvent.click(tabByName('行情监控'));
 
     await waitFor(() => expect(panel('intelligence-tabpanel-market')).not.toHaveAttribute('hidden'));
-    expect(panel('intelligence-tabpanel-market').textContent).toContain('行情越阈会生成供应商风险提醒，与情报报告不同');
+    expect(panel('intelligence-tabpanel-market').textContent).not.toContain('行情越阈会生成供应商风险提醒');
   });
 
   it('三个面板的 tabpanel / tab aria 关联成对，不存在悬空的 aria-controls', async () => {

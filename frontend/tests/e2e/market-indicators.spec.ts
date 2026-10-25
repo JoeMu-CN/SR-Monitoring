@@ -209,14 +209,14 @@ test('桌面1280：第三签可切换，三组三态渲染，提醒入口指向 
   await expect(page.getByRole('heading', {name: '情报聚合'})).toBeVisible({timeout: 15_000});
   await settleRoute(page);
 
-  // 三个外层页签齐备；行情监控的 hint 必须与情报报告语义区分开。
+  // 三个外层页签齐备；行情监控面板不再承载说明文案，直接展示读数与判定。
   await expect(page.getByTestId('intelligence-tabs').getByRole('tab')).toHaveCount(3);
   await expect(tab(page, '政策情报')).toHaveAttribute('aria-selected', 'true');
 
   await tab(page, '行情监控').click();
   const panel = page.getByTestId('intelligence-tabpanel-market');
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText('行情越阈会生成供应商风险提醒，与情报报告不同');
+  await expect(panel).not.toContainText('行情越阈会生成供应商风险提醒');
   await expect(page.getByTestId('intelligence-tabpanel-policy')).toBeHidden();
   await expect(page.getByTestId('intelligence-tabpanel-industry')).toBeHidden();
 

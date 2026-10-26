@@ -23,14 +23,14 @@
     | bis-entity-list | until_revoked | 美国 BIS 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
     | mofcom-entity-detail | until_revoked | 商务部管控名单明细，撤销前持续有效，不靠天数自动解除 |
     | uflpa-entity-list | until_revoked | UFLPA 实体清单，只能由撤销解除，仍依赖接收到撤销信息 |
-    | eu-official-journal | fixed_days 365 | 官方公报为混合公告（含修订草案），365 天是风险关注窗口而非法律期限 |
+    | eu-official-journal | fixed_days 365 + profile=regulatory_change | 官方公报为混合公告（含修订草案），365 天是风险关注窗口而非法律期限；profile 兜底 AI 不产细类的公报 |
     | eu-compliance | fixed_days 365 | 合规公告同属混合内容，365 天关注窗口非法定期限 |
     | customs-announcement | fixed_days 365 | 海关公告含政策草案与征求意见稿，365 天关注窗口非法定期限 |
-    | mee-announcement | fixed_days 365 | 生态环境部公告混合发布，365 天关注窗口非法定期限 |
+    | mee-announcement | fixed_days 365 + profile=regulatory_change | 生态环境部公告混合发布，365 天关注窗口非法定期限；profile 兜底 AI 不产细类的监管公告 |
     | mem-incident-bulletin | fixed_days 90 | 事故通报 90 天内作为风险关注窗口，超期退出监控 |
-    | wto-news | fixed_days 90 | 贸易新闻 90 天内作为风险关注窗口，超期退出监控 |
-    | usgs-earthquake-day | fixed_days 7 | 地震日事件为短时效信息，7 天后退出监控 |
-    | fmprc-press | fixed_days 30 | 外交表态 30 天关注窗口，超期退出监控 |
+    | wto-news | fixed_days 90 + profile=trade_tariff | 贸易新闻 90 天内作为风险关注窗口；profile 兜底 AI 不产细类的贸易政策新闻 |
+    | usgs-earthquake-day | fixed_days 7 + profile=geological_hazard | 地震日事件为短时效信息，7 天后退出监控；profile 兜底 AI 不产细类的地震事件 |
+    | fmprc-press | fixed_days 30 + profile=political_instability | 外交表态 30 天关注窗口；profile 兜底 AI 不产细类的外交表态 |
     | fx-rates | until_superseded 3 | 汇率行情逐日更新；3 天覆盖周末容差（周末无新报价，避免周一误过期） |
     | commodity-futures | until_superseded 3 | 期货行情逐日更新；3 天覆盖周末容差，避免周末误过期 |
     | semiconductor-index | until_superseded 3 | 半导体指数行情逐日更新；3 天覆盖周末容差 |
@@ -42,6 +42,12 @@
     产出 `event_subtype`，因此由信源级显式 `profile=market_price_point` 补齐分类，使
     `classify_pending_signal` 能完成分类而不是停在 classification_failed；仍保持
     `fixed_days 14`，因为该采集器不产出 validity_key（until_superseded 会导致入库失败）。
+
+    eu-official-journal / mee-announcement / wto-news / usgs-earthquake-day / fmprc-press
+    同理：均为综合新闻/公告类信源，AI 常只给出 `event_type`（多为 other）而不产出
+    `event_subtype`，历史上因此停在 classification_failed。这里为每个源补一个语义最贴近
+    的兜底 profile，仅用于 AI 未给细类时补齐分类；AI 给出 `event_subtype` 时仍以 AI 为准。
+    有效期窗口仍按各源既有 `fixed_days` 计算，profile 不改变天数。
 
 四、生效范围
     策略仅对之后新入库的信号生效（applies_to=new_signals_only）；存量信号不回溯、
@@ -113,14 +119,24 @@ TARGET_POLICIES: Final[Mapping[str, PolicySpec]] = MappingProxyType({
     "bis-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED),
     "mofcom-entity-detail": PolicySpec(ValidityMode.UNTIL_REVOKED),
     "uflpa-entity-list": PolicySpec(ValidityMode.UNTIL_REVOKED),
-    "eu-official-journal": PolicySpec(ValidityMode.FIXED_DAYS, 365),
+    "eu-official-journal": PolicySpec(
+        ValidityMode.FIXED_DAYS, 365, profile=ValidityProfile.REGULATORY_CHANGE
+    ),
     "eu-compliance": PolicySpec(ValidityMode.FIXED_DAYS, 365),
     "customs-announcement": PolicySpec(ValidityMode.FIXED_DAYS, 365),
-    "mee-announcement": PolicySpec(ValidityMode.FIXED_DAYS, 365),
+    "mee-announcement": PolicySpec(
+        ValidityMode.FIXED_DAYS, 365, profile=ValidityProfile.REGULATORY_CHANGE
+    ),
     "mem-incident-bulletin": PolicySpec(ValidityMode.FIXED_DAYS, 90),
-    "wto-news": PolicySpec(ValidityMode.FIXED_DAYS, 90),
-    "usgs-earthquake-day": PolicySpec(ValidityMode.FIXED_DAYS, 7),
-    "fmprc-press": PolicySpec(ValidityMode.FIXED_DAYS, 30),
+    "wto-news": PolicySpec(
+        ValidityMode.FIXED_DAYS, 90, profile=ValidityProfile.TRADE_TARIFF
+    ),
+    "usgs-earthquake-day": PolicySpec(
+        ValidityMode.FIXED_DAYS, 7, profile=ValidityProfile.GEOLOGICAL_HAZARD
+    ),
+    "fmprc-press": PolicySpec(
+        ValidityMode.FIXED_DAYS, 30, profile=ValidityProfile.POLITICAL_INSTABILITY
+    ),
     "fx-rates": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "commodity-futures": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),
     "semiconductor-index": PolicySpec(ValidityMode.UNTIL_SUPERSEDED, 3),

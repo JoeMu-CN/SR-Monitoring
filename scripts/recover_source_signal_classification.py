@@ -6,8 +6,9 @@
     某些信源（如 `sse-shipping` 上海航交所 CCFI 指数）产出的信号只命中 AI 大类
     `event_type`，不产出 `event_subtype`。旧版 `classify_pending_signal` 在
     `event_subtype is None` 时无条件判定分类失败，信号因此长期停在
-    `validity_state=pending_classification` / `validity_reason.code=classification_failed`；
-    调度器已把该 reason 排除出分析队列，不会自动重试。
+    `processing_state=classification_failed` / `validity_reason.code=classification_failed`
+    （0066 之前是 `validity_state=pending_classification`）；调度器已把该阶段排除出
+    分析队列，不会自动重试。
 
     本脚本在信源已具备显式 `validity_policy.profile`（见
     `scripts/seed_source_validity_policies.py`）的前提下，复用每条信号**最近一次
@@ -18,7 +19,7 @@
     - 不采集、不发布、不重启任何服务、不改信源策略、不打印任何 .env / Token /
       密码 / 连接串。
     - 默认 dry-run：只读统计候选数与可恢复数，不写库；`--apply` 才逐条处理。
-    - 幂等：成功处理的信号不再是 `pending_classification` + `classification_failed`，
+    - 幂等：成功处理的信号不再是 `processing_state=classification_failed`，
       重复执行不会再次命中候选集；dry-run → apply → 再 dry-run 的候选数应单调下降。
     - 可逆：只写信号有效期字段、事件与提醒，不删除任何数据；需要回退时把
       `data_sources.validity_policy` 的 profile 去掉即可（历史快照不回滚）。
@@ -62,7 +63,7 @@ from app.signals.models import DataSource, RawSignal
 from app.signals.schemas import SourceValidityPolicy
 
 LOG_PREFIX: Final = "[recover-classification]"
-PENDING_STATE: Final = "pending_classification"
+FAILED_STATE: Final = "classification_failed"
 FAILED_CODE: Final = "classification_failed"
 ItemStatus = Literal["recovered", "inactive", "skipped", "failed"]
 
@@ -121,12 +122,13 @@ def _describe_source_policy(source: DataSource) -> str:
 
 
 def _candidates(session: Session, source: DataSource) -> list[RawSignal]:
+    """待分类失败阶段：以 processing_state 为准（0066 起 validity_state 只表达生命周期）。"""
     return list(
         session.scalars(
             select(RawSignal)
             .where(
                 RawSignal.source_id == source.id,
-                RawSignal.validity_state == PENDING_STATE,
+                RawSignal.processing_state == FAILED_STATE,
                 RawSignal.validity_reason["code"].astext == FAILED_CODE,
             )
             .order_by(RawSignal.id)
@@ -149,7 +151,7 @@ def _recover_one(session: Session, signal: RawSignal, now_utc: datetime) -> Item
     except InactiveRiskSignalError as error:
         # process_analysis 已先提交分类结果再抛错；非活跃只表示当前不在有效期窗口。
         session.rollback()
-        resolved = signal.validity_state != PENDING_STATE
+        resolved = signal.processing_state != FAILED_STATE
         print(
             f"{LOG_PREFIX} [{'INACTIVE' if resolved else 'FAILED'}] signal={signal.id} "
             f"reason={error.reason} state={signal.validity_state}"
@@ -195,7 +197,7 @@ def run(code: str, *, apply: bool) -> int:
             f"{LOG_PREFIX} mode={'apply' if apply else 'dry-run'} database={database} "
             f"source={code}(id={source.id}) policy={_describe_source_policy(source)}"
         )
-        print(f"{LOG_PREFIX} 候选={outcome.candidates}（待分类且 classification_failed）")
+        print(f"{LOG_PREFIX} 候选={outcome.candidates}（分类失败阶段）")
         if not apply:
             for signal in signals:
                 outcome = _accumulate(outcome, _plan_one(session, signal))
@@ -214,7 +216,7 @@ def run(code: str, *, apply: bool) -> int:
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="recover_source_signal_classification.py",
-        description="恢复卡在 pending_classification/classification_failed 的存量信号",
+        description="恢复卡在 classification_failed 的存量信号",
     )
     parser.add_argument(
         "--source-code", required=True, help="目标信源 code，例如 sse-shipping"

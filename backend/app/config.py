@@ -56,6 +56,21 @@ def get_search_settings() -> SearchSettings:
     )
 
 
+@dataclass(frozen=True)
+class AmapSettings:
+    """高德 Web 服务地理编码配置；Key 只允许来自环境变量。"""
+
+    web_service_key: str
+    timeout_seconds: float
+
+
+def get_amap_settings() -> AmapSettings:
+    return AmapSettings(
+        web_service_key=os.getenv("AMAP_WEB_SERVICE_KEY", "").strip(),
+        timeout_seconds=_float_env("AMAP_GEOCODE_TIMEOUT_SECONDS", 5, minimum=1, maximum=30),
+    )
+
+
 def get_crawl4ai_settings() -> Crawl4AISettings:
     """读取受控单页 Crawl4AI 回退配置；默认关闭，避免隐式启动浏览器出网。"""
     return Crawl4AISettings(

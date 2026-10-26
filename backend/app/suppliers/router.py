@@ -24,6 +24,7 @@ from app.suppliers.editing import (
     assert_version_matches,
     lock_supplier_for_update,
 )
+from app.suppliers.geocoding import resolve_site_coordinates
 from app.suppliers.importer import (
     MAX_FILE_BYTES,
     WorkbookValidationError,
@@ -66,6 +67,10 @@ def get_supplier_or_404(session: Session, supplier_id: int) -> Supplier:
 def replace_supplier_details(
     session: Session, supplier: Supplier, payload: SupplierCreate | SupplierUpdate
 ) -> None:
+    existing_sites_by_id = {
+        site.id: site for site in supplier.sites if site.id is not None
+    }
+    existing_sites_by_name = {site.site_name: site for site in supplier.sites}
     if supplier.id is not None:
         supplier.aliases.clear()
         supplier.sites.clear()
@@ -93,6 +98,12 @@ def replace_supplier_details(
         supplier.aliases.append(alias)
     supplier.sites = []
     for site_item in payload.sites:
+        previous = (
+            existing_sites_by_id.get(site_item.id)
+            if site_item.id is not None
+            else existing_sites_by_name.get(site_item.site_name)
+        )
+        resolve_site_coordinates(site_item, previous=previous, trust_provided=True)
         site = SupplierSite(
             site_name=site_item.site_name,
             country_code=site_item.country_code,

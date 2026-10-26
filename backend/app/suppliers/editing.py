@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.suppliers.geocoding import resolve_site_coordinates
 from app.suppliers.models import Supplier, SupplierAlias, SupplierProduct, SupplierSite
 from app.suppliers.queries import supplier_options
 from app.suppliers.schemas import (
@@ -108,6 +109,7 @@ def _sync_sites(supplier: Supplier, items: list[SiteInput]) -> None:
         # 未携带 id 的旧客户端按地点名称回退匹配，保持既有行 id 不变。
         if target is None and item.id is None:
             target = by_name.get(item.site_name)
+        resolve_site_coordinates(item, previous=target, trust_provided=False)
         if target is None:
             target = SupplierSite(
                 site_name=item.site_name,

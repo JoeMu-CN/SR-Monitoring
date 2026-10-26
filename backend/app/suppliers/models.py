@@ -116,6 +116,7 @@ class SupplierSite(Base):
     city: Mapped[str | None] = mapped_column(Text)
     district: Mapped[str | None] = mapped_column(Text)
     address: Mapped[str] = mapped_column(Text)
+    # 统一 WGS84（与 Leaflet/Esri 底图一致）；高德等 GCJ-02 来源写入前必须转换。
     latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
     longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6))
 

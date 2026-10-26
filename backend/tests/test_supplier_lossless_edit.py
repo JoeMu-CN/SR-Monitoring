@@ -226,7 +226,7 @@ def test_edit_first_product_name_keeps_keywords(client: TestClient) -> None:
     }
 
 
-def test_edit_first_site_address_keeps_country_coordinates_and_others(
+def test_edit_first_site_address_clears_stale_coordinates_but_keeps_others(
     client: TestClient,
 ) -> None:
     detail = _create_full_supplier(client, "SUP-SITE-LOSSLESS-1")
@@ -251,10 +251,11 @@ def test_edit_first_site_address_keeps_country_coordinates_and_others(
         "region",
         "city",
         "district",
-        "latitude",
-        "longitude",
     ):
         assert edited[field] == first_site[field], field
+    # 测试环境没有高德 Key：地址已变化时必须清空旧坐标，不能继续指向旧地址。
+    assert edited["latitude"] is None
+    assert edited["longitude"] is None
     assert _child_by_id(after["sites"], detail["sites"][1]["id"]) == detail["sites"][1]
     after_products = sorted(after["products"], key=lambda item: item["id"])
     before_products = sorted(detail["products"], key=lambda item: item["id"])

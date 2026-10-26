@@ -61,7 +61,7 @@ SITE_COLUMNS = [
     ("城市", "city", False, "城市"),
     ("区县", "district", False, "区、县、旗或同级行政区"),
     ("详细地址", "address", True, "实际生产或履约地址"),
-    ("纬度", "latitude", False, "-90 到 90；必须与经度同时填写"),
+    ("纬度", "latitude", False, "-90 到 90；WGS84；必须与经度同时填写"),
     ("经度", "longitude", False, "-180 到 180；必须与纬度同时填写"),
 ]
 PRODUCT_COLUMNS = [

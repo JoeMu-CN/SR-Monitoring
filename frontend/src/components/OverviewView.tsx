@@ -450,6 +450,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
             <div className="flex min-h-[340px] flex-none flex-col xl:min-h-0 xl:flex-1">
               <OverviewMap
                 riskPoints={riskPoints}
+                riskSites={analytics?.risk_sites ?? []}
                 unlocatedCount={analytics?.unlocated_alert_count ?? 0}
                 loading={isAnalyticsFetching}
               />

@@ -284,6 +284,23 @@ def test_dashboard_analytics_trend_supplier_geo_and_supplier_points(
     assert "台湾省" not in by_name
     assert "北京市" not in by_name
 
+    # 地图点位直接使用供应商站点实际坐标，不按省/地区聚合。
+    sites = {point["site_name"]: point for point in payload["risk_sites"]}
+    assert [point["site_name"] for point in payload["risk_sites"]] == [
+        "SH 工厂",
+        "SZ 工厂",
+        "ZJ 工厂",
+    ]
+    assert sites["SH 工厂"]["supplier_name"] == "分析测试供应商 SH"
+    assert sites["SH 工厂"]["alert_count"] == 3
+    assert sites["SH 工厂"]["max_level"] == "P1"
+    assert sites["SH 工厂"]["latitude"] == 31.23
+    assert sites["SH 工厂"]["longitude"] == 121.47
+    assert sites["SZ 工厂"]["max_level"] == "P4"
+    assert sites["ZJ 工厂"]["alert_count"] == 0
+    assert sites["ZJ 工厂"]["max_level"] is None
+    assert sites["ZJ 工厂"]["latitude"] == 30.27
+
     supplier_by_city = {point["city"]: point for point in payload["supplier_points"]}
     assert supplier_by_city["上海市"]["supplier_count"] == 1
     assert supplier_by_city["苏州市"]["supplier_count"] == 1
@@ -328,6 +345,8 @@ def test_dashboard_analytics_supplier_multiple_sites_is_non_exclusive(
         assert point["site_count"] == 1
         assert point["alert_count"] == 1
         assert point["max_level"] == "P3"
+    assert len(payload["risk_sites"]) == 2
+    assert {point["alert_count"] for point in payload["risk_sites"]} == {1}
     assert payload["unlocated_alert_count"] == 0
 
 

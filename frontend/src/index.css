@@ -250,7 +250,8 @@ textarea {
 }
 
 .overview-leaflet .leaflet-tile-pane {
-  filter: none;
+  /* 直接压暗瓦片，避免矩形遮罩随地图拖动后露出原色。 */
+  filter: brightness(0.5) contrast(1.12) sepia(0.8) hue-rotate(180deg) saturate(2.5);
 }
 
 .overview-leaflet .leaflet-control-container {
@@ -327,20 +328,6 @@ textarea {
     opacity: 0.22;
     transform: scale(1.15);
   }
-}
-
-.overview-map-label {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  color: #dbeafe !important;
-  font-size: 10px;
-  padding: 0;
-  text-shadow: 0 0 4px #04111f, 0 0 2px #04111f;
-}
-
-.overview-map-label::before {
-  display: none !important;
 }
 
 /* 总览卡片滚动条：默认隐藏，鼠标进入卡片后再显示。 */

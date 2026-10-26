@@ -452,6 +452,23 @@ export interface DashboardGeoRiskPoint {
   readonly max_level: RiskLevel | null;
 }
 
+/** 供应商站点实际点位：一个站点一个点，只返回有完整经纬度的启用站点。 */
+export interface DashboardGeoRiskSitePoint {
+  readonly supplier_id: number;
+  readonly site_id: number;
+  readonly supplier_name: string;
+  readonly site_name: string;
+  readonly address: string;
+  readonly country_code: string;
+  readonly region: string | null;
+  readonly city: string | null;
+  readonly latitude: number;
+  readonly longitude: number;
+  readonly alert_count: number;
+  readonly level_counts: readonly DashboardLevelCount[];
+  readonly max_level: RiskLevel | null;
+}
+
 /** 供应商站点城市聚合点；仅统计启用供应商且有完整坐标的站点。 */
 export interface DashboardGeoSupplierPoint {
   readonly city: string;
@@ -468,6 +485,7 @@ export interface DashboardAnalytics {
   readonly window_days: number;
   readonly trend: readonly DashboardTrendPoint[];
   readonly risk_points: readonly DashboardGeoRiskPoint[];
+  readonly risk_sites: readonly DashboardGeoRiskSitePoint[];
   readonly supplier_points: readonly DashboardGeoSupplierPoint[];
   readonly unlocated_alert_count: number;
 }
@@ -1070,6 +1088,20 @@ export interface MonitoringScheduledJob {
 // 最近执行记录的状态：与后端 job 运行状态一一对应，前端按穷举映射渲染。
 export type MonitoringScheduledRunStatus = 'running' | 'completed' | 'error' | 'missed' | 'max_instances';
 
+// 单次执行的结构化结果：后端只给已登记的摘要与计数，前端不推算、不补零。
+export interface SchedulerRunResultMetric {
+  readonly label: string;
+  readonly value: number;
+}
+
+export interface SchedulerRunResult {
+  readonly summary: string;
+  /** 处理过程计数（抓取/新增/重复等）；旧记录可能缺失。 */
+  readonly metrics?: readonly SchedulerRunResultMetric[];
+  /** 产出计数（新增信号等）；旧记录可能缺失。 */
+  readonly outputs?: readonly SchedulerRunResultMetric[];
+}
+
 // 最近执行记录：已落库的调度运行事实（时间戳与状态码），不含异常文本或日志。
 export interface MonitoringScheduledRun {
   readonly id: number;
@@ -1079,6 +1111,14 @@ export interface MonitoringScheduledRun {
   readonly scheduled_run_at: string;
   readonly started_at: string | null;
   readonly finished_at: string | null;
+  /** 结构化执行结果；历史记录或失败执行可能没有。 */
+  readonly result?: SchedulerRunResult | null;
+}
+
+// 单个任务最近执行：GET /api/v1/system/scheduler-runs/{job_id}。
+export interface SchedulerRunHistory {
+  readonly job_id: string;
+  readonly items: readonly MonitoringScheduledRun[];
 }
 
 export interface MonitoringSchedulerHealth {
@@ -1600,6 +1640,11 @@ export const api = {
       signal ? {signal} : {},
     );
   },
+  // 单任务最近执行（含结构化结果）；只在选中单任务节点时按需请求，不做轮询。
+  schedulerJobRuns: (jobId: string, limit = 5, signal?: AbortSignal) => request<SchedulerRunHistory>(
+    `/api/v1/system/scheduler-runs/${encodeURIComponent(jobId)}?limit=${limit}`,
+    signal ? {signal} : {},
+  ),
   agentStatus: () => request<AgentStatusRead>('/api/v1/agent/status'),
   aiReviewSummary: () => request<AIReviewSummary>('/api/v1/ai-review-summary'),
   aiReviewItems: () => request<AIReviewItem[]>('/api/v1/ai-review-items?limit=5'),

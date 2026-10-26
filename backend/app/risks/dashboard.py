@@ -32,6 +32,7 @@ from app.risks.schemas import (
     DashboardAnalytics,
     EventTypeCount,
     GeoRiskPoint,
+    GeoRiskSitePoint,
     GeoSupplierPoint,
     LevelCount,
     SourceDistributionItem,
@@ -511,6 +512,97 @@ def _build_risk_points(
     return risk_points, unlocated
 
 
+def _build_risk_sites(
+    session: Session,
+    representatives: Sequence[RepresentativeRow],
+) -> tuple[list[GeoRiskSitePoint], int]:
+    """按供应商站点实际坐标聚合地图点位，不按省/地区合并。
+
+    只返回有完整经纬度的启用供应商站点；同一供应商有多个站点时，提醒数会
+    重复计入每个站点，因此未定位提醒按“供应商是否至少有一个可定位站点”统计。
+    """
+    supplier_levels: dict[int, dict[str, int]] = {}
+    supplier_alert_ids: dict[int, set[int]] = {}
+    for alert, _match, _event, supplier in representatives:
+        supplier_alert_ids.setdefault(supplier.id, set()).add(alert.id)
+        levels = supplier_levels.setdefault(supplier.id, {})
+        levels[alert.level] = levels.get(alert.level, 0) + 1
+
+    site_rows = session.execute(
+        select(
+            SupplierSite.id,
+            SupplierSite.supplier_id,
+            Supplier.legal_name,
+            SupplierSite.site_name,
+            SupplierSite.address,
+            SupplierSite.country_code,
+            SupplierSite.region,
+            SupplierSite.city,
+            SupplierSite.latitude,
+            SupplierSite.longitude,
+        )
+        .join(Supplier, Supplier.id == SupplierSite.supplier_id)
+        .where(Supplier.enabled.is_(True))
+        .where(SupplierSite.latitude.is_not(None))
+        .where(SupplierSite.longitude.is_not(None))
+    ).all()
+
+    risk_sites: list[GeoRiskSitePoint] = []
+    mapped_supplier_ids: set[int] = set()
+    for (
+        site_id,
+        supplier_id,
+        supplier_name,
+        site_name,
+        address,
+        country_code,
+        region,
+        city,
+        latitude,
+        longitude,
+    ) in site_rows:
+        levels = supplier_levels.get(supplier_id, {})
+        risk_sites.append(
+            GeoRiskSitePoint(
+                supplier_id=int(supplier_id),
+                site_id=int(site_id),
+                supplier_name=supplier_name,
+                site_name=site_name,
+                address=address,
+                country_code=country_code,
+                region=region,
+                city=city,
+                latitude=float(latitude),
+                longitude=float(longitude),
+                alert_count=len(supplier_alert_ids.get(supplier_id, set())),
+                level_counts=[
+                    LevelCount(level=level, count=levels.get(level, 0))
+                    for level in CURRENT_LEVELS
+                ],
+                max_level=next(
+                    (level for level in CURRENT_LEVELS if levels.get(level, 0) > 0),
+                    None,
+                ),
+            )
+        )
+        mapped_supplier_ids.add(int(supplier_id))
+
+    risk_sites.sort(
+        key=lambda point: (
+            LEVEL_ORDER.get(point.max_level or "", 9),
+            -point.alert_count,
+            point.supplier_name,
+            point.site_name,
+        )
+    )
+    unlocated = sum(
+        1
+        for _alert, _match, _event, supplier in representatives
+        if supplier.id not in mapped_supplier_ids
+    )
+    return risk_sites, unlocated
+
+
 def _build_supplier_points(session: Session) -> list[GeoSupplierPoint]:
     """供应商站点按城市聚合；只统计启用供应商且有完整坐标的站点。"""
     rows = session.execute(
@@ -596,7 +688,7 @@ def _build_trend(
 def build_dashboard_analytics(
     session: Session, *, days: int, now_utc: datetime | None = None
 ) -> DashboardAnalytics:
-    """总览大屏的补充数据：按日趋势、供应商省/地区点位、供应商城市点位。
+    """总览大屏的补充数据：按日趋势、供应商省/地区聚合、站点实际点位与城市点位。
 
     与 build_dashboard_aggregate 共用同一 current_alert_condition 与代表行去重
     口径，保证地图/趋势与 KPI 不出现两套统计。本函数只读，不写库。
@@ -605,7 +697,8 @@ def build_dashboard_analytics(
     representatives, groups = representative_rows(
         session, current_alert_rows(session, now_utc=as_of)
     )
-    risk_points, unlocated = _build_risk_points(session, representatives)
+    risk_points, _ = _build_risk_points(session, representatives)
+    risk_sites, unlocated = _build_risk_sites(session, representatives)
     return DashboardAnalytics(
         as_of=as_of,
         window_days=days,
@@ -616,6 +709,7 @@ def build_dashboard_analytics(
             days=days,
         ),
         risk_points=risk_points,
+        risk_sites=risk_sites,
         supplier_points=_build_supplier_points(session),
         unlocated_alert_count=unlocated,
     )

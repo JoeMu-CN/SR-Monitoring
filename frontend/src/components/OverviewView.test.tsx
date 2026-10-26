@@ -83,6 +83,7 @@ const baseAnalytics: DashboardAnalytics = {
     count: 2,
   })),
   risk_points: [],
+  risk_sites: [],
   supplier_points: [],
   unlocated_alert_count: 0,
 };

@@ -158,6 +158,24 @@ class GeoRiskPoint(BaseModel):
     max_level: str | None
 
 
+class GeoRiskSitePoint(BaseModel):
+    """供应商站点风险点位：一个站点一个点，坐标必须来自站点实际经纬度。"""
+
+    supplier_id: int
+    site_id: int
+    supplier_name: str
+    site_name: str
+    address: str
+    country_code: str
+    region: str | None
+    city: str | None
+    latitude: float
+    longitude: float
+    alert_count: int
+    level_counts: list[LevelCount]
+    max_level: str | None
+
+
 class GeoSupplierPoint(BaseModel):
     """供应商站点城市聚合点位；仅统计启用供应商且有经纬度的站点。"""
 
@@ -176,6 +194,7 @@ class DashboardAnalytics(BaseModel):
     window_days: int
     trend: list[TrendPoint]
     risk_points: list[GeoRiskPoint]
+    risk_sites: list[GeoRiskSitePoint]
     supplier_points: list[GeoSupplierPoint]
     unlocated_alert_count: int
 

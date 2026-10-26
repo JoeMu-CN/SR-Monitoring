@@ -232,6 +232,11 @@ const sourceJobName = (jobId: string, jobs: ReadonlyMap<string, MonitoringSchedu
   return id.length > 0 ? `信源 ${id}` : jobId;
 };
 
+/** 已注册任务（排除内部维护任务）；KPI 详情与任务网络共用同一口径。 */
+export const selectRegisteredJobs = (
+  scheduler: MonitoringSchedulerHealth,
+): MonitoringScheduledJob[] => scheduler.scheduled_jobs.filter((job) => !INTERNAL_JOB_IDS.has(job.job_id));
+
 /**
  * 从一份 ready 快照构建四列网络。
  * 未知的新 job_id 不会被丢弃：归入「其他任务」辅助节点，点击可看成员。
@@ -241,8 +246,8 @@ export const buildSchedulerFlowModel = (
   processing: MonitoringProcessingHealth,
 ): SchedulerFlowModel => {
   const jobs = new Map<string, MonitoringScheduledJob>();
-  for (const job of scheduler.scheduled_jobs) {
-    if (!INTERNAL_JOB_IDS.has(job.job_id)) jobs.set(job.job_id, job);
+  for (const job of selectRegisteredJobs(scheduler)) {
+    jobs.set(job.job_id, job);
   }
   const latestRuns = latestRunByJob(scheduler.recent_runs);
 
@@ -286,7 +291,7 @@ export const buildSchedulerFlowModel = (
 
   const collectMembers = membersFor(
     [...allJobIds].filter((jobId) => jobId === 'collect'),
-    () => '定时采集与处理',
+    () => '补充采集',
     jobs,
     latestRuns,
     workByJob,
@@ -323,7 +328,7 @@ export const buildSchedulerFlowModel = (
   );
 
   const nodes: FlowNode[] = [
-    buildNode({key: 'collect', name: '定时采集与处理', jobId: 'collect', stage: 'collect', members: collectMembers}),
+    buildNode({key: 'collect', name: '补充采集', jobId: 'collect', stage: 'collect', members: collectMembers}),
     buildNode({key: 'source', name: '信源采集', jobId: 'source-*', stage: 'collect', members: sourceMembers, kind: 'aggregate'}),
     buildNode({key: 'tyc', name: '天眼查核查', jobId: 'tyc-shard-*', stage: 'collect', members: tycMembers, kind: 'aggregate'}),
     {

@@ -1,0 +1,244 @@
+/* KPI 只读详情弹窗：沿用调度器实况的深色仪器风；无模糊、无入场动画。 */
+
+.scheduler-kpi-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(3, 8, 15, 0.68);
+}
+
+.scheduler-kpi-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: 80vh;
+  overflow: hidden;
+  border: 1px solid #2b3b52;
+  border-radius: 14px;
+  background: #0b131e;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(226, 232, 240, 0.05);
+}
+
+.scheduler-kpi-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px 11px;
+  border-bottom: 1px solid #22304a;
+  background: #0e1726;
+}
+
+.scheduler-kpi-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.scheduler-kpi-title {
+  margin: 0;
+  color: #f1f5f9;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.scheduler-kpi-count {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin: 0;
+  color: #f1f5f9;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.scheduler-kpi-count em {
+  color: #94a3b8;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.scheduler-kpi-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #33465f;
+  border-radius: 8px;
+  background: #0b131e;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+
+.scheduler-kpi-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.scheduler-kpi-close:hover {
+  border-color: #3f5876;
+  background: #132136;
+  color: #e2e8f0;
+}
+
+.scheduler-kpi-close:focus-visible {
+  outline: 2px solid #007aff;
+  outline-offset: 2px;
+}
+
+.scheduler-kpi-body {
+  padding: 2px 14px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 transparent;
+}
+
+.scheduler-kpi-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scheduler-kpi-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #475569;
+}
+
+.scheduler-kpi-section + .scheduler-kpi-section {
+  margin-top: 10px;
+}
+
+.scheduler-kpi-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 2px;
+  color: #8294aa;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scheduler-kpi-section-title span {
+  color: #dbe4ee;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.scheduler-kpi-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scheduler-kpi-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 2px;
+  border-bottom: 1px dashed #26364a;
+}
+
+.scheduler-kpi-row:last-child {
+  border-bottom: 0;
+}
+
+.scheduler-kpi-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.scheduler-kpi-row-name {
+  overflow: hidden;
+  color: #e2e8f0;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduler-kpi-row-meta {
+  color: #7d8ea3;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.scheduler-kpi-row-value {
+  flex: none;
+  color: #aebbd0;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.scheduler-kpi-row-label {
+  margin-right: 4px;
+  color: #6f8199;
+  font-size: 9px;
+}
+
+/* 状态徽标复用任务网络的 .sflow-badge 语言；这里只收掉它默认的右推。 */
+.scheduler-kpi-row .sflow-badge {
+  flex: none;
+  margin-left: 0;
+  font-size: 8.5px;
+}
+
+.scheduler-kpi-empty {
+  margin: 12px 0 6px;
+  color: #7d8ea3;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .scheduler-kpi-overlay {
+    padding: 12px;
+  }
+
+  .scheduler-kpi-dialog {
+    max-height: 82vh;
+  }
+
+  .scheduler-kpi-head {
+    padding: 11px 12px 10px;
+  }
+
+  .scheduler-kpi-body {
+    padding: 2px 12px 10px;
+  }
+
+  .scheduler-kpi-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scheduler-kpi-close {
+    transition: none;
+  }
+}

@@ -5,6 +5,7 @@ import type {ApiError} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {ProcessingHealthDetailBanner} from './MonitoringHealthBanner';
 import {SchedulerFlowMap} from './SchedulerFlowMap';
+import {SchedulerKpiDetail, type SchedulerKpiKey} from './SchedulerKpiDetail';
 import {SchedulerLogDrawer} from './SchedulerLogDrawer';
 import {StaleNotice} from './SchedulerLivePanels';
 import {formatDateTime} from './SchedulerActivityPanels';
@@ -113,6 +114,9 @@ const Stats = ({
   stale,
   asOf,
   reduced,
+  openKey,
+  onOpen,
+  registerButton,
 }: {
   readonly runningCount: number;
   readonly workCount: number;
@@ -122,30 +126,65 @@ const Stats = ({
   readonly stale: boolean;
   readonly asOf: string;
   readonly reduced: boolean;
+  readonly openKey: SchedulerKpiKey | null;
+  readonly onOpen: (key: SchedulerKpiKey) => void;
+  readonly registerButton: (key: SchedulerKpiKey, element: HTMLButtonElement | null) => void;
 }) => (
   <div className="scheduler-live-stats" aria-label="调度器概览">
     {/* 每次快照到达播放一次 600ms 微光；key 变化即重放，不加定时器、不做循环。 */}
     {!reduced && <span key={asOf} aria-hidden="true" className="scheduler-live-stats-refresh" />}
-    <div className={`scheduler-live-stat ${runningCount > 0 ? 'is-running' : ''}`}>
+    <button
+      type="button"
+      ref={(element) => registerButton('running', element)}
+      data-testid="scheduler-kpi-running"
+      className={`scheduler-live-stat ${runningCount > 0 ? 'is-running' : ''}`}
+      aria-haspopup="dialog"
+      aria-expanded={openKey === 'running'}
+      onClick={() => onOpen('running')}
+    >
       <span className="scheduler-live-stat-label">运行中</span>
       <strong className="scheduler-live-stat-value">{runningCount}<em>个任务</em></strong>
       <span className="scheduler-live-stat-sub">{workCount > 0 ? `${workCount} 项当前工作` : '无当前工作项'}</span>
-    </div>
-    <div className="scheduler-live-stat">
+    </button>
+    <button
+      type="button"
+      ref={(element) => registerButton('jobs', element)}
+      data-testid="scheduler-kpi-jobs"
+      className="scheduler-live-stat"
+      aria-haspopup="dialog"
+      aria-expanded={openKey === 'jobs'}
+      onClick={() => onOpen('jobs')}
+    >
       <span className="scheduler-live-stat-label">已注册任务</span>
       <strong className="scheduler-live-stat-value">{jobCount}<em>个</em></strong>
       <span className="scheduler-live-stat-sub">不含内部维护任务</span>
-    </div>
-    <div className="scheduler-live-stat">
+    </button>
+    <button
+      type="button"
+      ref={(element) => registerButton('runs', element)}
+      data-testid="scheduler-kpi-runs"
+      className="scheduler-live-stat"
+      aria-haspopup="dialog"
+      aria-expanded={openKey === 'runs'}
+      onClick={() => onOpen('runs')}
+    >
       <span className="scheduler-live-stat-label">近期执行</span>
       <strong className="scheduler-live-stat-value">{recentRunCount}<em>条</em></strong>
       <span className="scheduler-live-stat-sub">最近 30 条窗口</span>
-    </div>
-    <div className={`scheduler-live-stat ${attentionCount > 0 ? 'is-attention' : ''}`}>
+    </button>
+    <button
+      type="button"
+      ref={(element) => registerButton('attention', element)}
+      data-testid="scheduler-kpi-attention"
+      className={`scheduler-live-stat ${attentionCount > 0 ? 'is-attention' : ''}`}
+      aria-haspopup="dialog"
+      aria-expanded={openKey === 'attention'}
+      onClick={() => onOpen('attention')}
+    >
       <span className="scheduler-live-stat-label">需要关注</span>
       <strong className="scheduler-live-stat-value">{attentionCount}<em>个</em></strong>
       <span className="scheduler-live-stat-sub">{stale ? '快照内最新异常 / 错过' : '最新一次异常 / 错过'}</span>
-    </div>
+    </button>
   </div>
 );
 
@@ -181,6 +220,34 @@ export const SchedulerLiveView = ({snapshot, canViewLogs = false, onRequestError
     logButtonRef.current?.focus();
     window.requestAnimationFrame(() => logButtonRef.current?.focus());
   }, []);
+
+  const [openKpi, setOpenKpi] = useState<SchedulerKpiKey | null>(null);
+  const kpiButtonRefs = useRef(new Map<SchedulerKpiKey, HTMLButtonElement>());
+  const lastKpiRef = useRef<SchedulerKpiKey | null>(null);
+
+  const registerKpiButton = useCallback((key: SchedulerKpiKey, element: HTMLButtonElement | null) => {
+    if (element === null) kpiButtonRefs.current.delete(key);
+    else kpiButtonRefs.current.set(key, element);
+  }, []);
+
+  const closeKpi = useCallback(() => setOpenKpi(null), []);
+
+  // 关闭后焦点回到触发的 KPI 卡：只在“有打开记录 → 关闭”的那一次提交里回焦。
+  useEffect(() => {
+    if (openKpi !== null) {
+      lastKpiRef.current = openKpi;
+      return;
+    }
+    const key = lastKpiRef.current;
+    if (key === null) return;
+    lastKpiRef.current = null;
+    kpiButtonRefs.current.get(key)?.focus();
+  }, [openKpi]);
+
+  // 网络随时可能因心跳不可确认而整体收起，此时不保留已打开的详情。
+  useEffect(() => {
+    if (!showFlow) setOpenKpi(null);
+  }, [showFlow]);
 
   return (
     <section
@@ -234,7 +301,7 @@ export const SchedulerLiveView = ({snapshot, canViewLogs = false, onRequestError
         />
       )}
 
-      {showFlow && flowModel !== null && asOf !== null && (
+      {showFlow && flowModel !== null && asOf !== null && scheduler !== null && (
         <div className="scheduler-live-body">
           <Stats
             runningCount={flowModel.runningCount}
@@ -245,6 +312,9 @@ export const SchedulerLiveView = ({snapshot, canViewLogs = false, onRequestError
             stale={stale}
             asOf={asOf}
             reduced={reduceMotion}
+            openKey={openKpi}
+            onOpen={setOpenKpi}
+            registerButton={registerKpiButton}
           />
 
           {stale && <StaleNotice workCount={workCount} lastHeartbeatAt={lastHeartbeatAt} />}
@@ -276,6 +346,17 @@ export const SchedulerLiveView = ({snapshot, canViewLogs = false, onRequestError
           </div>
 
           <SchedulerFlowMap model={flowModel} asOf={asOf} live={heartbeatConfirmed} />
+
+          {openKpi !== null && (
+            <SchedulerKpiDetail
+              detail={openKpi}
+              scheduler={scheduler}
+              model={flowModel}
+              asOf={asOf}
+              live={heartbeatConfirmed}
+              onClose={closeKpi}
+            />
+          )}
         </div>
       )}
 

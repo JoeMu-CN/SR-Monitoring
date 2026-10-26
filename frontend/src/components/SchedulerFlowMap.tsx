@@ -11,6 +11,7 @@ import {
   type FlowNodeStatus,
   type SchedulerFlowModel,
 } from './schedulerFlowModel';
+import {SchedulerNodeRuns} from './SchedulerNodeRuns';
 import './SchedulerFlowMap.css';
 
 /**
@@ -544,16 +545,20 @@ const FlowNodeCard = ({
   );
 };
 
-const MemberRow = ({member, live}: {readonly member: FlowMember; readonly live: boolean}) => (
-  <li className="sflow-member">
-    <span className={`sflow-member-dot sflow-state--${member.status}`} />
-    <span className="sflow-member-main">
-      <span className="sflow-member-name">{member.name}</span>
-    </span>
-    <StatusBadge status={member.status} live={live} />
-    <span className="sflow-member-next">下次 {formatShortDateTime(member.nextRunAt, null)}</span>
-  </li>
-);
+const MemberRow = ({member, live}: {readonly member: FlowMember; readonly live: boolean}) => {
+  const summary = member.latestRun?.result?.summary?.trim() ?? '';
+  return (
+    <li className="sflow-member">
+      <span className={`sflow-member-dot sflow-state--${member.status}`} />
+      <span className="sflow-member-main">
+        <span className="sflow-member-name">{member.name}</span>
+        {summary !== '' && <span className="sflow-member-summary">{summary}</span>}
+      </span>
+      <StatusBadge status={member.status} live={live} />
+      <span className="sflow-member-next">下次 {formatShortDateTime(member.nextRunAt, null)}</span>
+    </li>
+  );
+};
 
 const NodeDetail = ({
   node,
@@ -564,7 +569,6 @@ const NodeDetail = ({
   readonly asOf: string;
   readonly live: boolean;
 }) => {
-  const latest = node.latestRun;
   if (node.kind === 'data') {
     const processing = node.processing;
     const lastRun = processing?.last_run;
@@ -577,7 +581,6 @@ const NodeDetail = ({
         <div className="sflow-detail-head">
           <StatusBadge status="data" live={live} />
           <b>{node.name}</b>
-          <code>processing</code>
           <span className="sflow-detail-stage">信号池数据节点</span>
         </div>
         <div className="sflow-detail-grid">
@@ -607,11 +610,12 @@ const NodeDetail = ({
       </section>
     );
   }
-  const latestLabel = latest === null
-    ? (node.runningWork.length > 0 ? `执行中 · ${formatRunningDuration(node.runningWork[0].started_at, asOf)}` : '—')
-    : latest.status === 'running'
-      ? `执行中 · ${formatRunningDuration(latest.started_at, asOf)}`
-      : `${nodeStatusLabel(latest.status, live)} · ${formatDateTime(latest.finished_at ?? latest.started_at ?? latest.scheduled_run_at)}`;
+  const runJobId = node.kind === 'job'
+    ? node.jobId
+    : node.members.length === 1
+      ? node.members[0].jobId
+      : null;
+  const showMembers = node.members.length > 1;
   return (
     <section className="sflow-detail" aria-live="polite" data-testid="scheduler-flow-detail">
       <div className="sflow-detail-head">
@@ -619,24 +623,26 @@ const NodeDetail = ({
         <b>{node.name}</b>
         <span className="sflow-detail-stage">{STAGE_LABEL[node.stage]}</span>
       </div>
-      <div className="sflow-detail-grid">
-        <div><span>下次执行</span><b>{formatShortDateTime(node.nextRunAt, asOf)}</b></div>
-        <div><span>最近一次</span><b>{latestLabel}</b></div>
-        <div><span>运行中</span><b>{node.runningCount}</b></div>
-        {node.members.length > 1 && <div><span>成员</span><b>{node.members.length}</b></div>}
-        {node.runningWork.length > 0 && (
-          <div className="is-work">
-            <span>当前工作</span>
-            <b>{workLabel(node.runningWork[0])}{node.runningWork.length > 1 ? ` +${node.runningWork.length - 1}` : ''}</b>
-          </div>
-        )}
-        {node.errorCount > 0 && <div><span>异常成员</span><b className="is-error">{node.errorCount}</b></div>}
-        {node.missedCount > 0 && <div><span>错过成员</span><b className="is-warn">{node.missedCount}</b></div>}
-      </div>
-      {node.members.length > 1 && (
+      {!node.present && <p className="sflow-detail-note">未在调度器注册</p>}
+      {node.runningWork.length > 0 && (
+        <p className="sflow-detail-work">
+          <span>当前工作</span>
+          {workLabel(node.runningWork[0])}{node.runningWork.length > 1 ? ` +${node.runningWork.length - 1}` : ''}
+        </p>
+      )}
+      {(node.errorCount > 0 || node.missedCount > 0) && (
+        <div className="sflow-detail-flags">
+          {node.errorCount > 0 && <span className="is-error">异常成员 <b>{node.errorCount}</b></span>}
+          {node.missedCount > 0 && <span className="is-warn">错过成员 <b>{node.missedCount}</b></span>}
+        </div>
+      )}
+      {showMembers && (
         <ul className="sflow-members" aria-label={`${node.name} 成员`}>
           {node.members.map((member) => <MemberRow key={member.jobId} member={member} live={live} />)}
         </ul>
+      )}
+      {!showMembers && node.present && runJobId !== null && (
+        <SchedulerNodeRuns key={runJobId} jobId={runJobId} asOf={asOf} live={live} />
       )}
     </section>
   );

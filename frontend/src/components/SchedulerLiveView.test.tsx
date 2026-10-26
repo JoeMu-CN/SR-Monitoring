@@ -1,7 +1,7 @@
-import {act, cleanup, fireEvent, render, screen} from '@testing-library/react';
+import {act, cleanup, fireEvent, render, screen, within} from '@testing-library/react';
 import {createElement, type HTMLAttributes, type ReactNode} from 'react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {api, ApiError, type MonitoringHealthRead} from '../api';
+import {api, ApiError, type MonitoringHealthRead, type SchedulerRunHistory} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {SchedulerLiveView} from './SchedulerLiveView';
 
@@ -53,6 +53,22 @@ const recentRun = (overrides: Partial<RecentRun> = {}): RecentRun => ({
   scheduled_run_at: '2026-10-25T12:00:00Z',
   started_at: '2026-10-25T12:00:01Z',
   finished_at: '2026-10-25T12:00:13Z',
+  ...overrides,
+});
+
+// 结构化结果是可选字段：旧记录没有 result，测试里显式区分“有明细/无明细”。
+const runWithResult = (overrides: Partial<RecentRun> = {}): RecentRun => recentRun({
+  id: 11,
+  job_id: 'collect',
+  name: '定时采集与处理',
+  status: 'completed',
+  started_at: '2026-10-26T04:00:01Z',
+  finished_at: '2026-10-26T04:00:08Z',
+  result: {
+    summary: '采集完成',
+    metrics: [{label: '抓取', value: 20}, {label: '新增', value: 5}, {label: '重复', value: 15}],
+    outputs: [{label: '新增信号', value: 5}],
+  },
   ...overrides,
 });
 
@@ -146,6 +162,8 @@ const openLog = async () => {
 
 beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+  // 每个用例默认不返回执行历史：避免未命中用例真的发请求，也避免 act 之外的异步更新。
+  vi.spyOn(api, 'schedulerJobRuns').mockImplementation(() => new Promise<SchedulerRunHistory>(() => {}));
 });
 
 afterEach(() => {
@@ -211,6 +229,252 @@ describe('调度器实况页外壳', () => {
     expect(screen.getByTestId('scheduler-live-view')).toHaveAttribute('data-reduced-motion', 'true');
     expect(screen.getByTestId('scheduler-live-heartbeat')).toBeInTheDocument();
     expect(screen.queryByTestId('scheduler-live-heartbeat-dot')).not.toBeInTheDocument();
+  });
+});
+
+describe('节点最近执行', () => {
+  it('选中单任务节点时按需请求最近 5 次执行，并替换重复的下次/上次字段', async () => {
+    const spy = vi.spyOn(api, 'schedulerJobRuns').mockResolvedValue({
+      job_id: 'collect',
+      items: [runWithResult()],
+    });
+    renderLive(readySnapshot());
+
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-collect'));
+    expect(spy).toHaveBeenCalledWith('collect', 5, expect.any(AbortSignal));
+
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(await within(detail).findByText('采集完成')).toBeInTheDocument();
+    expect(within(detail).getByText('抓取')).toBeInTheDocument();
+    expect(within(detail).getByText('20')).toBeInTheDocument();
+    expect(within(detail).getByText('重复')).toBeInTheDocument();
+    expect(within(detail).getByText('新增信号')).toBeInTheDocument();
+    expect(within(detail).queryByText('下次执行')).not.toBeInTheDocument();
+    expect(within(detail).queryByText('最近一次')).not.toBeInTheDocument();
+    expect(within(detail).queryByText('运行中')).not.toBeInTheDocument();
+  });
+
+  it('历史记录没有结构化结果时明确占位，不编造摘要或计数', async () => {
+    vi.spyOn(api, 'schedulerJobRuns').mockResolvedValue({
+      job_id: 'collect',
+      items: [runWithResult({id: 12, status: 'error', finished_at: null, result: null})],
+    });
+    renderLive(readySnapshot());
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-collect'));
+
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(await within(detail).findByText('该次执行没有结构化明细（旧记录或失败）')).toBeInTheDocument();
+    expect(within(detail).queryByText('采集完成')).not.toBeInTheDocument();
+    expect(within(detail).queryByText('抓取')).not.toBeInTheDocument();
+  });
+
+  it('没有执行记录时显示空态', async () => {
+    vi.spyOn(api, 'schedulerJobRuns').mockResolvedValue({job_id: 'collect', items: []});
+    renderLive(readySnapshot());
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-collect'));
+
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(await within(detail).findByText('最近没有执行记录')).toBeInTheDocument();
+  });
+
+  it('加载失败给出原因并可重试', async () => {
+    let attempt = 0;
+    vi.spyOn(api, 'schedulerJobRuns').mockImplementation((jobId) => {
+      if (jobId !== 'collect') return new Promise<SchedulerRunHistory>(() => {});
+      attempt += 1;
+      return attempt === 1
+        ? Promise.reject(new ApiError(500, 'boom'))
+        : Promise.resolve({job_id: 'collect', items: [runWithResult()]});
+    });
+    renderLive(readySnapshot());
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-collect'));
+
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(await within(detail).findByText('读取执行历史失败（HTTP 500）。')).toBeInTheDocument();
+    fireEvent.click(within(detail).getByRole('button', {name: '重试'}));
+    expect(await within(detail).findByText('采集完成')).toBeInTheDocument();
+  });
+
+  it('聚合节点保留成员列表与结果摘要，不为每个成员发请求', () => {
+    const snapshot = readySnapshot({
+      recent_runs: [
+        recentRun({
+          id: 21,
+          job_id: 'source-12',
+          name: '工信部 采集',
+          status: 'completed',
+          started_at: '2026-10-25T12:00:00Z',
+          finished_at: '2026-10-25T12:00:06Z',
+          result: {summary: '抓取 20 条，新增 5 条', metrics: [{label: '抓取', value: 20}]},
+        }),
+        recentRun({id: 22, job_id: 'source-13', name: '市场监管总局 采集', status: 'completed'}),
+      ],
+    });
+    const spy = vi.spyOn(api, 'schedulerJobRuns')
+      .mockImplementation(() => new Promise<SchedulerRunHistory>(() => {}));
+    renderLive(snapshot);
+
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-source'));
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(within(detail).getByText('工信部 采集')).toBeInTheDocument();
+    expect(within(detail).getByText('抓取 20 条，新增 5 条')).toBeInTheDocument();
+    // 默认选中的单任务会请求一次；聚合节点不为 19 个成员逐个请求。
+    expect(spy.mock.calls.map((call) => call[0])).toEqual(['signal-consume']);
+  });
+
+  it('切换节点中止上一请求，且不把上一节点的结果显示在新节点下', async () => {
+    const signals: AbortSignal[] = [];
+    vi.spyOn(api, 'schedulerJobRuns').mockImplementation((jobId, _limit, signal) => {
+      if (signal !== undefined) signals.push(signal);
+      if (jobId === 'collect') {
+        return Promise.resolve({job_id: 'collect', items: [runWithResult()]});
+      }
+      return new Promise<SchedulerRunHistory>(() => {});
+    });
+    renderLive(readySnapshot());
+
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-collect'));
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(await within(detail).findByText('采集完成')).toBeInTheDocument();
+    expect(signals[0].aborted).toBe(true);
+
+    fireEvent.click(screen.getByTestId('scheduler-flow-node-notify'));
+    expect(signals[1].aborted).toBe(true);
+    expect(signals[2].aborted).toBe(false);
+    expect(within(detail).queryByText('采集完成')).not.toBeInTheDocument();
+    expect(within(detail).getByText('正在读取最近执行…')).toBeInTheDocument();
+  });
+});
+
+describe('KPI 卡详情', () => {
+  it('四张 KPI 卡都能打开对应标题与内容，同一时间只有一个弹窗', () => {
+    renderLive(readySnapshot());
+
+    const cases = [
+      ['running', '运行中', ['当前工作项', '运行中的任务', '待分析信号消费']],
+      ['jobs', '已注册任务', ['定时采集与处理', '待分析信号消费']],
+      ['runs', '近期执行', ['保留清理']],
+      ['attention', '需要关注', ['天眼查核查 · 分片 0']],
+    ] as const;
+
+    for (const [key, title, texts] of cases) {
+      const trigger = screen.getByTestId(`scheduler-kpi-${key}`);
+      expect(trigger.tagName).toBe('BUTTON');
+      expect(trigger).toHaveAttribute('aria-haspopup', 'dialog');
+
+      fireEvent.click(trigger);
+      expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      const dialog = screen.getByRole('dialog', {name: title});
+      expect(dialog).toHaveAttribute('aria-modal', 'true');
+      for (const text of texts) expect(within(dialog).getByText(text)).toBeInTheDocument();
+      expect(screen.getAllByRole('dialog')).toHaveLength(1);
+
+      fireEvent.keyDown(document, {key: 'Escape'});
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    }
+  });
+
+  it('关闭后打开另一张 KPI：内容切换，不叠加弹窗', () => {
+    renderLive(readySnapshot());
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-running'));
+    expect(screen.getByRole('dialog', {name: '运行中'})).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('scheduler-kpi-overlay'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-jobs'));
+    expect(screen.getByRole('dialog', {name: '已注册任务'})).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', {name: '运行中'})).not.toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  it('四张卡的数量与对应列表条数一致', () => {
+    renderLive(readySnapshot());
+    const countOf = (dialog: HTMLElement) => dialog.querySelector('.scheduler-kpi-count')?.textContent ?? '';
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-running'));
+    const runningDialog = screen.getByRole('dialog', {name: '运行中'});
+    expect(countOf(runningDialog)).toBe('2个任务');
+    expect(within(runningDialog).getAllByRole('listitem')).toHaveLength(3); // 1 个当前工作 + 2 个运行中任务
+    fireEvent.keyDown(document, {key: 'Escape'});
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-jobs'));
+    const jobsDialog = screen.getByRole('dialog', {name: '已注册任务'});
+    expect(countOf(jobsDialog)).toBe('10个');
+    expect(within(jobsDialog).getAllByRole('listitem')).toHaveLength(10);
+    fireEvent.keyDown(document, {key: 'Escape'});
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-runs'));
+    const runsDialog = screen.getByRole('dialog', {name: '近期执行'});
+    expect(countOf(runsDialog)).toBe('7条');
+    expect(within(runsDialog).getAllByRole('listitem')).toHaveLength(7);
+    fireEvent.keyDown(document, {key: 'Escape'});
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-attention'));
+    const attentionDialog = screen.getByRole('dialog', {name: '需要关注'});
+    expect(countOf(attentionDialog)).toBe('2个');
+    expect(within(attentionDialog).getAllByRole('listitem')).toHaveLength(2);
+  });
+
+  it('已注册任务与近期执行列表不展示英文 jobId，已注册任务按下次执行升序', () => {
+    renderLive(readySnapshot());
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-jobs'));
+    const jobsDialog = screen.getByRole('dialog', {name: '已注册任务'});
+    const jobs = within(jobsDialog).getAllByRole('listitem');
+    expect(jobs[0]).toHaveTextContent('待分析信号消费');
+    expect(jobs[1]).toHaveTextContent('风险提醒推送');
+    expect(jobsDialog).not.toHaveTextContent('source-12');
+    expect(jobsDialog).not.toHaveTextContent('tyc-shard-0');
+    // 内部维护任务既不在列表里，也不参与计数。
+    expect(jobsDialog).not.toHaveTextContent('runtime-heartbeat');
+    expect(jobsDialog).not.toHaveTextContent('持久化调度器心跳');
+
+    fireEvent.keyDown(document, {key: 'Escape'});
+    fireEvent.click(screen.getByTestId('scheduler-kpi-runs'));
+    const runsDialog = screen.getByRole('dialog', {name: '近期执行'});
+    expect(runsDialog).not.toHaveTextContent('signal-consume');
+    expect(runsDialog).not.toHaveTextContent('cleanup');
+    expect(within(runsDialog).getAllByRole('listitem')).toHaveLength(7);
+  });
+
+  it('需要关注为空时显示空态，不虚构条目', () => {
+    renderLive(readySnapshot({
+      recent_runs: [recentRun({id: 1, job_id: 'collect', status: 'completed'})],
+    }));
+
+    const trigger = screen.getByTestId('scheduler-kpi-attention');
+    expect(trigger).toHaveTextContent('0');
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog', {name: '需要关注'});
+    expect(within(dialog).getByText('当前没有需要关注的执行')).toBeInTheDocument();
+    expect(within(dialog).queryAllByRole('listitem')).toHaveLength(0);
+  });
+
+  it('Esc 关闭详情并把焦点还给触发的 KPI 卡', () => {
+    renderLive(readySnapshot());
+    const trigger = screen.getByTestId('scheduler-kpi-runs');
+    fireEvent.click(trigger);
+    expect(screen.getByRole('dialog', {name: '近期执行'})).toBeInTheDocument();
+
+    fireEvent.keyDown(document, {key: 'Escape'});
+    expect(screen.queryByRole('dialog', {name: '近期执行'})).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('关闭按钮与遮罩点击都能关闭详情', () => {
+    renderLive(readySnapshot());
+
+    const trigger = screen.getByTestId('scheduler-kpi-running');
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('button', {name: '关闭'}));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    fireEvent.click(screen.getByTestId('scheduler-kpi-jobs'));
+    fireEvent.click(screen.getByTestId('scheduler-kpi-overlay'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
 

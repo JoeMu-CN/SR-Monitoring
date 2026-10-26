@@ -218,9 +218,9 @@
   min-height: 0;
 }
 
-.sflow-slot--collect { grid-column: 1; grid-row: 2; }
-.sflow-slot--source { grid-column: 1; grid-row: 3; }
-.sflow-slot--tyc { grid-column: 1; grid-row: 4; }
+.sflow-slot--source { grid-column: 1; grid-row: 2; }
+.sflow-slot--tyc { grid-column: 1; grid-row: 3; }
+.sflow-slot--collect { grid-column: 1; grid-row: 4; }
 .sflow-slot--hub {
   grid-column: 2;
   grid-row: 2 / span 3;
@@ -783,6 +783,53 @@
   text-transform: uppercase;
 }
 
+/* 单任务详情：不再重复“下次/最近一次”网格，改为说明 + 实时工作 + 最近执行列表。 */
+.sflow-detail-note {
+  margin: 8px 0 0;
+  color: #7d8ea3;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.sflow-detail-work {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 9.5px;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sflow-detail-work > span {
+  flex: none;
+  color: #6f8199;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
+
+.sflow-detail-flags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 8.5px;
+}
+
+.sflow-detail-flags b {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.sflow-detail-flags .is-error b { color: #ff453a; }
+.sflow-detail-flags .is-warn b { color: #ffb340; }
+
 .sflow-detail-grid {
   display: flex;
   align-items: flex-start;
@@ -872,7 +919,7 @@
 }
 
 .sflow-members {
-  max-height: 148px;
+  max-height: 168px;
   margin: 8px 0 0;
   padding: 5px 0 0;
   overflow-y: auto;
@@ -900,15 +947,28 @@
 
 .sflow-member-main {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   min-width: 0;
 }
 
 .sflow-member-name {
+  max-width: 100%;
   overflow: hidden;
   color: #cbd5e1;
   font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 聚合节点成员行：有最近一次结果摘要时补一行，19 个信源的列表更有信息。 */
+.sflow-member-summary {
+  max-width: 100%;
+  overflow: hidden;
+  color: #7d8ea3;
+  font-size: 8.5px;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

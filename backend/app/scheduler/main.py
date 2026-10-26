@@ -37,12 +37,12 @@ from app.database import SessionLocal
 from app.notification.monthly_report import monthly_report_job
 from app.notification.service import notify_job
 from app.research.schedule import get_schedule_config, weekly_schedule_preflight
-from app.scheduler.consume import consume_pending_signals_job
+from app.scheduler.consume import consume_pending_signals_job_with_result
 from app.scheduler.events import attach_observability_listener
 from app.scheduler.health_rules import cron_to_apscheduler
 from app.scheduler.jobs import (
     TYC_SHARD_CRONS,
-    age_pending_signal_priorities,
+    age_pending_signal_priorities_job,
     cleanup_job,
     collect_job,
     collect_source_job,
@@ -263,7 +263,7 @@ def _register_signal_consumption(scheduler: BlockingScheduler) -> None:
     # 且 add_executor(executor, alias=...) 的别名必须用关键字参数。
     scheduler.add_executor(ThreadPoolExecutor(max_workers=1), alias="signal_consume")
     scheduler.add_job(
-        consume_pending_signals_job,
+        consume_pending_signals_job_with_result,
         "interval",
         seconds=SIGNAL_CONSUME_INTERVAL_SECONDS,
         executor="signal_consume",
@@ -275,7 +275,7 @@ def _register_signal_consumption(scheduler: BlockingScheduler) -> None:
     )
     # 低优先级老化：等待过久的信号逐步提权，避免被高优噪声永久饿死。
     scheduler.add_job(
-        age_pending_signal_priorities,
+        age_pending_signal_priorities_job,
         "interval",
         hours=1,
         id="signal-priority-aging",

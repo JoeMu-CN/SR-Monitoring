@@ -633,6 +633,9 @@ def test_signal_consume_and_aging_jobs_use_dedicated_executor() -> None:
     """消费与老化 job 注册在专用单线程执行器上，且 max_instances/coalesce 正确。"""
     from datetime import timedelta
 
+    from app.scheduler.consume import consume_pending_signals_job_with_result
+    from app.scheduler.jobs import age_pending_signal_priorities_job
+
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
 
     scheduler_main._register_signal_consumption(scheduler)
@@ -642,12 +645,15 @@ def test_signal_consume_and_aging_jobs_use_dedicated_executor() -> None:
     assert consume_job.executor == "signal_consume"
     assert consume_job.max_instances == 1
     assert consume_job.coalesce is True
+    # 注册的必须是能返回 RunResult 的结果版 callable，否则摘要不会落库。
+    assert consume_job.func is consume_pending_signals_job_with_result
     assert consume_job.trigger.interval == timedelta(  # type: ignore[attr-defined]
         seconds=scheduler_main.SIGNAL_CONSUME_INTERVAL_SECONDS
     )
     aging_job = scheduler.get_job("signal-priority-aging")
     assert aging_job is not None
     assert aging_job.executor == "default"
+    assert aging_job.func is age_pending_signal_priorities_job
     assert aging_job.trigger.interval == timedelta(hours=1)  # type: ignore[attr-defined]
 
 
@@ -691,7 +697,7 @@ def test_collect_tyc_shard_job_passes_shard_index_without_consuming(
         lambda *args, **kwargs: processed.append(1),
     )
 
-    scheduler_jobs.collect_tyc_shard_job(1)
+    result = scheduler_jobs.collect_tyc_shard_job(1)
 
     assert captured == {
         "source_id": source.id,
@@ -700,6 +706,16 @@ def test_collect_tyc_shard_job_passes_shard_index_without_consuming(
     }
     # 采集与消费解耦：分片采集不再触发待处理信号处理。
     assert processed == []
+    assert result is not None
+    assert result.summary == "天眼查核查完成"
+    assert {metric.label: metric.value for metric in result.metrics} == {
+        "供应商": 3,
+        "调用": 2,
+        "新增信号": 1,
+        "重复": 0,
+        "空结果": 1,
+        "失败": 0,
+    }
 
 
 def test_collect_tyc_shard_job_skips_on_bucket_gate_rejection(

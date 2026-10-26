@@ -30,12 +30,17 @@ def test_scheduler_expires_review_due_signal_event_and_alert_together(
     monkeypatch.setattr(validity_job, "SessionLocal", lambda: nullcontext(db_session))
 
     # When
-    validity_job.risk_validity_job(now_utc=NOW_UTC)
+    result = validity_job.risk_validity_job(now_utc=NOW_UTC)
 
     # Then
     assert risk.signals[0].validity_state == "expired"
     assert risk.event.validity_state == "expired"
     assert risk.alert.status == "expired"
+    assert result is not None
+    counts = {metric.label: metric.value for metric in result.metrics}
+    assert counts["过期信号"] >= 1
+    # 该夹具的提醒由信号级联失效，expired_alerts 只统计本级直接过期数量。
+    assert "过期提醒" in counts
 
 
 def test_scheduler_legacy_alert_uses_stored_deadline_boundary(

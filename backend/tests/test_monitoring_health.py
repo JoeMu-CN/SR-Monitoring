@@ -1778,8 +1778,14 @@ def test_observability_tables_match_contract(db_session: Session) -> None:
         "scheduled_run_at",
         "started_at",
         "finished_at",
+        "result_summary",
         "created_at",
     }
+    index_names = {
+        index["name"]
+        for index in inspect(db_session.bind).get_indexes("scheduler_job_run")
+    }
+    assert "ix_scheduler_job_run_job_id" in index_names
     assert JOB_RUN_STATUS_VALUES == (
         "running",
         "completed",
@@ -1845,6 +1851,79 @@ def test_recent_runs_limited_to_latest_30_desc(db_session: Session) -> None:
     assert all(item.job_id == "collect" for item in recent)
 
 
+def test_recent_runs_excludes_notify_but_keeps_other_jobs(db_session: Session) -> None:
+    """notify 照常写历史，但不得挤占健康接口的最近 30 条窗口。"""
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    db_session.add_all(
+        [
+            SchedulerJobRun(
+                job_id="notify",
+                name="风险提醒推送",
+                status="completed",
+                scheduled_run_at=NOW,
+                started_at=NOW,
+                finished_at=NOW,
+            ),
+            SchedulerJobRun(
+                job_id="collect",
+                name="定时采集与处理",
+                status="completed",
+                scheduled_run_at=NOW - timedelta(minutes=1),
+                started_at=NOW - timedelta(minutes=1),
+                finished_at=NOW - timedelta(minutes=1),
+            ),
+        ]
+    )
+    db_session.flush()
+
+    recent = build_monitoring_health(db_session, now=NOW).scheduler.recent_runs
+    assert [item.job_id for item in recent] == ["collect"]
+
+
+def test_recent_runs_projects_valid_result_and_nulls_invalid_summary(
+    db_session: Session,
+) -> None:
+    _disable_all_sources(db_session)
+    _clear_observability_rows(db_session)
+    db_session.add_all(
+        [
+            SchedulerJobRun(
+                job_id="collect",
+                name="定时采集与处理",
+                status="completed",
+                scheduled_run_at=NOW,
+                started_at=NOW,
+                finished_at=NOW,
+                result_summary={
+                    "summary": "本轮采集完成",
+                    "metrics": [{"label": "新增信号", "value": 3}],
+                    "outputs": [],
+                },
+            ),
+            SchedulerJobRun(
+                job_id="collect",
+                name="定时采集与处理",
+                status="completed",
+                scheduled_run_at=NOW - timedelta(minutes=1),
+                started_at=NOW - timedelta(minutes=1),
+                finished_at=NOW - timedelta(minutes=1),
+                # 旧数据/脏值：不得让健康聚合抛错，也不得原样透传。
+                result_summary={"summary": "x" * 500, "raw": "SECRET"},
+            ),
+        ]
+    )
+    db_session.flush()
+
+    recent = build_monitoring_health(db_session, now=NOW).scheduler.recent_runs
+    assert len(recent) == 2
+    assert recent[0].result is not None
+    assert recent[0].result.summary == "本轮采集完成"
+    assert recent[0].result.metrics[0].label == "新增信号"
+    assert recent[0].result.metrics[0].value == 3
+    assert recent[1].result is None
+
+
 def test_monitoring_health_http_lists_scheduled_jobs_and_recent_runs(
     client, db_session: Session
 ) -> None:
@@ -1892,6 +1971,7 @@ def test_monitoring_health_http_lists_scheduled_jobs_and_recent_runs(
         "scheduled_run_at",
         "started_at",
         "finished_at",
+        "result",
     }
     assert runs[0]["job_id"] == "collect"
     assert runs[0]["name"] == "定时采集与处理"
@@ -1899,6 +1979,7 @@ def test_monitoring_health_http_lists_scheduled_jobs_and_recent_runs(
     assert runs[0]["scheduled_run_at"] is not None
     assert runs[0]["started_at"] is not None
     assert runs[0]["finished_at"] is not None
+    assert runs[0]["result"] is None
     # completed 只表示 callable 正常返回；绝不出现 succeeded 命名。
     assert "succeeded" not in response.text
 

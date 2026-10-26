@@ -8,7 +8,8 @@
 source_name / stage / started_at / item_id），绝不包含信号标题或正文。
 ``scheduler.scheduled_jobs`` 是 Scheduler 进程写库的真实排期快照；
 ``scheduler.recent_runs`` 是最近调度执行历史（completed 只表示 callable
-正常返回，绝不命名为 succeeded），均不含异常、堆栈或返回值。
+正常返回，绝不命名为 succeeded），均不含异常、堆栈或原始返回值；
+``scheduler.recent_runs[*].result`` 只含经 RunResult 校验的脱敏摘要。
 本轮尚未发布，不保留任何旧字段兼容层。
 """
 
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.scheduler.log_tail import LogUnavailableReason
 from app.scheduler.observability_models import JobRunStatus
+from app.scheduler.run_results import RunResult
 from app.scheduler.runtime_models import CurrentWorkKind, CurrentWorkStage
 
 OverallStatus = Literal["ok", "degraded", "unknown", "inactive"]
@@ -67,6 +69,15 @@ class SchedulerJobRunRead(BaseModel):
     scheduled_run_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    # 只投影经 RunResult 校验的脱敏摘要；旧数据/失败执行/非法摘要为 null。
+    result: RunResult | None
+
+
+class SchedulerRunHistoryRead(BaseModel):
+    """单个任务最近若干次执行历史；job 已移除时 items 为空，不返回 404。"""
+
+    job_id: str
+    items: list[SchedulerJobRunRead]
 
 
 class SchedulerHealthRead(BaseModel):

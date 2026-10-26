@@ -8,8 +8,9 @@
 - ``scheduler_job_run``：每次调度执行历史。事件幂等键为
   ``(job_id, scheduled_run_at UTC)``；``status`` 仅允许
   ``running/completed/error/missed/max_instances`` —— ``completed`` 只表示
-  callable 正常返回，绝不命名为 ``succeeded``。绝不保存 exception、traceback、
-  retval、信号标题正文、凭据或其他敏感数据。
+  callable 正常返回，绝不命名为 ``succeeded``。只保存经过 ``RunResult`` 校验的
+  脱敏摘要（``result_summary``），不保存原始 retval、exception、traceback、
+  信号标题正文、凭据或其他敏感数据。
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -61,6 +63,8 @@ class SchedulerJobRun(Base):
             "job_id", "scheduled_run_at", name="uq_scheduler_job_run_job_scheduled"
         ),
         Index("ix_scheduler_job_run_scheduled_run_at", "scheduled_run_at"),
+        # 按任务查看最近若干次执行：job_id 等值查询 + scheduled_run_at 倒序。
+        Index("ix_scheduler_job_run_job_id", "job_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -71,6 +75,10 @@ class SchedulerJobRun(Base):
     # 从未登记开始/结束的终态（missed/max_instances、乱序先到）保持 NULL，不编造。
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 只写经 RunResult 校验的脱敏摘要；NULL 表示无可用结果（含旧数据与失败终态）。
+    result_summary: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

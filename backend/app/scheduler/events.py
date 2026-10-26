@@ -112,8 +112,15 @@ def _handle_terminal(scheduler: _SchedulerView, event: JobExecutionEvent) -> Non
     if run_time is None:
         return
     job_id = event.job_id
+    # 只有成功完成（EXECUTED）才读取 callable 返回值；error/missed 一律不读取，
+    # 避免把异常对象或失败上下文带进持久化层。
+    result = getattr(event, "retval", None) if event.code == EVENT_JOB_EXECUTED else None
     observability.record_job_outcome(
-        job_id, run_time, status, name=_resolve_job_name(scheduler, job_id)
+        job_id,
+        run_time,
+        status,
+        name=_resolve_job_name(scheduler, job_id),
+        result=result,
     )
 
 

@@ -84,7 +84,8 @@ from app.risks.service import expire_alerts, process_analysis
 from app.risks.validity import expire_signal_if_due, is_raw_signal_effective
 from app.scheduler import runtime
 from app.scheduler.retention import cleanup_retention
-from app.signals.models import DataSource, RawSignal
+from app.scheduler.run_results import RunResult, RunResultMetric
+from app.signals.models import CollectionRun, DataSource, RawSignal
 from app.signals.relevance import (
     assess_signal_relevance,
     grade_structured_signal,
@@ -210,14 +211,46 @@ def _collect_enabled_sources(
     return summary
 
 
-def collect_source_job(source_id: int) -> None:
-    """按信息源自己的 cron 触发一次采集（只入库，不阻塞消费队列）。"""
+def collect_source_job(source_id: int) -> RunResult | None:
+    """按信息源自己的 cron 触发一次采集（只入库，不阻塞消费队列）。
+
+    成功时用最近一次 ``CollectionRun`` 的抓取/新增/重复计数生成脱敏摘要；
+    非拉取源、受控延后、采集失败与异常均不返回摘要。
+    """
     try:
         summary = _collect_enabled_sources(source_ids=[source_id])
-        if summary:
-            logger.info("信息源独立调度完成: %s", summary)
+        if not summary:
+            return None
+        # _collect_enabled_sources 的键是 source_code，失败值为 -1。
+        if any(value < 0 for value in summary.values()):
+            return None
+        logger.info("信息源独立调度完成: %s", summary)
+        with SessionLocal() as session:
+            run = session.scalar(
+                select(CollectionRun)
+                .where(CollectionRun.source_id == source_id)
+                .order_by(CollectionRun.started_at.desc(), CollectionRun.id.desc())
+                .limit(1)
+            )
+            if run is None:
+                return None
+            fetched, created_count, duplicate = (
+                run.fetched_count,
+                run.created_count,
+                run.duplicate_count,
+            )
+        return RunResult(
+            summary="采集完成",
+            metrics=[
+                RunResultMetric(label="抓取", value=max(0, fetched)),
+                RunResultMetric(label="新增", value=max(0, created_count)),
+                RunResultMetric(label="重复", value=max(0, duplicate)),
+            ],
+            outputs=[RunResultMetric(label="新增信号", value=max(0, created_count))],
+        )
     except Exception as exc:
         logger.exception("信息源 %s 独立调度异常: %s", source_id, exc)
+        return None
 
 
 # 天眼查周度分片核查的权威触发 cadence（D8：固定 2 片）：
@@ -230,7 +263,7 @@ TYC_SHARD_CRONS: tuple[str, str] = ("0 6 * * sun", "0 6 * * mon")
 TYC_WEEKLY_SCHEDULE: str = TYC_SHARD_CRONS[0]
 
 
-def collect_tyc_shard_job(shard_index: int) -> None:
+def collect_tyc_shard_job(shard_index: int) -> RunResult | None:
     """周度分片核查启用的供应商：调用天眼查 MCP 并把多维度报告写入信号池。
 
     只处理所属 SHA-256 分片（固定 2 片）的 ``suppliers.enabled=true``；启用前
@@ -240,9 +273,8 @@ def collect_tyc_shard_job(shard_index: int) -> None:
     核查同一额度执行器）：逐工具写 ``tyc_usage_records``，多维度报告落信号池。
 
     采集只入库、不消费：新增信号交由独立消费循环（``scheduler.consume``）分析。
-
-    本函数保持调度顶层边界：未启用/额度不可用/门禁拒绝/锁繁忙一律降级为跳过
-    日志，异常不外抛。
+    成功且有目标供应商时返回计数摘要；未启用/额度不可用/门禁拒绝/锁繁忙/
+    无目标/异常一律降级为跳过日志并返回 None，异常不外抛。
     """
     try:
         with SessionLocal() as session:
@@ -251,7 +283,7 @@ def collect_tyc_shard_job(shard_index: int) -> None:
             )
             if source is None:
                 logger.warning("天眼查信息源未配置，跳过供应商分片核查")
-                return
+                return None
             try:
                 result = run_tyc_batch(
                     session,
@@ -261,21 +293,21 @@ def collect_tyc_shard_job(shard_index: int) -> None:
                 )
             except TycBatchSourceInactive:
                 logger.warning("天眼查未启用，跳过供应商分片核查")
-                return
+                return None
             except TycBatchUnavailable as exc:
                 logger.warning("天眼查不可用，跳过供应商分片核查：%s", exc)
-                return
+                return None
             except TycBatchLocked as exc:
                 logger.warning("天眼查分片 %d 跳过：%s", shard_index, exc)
-                return
+                return None
             except TycBatchBucketGateRejected as exc:
                 logger.warning(
                     "天眼查分片 %d 门禁拒绝，跳过（不部分执行）：%s", shard_index, exc
                 )
-                return
+                return None
         if result.targeted_count == 0:
             logger.info("天眼查分片 %d 无启用供应商，跳过", shard_index)
-            return
+            return None
         logger.info(
             "天眼查分片 %d 核查完成: 供应商=%d 调用=%d 新增信号=%d 重复=%d 空=%d "
             "失败=%d 额度耗尽=%s",
@@ -288,8 +320,20 @@ def collect_tyc_shard_job(shard_index: int) -> None:
             result.failed_count,
             result.quota_exhausted,
         )
+        return RunResult(
+            summary="天眼查核查完成",
+            metrics=[
+                RunResultMetric(label="供应商", value=max(0, result.targeted_count)),
+                RunResultMetric(label="调用", value=max(0, result.attempted_count)),
+                RunResultMetric(label="新增信号", value=max(0, result.created_count)),
+                RunResultMetric(label="重复", value=max(0, result.duplicate_count)),
+                RunResultMetric(label="空结果", value=max(0, result.empty_count)),
+                RunResultMetric(label="失败", value=max(0, result.failed_count)),
+            ],
+        )
     except Exception as exc:
         logger.exception("天眼查分片核查异常: %s", exc)
+        return None
 
 
 def _evaluate_market_signal(
@@ -730,14 +774,35 @@ def age_pending_signal_priorities(
         return int(result.rowcount or 0)
 
 
-def collect_job() -> None:
+def age_pending_signal_priorities_job() -> RunResult:
+    """Scheduler 注册用老化 wrapper：保留原 int 契约，同时返回脱敏摘要。"""
+    updated = age_pending_signal_priorities()
+    return RunResult(
+        summary="优先级老化完成",
+        metrics=[RunResultMetric(label="提升信号", value=max(0, updated))],
+    )
+
+
+def collect_job() -> RunResult | None:
     """定时采集：只入库，不消费。分析由独立消费循环（signal-consume）负责。"""
     logger.info("定时采集开始: %s", datetime.now(UTC).isoformat())
     try:
         summary = _collect_enabled_sources(only_without_schedule=True)
         logger.info("采集汇总: %s（新信号已入队，等待独立消费循环分析）", summary)
+        created = sum(value for value in summary.values() if value > 0)
+        failed = sum(1 for value in summary.values() if value < 0)
+        return RunResult(
+            summary="采集完成",
+            metrics=[
+                RunResultMetric(label="采集信源", value=len(summary)),
+                RunResultMetric(label="新增信号", value=max(0, created)),
+                RunResultMetric(label="失败信源", value=max(0, failed)),
+            ],
+            outputs=[RunResultMetric(label="新增信号", value=max(0, created))],
+        )
     except Exception as exc:
         logger.exception("定时采集任务异常: %s", exc)
+        return None
 
 
 def create_research_task_job(task_type: str, *, now: datetime | None = None) -> int | None:
@@ -1114,7 +1179,7 @@ def create_weekly_research_batch_job(*, now: datetime | None = None) -> int | No
         )
 
 
-def intelligence_report_job() -> None:
+def intelligence_report_job() -> RunResult | None:
     """为政策/行业维度的风险事件批量生成情报报告（简要报告 + 风险提醒建议）。
 
     与提醒链路完全解耦：只读事件，不做供应商匹配、不评分、不推送。批次大小由
@@ -1124,23 +1189,33 @@ def intelligence_report_job() -> None:
         generated = generate_pending_intelligence_reports()
         if generated:
             logger.info("情报报告生成完成: %d 条", generated)
+        return RunResult(
+            summary="情报报告生成完成",
+            metrics=[RunResultMetric(label="报告数", value=max(0, generated))],
+        )
     except Exception as exc:
         logger.exception("情报报告任务异常: %s", exc)
+        return None
 
 
-def expire_job() -> None:
+def expire_job() -> RunResult | None:
     with SessionLocal() as session:
         try:
             expired = expire_alerts(session)
             session.commit()
             if expired:
                 logger.info("已失效提醒 %d 条", expired)
+            return RunResult(
+                summary="提醒失效完成",
+                metrics=[RunResultMetric(label="过期提醒", value=max(0, expired))],
+            )
         except Exception as exc:
             session.rollback()
             logger.exception("提醒失效任务异常: %s", exc)
+            return None
 
 
-def cleanup_job() -> None:
+def cleanup_job() -> RunResult | None:
     with SessionLocal() as session:
         try:
             now = datetime.now(UTC)
@@ -1159,6 +1234,31 @@ def cleanup_job() -> None:
                 result.deleted_analysis,
                 result.deleted_runs,
             )
+            return RunResult(
+                summary="保留清理完成",
+                metrics=[
+                    RunResultMetric(
+                        label="过期提醒", value=max(0, result.expired_alerts)
+                    ),
+                    RunResultMetric(
+                        label="删除事件", value=max(0, result.deleted_events)
+                    ),
+                    RunResultMetric(
+                        label="删除信号", value=max(0, result.deleted_signals)
+                    ),
+                    RunResultMetric(
+                        label="删除分析", value=max(0, result.deleted_analysis)
+                    ),
+                    RunResultMetric(
+                        label="删除采集运行", value=max(0, result.deleted_runs)
+                    ),
+                    RunResultMetric(
+                        label="删除调度历史",
+                        value=max(0, result.deleted_scheduler_runs),
+                    ),
+                ],
+            )
         except Exception as exc:
             session.rollback()
             logger.exception("保留清理任务异常: %s", exc)
+            return None

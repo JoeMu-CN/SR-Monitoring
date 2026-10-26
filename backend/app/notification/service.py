@@ -37,6 +37,7 @@ from app.notification.rendering import (
 )
 from app.risks.models import RiskAlert
 from app.risks.query_validity import current_alert_condition
+from app.scheduler.run_results import RunResult, RunResultMetric
 
 logger = logging.getLogger("notification")
 
@@ -270,14 +271,17 @@ def _process_merge_queue(
         queries.mark_batch_success(current_batch, title, content, now, summary)
 
 
-def notify_job() -> None:
-    """Scheduler 独立 Job：轮询新增/升级提醒并推送；成功提交、异常回滚。"""
+def notify_job() -> RunResult | None:
+    """Scheduler 独立 Job：轮询新增/升级提醒并推送；成功提交、异常回滚。
+
+    成功扫描返回计数摘要；未启用、已有批次运行跳过或异常时不返回摘要。
+    """
     settings = get_notification_settings()
     if not settings.enabled:
-        return
+        return None
     if not _notify_lock.acquire(blocking=False):
         logger.info("已有通知扫描批次运行，跳过本次")
-        return
+        return None
     try:
         with SessionLocal() as session:
             try:
@@ -287,7 +291,30 @@ def notify_job() -> None:
                 session.rollback()
                 raise
         logger.info("通知扫描完成: %s", summary)
+        # 只投影有诊断意义的 12 个计数；渠道/接收人数属于环境信息，不进入结果摘要。
+        labels = (
+            ("new_alerts", "新提醒"),
+            ("upgraded", "升级"),
+            ("recovered", "恢复"),
+            ("sent", "已发送"),
+            ("merged", "合并"),
+            ("queued", "排队"),
+            ("failed", "失败"),
+            ("rate_limited", "限频"),
+            ("quiet_suppressed", "免打扰"),
+            ("expired_suppressed", "过期抑制"),
+            ("backfill_pending", "回填待处理"),
+            ("legacy_unlinked", "旧数据未关联"),
+        )
+        return RunResult(
+            summary="提醒扫描完成",
+            metrics=[
+                RunResultMetric(label=label, value=max(0, summary.get(key, 0)))
+                for key, label in labels
+            ],
+        )
     except Exception:
         logger.exception("通知扫描异常")
+        return None
     finally:
         _notify_lock.release()

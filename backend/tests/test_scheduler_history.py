@@ -2,13 +2,15 @@
 
 用例分层（Given/When/Then）：
 1. 稳定枚举与排除集合：状态严格为 running|completed|error|missed|max_instances，
-   绝不命名 succeeded；registry 排除纯内部维护 job，history 额外排除高频 notify。
+   绝不命名 succeeded；registry 排除纯内部维护 job，history 仅排除同一批内部 job
+   （notify 保留历史，健康最近窗口再单独过滤）。
 2. 迁移：0057 紧接 0056 建立 scheduler_job_registry 与 scheduler_job_run。
 3. 事件语义（对齐 APScheduler 3.11.3）：SUBMITTED/MAX_INSTANCES 使用复数
    scheduled_run_times，EXECUTED/ERROR/MISSED 使用单数 scheduled_run_time。
 4. 幂等与乱序：唯一键 (job_id, scheduled_run_at UTC)；终态可先到并 UPSERT，
    迟到的 SUBMITTED 不得把终态改回 running；重复事件不产生新行。
-5. 脱敏：事件携带的 exception/traceback/retval 一律不落库。
+5. 脱敏：事件携带的 exception/traceback 与不可信 retval 一律不落库；只有通过
+   RunResult 校验的结构化摘要写入 result_summary。
 6. 隔离：监听器与写入异常只记稳定日志，绝不向上抛、不影响业务 job。
 7. 中断收敛：Scheduler 启动时把上次进程中断遗留的 running 行收敛为稳定异常
    error（finished_at 写启动观测时间），幂等、失败隔离，不新增状态枚举。
@@ -122,7 +124,8 @@ def test_job_run_status_values_are_stable_without_succeeded() -> None:
 
 def test_internal_jobs_are_excluded_from_registry_and_history() -> None:
     assert scheduler_observability.REGISTRY_EXCLUDED_JOB_IDS == INTERNAL_JOB_IDS
-    assert scheduler_observability.HISTORY_EXCLUDED_JOB_IDS == INTERNAL_JOB_IDS | {"notify"}
+    # notify 是业务提醒 job：保留执行历史（健康最近窗口再单独过滤）。
+    assert scheduler_observability.HISTORY_EXCLUDED_JOB_IDS == INTERNAL_JOB_IDS
 
 
 # --------------------------------------------------------------------------- #
@@ -143,6 +146,23 @@ def test_migration_0057_declares_scheduler_observability_tables() -> None:
     for status in JOB_RUN_STATUS_VALUES:
         assert f"'{status}'" in text
     assert "scheduled_run_at" in text
+
+
+def test_migration_0069_adds_result_summary_and_job_id_index() -> None:
+    """静态守卫：0069 紧接 0068，新增可空 result_summary 与 job_id 索引。"""
+    migration_path = (
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "0069_scheduler_run_result.py"
+    )
+    text = migration_path.read_text(encoding="utf-8")
+    assert 'revision: str = "0069"' in text
+    assert 'down_revision: str | None = "0068"' in text
+    assert "result_summary" in text
+    assert "ix_scheduler_job_run_job_id" in text
+    assert "JSONB" in text
+    assert "nullable=True" in text
 
 
 # --------------------------------------------------------------------------- #
@@ -267,6 +287,35 @@ def test_terminal_events_route_singular_scheduled_run_time(
     assert all(item[1] == NOW for item in outcomes)
 
 
+def test_executed_event_routes_retval_but_failures_do_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """只有成功完成读取 retval；error/missed 即使事件带 retval 也不传给写库层。"""
+    scheduler = _scheduler_with_collect_job()
+    outcomes: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        scheduler_observability,
+        "record_job_outcome",
+        lambda job_id, run_at, status, *, name, result=None, **kwargs: outcomes.append(
+            (status, result)
+        ),
+    )
+
+    for code in (EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED):
+        scheduler_events.on_scheduler_event(
+            scheduler,
+            JobExecutionEvent(
+                code, "collect", "default", NOW, retval={"summary": "完成"}
+            ),
+        )
+
+    assert outcomes == [
+        ("completed", {"summary": "完成"}),
+        ("error", None),
+        ("missed", None),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # 4. 事件语义：SUBMITTED / EXECUTED / MISSED / MAX_INSTANCES
 # --------------------------------------------------------------------------- #
@@ -382,6 +431,84 @@ def test_missed_records_without_run_timestamps(
     assert rows[0].finished_at is None
 
 
+def test_executed_event_persists_normalized_result_summary(
+    db_session: Session, observability_uses_test_session: None
+) -> None:
+    _clear_observability_rows(db_session)
+    scheduler = _scheduler_with_collect_job()
+
+    scheduler_events.on_scheduler_event(
+        scheduler,
+        JobExecutionEvent(
+            EVENT_JOB_EXECUTED,
+            "collect",
+            "default",
+            NOW,
+            retval={
+                "summary": "本轮采集完成",
+                "metrics": [{"label": "新增信号", "value": 3}],
+                "outputs": [{"label": "处理报告", "value": 1}],
+            },
+        ),
+    )
+
+    row = _runs_of(db_session, "collect")[0]
+    assert row.status == "completed"
+    assert row.result_summary == {
+        "summary": "本轮采集完成",
+        "metrics": [{"label": "新增信号", "value": 3}],
+        "outputs": [{"label": "处理报告", "value": 1}],
+    }
+
+
+def test_executed_event_with_untrusted_retval_persists_no_result(
+    db_session: Session, observability_uses_test_session: None
+) -> None:
+    _clear_observability_rows(db_session)
+    scheduler = _scheduler_with_collect_job()
+
+    scheduler_events.on_scheduler_event(
+        scheduler,
+        JobExecutionEvent(
+            EVENT_JOB_EXECUTED,
+            "collect",
+            "default",
+            NOW,
+            retval={"secret": "SECRET_RETVAL", "summary": "x" * 200},
+        ),
+    )
+
+    row = _runs_of(db_session, "collect")[0]
+    assert row.status == "completed"
+    assert row.result_summary is None
+    assert "SECRET" not in repr(row.__dict__)
+
+
+def test_late_terminal_without_result_keeps_existing_summary(
+    db_session: Session, observability_uses_test_session: None
+) -> None:
+    _clear_observability_rows(db_session)
+    scheduler = _scheduler_with_collect_job()
+    result = {"summary": "本轮采集完成"}
+
+    scheduler_events.on_scheduler_event(
+        scheduler,
+        JobExecutionEvent(EVENT_JOB_EXECUTED, "collect", "default", NOW, retval=result),
+    )
+    # 重复终态没有 retval：COALESCE 保护已有摘要，不把结果清空。
+    scheduler_events.on_scheduler_event(
+        scheduler, JobExecutionEvent(EVENT_JOB_EXECUTED, "collect", "default", NOW)
+    )
+
+    rows = _runs_of(db_session, "collect")
+    assert len(rows) == 1
+    assert rows[0].result_summary == {
+        "summary": "本轮采集完成",
+        "metrics": [],
+        "outputs": [],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # 5. 脱敏与列白名单
 # --------------------------------------------------------------------------- #
@@ -404,7 +531,7 @@ def test_terminal_event_does_not_persist_exception_retval_or_traceback(
         ),
     )
 
-    # 表结构只有稳定状态与时间戳列，没有异常文本/堆栈/返回值列。
+    # 表结构只有稳定状态、时间戳与受限结果摘要列，没有异常文本/堆栈/返回文本列。
     assert set(SchedulerJobRun.__table__.columns.keys()) == {
         "id",
         "job_id",
@@ -413,23 +540,25 @@ def test_terminal_event_does_not_persist_exception_retval_or_traceback(
         "scheduled_run_at",
         "started_at",
         "finished_at",
+        "result_summary",
         "created_at",
     }
     row = _runs_of(db_session, "collect")[0]
     assert row.status == "error"
+    assert row.result_summary is None
     assert "SECRET" not in repr(row.__dict__)
 
 
 # --------------------------------------------------------------------------- #
 # 6. 排除规则与异常隔离
 # --------------------------------------------------------------------------- #
-def test_history_excludes_internal_and_notify_jobs(
+def test_history_excludes_internal_jobs_but_keeps_notify(
     db_session: Session, observability_uses_test_session: None
 ) -> None:
     _clear_observability_rows(db_session)
     scheduler = BlockingScheduler(timezone="Asia/Shanghai")
 
-    for job_id in sorted(INTERNAL_JOB_IDS | {"notify"}):
+    for job_id in sorted(INTERNAL_JOB_IDS):
         scheduler_events.on_scheduler_event(
             scheduler, JobSubmissionEvent(EVENT_JOB_SUBMITTED, job_id, "default", [NOW])
         )
@@ -437,6 +566,17 @@ def test_history_excludes_internal_and_notify_jobs(
             scheduler, JobExecutionEvent(EVENT_JOB_EXECUTED, job_id, "default", NOW)
         )
     assert db_session.scalar(select(SchedulerJobRun)) is None
+
+    # notify 是业务提醒 job：执行历史保留（健康最近窗口另行排除）。
+    scheduler_events.on_scheduler_event(
+        scheduler, JobSubmissionEvent(EVENT_JOB_SUBMITTED, "notify", "default", [NOW])
+    )
+    scheduler_events.on_scheduler_event(
+        scheduler, JobExecutionEvent(EVENT_JOB_EXECUTED, "notify", "default", NOW)
+    )
+    notify_rows = _runs_of(db_session, "notify")
+    assert len(notify_rows) == 1
+    assert notify_rows[0].status == "completed"
 
     # 动态 source-* 必须记录；名字缺失时回退 job_id，不编造。
     scheduler_events.on_scheduler_event(

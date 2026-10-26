@@ -7,8 +7,10 @@
   UPSERT 终态；迟到的 SUBMITTED 绝不覆盖终态（``ON CONFLICT DO NOTHING``）。
 - 时间一律规范化为 UTC；事件幂等键 ``(job_id, scheduled_run_at)`` 由数据库
   唯一约束兜底并发，事件乱序与 listener 并发下仍保持单行。
-- registry 排除纯内部维护 job；history 额外排除高频 ``notify``，避免提醒扫描
-  淹没历史；动态 ``source-*`` 必须记录。
+- registry 排除纯内部维护 job；history 也排除同一批内部 job，但保留 ``notify``
+  等业务提醒 job 的执行历史（健康接口的最近窗口再单独过滤高频 notify）。
+- 成功完成（EXECUTED）的返回值只经 :func:`normalize_run_result` 投影为受限摘要；
+  原始 retval、异常、正文与凭据一律不落库。
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.database import SessionLocal
@@ -27,6 +29,7 @@ from app.scheduler.observability_models import (
     SchedulerJobRegistry,
     SchedulerJobRun,
 )
+from app.scheduler.run_results import normalize_run_result
 
 logger = logging.getLogger("scheduler.observability")
 
@@ -39,8 +42,9 @@ REGISTRY_EXCLUDED_JOB_IDS: frozenset[str] = frozenset(
         "research-capacity-recovery",
     }
 )
-# 执行历史在内部维护 job 之外再排除高频 notify，避免历史被提醒扫描淹没。
-HISTORY_EXCLUDED_JOB_IDS: frozenset[str] = REGISTRY_EXCLUDED_JOB_IDS | {"notify"}
+# 执行历史与 registry 一样排除内部维护 job；notify 是业务 job，保留历史，
+# 但健康接口的最近窗口会单独过滤它，避免高频提醒淹没诊断信息。
+HISTORY_EXCLUDED_JOB_IDS: frozenset[str] = REGISTRY_EXCLUDED_JOB_IDS
 
 # 终态中真正运行过的状态：记录 finished_at；missed/max_instances 从未运行。
 _FINISHED_RUN_STATUSES: frozenset[str] = frozenset({"completed", "error"})
@@ -231,19 +235,24 @@ def record_job_outcome(
     status: JobRunStatus,
     *,
     name: str,
+    result: object | None = None,
     now: datetime | None = None,
 ) -> bool:
-    """终态事件（EXECUTED/ERROR/MISSED/MAX_INSTANCES）：UPSERT 稳定终态。
+    """终态事件（EXECUTED/ERROR/MISSED/MAX_INSTANCES）：UPSERT 稳定终态与结果摘要。
 
     - 可先于 SUBMITTED 到达：直接插入终态行，``started_at`` 保持 NULL，不编造。
     - ``completed``/``error`` 记录 ``finished_at``；``missed``/``max_instances``
       从未运行，``started_at``/``finished_at`` 均保持 NULL。
-    - 终态重复到达幂等：同一幂等键 UPSERT 到同一终态。
+    - ``result`` 只接受经 :func:`normalize_run_result` 校验的结构化摘要；其它值
+      一律写 NULL，绝不保存原始 retval、异常或正文。
+    - 终态重复到达幂等：同一幂等键 UPSERT 到同一终态；冲突更新时用
+      ``COALESCE`` 保护已有摘要，迟到/重复的无结果终态不覆盖已写入的结果。
     """
     if job_id in HISTORY_EXCLUDED_JOB_IDS:
         return False
     moment = now or datetime.now(UTC)
     finished_at = moment if status in _FINISHED_RUN_STATUSES else None
+    result_summary = normalize_run_result(result)
     try:
         with SessionLocal() as session:
             statement = insert(SchedulerJobRun).values(
@@ -253,6 +262,7 @@ def record_job_outcome(
                 scheduled_run_at=_utc(scheduled_run_at),
                 started_at=None,
                 finished_at=finished_at,
+                result_summary=result_summary,
             )
             statement = statement.on_conflict_do_update(
                 index_elements=[
@@ -263,6 +273,11 @@ def record_job_outcome(
                     "name": statement.excluded.name,
                     "status": statement.excluded.status,
                     "finished_at": statement.excluded.finished_at,
+                    # 新事件没有摘要时保留已有摘要；有摘要时以新值为准。
+                    "result_summary": func.coalesce(
+                        statement.excluded.result_summary,
+                        SchedulerJobRun.result_summary,
+                    ),
                 },
             )
             session.execute(statement)

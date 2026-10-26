@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -29,11 +30,21 @@ from app.config import (
 from app.database import engine
 from app.scheduler import runtime
 from app.scheduler.jobs import process_signal_batch
+from app.scheduler.run_results import RunResult, RunResultMetric
 
 logger = logging.getLogger("scheduler.consume")
 
 # 固定 advisory lock key：0x53474E4C = "SGNL"。会话级锁，跨 Scheduler 副本互斥。
 SIGNAL_CONSUME_LOCK_KEY = 0x53474E4C
+
+
+@dataclass(frozen=True)
+class ConsumeOutcome:
+    """一轮消费的累计计数；供 int 兼容入口与结果摘要共用。"""
+
+    processed: int = 0
+    filtered: int = 0
+    failed: int = 0
 
 
 def _try_acquire_consume_lock(connection: Connection) -> bool:
@@ -58,17 +69,17 @@ def _release_consume_lock(connection: Connection) -> None:
     )
 
 
-def consume_pending_signals_job() -> int:
-    """消费一轮待分析队列，返回本轮累计 processed 条数。
+def _consume_pending_signals() -> ConsumeOutcome:
+    """消费一轮待分析队列，返回累计 processed/filtered/failed 计数。
 
-    未启用直接返回 0；拿不到 advisory lock 说明另一轮仍在运行，本轮跳过；
+    未启用直接返回全零；拿不到 advisory lock 说明另一轮仍在运行，本轮跳过；
     单轮受时间预算约束，队列空（全零）即停。
 
     锁必须由一个 ``engine.connect()`` 的**长期连接**持有：Session 在 commit 后
     会把连接归还连接池，可能导致解锁落在另一条连接上而让锁永久残留。
     """
     if not SIGNAL_CONSUME_ENABLED:
-        return 0
+        return ConsumeOutcome()
 
     processed_total = 0
     filtered_total = 0
@@ -79,10 +90,10 @@ def consume_pending_signals_job() -> int:
         except Exception:
             # 加锁本身不可用（例如非 PostgreSQL 后端）：本轮跳过，不伪报失败批次。
             logger.exception("信号消费锁不可用，跳过本轮")
-            return 0
+            return ConsumeOutcome()
         if not acquired:
             logger.info("信号消费锁被占用（另一轮仍在运行），跳过本轮")
-            return 0
+            return ConsumeOutcome()
         try:
             deadline = time.monotonic() + SIGNAL_CONSUME_TIME_BUDGET_SECONDS
             while True:
@@ -101,7 +112,9 @@ def consume_pending_signals_job() -> int:
                         failed=1,
                         error_code="pending_processing_failed",
                     )
-                    return processed_total
+                    return ConsumeOutcome(
+                        processed_total, filtered_total, failed_total + 1
+                    )
                 processed_total += result.processed
                 filtered_total += result.filtered
                 failed_total += result.failed
@@ -123,4 +136,22 @@ def consume_pending_signals_job() -> int:
         filtered=filtered_total,
         failed=failed_total,
     )
-    return processed_total
+    return ConsumeOutcome(processed_total, filtered_total, failed_total)
+
+
+def consume_pending_signals_job() -> int:
+    """消费一轮待分析队列，返回本轮累计 processed 条数（保持既有 int 契约）。"""
+    return _consume_pending_signals().processed
+
+
+def consume_pending_signals_job_with_result() -> RunResult:
+    """Scheduler 注册用结果版 wrapper：保留 int 入口，同时返回脱敏摘要。"""
+    outcome = _consume_pending_signals()
+    return RunResult(
+        summary="信号消费完成",
+        metrics=[
+            RunResultMetric(label="处理", value=max(0, outcome.processed)),
+            RunResultMetric(label="过滤", value=max(0, outcome.filtered)),
+            RunResultMetric(label="失败", value=max(0, outcome.failed)),
+        ],
+    )

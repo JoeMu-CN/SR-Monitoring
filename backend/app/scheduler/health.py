@@ -56,6 +56,7 @@ from app.scheduler.observability_models import (
     SchedulerJobRegistry,
     SchedulerJobRun,
 )
+from app.scheduler.run_results import RunResult
 from app.scheduler.runtime import (
     HEARTBEAT_INTERVAL_SECONDS,
     HEARTBEAT_JOB_KEY,
@@ -106,6 +107,9 @@ _JOB_RUN_STATUS_BY_NAME: dict[str, JobRunStatus] = {
 
 # 最近调度执行历史条数上限：足以诊断最近调度，不做分页。
 RECENT_RUN_LIMIT = 30
+
+# 健康接口的最近窗口排除高频提醒扫描：notify 仍写执行历史，但不能挤占 30 条窗口。
+RECENT_RUN_EXCLUDED_JOB_IDS: frozenset[str] = frozenset({"notify"})
 
 # current_kind/current_stage 同为 Text 列：只投影白名单枚举，其余一律省略。
 _CURRENT_WORK_KIND_BY_NAME: dict[str, CurrentWorkKind] = {
@@ -183,32 +187,72 @@ def _scheduled_jobs(session: Session) -> list[ScheduledJobRead]:
     ]
 
 
+def _run_result(value: dict[str, object] | None) -> RunResult | None:
+    """旧数据或非法摘要一律投影为 null，不因脏值中断健康聚合。"""
+    if value is None:
+        return None
+    try:
+        return RunResult.model_validate(value)
+    except Exception:
+        return None
+
+
+def _run_read(row: SchedulerJobRun) -> SchedulerJobRunRead | None:
+    """把一行执行历史投影为响应模型；未知状态安全省略。"""
+    status = _JOB_RUN_STATUS_BY_NAME.get(row.status)
+    if status is None:
+        return None
+    return SchedulerJobRunRead(
+        id=row.id,
+        job_id=row.job_id,
+        name=row.name,
+        status=status,
+        scheduled_run_at=_utc(row.scheduled_run_at),
+        started_at=_as_utc(row.started_at),
+        finished_at=_as_utc(row.finished_at),
+        result=_run_result(row.result_summary),
+    )
+
+
 def _recent_runs(session: Session) -> list[SchedulerJobRunRead]:
     """最新 ``RECENT_RUN_LIMIT`` 条调度执行历史：按调度时间倒序，同刻按 id 倒序。
 
-    未知状态（如历史脏值）安全省略，不猜测映射。
+    未知状态（如历史脏值）安全省略，不猜测映射；高频 notify 不进入该窗口
+    （它的历史仍可在按任务接口查询）。
     """
     rows = session.scalars(
         select(SchedulerJobRun)
+        .where(SchedulerJobRun.job_id.not_in(RECENT_RUN_EXCLUDED_JOB_IDS))
         .order_by(SchedulerJobRun.scheduled_run_at.desc(), SchedulerJobRun.id.desc())
         .limit(RECENT_RUN_LIMIT)
     )
     items: list[SchedulerJobRunRead] = []
     for row in rows:
-        status = _JOB_RUN_STATUS_BY_NAME.get(row.status)
-        if status is None:
-            continue
-        items.append(
-            SchedulerJobRunRead(
-                id=row.id,
-                job_id=row.job_id,
-                name=row.name,
-                status=status,
-                scheduled_run_at=_utc(row.scheduled_run_at),
-                started_at=_as_utc(row.started_at),
-                finished_at=_as_utc(row.finished_at),
-            )
-        )
+        item = _run_read(row)
+        if item is not None:
+            items.append(item)
+    return items
+
+
+def recent_runs_for_job(
+    session: Session, *, job_id: str, limit: int
+) -> list[SchedulerJobRunRead]:
+    """按任务读取最近若干次执行（新→旧），用于底部节点详情。
+
+    只读、不写库；任务已移除时自然返回空列表。结果摘要来自 ``result_summary``，
+    旧数据或非法摘要投影为 null。
+    """
+    rows = session.scalars(
+        select(SchedulerJobRun)
+        .where(SchedulerJobRun.job_id == job_id)
+        .order_by(SchedulerJobRun.scheduled_run_at.desc(), SchedulerJobRun.id.desc())
+        .limit(limit)
+    )
+    items: list[SchedulerJobRunRead] = []
+    for row in rows:
+        item = _run_read(row)
+        if item is not None:
+            items.append(item)
     return items
 
 

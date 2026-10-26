@@ -29,6 +29,10 @@ const LEVEL_SEGMENTS = [
   {level: 'P4', label: 'P4 轻微关注', color: 'bg-[#7f8ea3]', text: '#7f8ea3'},
 ] as const;
 
+const LEVEL_RANK: Record<RiskLevel, number> = {P1: 0, P2: 1, P3: 2, P4: 3};
+
+const riskLevelRank = (level: RiskLevel | null): number => (level === null ? 9 : LEVEL_RANK[level]);
+
 const EVENT_TYPE_LABELS: Record<string, string> = {
   weather: '自然灾害',
   earthquake: '地震灾害',
@@ -76,6 +80,32 @@ const sourceHealthMeta = (source: DashboardSummary['sources'][number]): {label: 
   }
   return {label: '待运行', dot: 'bg-amber-400', text: 'text-amber-300'};
 };
+
+const RiskStreamRow = ({
+  item,
+  onSelect,
+  duplicate = false,
+}: {
+  readonly item: RiskItem;
+  readonly onSelect: (item: RiskItem) => void;
+  readonly duplicate?: boolean;
+}) => (
+  <button
+    type="button"
+    tabIndex={duplicate ? -1 : undefined}
+    onClick={() => onSelect(item)}
+    className="flex w-full items-start gap-2 py-2.5 text-left transition-colors hover:bg-sky-400/5"
+  >
+    <span className={`mt-0.5 rounded px-1 py-0.5 font-mono text-[9px] font-bold ${item.level === 'P1' ? 'bg-[#ff4d4f]/15 text-[#ff7875]' : item.level === 'P2' ? 'bg-[#ffa940]/15 text-[#ffc069]' : item.level === 'P3' ? 'bg-[#4da3ff]/15 text-[#69b4ff]' : 'bg-slate-400/15 text-slate-300'}`}>{item.level}</span>
+    <span className="min-w-0 flex-1">
+      <span className="block truncate text-[11px] font-bold text-sky-50">{item.companyName}</span>
+      <span className="mt-1 flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-[10px] text-sky-300/70">{item.riskType}</span>
+        <span className="shrink-0 font-mono text-[9px] text-sky-500/70">{item.updatedTime}</span>
+      </span>
+    </span>
+  </button>
+);
 
 export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, monitoringHealth}: OverviewViewProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -184,9 +214,11 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
   };
 
   const recentRisks = useMemo(
-    () => (summary ? summary.recent_alerts.slice(0, 5).map(mapRiskAlert) : []),
+    () => (summary ? summary.recent_alerts.slice(0, 10).map(mapRiskAlert) : []),
     [summary],
   );
+  const streamAutoScroll = recentRisks.length > 4;
+  const streamDuration = `${Math.max(16, recentRisks.length * 2.6)}s`;
 
   if (summary === null) {
     if (loadError !== null) return <OverviewLoadError message={loadError.message} onRetry={retry} />;
@@ -227,7 +259,16 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
   const refreshFailed = loadError !== null;
   const riskPoints = analytics?.risk_points ?? [];
   // 地图点位包含“有供应商但暂无风险”的空心省；排行只列真正命中提醒的地区。
-  const regionRows = riskPoints.filter((point) => point.alert_count > 0).slice(0, 8);
+  // 排行口径：最高等级优先，同等级内按总风险数降序。
+  const regionRows = riskPoints
+    .filter((point) => point.alert_count > 0)
+    .slice()
+    .sort((a, b) => riskLevelRank(a.max_level) - riskLevelRank(b.max_level) || b.alert_count - a.alert_count)
+    .slice(0, 8);
+  // 排行右侧按等级分列：只生成实际出现的等级列，空值也占位，保证同等级纵向对齐。
+  const regionLevels = LEVEL_SEGMENTS.filter((segment) => regionRows.some(
+    (point) => (point.level_counts.find((item) => item.level === segment.level)?.count ?? 0) > 0,
+  ));
   const trendPoints = analytics?.trend ?? [];
 
   return (
@@ -295,7 +336,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
 
         <div className="mt-3 grid gap-3 xl:grid-cols-[260px_minmax(0,1fr)_300px] xl:min-h-0 xl:flex-1">
           <aside className="flex min-h-0 flex-col gap-3">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="overview-kpi-grid grid grid-cols-2 gap-2">
               <Kpi label="活跃供应商" value={summary.active_supplier_total} suffix="监控中" tone="sky" testId="overview-metric-active" />
               <Kpi label="高危预警 P1" value={levelCount('P1')} suffix="需处置" tone="red" testId="overview-metric-p1" />
               <Kpi label="高风险 P2" value={levelCount('P2')} suffix="跟踪中" tone="amber" testId="overview-metric-p2" />
@@ -377,7 +418,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
               </div>
             </section>
 
-            <section className="scroll-card flex min-h-0 flex-1 flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
+            <section className="overview-health-card scroll-card flex min-h-0 flex-1 flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
               <div className="mb-1 flex flex-none items-center justify-between">
                 <h2 className="text-[12px] font-bold tracking-[0.08em] text-sky-100">信源采集健康</h2>
                 <span className="font-mono text-[9px] text-sky-500/70">{healthySourceCount}/{summary.sources.length} 正常</span>
@@ -419,7 +460,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
           </section>
 
           <aside className="flex min-h-0 flex-col gap-3">
-            <section className="flex h-[330px] flex-none flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))]">
+            <section className="overview-live-card flex h-[330px] flex-none flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))]">
               <div className="flex items-center justify-between border-b border-sky-400/10 px-3.5 py-2">
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-[12px] font-bold tracking-[0.08em] text-sky-100">实时风险流</h2>
@@ -429,27 +470,32 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
                 </div>
                 <button type="button" onClick={onViewAllRisks} className="text-[10px] font-bold text-sky-400 hover:text-sky-200">全部风险 →</button>
               </div>
-              <div className="flex flex-1 flex-col divide-y divide-sky-400/10 overflow-y-auto px-3.5">
-                {recentRisks.length === 0 ? (
-                  <p className="grid h-full place-items-center py-8 text-[11px] text-sky-400/60">暂无当前风险提醒</p>
-                ) : recentRisks.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => onSelectRisk(item)}
-                    className="flex w-full items-start gap-2 py-2.5 text-left transition-colors hover:bg-sky-400/5"
-                  >
-                    <span className={`mt-0.5 rounded px-1 py-0.5 font-mono text-[9px] font-bold ${item.level === 'P1' ? 'bg-[#ff4d4f]/15 text-[#ff7875]' : item.level === 'P2' ? 'bg-[#ffa940]/15 text-[#ffc069]' : item.level === 'P3' ? 'bg-[#4da3ff]/15 text-[#69b4ff]' : 'bg-slate-400/15 text-slate-300'}`}>{item.level}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[11px] font-bold text-sky-50">{item.companyName}</span>
-                      <span className="mt-1 flex items-center justify-between gap-2">
-                        <span className="min-w-0 truncate text-[10px] text-sky-300/70">{item.riskType}</span>
-                        <span className="shrink-0 font-mono text-[9px] text-sky-500/70">{item.updatedTime}</span>
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {recentRisks.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center px-3.5">
+                  <p className="py-8 text-[11px] text-sky-400/60">暂无当前风险提醒</p>
+                </div>
+              ) : streamAutoScroll ? (
+                <div className="overview-risk-stream flex flex-1 flex-col overflow-hidden px-3.5">
+                  <div className="overview-risk-stream-track flex flex-col" style={{animationDuration: streamDuration}}>
+                    <div className="divide-y divide-sky-400/10">
+                      {recentRisks.map((item) => (
+                        <RiskStreamRow key={`main-${item.id}`} item={item} onSelect={onSelectRisk} />
+                      ))}
+                    </div>
+                    <div aria-hidden="true" className="pointer-events-none divide-y divide-sky-400/10">
+                      {recentRisks.map((item) => (
+                        <RiskStreamRow key={`duplicate-${item.id}`} item={item} onSelect={onSelectRisk} duplicate />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-1 flex-col divide-y divide-sky-400/10 overflow-y-auto px-3.5">
+                  {recentRisks.map((item) => (
+                    <RiskStreamRow key={item.id} item={item} onSelect={onSelectRisk} />
+                  ))}
+                </div>
+              )}
             </section>
 
             <section className="flex-none rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
@@ -472,7 +518,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
               </div>
             </section>
 
-            <section className="scroll-card flex min-h-0 flex-1 flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
+            <section className="overview-ranking-card scroll-card flex min-h-0 flex-1 flex-col rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
               <div className="mb-2 flex flex-none items-center justify-between">
                 <h2 className="text-[12px] font-bold tracking-[0.08em] text-sky-100">风险地区排行</h2>
                 <span className="font-mono text-[9px] text-sky-500/70">TOP {regionRows.length}</span>
@@ -481,16 +527,31 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
                 {regionRows.length === 0 ? (
                   <p className="text-[11px] text-sky-400/60">暂无地区点位数据</p>
                 ) : regionRows.map((point, index) => (
-                  <div key={`${point.name}-${index}`} className="flex min-h-[24px] flex-1 items-center gap-2 rounded-md bg-sky-400/[0.03] px-2 text-[9px]">
+                  <div
+                    key={`${point.name}-${index}`}
+                    title={`${point.name}：总风险 ${point.alert_count} 条`}
+                    className="flex min-h-[24px] flex-1 items-center gap-2 rounded-md bg-sky-400/[0.03] px-2 text-[9px]"
+                  >
                     <span className="w-3 shrink-0 font-mono text-[8px] text-sky-500/60">{index + 1}</span>
                     <span className="min-w-0 flex-1 truncate text-sky-200/85">{point.name}</span>
                     <span
-                      className="shrink-0 font-mono text-[8px] font-bold"
-                      style={{color: LEVEL_SEGMENTS.find((segment) => segment.level === point.max_level)?.text ?? '#7f8ea3'}}
+                      className="grid shrink-0 items-center gap-x-2"
+                      style={{gridTemplateColumns: `repeat(${Math.max(1, regionLevels.length)}, 40px)`}}
                     >
-                      {point.max_level ?? 'P4'}
+                      {regionLevels.map((segment) => {
+                        const count = point.level_counts.find((item) => item.level === segment.level)?.count ?? 0;
+                        return (
+                          <span key={segment.level} className="inline-flex items-baseline justify-end gap-1.5 font-mono text-[8px]">
+                            {count > 0 ? (
+                              <>
+                                <span className="font-bold" style={{color: segment.text}}>{segment.level}</span>
+                                <b className="text-[9px] text-sky-100">{count}</b>
+                              </>
+                            ) : null}
+                          </span>
+                        );
+                      })}
                     </span>
-                    <b className="w-7 shrink-0 text-right font-mono text-[9px] text-sky-100">{point.alert_count}</b>
                   </div>
                 ))}
               </div>
@@ -518,7 +579,7 @@ const Kpi = ({label, value, suffix, tone, testId}: {
 }) => {
   const colors = KPI_TONE[tone];
   return (
-    <div className={`rounded-lg border bg-[linear-gradient(160deg,rgba(20,48,86,0.62),rgba(7,17,32,0.45))] p-2.5 ${colors.border}`}>
+    <div className={`flex h-full flex-col justify-center gap-1.5 rounded-lg border bg-[linear-gradient(160deg,rgba(20,48,86,0.62),rgba(7,17,32,0.45))] p-2.5 ${colors.border}`}>
       <div className="flex items-center justify-between gap-1">
         <span className="truncate text-[10px] text-sky-300/70">{label}</span>
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${colors.dot}`} />

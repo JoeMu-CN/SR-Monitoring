@@ -20,6 +20,31 @@ body {
   color: #101d28;
 }
 
+/* 总览单屏：底部两张卡片紧凑固定，富余高度始终分给 KPI 与风险流，兼容浏览器缩放后的较矮视口。 */
+@media (min-width: 1280px) {
+  .overview-kpi-grid {
+    flex: 1 1 0%;
+    min-height: 120px;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-live-card {
+    height: auto;
+    min-height: 280px;
+    flex: 1 1 0%;
+  }
+
+  .overview-health-card {
+    height: clamp(180px, 26vh, 220px);
+    flex: none;
+  }
+
+  .overview-ranking-card {
+    height: clamp(160px, 22vh, 190px);
+    flex: none;
+  }
+}
+
 ::selection {
   background: #dbeafe;
   color: #007aff;
@@ -230,6 +255,44 @@ textarea {
 
 .overview-leaflet .leaflet-control-container {
   display: none;
+}
+
+/* 实时风险流：两段相同列表上下衔接，悬停或键盘聚焦时暂停，便于点击。 */
+.overview-risk-stream {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
+}
+
+.overview-risk-stream-track {
+  animation: overview-risk-stream-scroll 26s linear infinite;
+}
+
+.overview-risk-stream:hover .overview-risk-stream-track,
+.overview-risk-stream:focus-within .overview-risk-stream-track {
+  animation-play-state: paused;
+}
+
+@keyframes overview-risk-stream-scroll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overview-risk-stream {
+    overflow-y: auto !important;
+  }
+
+  .overview-risk-stream-track {
+    animation: none;
+  }
+
+  .overview-risk-stream [aria-hidden="true"] {
+    display: none;
+  }
 }
 
 /* 有命中风险的点位：两圈从中心向外扩散的波纹；空心供应商点不参与动画。 */

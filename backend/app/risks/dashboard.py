@@ -494,10 +494,11 @@ def _build_risk_points(
             )
         )
 
+    # 排行口径：最高风险等级优先；同等级内再按该地区总风险数降序。
     risk_points.sort(
         key=lambda point: (
-            -point.alert_count,
             LEVEL_ORDER.get(point.max_level or "", 9),
+            -point.alert_count,
             -point.supplier_count,
             point.name,
         )

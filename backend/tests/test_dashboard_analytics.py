@@ -265,6 +265,8 @@ def test_dashboard_analytics_trend_supplier_geo_and_supplier_points(
     assert payload["unlocated_alert_count"] == 0
 
     by_name = {point["name"]: point for point in payload["risk_points"]}
+    # 排行先按最高等级（P1 → P4），无风险省排在最后。
+    assert [point["name"] for point in payload["risk_points"]] == ["上海市", "江苏省", "浙江省"]
     # 同一供应商的 3 条提醒聚合到其站点所在省；事件发生在浙江/北京不影响点位。
     assert by_name["上海市"]["supplier_count"] == 1
     assert by_name["上海市"]["site_count"] == 1

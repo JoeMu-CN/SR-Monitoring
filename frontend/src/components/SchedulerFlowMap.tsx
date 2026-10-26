@@ -419,24 +419,56 @@ const workLabel = (work: MonitoringSchedulerWork): string => {
   return `信号 #${work.item_id ?? '—'} · 处理中`;
 };
 
-const NodeFoot = ({node, asOf}: {readonly node: FlowNode; readonly asOf: string}) => {
-  const latest = node.latestRun;
+const NodeFoot = ({node, asOf, live}: {readonly node: FlowNode; readonly asOf: string; readonly live: boolean}) => {
+  // 未注册节点没有可对照的执行记录：保留注册说明，下一次照样给占位。
   if (!node.present) {
-    return <span className="sflow-node-foot"><span>未在调度器注册</span><span>—</span></span>;
+    return (
+      <span className="sflow-node-foot">
+        <span className="sflow-node-foot-line">未在调度器注册</span>
+        <span className="sflow-node-foot-line">
+          <span className="sflow-node-foot-label">下次</span>
+          <span className="sflow-node-foot-time">—</span>
+        </span>
+      </span>
+    );
   }
+  const latest = node.latestRun;
+  const running = node.status === 'running';
   const startedAt = latest?.started_at ?? node.runningWork[0]?.started_at ?? null;
+  // 上次时间与“最近一次”详情同一口径：结束时间优先，其次开始，最后计划时间。
+  const lastRunAt = running
+    ? startedAt
+    : latest === null
+      ? null
+      : latest.finished_at ?? latest.started_at ?? latest.scheduled_run_at;
+  const duration = node.errorCount > 0
+    ? `${node.errorCount} 异常`
+    : running
+      ? formatRunningDuration(startedAt, asOf)
+      : latest === null
+        ? null
+        : latest.started_at === null || latest.finished_at === null
+          ? '—'
+          : formatDuration(latest.started_at, latest.finished_at);
   return (
     <span className="sflow-node-foot">
-      <span>{formatShortDateTime(node.nextRunAt, asOf)}</span>
-      {node.errorCount > 0 ? (
-        <b className="sflow-node-error-count">{node.errorCount} 异常</b>
-      ) : node.status === 'running' ? (
-        <b>{formatRunningDuration(startedAt, asOf)}</b>
-      ) : latest !== null ? (
-        <b>{latest.finished_at === null ? '执行中' : formatDuration(latest.started_at, latest.finished_at)}</b>
-      ) : (
-        <b>—</b>
-      )}
+      <span className="sflow-node-foot-line">
+        <span className="sflow-node-foot-label">{running ? '本次' : '上次'}</span>
+        <span className="sflow-node-foot-time">{lastRunAt === null ? '—' : formatShortDateTime(lastRunAt, asOf)}</span>
+        <StatusBadge status={node.status} live={live} />
+        {duration !== null && (
+          <b
+            className={`sflow-node-foot-right${node.errorCount > 0 ? ' sflow-node-error-count' : ''}`}
+            title={duration}
+          >
+            {duration}
+          </b>
+        )}
+      </span>
+      <span className="sflow-node-foot-line">
+        <span className="sflow-node-foot-label">下次</span>
+        <span className="sflow-node-foot-time">{formatShortDateTime(node.nextRunAt, asOf)}</span>
+      </span>
     </span>
   );
 };
@@ -506,10 +538,8 @@ const FlowNodeCard = ({
       <span className="sflow-node-top">
         <span className="sflow-node-dot" />
         <span className="sflow-node-name">{node.name}{count === null ? '' : ` ${count}`}</span>
-        <StatusBadge status={node.status} live={live} />
       </span>
-      <span className="sflow-node-id">{node.present ? node.jobId : '—'}</span>
-      <NodeFoot node={node} asOf={asOf} />
+      <NodeFoot node={node} asOf={asOf} live={live} />
     </button>
   );
 };
@@ -519,10 +549,9 @@ const MemberRow = ({member, live}: {readonly member: FlowMember; readonly live: 
     <span className={`sflow-member-dot sflow-state--${member.status}`} />
     <span className="sflow-member-main">
       <span className="sflow-member-name">{member.name}</span>
-      <code>{member.jobId}</code>
     </span>
     <StatusBadge status={member.status} live={live} />
-    <span className="sflow-member-next">{formatShortDateTime(member.nextRunAt, null)}</span>
+    <span className="sflow-member-next">下次 {formatShortDateTime(member.nextRunAt, null)}</span>
   </li>
 );
 
@@ -588,7 +617,6 @@ const NodeDetail = ({
       <div className="sflow-detail-head">
         <StatusBadge status={node.status} live={live} />
         <b>{node.name}</b>
-        <code>{node.jobId}</code>
         <span className="sflow-detail-stage">{STAGE_LABEL[node.stage]}</span>
       </div>
       <div className="sflow-detail-grid">

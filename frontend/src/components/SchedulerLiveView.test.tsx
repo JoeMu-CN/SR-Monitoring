@@ -178,7 +178,7 @@ describe('调度器实况页外壳', () => {
     fireEvent.click(screen.getByTestId('scheduler-flow-node-source'));
     const detail = screen.getByTestId('scheduler-flow-detail');
     expect(detail).toHaveTextContent('信源采集');
-    expect(detail).toHaveTextContent('source-12');
+    expect(detail).not.toHaveTextContent('source-12');
     expect(detail).toHaveTextContent('工信部 采集');
   });
 

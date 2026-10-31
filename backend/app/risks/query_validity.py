@@ -1,9 +1,11 @@
 """风险信号与提醒的实时 SQL 判活谓词。"""
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Final
 
-from sqlalchemy import DateTime, and_, bindparam, or_
+from sqlalchemy import DateTime, and_, bindparam, or_, select
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.risks.models import RiskAlert
@@ -49,6 +51,23 @@ def current_alert_condition(now_utc: datetime) -> ColumnElement[bool]:
             RiskAlert.expiry_kind == "legacy",
         ),
     )
+
+
+def live_alert_ids(
+    session: Session,
+    *,
+    now_utc: datetime,
+    alert_ids: Sequence[int] | None = None,
+) -> set[int]:
+    """返回满足 ``current_alert_condition`` 的提醒 ID 集合。
+
+    事件簇、事件详情与组级状态都用它做逐行判活：判活规则只留在 SQL 谓词里，
+    Python 侧只做集合查找，避免出现「只认 status 字段」的第二套口径。
+    """
+    statement = select(RiskAlert.id).where(current_alert_condition(now_utc))
+    if alert_ids is not None:
+        statement = statement.where(RiskAlert.id.in_(list(alert_ids)))
+    return set(session.scalars(statement))
 
 
 def valid_signal_condition(

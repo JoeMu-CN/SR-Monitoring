@@ -102,9 +102,10 @@ def event_time_window(
     return start, end
 
 
-def _windows_overlap(
+def windows_overlap(
     left: tuple[datetime, datetime], right: tuple[datetime, datetime]
 ) -> bool:
+    """两个闭区间是否重叠；事件级与提醒级合并共用同一判定。"""
     return left[0] <= right[1] and right[0] <= left[1]
 
 
@@ -116,9 +117,36 @@ def should_merge(left: AlertGroupMember, right: AlertGroupMember) -> bool:
         return False
     if not (left.region_keys & right.region_keys):
         return False
-    return _windows_overlap(
+    return windows_overlap(
         (left.start_at, left.end_at), (right.start_at, right.end_at)
     )
+
+
+def should_merge_event(
+    *,
+    left_event_type: str,
+    left_region_keys: frozenset[str],
+    left_window: tuple[datetime, datetime] | None,
+    right_event_type: str,
+    right_region_keys: frozenset[str],
+    right_window: tuple[datetime, datetime] | None,
+) -> bool:
+    """两个事件是否属于同一展示簇。
+
+    与提醒级 ``should_merge`` 同源：事件类型相同、两侧区域键都非空且有交集、
+    时间窗重叠才合并；缺地区或时间窗无法判定时保守地不合并（各自成簇）。
+    区别只在维度：提醒级还要求同供应商，事件级不区分供应商（一个事件可关联
+    多个供应商，簇仍是一个）。
+    """
+    if left_event_type != right_event_type:
+        return False
+    if not left_region_keys or not right_region_keys:
+        return False
+    if not (left_region_keys & right_region_keys):
+        return False
+    if left_window is None or right_window is None:
+        return False
+    return windows_overlap(left_window, right_window)
 
 
 def _find(parents: list[int], index: int) -> int:

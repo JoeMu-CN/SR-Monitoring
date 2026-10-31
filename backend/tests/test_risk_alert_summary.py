@@ -77,6 +77,14 @@ def test_summary_counts_every_current_alert_beyond_the_list_page_limit(
     assert [item["level"] for item in summary["level_counts"]] == list(CURRENT_LEVELS)
     assert _level_counts(summary["level_counts"]) == {"P1": 3, "P2": 4, "P3": 5, "P4": 93}
     assert summary["total_current"] == 105
+    # 增量字段：事件/供应商按提醒行去重；夹具事件都没有地点，按规则不聚类。
+    assert summary["total_events"] == 105
+    assert summary["total_suppliers"] == 105
+    assert summary["total_clusters"] == 105
+    # 增量口径：每条提醒各自独立事件与供应商，缺地区不聚类 → 事件=供应商=簇=105。
+    assert summary["total_events"] == 105
+    assert summary["total_suppliers"] == 105
+    assert summary["total_clusters"] == 105
     # 与风险总览的当前统计完全一致（两个页面不得再互相矛盾）
     assert dashboard_response.status_code == 200, dashboard_response.text
     dashboard_levels = _level_counts(dashboard_response.json()["level_counts"])
@@ -104,6 +112,10 @@ def test_summary_excludes_alerts_past_their_deadline(
     # Then
     assert response.status_code == 200, response.text
     assert response.json()["total_current"] == 1
+    # 已过截止的提醒既不计分组，也不计事件、供应商与事件簇。
+    assert response.json()["total_events"] == 1
+    assert response.json()["total_suppliers"] == 1
+    assert response.json()["total_clusters"] == 1
     assert _level_counts(response.json()["level_counts"]) == {"P1": 1, "P2": 0, "P3": 0, "P4": 0}
 
 
@@ -117,6 +129,9 @@ def test_summary_returns_fixed_zero_contract_without_current_alerts(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["total_current"] == 0
+    assert payload["total_events"] == 0
+    assert payload["total_suppliers"] == 0
+    assert payload["total_clusters"] == 0
     assert [item["level"] for item in payload["level_counts"]] == list(CURRENT_LEVELS)
     assert [item["count"] for item in payload["level_counts"]] == [0, 0, 0, 0]
 

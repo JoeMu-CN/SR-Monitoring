@@ -10,6 +10,7 @@ from app.risks.grouping import (
     location_region_key,
     representative,
     should_merge,
+    should_merge_event,
 )
 
 BASE = datetime(2026, 10, 22, 0, tzinfo=UTC)
@@ -131,6 +132,90 @@ class TestShouldMerge:
         left = _member(1, regions=frozenset())
         right = _member(2)
         assert should_merge(left, right) is False
+
+
+class TestEventLevelMerge:
+    """事件级聚类复用同一套规则：同类型 + 地区相交 + 时间窗重叠。"""
+
+    WINDOW = (BASE, BASE + timedelta(days=3))
+
+    def test_same_type_region_overlap_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset({"region:浙江"}),
+                left_window=self.WINDOW,
+                right_event_type="weather",
+                right_region_keys=frozenset({"region:浙江"}),
+                right_window=(BASE + timedelta(days=1), BASE + timedelta(days=4)),
+            )
+            is True
+        )
+
+    def test_different_type_never_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset({"region:浙江"}),
+                left_window=self.WINDOW,
+                right_event_type="geological",
+                right_region_keys=frozenset({"region:浙江"}),
+                right_window=self.WINDOW,
+            )
+            is False
+        )
+
+    def test_missing_region_never_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset(),
+                left_window=self.WINDOW,
+                right_event_type="weather",
+                right_region_keys=frozenset({"region:浙江"}),
+                right_window=self.WINDOW,
+            )
+            is False
+        )
+
+    def test_missing_window_never_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset({"region:浙江"}),
+                left_window=None,
+                right_event_type="weather",
+                right_region_keys=frozenset({"region:浙江"}),
+                right_window=self.WINDOW,
+            )
+            is False
+        )
+
+    def test_non_overlapping_window_never_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset({"region:浙江"}),
+                left_window=(BASE, BASE + timedelta(days=1)),
+                right_event_type="weather",
+                right_region_keys=frozenset({"region:浙江"}),
+                right_window=(BASE + timedelta(days=5), BASE + timedelta(days=6)),
+            )
+            is False
+        )
+
+    def test_shared_region_among_several_merges(self) -> None:
+        assert (
+            should_merge_event(
+                left_event_type="weather",
+                left_region_keys=frozenset({"region:浙江", "region:江苏"}),
+                left_window=self.WINDOW,
+                right_event_type="weather",
+                right_region_keys=frozenset({"region:江苏", "region:上海"}),
+                right_window=self.WINDOW,
+            )
+            is True
+        )
 
 
 class TestGrouping:

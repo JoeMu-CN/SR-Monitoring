@@ -161,6 +161,25 @@ def _finalize_stale_collection_runs_on_startup() -> int:
     return finalized
 
 
+def _run_risk_validity_catchup_on_startup() -> None:
+    """Scheduler 启动补跑一次风险有效期物化。
+
+    有效期的定时物化按整点 cron 触发；进程在整点前重启会错过那一轮，出现
+    「统计已按实时判活排除，但提醒 status 仍是 current」的窗口。启动时用独立
+    SessionLocal 短事务补跑一次，与周期任务共用同一幂等实现；任何异常只记日志，
+    绝不阻塞调度器启动（数据库尚未迁移完成时同样安全跳过）。
+    """
+    try:
+        result = risk_validity_job()
+    except Exception:  # noqa: BLE001 - 启动补跑失败不得阻塞启动
+        logger.exception("Scheduler 启动补跑风险有效期物化失败，继续启动")
+        return
+    if result is None:
+        logger.warning("Scheduler 启动补跑风险有效期物化未完成，等待下一轮定时任务")
+        return
+    logger.info("Scheduler 启动补跑风险有效期物化完成")
+
+
 def _register_source_jobs(scheduler: BlockingScheduler) -> None:
     """刷新信息源控制台中的独立 cron 任务。"""
     with SessionLocal() as session:
@@ -294,6 +313,8 @@ def main() -> None:
     # 启动恢复：仅本进程启动时收尾一次遗留 running 采集运行，然后才注册周期
     # 任务；正常采集循环不再扫描 running，避免误伤仍在执行的长任务。
     _finalize_stale_collection_runs_on_startup()
+    # 启动补跑一次有效期物化：避免重启错过整点导致统计与 status 口径短暂不一致。
+    _run_risk_validity_catchup_on_startup()
     _register_signal_consumption(scheduler)
     scheduler.add_job(
         collect_job, _trigger(SCHEDULER_COLLECT_CRON), id="collect", name="定时采集与处理"

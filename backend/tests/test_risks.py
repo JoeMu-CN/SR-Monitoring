@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
@@ -163,6 +164,47 @@ def test_complete_risk_pipeline_merges_and_scores_idempotently(
     assert alert["supplier_name"] == "测试供应商有限公司"
     assert alert["match_type"] == "legal_name"
     assert alert["score_detail"]["rule_version"].startswith("risk-score-v1-")
+    # 增量组级字段：单事件单信源时组即自身，合并数为 1。
+    assert alert["group_status"] == "active"
+    assert alert["group_event_count"] == 1
+    assert alert["group_source_count"] == 1
+    assert alert["merged_count"] == 1
+    assert alert["merged_events"] == []
+    # 组级增量字段：单条提醒自成一组，状态看实时判活。
+    assert alert["group_status"] == "active"
+    assert alert["group_event_count"] == 1
+    assert alert["group_source_count"] == 1
+    assert alert["group_expires_min"] == alert["group_expires_max"]
+
+
+def test_expired_list_includes_realtime_expired_alert_with_current_status(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """已失效列表必须覆盖「已过 expires_at 但状态尚未物化」的提醒行。"""
+    provider = StaticProvider()
+    monkeypatch.setattr(ai_service, "get_ai_provider", lambda _settings: provider)
+    create_supplier(client)
+    import_signals(client)
+    signal_id = db_session.scalar(select(RawSignal.id).order_by(RawSignal.id))
+    assert signal_id is not None
+    assert client.post(f"/api/v1/signals/{signal_id}/process").status_code == 200
+
+    alert = db_session.scalar(select(RiskAlert))
+    assert alert is not None
+    alert.status = "current"
+    alert.expiry_kind = "finite"
+    alert.expires_at = datetime(2020, 1, 1, tzinfo=UTC)
+    db_session.commit()
+
+    response = client.get("/api/v1/risk-alerts?status=expired")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["status"] == "current"
+    assert payload["items"][0]["expires_at"].startswith("2020-01-01")
 
 
 def test_process_without_matching_supplier_creates_event_without_alert(
@@ -881,6 +923,21 @@ def test_event_detail_contains_signals_entities_locations(
         assert signal["validity_state"]
     assert any(entity["name"] == "测试供应商有限公司" for entity in detail["entities"])
     assert any("上海" in str(location["city"]) for location in detail["locations"])
+    # 事件详情供应商增量字段：一行一个供应商，含提醒状态与版本替代标记。
+    suppliers = detail["suppliers"]
+    assert len(suppliers) == 1
+    assert suppliers[0]["supplier_name"] == "测试供应商有限公司"
+    assert suppliers[0]["level"] == "P2"
+    assert suppliers[0]["alert_status"] == "current"
+    assert suppliers[0]["version_superseded"] is False
+    assert suppliers[0]["alert_id"] is not None
+    # 事件详情增量字段：受影响供应商列表（一行一个供应商）。
+    suppliers = detail["suppliers"]
+    assert len(suppliers) == 1
+    assert suppliers[0]["supplier_name"] == "测试供应商有限公司"
+    assert suppliers[0]["alert_status"] == "current"
+    assert suppliers[0]["version_superseded"] is False
+    assert suppliers[0]["level"] in {"P1", "P2", "P3", "P4"}
 
     missing = client.get("/api/v1/events/999999")
     assert missing.status_code == 404

@@ -80,6 +80,23 @@ const alertWithSiteMatch = (id: number, locationName: string): RiskAlertRead => 
   ],
 });
 
+/** 组内事件的完整字段尚未进入 api.ts：直接构造后端未来会给出的 snake_case 结构。 */
+const mergedEvent = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  alert_id: 71,
+  event_id: 701,
+  level: 'P3',
+  score: 60,
+  event_type: 'logistics',
+  event_subtype: null,
+  event_summary: '同组事件',
+  event_start_at: '2026-08-28T08:00:00Z',
+  event_end_at: null,
+  source_title: '地方应急办',
+  source_url: null,
+  published_at: '2026-08-28T09:00:00Z',
+  ...overrides,
+});
+
 /** 关联地点卡片：卡内地点名与匹配证据里的「事件地点」同名，断言需限定在卡片内。 */
 const locationCard = (): HTMLElement => {
   const card = screen.getByRole('heading', {name: '关联地点'}).closest('section');
@@ -582,3 +599,81 @@ describe('RiskDetailView', () => {
   });
 });
 
+describe('RiskDetailView 同组事件有效期', () => {
+  it('每个成员补齐有效期截止、状态徽标与影响供应商数', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ...alert(7),
+        merged_count: 3,
+        merged_events: [
+          mergedEvent({
+            event_summary: '同组事件：仓储起火',
+            validity_state: 'expired',
+            expires_at: '2026-09-02T00:00:00Z',
+            affected_supplier_count: 3,
+          }),
+          mergedEvent({
+            alert_id: 72,
+            event_id: 702,
+            event_summary: '同组事件：替代通报',
+            validity_state: 'superseded',
+            expires_at: '2026-09-09T00:00:00Z',
+          }),
+        ],
+      }))
+      .mockResolvedValueOnce(response(event(70)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAt('/risks/7');
+
+    const expiredItem = (await screen.findByText('同组事件：仓储起火')).closest('li');
+    if (expiredItem === null) throw new Error('同组事件条目未渲染');
+    expect(within(expiredItem).getByText('已过期')).toBeInTheDocument();
+    expect(expiredItem).toHaveTextContent('有效期截止');
+    expect(expiredItem).toHaveTextContent('影响供应商 3 家');
+
+    const supersededItem = screen.getByText('同组事件：替代通报').closest('li');
+    if (supersededItem === null) throw new Error('替代版本条目未渲染');
+    expect(within(supersededItem).getByText('已被新版本替代')).toBeInTheDocument();
+    // 字段缺失时不渲染「影响供应商」，避免出现 0 或空值
+    expect(supersededItem).not.toHaveTextContent('影响供应商');
+  });
+
+  it('组内存在多个截止时间时，代表事件的有效期信息补充范围', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        ...alert(7),
+        valid_until: '2026-09-05T00:00:00Z',
+        merged_count: 2,
+        merged_events: [
+          mergedEvent({validity_state: 'active', expires_at: '2026-09-02T00:00:00Z'}),
+          mergedEvent({alert_id: 72, event_id: 702, validity_state: 'active', expires_at: '2026-09-09T00:00:00Z'}),
+        ],
+      }))
+      .mockResolvedValueOnce(response(event(70)));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderAt('/risks/7');
+
+    expect(await screen.findByText('组内有效期范围')).toBeInTheDocument();
+    const rangeValue = screen.getByText('组内有效期范围').nextElementSibling;
+    expect(rangeValue?.textContent).toContain(' ~ ');
+
+    // 所有截止时间一致时不显示范围行
+    cleanup();
+    const sameDeadline = vi.fn()
+      .mockResolvedValueOnce(response({
+        ...alert(7),
+        valid_until: '2026-09-05T00:00:00Z',
+        merged_count: 2,
+        merged_events: [mergedEvent({validity_state: 'active', expires_at: '2026-09-05T00:00:00Z'})],
+      }))
+      .mockResolvedValueOnce(response(event(70)));
+    vi.stubGlobal('fetch', sameDeadline);
+
+    renderAt('/risks/7');
+
+    expect(await screen.findByRole('heading', {name: '同组事件 2 个'})).toBeInTheDocument();
+    expect(screen.queryByText('组内有效期范围')).not.toBeInTheDocument();
+  });
+});

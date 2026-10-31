@@ -2,7 +2,7 @@ import {cleanup, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import type {RiskAlertSummary} from '../api';
-import type {RiskItem} from '../types';
+import type {RiskItem, RiskItemMergedEvent} from '../types';
 import {CurrentRisksView} from './CurrentRisksView';
 
 const baseItem = (overrides: Partial<RiskItem> = {}): RiskItem => ({
@@ -34,6 +34,43 @@ const summaryFixture = (counts: Readonly<Record<'P1' | 'P2' | 'P3' | 'P4', numbe
   ],
   total_current: counts.P1 + counts.P2 + counts.P3 + counts.P4,
 });
+
+/**
+ * 组内事件的映射结构（RiskItemMergedEvent）：测试按真实字段构造，
+ * 兼容层字段缺失时的降级另有用例覆盖。
+ */
+const groupedItem = (overrides: Partial<RiskItem>, merged: RiskItemMergedEvent[]): RiskItem => ({
+  ...baseItem(overrides),
+  mergedEvents: merged,
+});
+
+const mergedEvent = (overrides: Partial<RiskItemMergedEvent> = {}): RiskItemMergedEvent => ({
+  alertId: 2,
+  eventId: 102,
+  summary: '同组事件：仓库积水停运',
+  sourceTitle: '地方应急办',
+  level: 'P3',
+  startAt: '2026-09-02T00:00:00Z',
+  expiresAt: '2026-09-03T00:00:00Z',
+  status: 'expired',
+  superseded: false,
+  ...overrides,
+});
+
+/** 代表事件 + 一个已过期成员，构成「部分失效」组。 */
+const partialGroup = (): RiskItem => groupedItem({id: '1', companyName: '组内事件供应商'}, [
+  mergedEvent({
+    alertId: 1,
+    eventId: 101,
+    summary: '代表事件：港口罢工',
+    sourceTitle: '信源 A',
+    level: 'P2',
+    startAt: '2026-09-01T00:00:00Z',
+    expiresAt: '2026-09-05T00:00:00Z',
+    status: 'current',
+  }),
+  mergedEvent(),
+]);
 
 afterEach(cleanup);
 
@@ -139,6 +176,24 @@ describe('当前风险列表有效期状态展示', () => {
     expect(screen.queryByText('filtered_out')).not.toBeInTheDocument();
   });
 
+  it('传入 expiredItems 时，已失效口径使用独立数据源', async () => {
+    const user = userEvent.setup();
+    render(
+      <CurrentRisksView
+        riskItems={[baseItem({id: '1', companyName: '当前供应商'})]}
+        summary={null}
+        expiredItems={[baseItem({id: '2', companyName: '历史供应商', status: 'invalid'})]}
+        expiredTotal={1}
+        onSelectRisk={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', {name: '已失效'}));
+    expect(await screen.findByText('历史供应商')).toBeInTheDocument();
+    expect(screen.queryByText('当前供应商')).not.toBeInTheDocument();
+    expect(screen.getByText('本页显示 1 条（已加载 1 条），全库已失效共 1 条')).toBeInTheDocument();
+  });
+
   it('当前/历史可切换：默认只显示当前有效，切换到已失效显示历史', async () => {
     const user = userEvent.setup();
     const items: RiskItem[] = [
@@ -242,5 +297,95 @@ describe('当前风险概览：全库计数与单页列表口径分离', () => {
 
     expect(screen.getByText('共 2 条（本页已加载）')).toBeInTheDocument();
     expect(screen.getByText('本页显示 2 条，已加载 2 条（全库当前计数暂不可用）')).toBeInTheDocument();
+  });
+});
+
+describe('组内事件有效期（按供应商视图）', () => {
+  it('一级摘要给出事件数、信源数与有效期范围，并标注部分失效', () => {
+    render(<CurrentRisksView riskItems={[partialGroup()]} summary={null} onSelectRisk={vi.fn()} />);
+
+    expect(screen.getByText('2 个事件')).toBeInTheDocument();
+    expect(screen.getByText('2 个信源')).toBeInTheDocument();
+    // 组内最早开始 9/1 至最晚截止 9/5；断言区间分隔存在，避免把时区写死
+    expect(screen.getByText(/ ~ /)).toBeInTheDocument();
+    expect(screen.getByText('部分失效')).toBeInTheDocument();
+    // 取消 mini 甘特：默认不展示时间条，需显式展开
+    expect(screen.queryAllByTestId('gantt-bar')).toHaveLength(0);
+  });
+
+  it('点击「展开事件有效期」展示 full 甘特图，含图例与事件标签', async () => {
+    const user = userEvent.setup();
+    render(<CurrentRisksView riskItems={[partialGroup()]} summary={null} onSelectRisk={vi.fn()} />);
+
+    const toggle = screen.getByRole('button', {name: '展开事件有效期'});
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('group', {name: '事件有效期甘特图'})).not.toBeInTheDocument();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const chart = screen.getByRole('group', {name: '事件有效期甘特图'});
+    expect(within(chart).getByText('已被替代')).toBeInTheDocument();
+    expect(within(chart).getByText('今天')).toBeInTheDocument();
+    expect(within(chart).getByText('信源 A')).toBeInTheDocument();
+    expect(within(chart).getByText('地方应急办')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', {name: '收起事件有效期'}));
+    expect(screen.queryByRole('group', {name: '事件有效期甘特图'})).not.toBeInTheDocument();
+  });
+
+  it('点击时间条优先打开组内具体事件，该提醒不在当前页时回退到代表事件', async () => {
+    const user = userEvent.setup();
+    const onSelectRisk = vi.fn();
+    const group = partialGroup();
+    const sibling = baseItem({
+      id: '2',
+      companyName: '同组另一供应商',
+      status: 'invalid',
+      validityState: 'expired',
+    });
+    render(<CurrentRisksView riskItems={[group, sibling]} summary={null} onSelectRisk={onSelectRisk} />);
+
+    await user.click(screen.getByRole('button', {name: '展开事件有效期'}));
+    const bars = screen.getAllByTestId('gantt-bar');
+    await user.click(bars[1]);
+    expect(onSelectRisk).toHaveBeenCalledWith(sibling);
+
+    onSelectRisk.mockClear();
+    await user.click(bars[0]);
+    expect(onSelectRisk).toHaveBeenCalledWith(group);
+  });
+
+  it('已失效模式下同样展示甘特图，状态按已失效组标注', async () => {
+    const user = userEvent.setup();
+    const expiredGroup = groupedItem(
+      {id: '9', companyName: '已失效供应商', status: 'invalid', validityState: 'expired'},
+      [
+        mergedEvent({alertId: 9, eventId: 901, summary: '旧事件', status: 'expired', expiresAt: '2026-09-03T00:00:00Z'}),
+        mergedEvent({alertId: 10, eventId: 902, status: 'expired'}),
+      ],
+    );
+    render(<CurrentRisksView riskItems={[expiredGroup]} summary={null} onSelectRisk={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', {name: '已失效'}));
+
+    const card = screen.getByText('已失效供应商').closest('article');
+    if (card === null) throw new Error('已失效卡片未渲染');
+    expect(within(card).getByText('已失效')).toBeInTheDocument();
+    await user.click(within(card).getByRole('button', {name: '展开事件有效期'}));
+    expect(within(card).getAllByTestId('gantt-bar')).toHaveLength(2);
+    // 过期事件的条用 slate 色，不再使用品牌蓝
+    expect(within(card).getAllByTestId('gantt-bar')[0].firstElementChild?.className).toContain('bg-slate-400');
+  });
+
+  it('组内事件字段缺失时用当前事件的 validUntil 画单条，不报错也不显示组摘要', () => {
+    render(<CurrentRisksView riskItems={[baseItem({id: '5'})]} summary={null} onSelectRisk={vi.fn()} />);
+
+    expect(screen.queryAllByTestId('gantt-bar')).toHaveLength(0);
+    expect(screen.getByRole('button', {name: '展开事件有效期'})).toBeInTheDocument();
+    expect(screen.queryByText(/个事件$/)).not.toBeInTheDocument();
+    expect(screen.queryByText('部分失效')).not.toBeInTheDocument();
+    // 单条不再重复 min ~ max 的组摘要，仍保留原有截止/复核信息
+    expect(screen.getByText('截止')).toBeInTheDocument();
   });
 });

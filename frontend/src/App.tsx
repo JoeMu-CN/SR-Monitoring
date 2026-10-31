@@ -14,6 +14,9 @@ import {
   type AuthUser,
   type AgentStatusRead,
   type RiskAlertSummary,
+  type RiskEventClusterListResponse,
+  type RiskEventClusterSummary,
+  type RiskEventState,
   type SupplierDeletionImpactRead,
   type SupplierRead,
   type SystemHealth,
@@ -34,13 +37,15 @@ import {DataSourcesView, type RefreshSourcesIntent} from './components/DataSourc
 import {SourceSignalsView} from './components/SourceSignalsView';
 import {SupplierImportModal} from './components/SupplierImportModal';
 import {OverviewView} from './components/OverviewView';
+import {RiskEventsView, RiskViewModeTabs, riskViewPanelId, riskViewTabId, type RiskViewMode} from './components/RiskEventsView';
+import {EventDetailView} from './components/EventDetailView';
 import {PolicyIntelligenceView} from './components/PolicyIntelligenceView';
 import {RiskAssistantView} from './components/RiskAssistantView';
 import {RuleEngineView} from './components/RuleEngineView';
 import {SCHEDULER_LOG_PERMISSION, SchedulerLiveView} from './components/SchedulerLiveView';
 import {SuppliersView} from './components/SuppliersView';
 import {UsersManagementView} from './components/UsersManagementView';
-import {riskDetailPath, routePaths, routePermissions} from './routes';
+import {eventDetailPath, riskDetailPath, routePaths, routePermissions} from './routes';
 import {monitoringHealthRefreshMsForPath, useMonitoringHealth} from './useMonitoringHealth';
 
 const SIDEBAR_STAGE_STORAGE_KEY = 'sr-sidebar-collapsed';
@@ -66,6 +71,22 @@ export function App() {
   // 当前提醒全量计数：与 riskItems 的单页（limit=100）列表口径分离，供风险监控页概览卡展示。
   // null 表示汇总尚不可用，视图据此回落已加载页计数。
   const [riskAlertSummary, setRiskAlertSummary] = useState<RiskAlertSummary | null>(null);
+  // 风险事件视图的口径与状态：默认「按事件」+ 当前有效；已失效数据切换时懒加载。
+  const [riskViewMode, setRiskViewMode] = useState<RiskViewMode>('events');
+  const [riskState, setRiskState] = useState<RiskEventState>('current');
+  // 事件簇列表按状态缓存：切回已加载过的状态不再重复请求。
+  const [eventClusterPages, setEventClusterPages] = useState<Partial<Record<RiskEventState, RiskEventClusterListResponse>>>({});
+  // 事件簇汇总固定当前口径，供统计条与总览主 KPI 使用；null 表示尚不可用。
+  const [eventClusterSummary, setEventClusterSummary] = useState<RiskEventClusterSummary | null>(null);
+  const [eventClustersLoading, setEventClustersLoading] = useState(false);
+  const [eventClustersError, setEventClustersError] = useState<string | null>(null);
+  const [eventClustersRetryToken, setEventClustersRetryToken] = useState(0);
+  // 供应商视图的已失效数据：独立懒加载，避免把历史行混进当前主数据。
+  const [expiredRiskItems, setExpiredRiskItems] = useState<RiskItem[]>([]);
+  const [expiredRiskTotal, setExpiredRiskTotal] = useState<number | null>(null);
+  const [expiredRiskLoading, setExpiredRiskLoading] = useState(false);
+  const [expiredRiskError, setExpiredRiskError] = useState<string | null>(null);
+  const [expiredRiskLoaded, setExpiredRiskLoaded] = useState(false);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [dimensions, setDimensions] = useState<MonitoringDimension[]>([]);
@@ -160,6 +181,76 @@ export function App() {
 
   useEffect(() => { if (auth) void loadData(); }, [auth, loadData]);
 
+  // 事件簇汇总独立于 loadData：失败只让统计条显示占位，不得把整页降级为错误横幅。
+  useEffect(() => {
+    if (!auth) return;
+    let cancelled = false;
+    api.riskEventClusterSummary()
+      .then((summary) => { if (!cancelled) setEventClusterSummary(summary); })
+      .catch(() => { if (!cancelled) setEventClusterSummary(null); });
+    return () => { cancelled = true; };
+  }, [auth]);
+
+  // 事件簇列表：当前口径首屏加载，已失效口径首次切换时懒加载；加载成功的口径走缓存。
+  useEffect(() => {
+    if (!auth) return;
+    if (eventClusterPages[riskState]) return;
+    let cancelled = false;
+    setEventClustersLoading(true);
+    setEventClustersError(null);
+    api.riskEventClusters(riskState)
+      .then((response) => {
+        if (cancelled) return;
+        setEventClusterPages((current) => ({...current, [riskState]: response}));
+      })
+      .catch((caught) => {
+        if (cancelled) return;
+        if (caught instanceof ApiError && caught.status === 401) {
+          setAuth(null);
+          setAuthError('登录已失效，请重新登录');
+          return;
+        }
+        setEventClustersError(caught instanceof Error ? caught.message : '风险事件加载失败');
+      })
+      .finally(() => { if (!cancelled) setEventClustersLoading(false); });
+    return () => { cancelled = true; };
+  }, [auth, riskState, eventClusterPages, eventClustersRetryToken]);
+
+  // 重试：清掉当前口径缓存后重新拉取；汇总缺失时一并重试，避免统计条长期停在占位。
+  const reloadEventClusters = useCallback(() => {
+    setEventClusterPages((current) => {
+      const next = {...current};
+      delete next[riskState];
+      return next;
+    });
+    setEventClustersRetryToken((token) => token + 1);
+    api.riskEventClusterSummary()
+      .then(setEventClusterSummary)
+      .catch(() => { /* 统计条继续显示占位，不阻塞列表重试 */ });
+  }, [riskState]);
+
+  // 供应商视图「已失效」懒加载：只在用户首次切到该口径时请求一次，失败保留重试入口。
+  const loadExpiredRisks = useCallback(() => {
+    if (!auth || expiredRiskLoading || expiredRiskLoaded) return;
+    setExpiredRiskLoading(true);
+    setExpiredRiskError(null);
+    api.alertHistory()
+      .then((response) => {
+        setExpiredRiskItems(response.items.map(mapRiskAlert));
+        setExpiredRiskTotal(response.total);
+        setExpiredRiskLoaded(true);
+      })
+      .catch((caught) => {
+        if (caught instanceof ApiError && caught.status === 401) {
+          setAuth(null);
+          setAuthError('登录已失效，请重新登录');
+          return;
+        }
+        setExpiredRiskError(caught instanceof Error ? caught.message : '已失效事件加载失败');
+      })
+      .finally(() => setExpiredRiskLoading(false));
+  }, [auth, expiredRiskLoaded, expiredRiskLoading]);
+
   const handleLogin = async (username: string, password: string) => {
     setAuthError(null);
     try {
@@ -177,6 +268,15 @@ export function App() {
     setAuthError(null);
     setRiskItems([]);
     setRiskAlertSummary(null);
+    setEventClusterPages({});
+    setEventClusterSummary(null);
+    setEventClustersError(null);
+    setExpiredRiskItems([]);
+    setExpiredRiskTotal(null);
+    setExpiredRiskError(null);
+    setExpiredRiskLoaded(false);
+    setRiskViewMode('events');
+    setRiskState('current');
     setSuppliers([]);
     setDataSources([]);
     setDimensions([]);
@@ -448,11 +548,54 @@ export function App() {
     refreshIntervalMs: monitoringHealthRefreshMsForPath(location.pathname),
     onRequestError: handleDetailRequestError,
   });
-  const riskRouteView = <RiskRouteView riskItems={riskItems} summary={riskAlertSummary} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
+  const riskRouteView = <RiskRouteView riskItems={riskItems} summary={riskAlertSummary} expiredItems={expiredRiskItems} expiredTotal={expiredRiskTotal} expiredLoading={expiredRiskLoading} expiredError={expiredRiskError} onLoadExpired={loadExpiredRisks} onAskAssistant={handleAskAssistant} onCloseDetail={() => navigate(routePaths.risks)} onExportReport={(risk) => { setReportRisk(risk); setIsExportModalOpen(true); navigate(routePaths.risks); }} onSelectRisk={selectRisk} onRequestError={handleDetailRequestError} />;
+  const eventClusterPage = eventClusterPages[riskState] ?? null;
   const routeViews: RouteViews = {
-    overview: <OverviewView onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} onRequestError={handleDetailRequestError} monitoringHealth={monitoringHealth} />,
-    risks: riskRouteView,
+    overview: <OverviewView onSelectRisk={selectRisk} onViewAllRisks={() => navigate(routePaths.risks)} onRequestError={handleDetailRequestError} monitoringHealth={monitoringHealth} eventSummary={eventClusterSummary} />,
+    // /risks 默认「事件」视图；「供应商」视图复用现有供应商维度列表（含 /risks/:alertId 详情）。
+    // 标题与页签在 App 层只渲染一份、位置固定：切换子视图只替换下方面板，导航不会跳动。
+    risks: (
+      <div className="space-y-3 pb-20 sm:space-y-5 lg:pb-8">
+        <div>
+          <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white lg:text-2xl">风险事件</h1>
+        </div>
+        {/* 与情报聚合页同构：一份外层卡片同时包住页签与面板，避免页签单独成卡造成割裂。 */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white/80 p-4 shadow-sm backdrop-blur-md dark:border-slate-700/60 dark:bg-slate-800/60">
+          <RiskViewModeTabs mode={riskViewMode} onModeChange={setRiskViewMode} />
+          <div className="pt-3">
+            {riskViewMode === 'events' ? (
+              <div role="tabpanel" id={riskViewPanelId('events')} aria-labelledby={riskViewTabId('events')}>
+                <RiskEventsView
+                  state={riskState}
+                  onStateChange={setRiskState}
+                  clusters={eventClusterPage?.items ?? []}
+                  total={eventClusterPage?.total ?? 0}
+                  summary={eventClusterSummary}
+                  loading={eventClustersLoading}
+                  error={eventClustersError}
+                  onRetry={reloadEventClusters}
+                  onSelectEvent={(eventId) => navigate(eventDetailPath(eventId))}
+                />
+              </div>
+            ) : (
+              <div role="tabpanel" id={riskViewPanelId('suppliers')} aria-labelledby={riskViewTabId('suppliers')}>
+                {riskRouteView}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    ),
     riskDetail: riskRouteView,
+    // 事件详情：只经风险事件视图进入，返回回到 /risks。
+    eventDetail: (
+      <EventDetailView
+        onBack={() => navigate(routePaths.risks)}
+        onSelectAlert={(alertId) => navigate(riskDetailPath(alertId))}
+        onRequestError={handleDetailRequestError}
+      />
+    ),
+
     intelligence: <PolicyIntelligenceView />,
     assistant: <RiskAssistantView riskItems={riskItems} suppliers={suppliers} agentStatus={agentStatus} onSelectRisk={selectRisk} onSelectSupplier={handleSelectSupplier} pendingQuery={pendingAssistantQuery} onClearPendingQuery={() => setPendingAssistantQuery(null)} onAlertsChanged={refreshRiskAlerts} />,
     suppliers: <SuppliersView refreshToken={supplierRefreshToken} onOpenImportModal={() => setIsSupplierImportModalOpen(true)} onOpenNewSupplierModal={openNewSupplierModal} onEditSupplier={handleEditSupplier} onToggleStatus={(supplier) => void handleToggleSupplierStatus(supplier)} onAskAssistant={handleAskAssistant} onRequestError={handleDetailRequestError} role={canManageSuppliers ? 'admin' : 'viewer'} />,

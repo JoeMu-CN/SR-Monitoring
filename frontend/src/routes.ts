@@ -11,7 +11,7 @@ export const routePermissions = {
 } as const;
 
 export type RoutePermission = typeof routePermissions[keyof typeof routePermissions];
-export type RouteId = 'overview' | 'risks' | 'intelligence' | 'riskDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'scheduler' | 'rules' | 'userSettings';
+export type RouteId = 'overview' | 'risks' | 'intelligence' | 'riskDetail' | 'eventDetail' | 'assistant' | 'suppliers' | 'sources' | 'sourceSignals' | 'scheduler' | 'rules' | 'userSettings';
 export type NavigationSurface = 'desktop' | 'mobile';
 export type NavigationSection = 'main' | 'system';
 export type NavigationIcon = 'overview' | 'risks' | 'intelligence' | 'assistant' | 'suppliers' | 'sources' | 'scheduler' | 'rules' | 'userSettings';
@@ -41,6 +41,8 @@ export const routePaths = {
   risks: '/risks',
   intelligence: '/intelligence',
   riskDetail: '/risks/:alertId',
+  // 事件详情：从风险事件视图的成员进入，独立于供应商维度的 /risks/:alertId。
+  eventDetail: '/events/:eventId',
   assistant: '/assistant',
   suppliers: '/suppliers',
   sources: '/sources',
@@ -61,7 +63,7 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     id: 'risks',
     path: routePaths.risks,
     permission: routePermissions.riskView,
-    navigation: {surfaces: ['desktop', 'mobile'], section: 'main', desktopLabel: '全部风险事件', mobileLabel: '风险', icon: 'risks', end: false},
+    navigation: {surfaces: ['desktop', 'mobile'], section: 'main', desktopLabel: '风险事件', mobileLabel: '风险', icon: 'risks', end: false},
   },
   {
     // 情报聚合：政策/行业维度的宏观报告页。两个 Tab 是页内状态，不是独立路径，
@@ -72,6 +74,8 @@ export const routeDefinitions: readonly RouteDefinition[] = [
     navigation: {surfaces: ['desktop'], section: 'main', desktopLabel: '情报聚合', mobileLabel: '情报', icon: 'intelligence', end: true},
   },
   {id: 'riskDetail', path: routePaths.riskDetail, permission: routePermissions.riskView},
+  // 事件详情只经站内跳转到达，不进导航。
+  {id: 'eventDetail', path: routePaths.eventDetail, permission: routePermissions.riskView},
   {
     id: 'assistant',
     path: routePaths.assistant,
@@ -116,6 +120,9 @@ export const routeDefinitions: readonly RouteDefinition[] = [
 export const allRoutePermissions: readonly RoutePermission[] = Object.values(routePermissions);
 
 export const riskDetailPath = (alertId: string) => `${routePaths.risks}/${alertId}`;
+
+/** 事件详情路径：与供应商维度详情一样只做站内跳转，不进入导航。 */
+export const eventDetailPath = (eventId: number | string) => `/events/${eventId}`;
 
 export type SourceSignalScope = 'valid' | 'all';
 

@@ -1,7 +1,8 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowLeft, Download, MessageCircleQuestion, RefreshCw, ShieldAlert} from 'lucide-react';
 import {ApiError, api, mapRiskAlert, type EventDetailRead, type RiskAlertRead} from '../api';
 import type {RiskItem} from '../types';
+import {displayStatus, parseGanttTime, toGanttMember, type GanttDisplayStatus} from './EventValidityGantt';
 import {RiskDetailEvidenceSections} from './RiskDetailEvidenceSections';
 import {ValidityStateBadge} from './ValidityStateBadge';
 
@@ -26,6 +27,13 @@ const errorMessage = (caught: unknown, fallback: string): string => caught insta
 const formatDateTime = (value: string | null) => (
   value ? new Date(value).toLocaleString('zh-CN', {hour12: false}) : '未提供'
 );
+
+/** 同组事件的状态徽标：有效 / 已过期 / 已被新版本替代。 */
+const MEMBER_STATUS_META: Record<GanttDisplayStatus, {label: string; className: string}> = {
+  current: {label: '有效', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'},
+  expired: {label: '已过期', className: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'},
+  superseded: {label: '已被新版本替代', className: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'},
+};
 
 const DetailState = ({title, detail, action}: {readonly title: string; readonly detail: string; readonly action?: React.ReactNode}) => (
   <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-start justify-center gap-3 rounded-2xl border border-slate-200/80 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-800/60" role="status">
@@ -100,6 +108,27 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
     void loadEvent(alert.event_id, sequence);
   };
 
+  // 组内事件的有效期增量字段是可选的（后端未部署时缺失）：统一走松散归一，缺失即降级。
+  const groupMembers = useMemo(
+    () => (alert?.merged_events ?? []).map((item) => toGanttMember(item)),
+    [alert],
+  );
+
+  // 组内出现多个不同截止时间时，代表事件的有效期信息补一条范围。
+  const groupValidityRange = useMemo(() => {
+    if (alert === null) return null;
+    const timestamps = new Set<number>();
+    const selfExpiry = parseGanttTime(alert.valid_until);
+    if (selfExpiry !== null) timestamps.add(selfExpiry.getTime());
+    for (const member of groupMembers) {
+      const expiry = parseGanttTime(member?.expiresAt);
+      if (expiry !== null) timestamps.add(expiry.getTime());
+    }
+    if (timestamps.size < 2) return null;
+    const sorted = [...timestamps].sort((left, right) => left - right);
+    return `${formatDateTime(new Date(sorted[0]).toISOString())} ~ ${formatDateTime(new Date(sorted[sorted.length - 1]).toISOString())}`;
+  }, [alert, groupMembers]);
+
   if (alertLoading) {
     return (
       <section className="mx-auto flex min-h-[50vh] max-w-xl flex-col items-center justify-center gap-3" role="status">
@@ -161,6 +190,12 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
           <dl className="mt-2 grid gap-3 text-xs text-slate-600 sm:grid-cols-2 dark:text-slate-400">
             <div className="min-w-0"><dt className="font-bold">有效期截止</dt><dd className="mt-0.5 break-words">{formatDateTime(alert.valid_until)}</dd></div>
             <div className="min-w-0"><dt className="font-bold">复核时间</dt><dd className="mt-0.5 break-words">{formatDateTime(alert.review_due_at)}</dd></div>
+            {groupValidityRange !== null && (
+              <div className="min-w-0 sm:col-span-2">
+                <dt className="font-bold">组内有效期范围</dt>
+                <dd className="mt-0.5 break-words font-mono">{groupValidityRange}</dd>
+              </div>
+            )}
           </dl>
         </div>
       </header>
@@ -182,27 +217,45 @@ export const RiskDetailView = ({alertId, onAskAssistant, onClose, onExportReport
             当前页为等级最高的代表事件；以下为同组其余事件，事件与提醒均完整保留。
           </p>
           <ul className="mt-3 space-y-2">
-            {(alert.merged_events ?? []).map((item) => (
-              <li
-                key={item.alert_id}
-                className="flex flex-col gap-1 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/60"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold text-white ${levelClassName[item.level]}`}>
-                    {item.level}
-                  </span>
-                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                    {item.source_title}
-                  </span>
-                  <span className="font-mono text-[11px] text-slate-400">
-                    {formatDateTime(item.published_at)}
-                  </span>
-                </div>
-                <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                  {item.event_summary}
-                </p>
-              </li>
-            ))}
+            {(alert.merged_events ?? []).map((item, index) => {
+              const member = groupMembers[index] ?? null;
+              const status = member === null ? null : displayStatus(member);
+              const statusMeta = status === null ? null : MEMBER_STATUS_META[status];
+              return (
+                <li
+                  key={item.alert_id}
+                  className="flex flex-col gap-1 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/60"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded px-1.5 py-0.5 text-[11px] font-bold text-white ${levelClassName[item.level]}`}>
+                      {item.level}
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                      {item.source_title}
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-400">
+                      {formatDateTime(item.published_at)}
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                    {item.event_summary}
+                  </p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    {statusMeta !== null && (
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${statusMeta.className}`}>
+                        {statusMeta.label}
+                      </span>
+                    )}
+                    <span>
+                      有效期截止 <span className="font-mono">{formatDateTime(member?.expiresAt ?? null)}</span>
+                    </span>
+                    {typeof member?.affectedSupplierCount === 'number' && member.affectedSupplierCount > 0 && (
+                      <span>影响供应商 <span className="font-mono">{member.affectedSupplierCount}</span> 家</span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

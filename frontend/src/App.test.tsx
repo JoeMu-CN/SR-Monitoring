@@ -16,6 +16,8 @@ import type {
   GlobalScoringConfigRead,
   MonitoringHealthRead,
   RiskAlertSummary,
+  RiskEventClusterListResponse,
+  RiskEventClusterSummary,
   RuleEngineOptions,
   RiskAlertRead,
   SupplierListItem,
@@ -42,7 +44,11 @@ vi.mock('./api', async (importOriginal) => {
         resetPassword: vi.fn(),
       },
       alerts: vi.fn(),
+      alertHistory: vi.fn(),
       alertSummary: vi.fn(),
+      riskEventClusters: vi.fn(),
+      riskEventClusterSummary: vi.fn(),
+      eventDetail: vi.fn(),
       dashboardSummary: vi.fn(),
       chat: vi.fn(),
       chatSteps: vi.fn(),
@@ -216,6 +222,50 @@ const alertSummaryOk: RiskAlertSummary = {
     {level: 'P4', count: 93},
   ],
   total_current: 94,
+  total_events: 22,
+  total_suppliers: 34,
+};
+
+// 事件簇口径：统计条四个数字固定取汇总，列表只返回一个簇，用于验证两者独立。
+const eventClusterSummaryOk: RiskEventClusterSummary = {
+  current_events: 22,
+  current_clusters: 12,
+  current_groups: 44,
+  current_alerts: 327,
+  current_suppliers: 34,
+  as_of: '2026-09-09T00:00:00Z',
+};
+
+const eventClusterPageOk: RiskEventClusterListResponse = {
+  items: [{
+    cluster_id: 'compliance:浙江省杭州市:2026-08-01',
+    event_type: 'compliance',
+    title: '出口管制制裁影响华东供应商',
+    region_label: '浙江省杭州市',
+    event_count: 2,
+    supplier_count: 3,
+    max_level: 'P1',
+    level_counts: [{level: 'P1', count: 1}, {level: 'P2', count: 1}],
+    expires_min: '2026-09-01T00:00:00Z',
+    expires_max: '2026-09-05T00:00:00Z',
+    status: 'partially_expired',
+    members: [{
+      event_id: 10,
+      summary: '因违反出口管制被列入制裁实体清单',
+      source_code: 'ofac-sdn',
+      source_title: 'OFAC SDN',
+      published_at: '2026-08-01T00:00:00Z',
+      valid_from: '2026-08-01T00:00:00Z',
+      expires_at: '2026-09-01T00:00:00Z',
+      validity_state: 'active',
+      supplier_count: 3,
+      max_level: 'P1',
+      expired_reason: null,
+    }],
+  }],
+  total: 12,
+  limit: 20,
+  offset: 0,
 };
 
 const supplierBackend: SupplierListItem = {
@@ -421,7 +471,14 @@ const defaultMocks = (overrides: {permissions?: string[]; user?: AuthUser; agent
   vi.mocked(api.auth.login).mockResolvedValue(user);
   vi.mocked(api.auth.logout).mockResolvedValue({detail: 'ok'});
   vi.mocked(api.alerts).mockResolvedValue({items: [alertBackend], total: 1});
+  // 供应商视图的已失效数据：只在切换时按需拉取。
+  vi.mocked(api.alertHistory).mockResolvedValue({items: [], total: 0});
   vi.mocked(api.alertSummary).mockResolvedValue(alertSummaryOk);
+  // 风险事件视图的数据源：首屏只取当前口径，已失效口径切换时才请求。
+  vi.mocked(api.riskEventClusters).mockImplementation(async (state) => (
+    state === 'current' ? eventClusterPageOk : {...eventClusterPageOk, items: [], total: 0}
+  ));
+  vi.mocked(api.riskEventClusterSummary).mockResolvedValue(eventClusterSummaryOk);
   // 助手运行期步骤轮询：默认返回空快照，未发送消息的用例不会被定时器干扰。
   vi.mocked(api.chatSteps).mockResolvedValue({run_token: 'test-run', status: 'done', steps: []});
   vi.mocked(api.dashboardSummary).mockResolvedValue(dashboardSummaryOk);
@@ -501,8 +558,8 @@ describe('App loadData：Agent 状态接口失败不阻塞只读角色主数据'
     expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
     // 最近风险提醒（来自 dashboardSummary.recent_alerts）正常渲染
     expect((await screen.findAllByText('示例精密电子有限公司')).length).toBeGreaterThan(0);
-    // 总览统计（来自 dashboardSummary）正常渲染：当前风险总计 1 条
-    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('1');
+    // 主 KPI 已改为事件口径：当前风险事件 22（来自事件簇汇总）
+    expect(screen.getByTestId('overview-metric-total')).toHaveTextContent('22');
     expect(screen.queryByText('权限不足')).not.toBeInTheDocument();
   });
 
@@ -755,14 +812,64 @@ describe('App 供应商编辑：删除影响展示', () => {
   });
 });
 
-describe('App 当前风险监控：概览卡使用全量汇总，与单页列表口径分离', () => {
-  it('加载后概览卡显示全库 94 条，页脚标明本页只显示已加载的 1 条', async () => {
+describe('App 风险事件页：默认按事件，供应商视图复用全量汇总', () => {
+  it('默认按事件：标题与统计条来自事件簇汇总，不依赖提醒单页口径', async () => {
     defaultMocks();
     renderApp('/risks');
+
+    expect(await screen.findByRole('heading', {name: '风险事件'})).toBeInTheDocument();
+    expect(await screen.findByText('出口管制制裁影响华东供应商')).toBeInTheDocument();
+    // 统计条固定取事件簇汇总：当前事件/事件簇/供应商/风险组
+    expect(screen.getByText('当前事件')).toBeInTheDocument();
+    expect(screen.getByText('事件簇')).toBeInTheDocument();
+    expect(screen.getByText('风险组')).toBeInTheDocument();
+    expect(screen.getByRole('tab', {name: '事件'})).toHaveAttribute('aria-selected', 'true');
+    expect(api.riskEventClusters).toHaveBeenCalledWith('current');
+    // 当前口径下不请求已失效列表
+    expect(api.riskEventClusters).not.toHaveBeenCalledWith('expired');
+  });
+
+  it('切到按供应商后，概览卡显示全库 94 条、页脚标明本页只显示已加载的 1 条', async () => {
+    defaultMocks();
+    renderApp('/risks');
+
+    await userEvent.setup().click(await screen.findByRole('tab', {name: '供应商'}));
 
     expect(await screen.findByText('共 94 条（全库当前）')).toBeInTheDocument();
     expect(screen.getByText('本页显示 1 条（已加载 1 条），全库当前共 94 条')).toBeInTheDocument();
     expect(api.alertSummary).toHaveBeenCalled();
+    // 标题与页签由 App 统一渲染：供应商视图里也只有一份「风险事件」标题。
+    expect(screen.getAllByRole('heading', {name: '风险事件'})).toHaveLength(1);
+    expect(screen.getByRole('tab', {name: '供应商'})).toHaveAttribute('aria-selected', 'true');
+    expect(document.getElementById('risk-view-panel-suppliers')).not.toBeNull();
+
+    // 页签常驻在面板之上：供应商视图能直接切回事件视图，不会形成单向入口。
+    await userEvent.setup().click(screen.getByRole('tab', {name: '事件'}));
+    expect(await screen.findByRole('heading', {name: '风险事件'})).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', {name: '风险事件'})).toHaveLength(1);
+    expect(document.getElementById('risk-view-panel-events')).not.toBeNull();
+  });
+
+  it('已失效口径切换时才懒加载对应列表', async () => {
+    defaultMocks();
+    renderApp('/risks');
+
+    await userEvent.setup().click(await screen.findByRole('button', {name: '已失效'}));
+
+    await waitFor(() => expect(api.riskEventClusters).toHaveBeenCalledWith('expired'));
+    expect(await screen.findByText('暂无已失效的风险事件')).toBeInTheDocument();
+  });
+
+  it('供应商视图切到已失效时才请求历史提醒', async () => {
+    defaultMocks();
+    renderApp('/risks');
+
+    await userEvent.setup().click(await screen.findByRole('tab', {name: '供应商'}));
+    expect(api.alertHistory).not.toHaveBeenCalled();
+
+    await userEvent.setup().click(screen.getByRole('button', {name: '已失效'}));
+    await waitFor(() => expect(api.alertHistory).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('本页显示 0 条（已加载 0 条），全库已失效共 0 条')).toBeInTheDocument();
   });
 
   it('全量汇总请求失败不阻塞页面：无全局错误横幅，概览卡显式回落本页口径', async () => {
@@ -770,7 +877,9 @@ describe('App 当前风险监控：概览卡使用全量汇总，与单页列表
     vi.mocked(api.alertSummary).mockRejectedValue(new ApiError(503, '当前风险汇总服务不可用'));
     renderApp('/risks');
 
-    expect(await screen.findByRole('heading', {name: '全部风险事件'})).toBeInTheDocument();
+    await userEvent.setup().click(await screen.findByRole('tab', {name: '供应商'}));
+
+    expect(await screen.findByRole('heading', {name: '风险事件'})).toBeInTheDocument();
     expect(screen.getByText('共 1 条（本页已加载）')).toBeInTheDocument();
     expect(screen.getByText('本页显示 1 条，已加载 1 条（全库当前计数暂不可用）')).toBeInTheDocument();
     // 独立降级：不得触发全局错误横幅
@@ -786,7 +895,7 @@ describe('App /overview 与 loadData 解耦', () => {
     renderApp('/overview');
 
     expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
-    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
+    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('22');
     expect(screen.queryByText('正在加载供应链风险数据…')).not.toBeInTheDocument();
   });
 
@@ -797,7 +906,7 @@ describe('App /overview 与 loadData 解耦', () => {
     renderApp('/overview');
 
     expect(await screen.findByText('供应链风险监控总览大屏')).toBeInTheDocument();
-    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('1');
+    expect(await screen.findByTestId('overview-metric-total')).toHaveTextContent('22');
   });
 
   it('summary 返回 401 时经 App 统一处理清理会话并退回登录页', async () => {
@@ -868,7 +977,7 @@ describe('App 监控健康只读诊断', () => {
     const banner = await screen.findByTestId('monitoring-health-banner', {}, {timeout: 5000});
     expect(banner).toHaveAttribute('data-state', 'degraded');
     expect(banner.textContent).toContain('当前监控链路异常');
-    expect(screen.queryByTestId('overview-metric-total')).toHaveTextContent('1');
+    expect(screen.queryByTestId('overview-metric-total')).toHaveTextContent('22');
   });
 
   it('/sources 页同样接入诊断：来源新鲜度与健康横幅均按权限请求', async () => {
@@ -1094,7 +1203,9 @@ describe('App 助手核查写入告警后自动同步风险监控数据', () => 
 
     // 真实行为：初始 1 条被替换为 2 条，无需任何页面刷新。
     await waitFor(() => expect(api.alerts).toHaveBeenCalledTimes(2), {timeout: 5000});
-    await userEvent.setup().click(screen.getByRole('link', {name: /全部风险事件/}));
+    await userEvent.setup().click(screen.getByRole('link', {name: /风险事件/}));
+    // 默认事件视图不展示提醒级供应商名，切到「供应商」验证新增提醒已进入列表。
+    await userEvent.setup().click(await screen.findByRole('tab', {name: '供应商'}));
     expect(await screen.findByText('核查新增风险企业有限公司', {}, {timeout: 5000})).toBeInTheDocument();
   }, 15000);
 

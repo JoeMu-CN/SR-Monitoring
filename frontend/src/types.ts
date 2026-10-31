@@ -69,7 +69,38 @@ export interface RiskItem {
     locationMatch: string;
     keywords: string[];
   };
+
+  // 组级口径（同供应商 + 同区域 + 同事件类型的合并组）；后端未部署时缺失。
+  groupStatus?: string | null; // active|partially_expired|expired
+  groupEventCount?: number;
+  groupSourceCount?: number;
+  groupExpiresMin?: string | null;
+  groupExpiresMax?: string | null;
+  /** 组内其他事件，供有效期甘特按成员展开。 */
+  mergedEvents?: RiskItemMergedEvent[];
 }
+
+/**
+ * 合并组内单个事件的前端结构。
+ *
+ * 字段与 EventValidityGantt 的 GanttMember 对齐（alertId/startAt/status/superseded），
+ * 由后端 MergedEventRead 映射而来；有效区间缺失时回落到事件起止时间。
+ */
+export type RiskItemMergedEvent = {
+  alertId: number;
+  eventId: number;
+  summary: string;
+  sourceTitle: string;
+  level: RiskLevel;
+  /** 优先事件生效时间，回退发布时间。 */
+  startAt: string | null;
+  /** 提醒有效期截止时间。 */
+  expiresAt: string | null;
+  status: 'current' | 'expired';
+  superseded?: boolean;
+  /** 事件影响的供应商数；字段未落地时为 null。 */
+  affectedSupplierCount?: number | null;
+};
 
 export interface Supplier {
   id: string;

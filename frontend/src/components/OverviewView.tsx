@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useSearchParams} from 'react-router-dom';
 import {AlertTriangle, RefreshCw} from 'lucide-react';
-import {api, ApiError, mapRiskAlert, type DashboardAnalytics, type DashboardSummary, type DashboardWindowDays} from '../api';
+import {api, ApiError, mapRiskAlert, type DashboardAnalytics, type DashboardSummary, type DashboardWindowDays, type RiskEventClusterSummary} from '../api';
 import {displaySourceName} from '../sourceDisplay';
 import type {RiskItem, RiskLevel} from '../types';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
@@ -14,6 +14,8 @@ interface OverviewViewProps {
   readonly onViewAllRisks: () => void;
   readonly onRequestError: (error: ApiError) => void;
   readonly monitoringHealth: MonitoringHealthSnapshot;
+  /** 事件级汇总：主 KPI 使用「当前风险事件」，缺失时回落提醒组口径。 */
+  readonly eventSummary?: RiskEventClusterSummary | null;
 }
 
 // 时间窗口白名单：仅 7/90 写入 URL query，缺省 30 不落 query，其他值一律规范化回 30。
@@ -107,7 +109,7 @@ const RiskStreamRow = ({
   </button>
 );
 
-export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, monitoringHealth}: OverviewViewProps) => {
+export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, monitoringHealth, eventSummary}: OverviewViewProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawDays = searchParams.get('days');
   const days = parseWindow(rawDays);
@@ -340,7 +342,7 @@ export const OverviewView = ({onSelectRisk, onViewAllRisks, onRequestError, moni
               <Kpi label="活跃供应商" value={summary.active_supplier_total} suffix="监控中" tone="sky" testId="overview-metric-active" />
               <Kpi label="高危预警 P1" value={levelCount('P1')} suffix="需处置" tone="red" testId="overview-metric-p1" />
               <Kpi label="高风险 P2" value={levelCount('P2')} suffix="跟踪中" tone="amber" testId="overview-metric-p2" />
-              <Kpi label="当前风险总计" value={summary.total_current} suffix="当前有效" tone="slate" testId="overview-metric-total" />
+              <Kpi label="当前风险事件" value={eventSummary?.current_events ?? summary.total_current} suffix="当前有效" detail={eventSummary ? `涉及 ${eventSummary.current_suppliers} 家供应商 · ${eventSummary.current_groups} 个风险组` : undefined} tone="slate" testId="overview-metric-total" />
             </div>
 
             <section data-testid="severity-bar" className="rounded-xl border border-sky-400/15 bg-[linear-gradient(180deg,rgba(12,30,54,0.82),rgba(6,14,27,0.62))] p-3">
@@ -571,10 +573,11 @@ const KPI_TONE = {
   slate: {value: 'text-white dark:text-white', dot: 'bg-slate-400', border: 'border-slate-400/15'},
 } as const;
 
-const Kpi = ({label, value, suffix, tone, testId}: {
+const Kpi = ({label, value, suffix, detail, tone, testId}: {
   readonly label: string;
   readonly value: number;
   readonly suffix: string;
+  readonly detail?: string;
   readonly tone: keyof typeof KPI_TONE;
   readonly testId: string;
 }) => {
@@ -589,6 +592,7 @@ const Kpi = ({label, value, suffix, tone, testId}: {
         <span data-testid={testId} className={`font-mono text-2xl font-black leading-none ${colors.value}`}>{value}</span>
         <span className="text-[9px] text-sky-500/70">{suffix}</span>
       </div>
+      {detail && <span className="truncate text-[8px] leading-tight text-sky-500/60">{detail}</span>}
     </div>
   );
 };

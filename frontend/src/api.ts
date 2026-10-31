@@ -250,6 +250,17 @@ export interface RiskAlertRead {
   merged_count?: number;
   /** 组内其他事件；不含当前这条提醒自身的事件。 */
   merged_events?: MergedEventRead[];
+  // 组级口径：同供应商 + 同区域 + 同事件类型的合并组。后端未部署时整体缺失，页面按缺省降级。
+  /** 合并组生命周期状态（active / partially_expired / expired）。 */
+  group_status?: string | null;
+  /** 合并组内事件数。 */
+  group_event_count?: number | null;
+  /** 合并组内信源数。 */
+  group_source_count?: number | null;
+  /** 合并组内最早有效期截止时间。 */
+  group_expires_min?: string | null;
+  /** 合并组内最晚有效期截止时间。 */
+  group_expires_max?: string | null;
 }
 
 /** 合并展示组内的单个事件（事件与提醒都保留，仅展示层聚合）。 */
@@ -266,6 +277,13 @@ export interface MergedEventRead {
   source_title: string;
   source_url: string | null;
   published_at: string | null;
+  // 增量字段：供供应商视图的有效期甘特使用；后端未部署时缺失。
+  valid_from?: string | null;
+  expires_at?: string | null;
+  validity_state?: ValidityState | null;
+  status?: string | null;
+  version_superseded?: boolean | null;
+  supplier_count?: number | null;
 }
 
 export interface EventSignalEvidence {
@@ -315,6 +333,26 @@ export interface EventDetailRead {
   readonly review_due_at: string | null;
   readonly validity_policy_version: string | null;
   readonly validity_reason: ValidityReasonRead;
+  /** 受影响供应商；后端未部署该增量字段时缺失，页面按空态降级。 */
+  readonly suppliers?: readonly EventSupplierAlert[];
+}
+
+/** 事件详情内的受影响供应商（事件级展示，一行一个供应商的当前提醒）。 */
+export interface EventSupplierAlert {
+  readonly supplier_id: number;
+  readonly supplier_name: string;
+  readonly level: RiskLevel;
+  readonly score: number;
+  /** 提醒状态原始码（current / expired 等）。 */
+  readonly alert_status: string;
+  readonly expires_at: string | null;
+  /** 该供应商的提醒是否已被新版本事件替代。 */
+  readonly version_superseded: boolean;
+  /**
+   * 对应提醒 ID，用于跳转 /risks/:alertId。
+   * 契约未声明该字段：缺失时供应商行不可点击，只做展示。
+   */
+  readonly alert_id?: number | null;
 }
 
 interface RiskAlertListResponse { items: RiskAlertRead[]; total: number }
@@ -330,6 +368,77 @@ export interface RiskAlertSummary {
   readonly level_counts: readonly DashboardLevelCount[];
   /** 当前有效提醒总数，等于 level_counts 之和。 */
   readonly total_current: number;
+  /** 当前有效事件数（增量字段；后端未部署时缺失，调用方回落 total_current）。 */
+  readonly total_events?: number;
+  /** 当前受影响供应商数（增量字段；后端未部署时缺失）。 */
+  readonly total_suppliers?: number;
+}
+
+/* ── 风险事件簇契约（GET /api/v1/risk-event-clusters） ─────────────────────── */
+
+/** 事件簇查询口径：current=当前有效簇，expired=已失效簇。 */
+export type RiskEventState = 'current' | 'expired';
+
+/** 事件簇状态：全活跃 / 部分成员失效 / 全部失效。 */
+export type RiskEventClusterStatus = 'active' | 'partially_expired' | 'expired';
+
+/** 簇内的单个成员事件（一个事件可对应多条信源与多个供应商）。 */
+export interface RiskEventClusterMember {
+  event_id: number;
+  summary: string;
+  source_code: string;
+  source_title: string;
+  published_at: string | null;
+  valid_from: string | null;
+  expires_at: string | null;
+  validity_state: ValidityState | null;
+  supplier_count: number;
+  max_level: RiskLevel;
+  /** 失效原因；仍有效时为 null。 */
+  expired_reason: 'event_expired' | 'alert_expired' | 'version_superseded' | null;
+}
+
+/** 风险事件簇：同事件类型 + 同地区 + 同时间窗的事件聚合。 */
+export interface RiskEventCluster {
+  cluster_id: string;
+  event_type: string;
+  title: string;
+  region_label: string;
+  event_count: number;
+  supplier_count: number;
+  max_level: RiskLevel;
+  level_counts: Array<{level: RiskLevel; count: number}>;
+  expires_min: string | null;
+  expires_max: string | null;
+  status: RiskEventClusterStatus;
+  members: RiskEventClusterMember[];
+}
+
+export interface RiskEventClusterListResponse {
+  items: RiskEventCluster[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * 事件簇汇总（GET /api/v1/risk-event-clusters/summary）。
+ *
+ * 固定为当前有效口径：统计条的事件/簇/供应商/风险组四个数字都取这里，
+ * 与已失效视图的列表条数分离。
+ */
+export interface RiskEventClusterSummary {
+  /** 当前风险事件数（事件级，非提醒级）。 */
+  current_events: number;
+  /** 当前事件簇数。 */
+  current_clusters: number;
+  /** 当前风险组数（同供应商+同区域的合并组）。 */
+  current_groups: number;
+  /** 当前提醒数。 */
+  current_alerts: number;
+  /** 当前受影响供应商数。 */
+  current_suppliers: number;
+  as_of: string;
 }
 
 /* ── 情报聚合契约（GET /api/v1/intelligence?tab=policy|industry） ──────────── */
@@ -1517,6 +1626,10 @@ export const api = {
     }),
   },
   alerts: () => request<RiskAlertListResponse>('/api/v1/risk-alerts?status=current&limit=100'),
+  // 已失效提醒历史：供应商视图切到「已失效」时懒加载，单页 100 条。
+  alertHistory: (limit = 100, offset = 0) => request<RiskAlertListResponse>(
+    `/api/v1/risk-alerts?status=expired&limit=${limit}&offset=${offset}`,
+  ),
   // 当前提醒全量计数：概览口径专用，不受上面列表 limit=100 的单页截断影响。
   alertSummary: () => request<RiskAlertSummary>('/api/v1/risk-alerts/summary'),
   alert: (id: number) => request<RiskAlertRead>(`/api/v1/risk-alerts/${id}`),
@@ -1524,6 +1637,17 @@ export const api = {
   // 大屏地图与趋势：与 summary 分开请求，失败时主面板仍可展示。
   dashboardAnalytics: (days: DashboardWindowDays) => request<DashboardAnalytics>(`/api/v1/dashboard/analytics?days=${days}`),
   event: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
+  /**
+   * 事件详情（风险事件视图）：与 api.event 同一后端端点，语义上按事件查看。
+   * suppliers 为增量字段，后端未部署时缺失。
+   */
+  eventDetail: (id: number) => request<EventDetailRead>(`/api/v1/events/${id}`),
+  // 风险事件簇列表：current=当前有效，expired=已失效（切换时懒加载）。
+  riskEventClusters: (state: RiskEventState, limit = 20, offset = 0) => request<RiskEventClusterListResponse>(
+    `/api/v1/risk-event-clusters?state=${state}&limit=${limit}&offset=${offset}`,
+  ),
+  // 事件簇汇总固定当前口径，用于统计条与总览主 KPI。
+  riskEventClusterSummary: () => request<RiskEventClusterSummary>('/api/v1/risk-event-clusters/summary'),
   intelligence: (tab: IntelligenceCategory, limit = 20, offset = 0) => request<IntelligenceReportListResponse>(
     `/api/v1/intelligence?tab=${tab}&limit=${limit}&offset=${offset}`,
   ),
@@ -1767,6 +1891,32 @@ export function mapRiskAlert(alert: RiskAlertRead): RiskItem {
     scoreBreakdown,
     originalSignals: [{title: alert.source_title || alert.event_summary, source: alert.source_title || '来源未披露', time: formatDateTime(alert.published_at)}],
     matchReasons: {entityMatch: alert.match_reasons[0] ?? alert.match_type, locationMatch: evidenceText(alert.match_evidence), keywords: alert.match_reasons.slice(1)},
+    // 组级字段全部可选：后端未部署时保持 undefined，供应商视图按缺省渲染。
+    groupStatus: alert.group_status ?? undefined,
+    groupEventCount: alert.group_event_count ?? undefined,
+    groupSourceCount: alert.group_source_count ?? undefined,
+    groupExpiresMin: alert.group_expires_min ?? null,
+    groupExpiresMax: alert.group_expires_max ?? null,
+    mergedEvents: (alert.merged_events ?? []).map((event) => {
+      const validityState = event.validity_state ?? null;
+      // 状态判定与甘特口径一致：显式 expired/invalid 或已失效的生命周期状态都按已失效画。
+      const expiredStates = ['expired', 'invalid', 'revoked', 'superseded', 'legacy', 'irrelevant', 'conflicted'];
+      return {
+        alertId: event.alert_id,
+        eventId: event.event_id,
+        summary: event.event_summary,
+        sourceTitle: event.source_title,
+        level: event.level,
+        // 增量的有效期区间优先；缺失时逐级回落到事件起止时间与发布时间。
+        startAt: event.valid_from ?? event.event_start_at ?? event.published_at,
+        expiresAt: event.expires_at ?? event.event_end_at ?? null,
+        status: (event.status === 'expired' || event.status === 'invalid' || (validityState !== null && expiredStates.includes(validityState)))
+          ? 'expired' as const
+          : 'current' as const,
+        superseded: event.version_superseded ?? validityState === 'superseded',
+        affectedSupplierCount: event.supplier_count ?? null,
+      };
+    }),
   };
 }
 

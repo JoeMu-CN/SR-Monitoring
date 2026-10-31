@@ -44,6 +44,10 @@
   background: #64748b;
 }
 
+.sflow-node-dot {
+  position: relative;
+}
+
 .sflow-scroll {
   overflow-x: auto;
   overflow-y: hidden;
@@ -67,18 +71,19 @@
   width: 100%;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-  /* 底板：24px 测量网格 + 上下轻微暗角，让网络区从卡片变成独立仪表窗口。 */
-  background-color: #0a1220;
+  /* 底板：近黑底 + 顶部梅紫微光 + 24px 测量网格 + 上下暗角。 */
+  background-color: #060607;
   background-image:
     linear-gradient(
       180deg,
-      rgba(2, 7, 14, 0.45) 0,
-      rgba(2, 7, 14, 0) 32px,
-      rgba(2, 7, 14, 0) calc(100% - 32px),
-      rgba(2, 7, 14, 0.45) 100%
+      rgba(2, 3, 6, 0.5) 0,
+      rgba(2, 3, 6, 0) 32px,
+      rgba(2, 3, 6, 0) calc(100% - 32px),
+      rgba(2, 3, 6, 0.5) 100%
     ),
-    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 24px),
-    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.035) 0 1px, transparent 1px 24px);
+    linear-gradient(180deg, rgba(46, 16, 101, 0.26) 0, rgba(46, 16, 101, 0.07) 30%, rgba(6, 6, 7, 0) 52%),
+    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.05) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.05) 0 1px, transparent 1px 24px);
 }
 
 /* 低对比角标：落在标签行的空白带与底边，回字形太满，这里只用 12×4 的拐角裁切记号。 */
@@ -110,7 +115,7 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(210px, 1.05fr) minmax(220px, 1.1fr) minmax(190px, 0.95fr) minmax(240px, 1.2fr);
-  grid-template-rows: 24px repeat(3, 76px);
+  grid-template-rows: 24px repeat(3, 76px) 76px;
   column-gap: 58px;
   row-gap: 14px;
   min-width: 1080px;
@@ -150,10 +155,31 @@
   );
 }
 
-.sflow-label--collect { grid-column: 1; }
-.sflow-label--signal { grid-column: 2; }
-.sflow-label--process { grid-column: 3; }
+/* 列标签呼应三色：01 钴蓝 / 02 梅紫 / 03 余烬 / 04 中性文字 + 三色刻度。 */
+.sflow-label--collect { grid-column: 1; color: #7ea9ea; }
+.sflow-label--collect b { color: #6f9fe6; }
+.sflow-label--collect span {
+  background-image: repeating-linear-gradient(90deg, rgb(59 130 246 / 0.34) 0 1px, transparent 1px 8px);
+}
+
+.sflow-label--signal { grid-column: 2; color: #b79bf3; }
+.sflow-label--signal b { color: #ab8aef; }
+.sflow-label--signal span {
+  background-image: repeating-linear-gradient(90deg, rgb(168 85 247 / 0.34) 0 1px, transparent 1px 8px);
+}
+
+.sflow-label--process { grid-column: 3; color: #e8a06a; }
+.sflow-label--process b { color: #e0914f; }
+.sflow-label--process span {
+  background-image: repeating-linear-gradient(90deg, rgb(249 115 22 / 0.34) 0 1px, transparent 1px 8px);
+}
+
 .sflow-label--output { grid-column: 4; }
+.sflow-label--output span {
+  background-image: linear-gradient(90deg, rgb(59 130 246 / 0.5), rgb(168 85 247 / 0.5), rgb(249 115 22 / 0.5));
+  mask-image: repeating-linear-gradient(90deg, #000 0 1px, transparent 1px 8px);
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 1px, transparent 1px 8px);
+}
 
 .sflow-edges,
 .sflow-ports,
@@ -168,6 +194,39 @@
 .sflow-edges { z-index: 0; overflow: visible; }
 .sflow-particles { z-index: 1; }
 .sflow-ports { z-index: 3; overflow: visible; }
+
+/* 超慢水平扫描线：只在网络底板上走一条 1px，卡片与文字在其上方。 */
+.sflow-scanline {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sflow-scanline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(125, 211, 252, 0.22) 0,
+    rgba(125, 211, 252, 0.22) 1px,
+    rgba(125, 211, 252, 0) 1px
+  );
+  opacity: 0;
+  animation: sflow-scanline-sweep 9s linear infinite;
+}
+
+@keyframes sflow-scanline-sweep {
+  0% { transform: translateY(-100%); opacity: 0; }
+  7% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
 
 .sflow-edge {
   fill: none;
@@ -188,6 +247,26 @@
 .sflow-edge--warn { stroke: #9a5c3f; stroke-width: 1.35; }
 .sflow-edge--done { stroke: #556b84; }
 .sflow-edge--idle { stroke: #4d6178; }
+
+/* 独立排期关联线：低透明度虚线；只有运行中才流动，异常/错过用语义色但不加亮。 */
+.sflow-edge--aux {
+  stroke: #46607c;
+  stroke-width: 1.1;
+  stroke-dasharray: 2 7;
+  opacity: 0.85;
+}
+
+.sflow-edge--aux.sflow-edge--active {
+  stroke: #5d84a7;
+  stroke-width: 1.3;
+  stroke-dasharray: 3 6;
+  animation: sflow-edge-flow 2.6s linear infinite;
+}
+
+.sflow-edge--aux.sflow-edge--warn {
+  stroke: #8a5236;
+  stroke-width: 1.2;
+}
 
 /* 端口改为“闸口”语言：实心 + 环 / 实心 + 虚环 / 空心 + 环，颜色之外再给一层形状差异。 */
 .sflow-port {
@@ -232,7 +311,13 @@
 .sflow-slot--expire { grid-column: 4; grid-row: 3; }
 .sflow-slot--intel { grid-column: 4; grid-row: 4; }
 
+/* 第 5 行：三个主独立排期卫星节点，与主网共用卡片视觉。 */
+.sflow-slot--aux-cleanup { grid-column: 2; grid-row: 5; }
+.sflow-slot--aux-aging { grid-column: 3; grid-row: 5; }
+.sflow-slot--aux-monthly { grid-column: 4; grid-row: 5; }
+
 .sflow-node {
+  --sflow-accent-rgb: 96 165 250;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -242,14 +327,36 @@
   height: 100%;
   padding: 7px 7px 6px 10px;
   overflow: hidden;
-  border: 1px solid #354863;
+  border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 10px;
-  background: #0e1726;
+  /* 玻璃卡：顶端 1px accent 线 → 8% 白色斜向高光 → 底部 accent 光晕 → 梅紫到近黑的暗部。 */
+  background-color: #060607;
+  background-image:
+    linear-gradient(180deg, rgb(var(--sflow-accent-rgb) / 0.42) 0 1px, transparent 1px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.085) 0%, rgba(255, 255, 255, 0.02) 34%, rgba(255, 255, 255, 0) 62%),
+    radial-gradient(104% 64% at 50% 116%, rgb(var(--sflow-accent-rgb) / 0.3) 0%, rgb(var(--sflow-accent-rgb) / 0.1) 42%, rgba(6, 6, 7, 0) 68%),
+    linear-gradient(180deg, rgba(46, 16, 101, 0.38) 0%, rgba(30, 14, 62, 0.16) 34%, #060607 64%);
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.16);
   transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
 }
+
+/* 光色只表达“属于哪一类”，状态仍由左侧状态轨、徽标与闪框承担。 */
+.sflow-node--collect { --sflow-accent-rgb: 59 130 246; }
+.sflow-node--signal { --sflow-accent-rgb: 249 115 22; }
+.sflow-node--output { --sflow-accent-rgb: 59 130 246; }
+.sflow-node[data-node-key="notify"] { --sflow-accent-rgb: 249 115 22; }
+.sflow-node[data-node-key="expire"] { --sflow-accent-rgb: 59 130 246; }
+.sflow-node[data-node-key="intel"] { --sflow-accent-rgb: 168 85 247; }
+
+/* 第 5 行卫星节点：清理=梅紫，老化=余烬，月报=钴蓝。 */
+.sflow-slot--aux-cleanup .sflow-node { --sflow-accent-rgb: 168 85 247; }
+.sflow-slot--aux-aging .sflow-node { --sflow-accent-rgb: 249 115 22; }
+.sflow-slot--aux-monthly .sflow-node { --sflow-accent-rgb: 59 130 246; }
 
 /* 左侧 2px 状态轨：状态色从边框迁移到轨道，卡片边框回归中性。 */
 .sflow-node::before {
@@ -264,31 +371,61 @@
 }
 
 .sflow-node:hover {
-  border-color: #3d5170;
-  background-color: #132136;
+  border-color: rgba(148, 163, 184, 0.34);
+  background-color: #0a0a0d;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.24),
+    inset 0 0 0 1px rgb(var(--sflow-accent-rgb) / 0.16);
 }
 
 .sflow-node:focus-visible {
   outline: 2px solid #007aff;
   outline-offset: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.24),
+    inset 0 0 0 1px rgb(var(--sflow-accent-rgb) / 0.2);
 }
 
-/* 选中：加粗状态轨 + 顶部 1px 亮线，不再与运行中的青色抢同一个视觉信号。 */
+/* 选中：白色顶部内高光 + 3px 状态轨 + 细亮边；不改背景层，玻璃与光晕保留。 */
 .sflow-node.is-selected {
-  border-color: rgba(148, 163, 184, 0.5);
-  background-color: #11203a;
-  background-image: linear-gradient(180deg, rgba(226, 232, 240, 0.13) 0, rgba(226, 232, 240, 0) 7px);
+  border-color: rgba(226, 232, 240, 0.42);
+  background-color: #0b0b10;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.26),
+    inset 0 0 0 1px rgba(226, 232, 240, 0.16);
 }
 
 .sflow-node.is-selected::before {
   width: 3px;
 }
 
-/* 未注册：只降级边框与底色，不为整卡降透明度（否则 9px 次级文字会先失效）。 */
+/* 未注册：虚线 + 去光晕，但仍保留所属列的光色线索（只留 1px 暗线）。 */
 .sflow-node.is-unregistered {
   border-style: dashed;
   border-color: #2f4058;
-  background-color: #0c1421;
+  background-color: #08080b;
+  /* 未注册仍保留所属列的低强度光晕，虚线边框负责表达停用语义。 */
+  background-image:
+    linear-gradient(180deg, rgb(var(--sflow-accent-rgb) / 0.2) 0 1px, transparent 1px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 58%),
+    radial-gradient(90% 58% at 50% 120%, rgb(var(--sflow-accent-rgb) / 0.11) 0%, transparent 68%),
+    linear-gradient(180deg, rgba(46, 16, 101, 0.22) 0%, #08080b 72%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 20px rgb(var(--sflow-accent-rgb) / 0.08);
+}
+
+/* 未注册也可被选中：保留虚线语义，只补选中高光。 */
+.sflow-node.is-unregistered.is-selected {
+  border-color: rgba(226, 232, 240, 0.42);
+  background-color: #0b0b10;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 0 20px rgb(var(--sflow-accent-rgb) / 0.1),
+    inset 0 0 0 1px rgba(226, 232, 240, 0.1);
 }
 
 .sflow-node.is-unregistered .sflow-node-name {
@@ -431,7 +568,6 @@
 
 .sflow-node.sflow-state--running {
   border-color: rgba(56, 189, 248, 0.26);
-  background-color: #102132;
 }
 
 .sflow-node.sflow-state--error {
@@ -454,7 +590,7 @@
 /* 选中态底色优先于状态底色（状态仍由轨道颜色表达）。 */
 .sflow-node.is-selected,
 .sflow-hub.is-selected {
-  background-color: #11203a;
+  background-color: #0b0b10;
 }
 
 .sflow-node.sflow-state--running::after {
@@ -468,6 +604,21 @@
   background: #38bdf8;
   opacity: 0.7;
   animation: sflow-scan 3.2s ease-in-out infinite;
+}
+
+/* 运行中状态点：只做一圈柔和外扩，不加发光。 */
+.sflow-node.sflow-state--running .sflow-node-dot::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-radius: 50%;
+  animation: sflow-dot-pulse 2.8s ease-out infinite;
+}
+
+@keyframes sflow-dot-pulse {
+  0% { transform: scale(0.8); opacity: 0.7; }
+  70%, 100% { transform: scale(1.9); opacity: 0; }
 }
 
 .sflow-badge {
@@ -530,8 +681,9 @@
   color: #7dd3fc;
 }
 
-/* 信号池：跨三行，作为数据节点单独处理。 */
+/* 信号池：跨三行，作为数据节点单独处理。光色取梅紫。 */
 .sflow-hub {
+  --sflow-accent-rgb: 168 85 247;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -542,13 +694,21 @@
   max-height: 100%;
   padding: 12px 14px 12px 16px;
   overflow: hidden;
-  border: 1px solid #3b506b;
+  border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 12px;
-  background: #0f1d30;
+  background-color: #060607;
+  background-image:
+    linear-gradient(180deg, rgb(var(--sflow-accent-rgb) / 0.45) 0 1px, transparent 1px),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 38%, rgba(255, 255, 255, 0) 64%),
+    radial-gradient(110% 68% at 50% 118%, rgb(var(--sflow-accent-rgb) / 0.3) 0%, rgb(var(--sflow-accent-rgb) / 0.1) 44%, rgba(6, 6, 7, 0) 70%),
+    linear-gradient(180deg, rgba(46, 16, 101, 0.42) 0%, rgba(30, 14, 62, 0.18) 36%, #060607 66%);
   color: #e2e8f0;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.16s ease, background-color 0.16s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.11),
+    inset 0 0 34px rgb(var(--sflow-accent-rgb) / 0.18);
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 /* 信号池同属四列节点语言：左侧状态轨在数据节点上固定为冷蓝。 */
@@ -564,17 +724,30 @@
 }
 
 .sflow-hub:hover {
-  border-color: #415774;
+  border-color: rgba(148, 163, 184, 0.36);
+  background-color: #0a0a0d;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 34px rgb(var(--sflow-accent-rgb) / 0.26),
+    inset 0 0 0 1px rgb(var(--sflow-accent-rgb) / 0.16);
 }
 
 .sflow-hub:focus-visible {
   outline: 2px solid #007aff;
   outline-offset: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 34px rgb(var(--sflow-accent-rgb) / 0.26),
+    inset 0 0 0 1px rgb(var(--sflow-accent-rgb) / 0.2);
 }
 
 .sflow-hub.is-selected {
-  border-color: rgba(148, 163, 184, 0.5);
-  background-image: linear-gradient(180deg, rgba(226, 232, 240, 0.13) 0, rgba(226, 232, 240, 0) 7px);
+  border-color: rgba(226, 232, 240, 0.42);
+  background-color: #0b0b10;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 34px rgb(var(--sflow-accent-rgb) / 0.28),
+    inset 0 0 0 1px rgba(226, 232, 240, 0.1);
 }
 
 .sflow-hub.is-selected::before {
@@ -628,7 +801,7 @@
   gap: 8px;
   max-width: 176px;
   padding-top: 6px;
-  border-top: 1px solid #2c3d52;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
   color: #94a3b8;
   font-size: 9.5px;
 }
@@ -675,21 +848,17 @@
   text-transform: uppercase;
 }
 
-.sflow-aux-empty {
-  color: #64748b;
-  font-size: 9.5px;
-}
-
 .sflow-aux-chip {
+  --sflow-accent-rgb: 96 165 250;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   max-width: 260px;
   padding: 4px 8px;
   overflow: hidden;
-  border: 1px solid #354863;
+  border: 1px solid rgba(125, 160, 190, 0.18);
   border-radius: 999px;
-  background: #0d1a2a;
+  background: #08090c;
   color: #cbd5e1;
   font-size: 9.5px;
   text-overflow: ellipsis;
@@ -705,7 +874,7 @@
 .sflow-aux-chip.is-selected {
   border-color: rgba(203, 213, 225, 0.5);
   color: #e2e8f0;
-  background: #11203a;
+  background: #0b0b10;
 }
 
 .sflow-aux-chip:focus-visible {
@@ -728,19 +897,27 @@
   transition: border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
 }
 
-/* 光点到达节点时的短暂微闪；黄色用于真实任务触发。 */
+/* 光点到达节点时的短暂微闪；黄色用于真实任务触发。玻璃层与内发光保持不变。 */
 .sflow-node.is-flash-white,
 .sflow-hub.is-flash-white,
 .sflow-aux-chip.is-flash-white {
   border-color: rgba(232, 240, 251, 0.78);
-  box-shadow: 0 0 0 3px rgba(232, 240, 251, 0.08), 0 0 16px rgba(232, 240, 251, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.18),
+    0 0 0 3px rgba(232, 240, 251, 0.08),
+    0 0 16px rgba(232, 240, 251, 0.2);
 }
 
 .sflow-node.is-flash-yellow,
 .sflow-hub.is-flash-yellow,
 .sflow-aux-chip.is-flash-yellow {
   border-color: rgba(255, 214, 10, 0.9);
-  box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.13), 0 0 18px rgba(255, 214, 10, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 28px rgb(var(--sflow-accent-rgb) / 0.18),
+    0 0 0 3px rgba(255, 214, 10, 0.13),
+    0 0 18px rgba(255, 214, 10, 0.3);
 }
 
 /* 选中节点明细。 */
@@ -1025,12 +1202,26 @@
   }
 
   /* 减少动效：活动边保留可读虚线，不再流动。 */
-  .sflow-edge--active {
+  .sflow-edge--active,
+  .sflow-edge--aux.sflow-edge--active {
     animation: none;
+  }
+
+  .sflow-node.sflow-state--running .sflow-node-dot::after,
+  .sflow-scanline::before {
+    animation: none;
+    opacity: 0;
   }
 
   .sflow-node,
   .sflow-hub {
     transition: none;
   }
+}
+
+/* 页面隐藏时暂停本组件新增的循环动画（页面级类由 SchedulerLiveView 控制）。 */
+.scheduler-live-paused .sflow-scanline::before,
+.scheduler-live-paused .sflow-node.sflow-state--running .sflow-node-dot::after,
+.scheduler-live-paused .sflow-edge--aux {
+  animation-play-state: paused !important;
 }

@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject} from 'react';
+import {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject} from 'react';
 import {useReducedMotion} from 'motion/react';
 import {PROCESSING_STATE_LABELS, type MonitoringSchedulerWork} from '../api';
 import {formatDateTime, formatDuration, formatRunningDuration} from './SchedulerActivityPanels';
@@ -41,6 +41,8 @@ interface BasePath {
   readonly id: string;
   readonly d: string;
   readonly state: FlowNodeStatus;
+  /** 独立排期关联线：走虚线语言，参与光点但不参与“黄色只真实触发”。 */
+  readonly aux?: boolean;
 }
 
 interface ParticleRoute {
@@ -82,6 +84,13 @@ const STAGE_LABEL: Record<FlowNode['stage'], string> = {
 };
 const SOURCE_KEYS = ['collect', 'source', 'tyc'] as const;
 const OUTPUT_KEYS = ['notify', 'expire', 'intel'] as const;
+
+/** 三个主独立排期任务：进入主网格第 5 行，与各自的宿主节点连线。 */
+const AUX_SLOT: Record<string, string> = {
+  cleanup: 'aux-cleanup',
+  aging: 'aux-aging',
+  monthly: 'aux-monthly',
+};
 
 const pathState = (status: FlowNodeStatus): string => {
   if (status === 'running') return 'active';
@@ -167,19 +176,24 @@ const rectRelative = (element: HTMLElement, base: DOMRect): {left: number; top: 
   };
 };
 
-const buildLayout = (
-  grid: HTMLElement,
-  nodeEls: ReadonlyMap<string, HTMLElement>,
+interface LayoutRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * 纯几何布局：给定各节点矩形，输出连线、端口与光点路线。
+ * 与 DOM 解耦，便于单测；auxNodes 只需传入第 5 行的主独立排期节点。
+ */
+export const buildFlowLayout = (
   modelNodes: readonly FlowNode[],
+  auxNodes: readonly FlowNode[],
+  rectOf: (key: string) => LayoutRect | null,
+  width: number,
+  height: number,
 ): FlowLayout => {
-  const base = grid.getBoundingClientRect();
-  const width = grid.clientWidth;
-  const height = grid.clientHeight;
-  if (width < 10 || height < 10) return EMPTY_LAYOUT;
-  const rectOf = (key: string) => {
-    const element = nodeEls.get(key);
-    return element === undefined ? null : rectRelative(element, base);
-  };
   const hub = rectOf('hub');
   const consume = rectOf('consume');
   if (hub === null || consume === null) return EMPTY_LAYOUT;
@@ -187,7 +201,7 @@ const buildLayout = (
   const nodeByKey = new Map(modelNodes.map((node) => [node.key, node]));
   interface RectItem {
     readonly key: string;
-    readonly rect: {left: number; top: number; width: number; height: number};
+    readonly rect: LayoutRect;
     readonly node: FlowNode;
   }
   const sourceRects: RectItem[] = [];
@@ -268,7 +282,63 @@ const buildLayout = (
   }
   ports.push({x: consumeRight, y: consumeCenterY, state: consumeState});
 
+  // 第 5 行：三个主独立排期任务的关联线。节点缺失时不画线，也不产生光点路线。
+  const auxByKey = new Map(auxNodes.map((node) => [node.key, node]));
+  const addAuxPath = (key: string, points: readonly Point[], port: Point, sourceKey: string): void => {
+    const auxNode = auxByKey.get(key);
+    if (auxNode === undefined) return;
+    const pts = dedupePoints(points);
+    if (pts.length < 2) return;
+    basePaths.push({id: `aux-${key}`, d: roundedPath(pts), state: auxNode.status, aux: true});
+    ports.push({x: port.x, y: port.y, state: auxNode.status});
+    routes.push({id: `aux-${key}`, points: pts, sourceKey, targetKey: key});
+  };
+
+  const cleanupRect = rectOf('cleanup');
+  if (cleanupRect !== null) {
+    const x = hub.left + hub.width / 2;
+    addAuxPath('cleanup', [{x, y: hub.top + hub.height}, {x, y: cleanupRect.top}], {x, y: cleanupRect.top}, 'hub');
+  }
+
+  const agingRect = rectOf('aging');
+  if (agingRect !== null) {
+    const x = consume.left + consume.width / 2;
+    addAuxPath('aging', [{x, y: consume.top + consume.height}, {x, y: agingRect.top}], {x, y: agingRect.top}, 'consume');
+  }
+
+  const monthlyRect = rectOf('monthly');
+  const notifyRect = rectOf('notify');
+  if (monthlyRect !== null && notifyRect !== null) {
+    // 走 03/04 列间隙：从提醒推送左侧出发，下到月报卡片，再横向进入卡片左侧。
+    const notifyY = notifyRect.top + notifyRect.height / 2;
+    const monthY = monthlyRect.top + monthlyRect.height / 2;
+    const laneX = monthlyRect.left - 14;
+    addAuxPath('monthly', [
+      {x: notifyRect.left, y: notifyY},
+      {x: laneX, y: notifyY},
+      {x: laneX, y: monthY},
+      {x: monthlyRect.left, y: monthY},
+    ], {x: monthlyRect.left, y: monthY}, 'notify');
+  }
+
   return {width, height, basePaths, ports, routes};
+};
+
+const buildLayout = (
+  grid: HTMLElement,
+  nodeEls: ReadonlyMap<string, HTMLElement>,
+  modelNodes: readonly FlowNode[],
+  auxNodes: readonly FlowNode[],
+): FlowLayout => {
+  const base = grid.getBoundingClientRect();
+  const width = grid.clientWidth;
+  const height = grid.clientHeight;
+  if (width < 10 || height < 10) return EMPTY_LAYOUT;
+  const rectOf = (key: string) => {
+    const element = nodeEls.get(key);
+    return element === undefined ? null : rectRelative(element, base);
+  };
+  return buildFlowLayout(modelNodes, auxNodes, rectOf, width, height);
 };
 
 interface FlowParticlesProps {
@@ -482,6 +552,7 @@ const FlowNodeCard = ({
   flash,
   onSelect,
   registerRef,
+  testId,
 }: {
   readonly node: FlowNode;
   readonly asOf: string;
@@ -490,6 +561,8 @@ const FlowNodeCard = ({
   readonly flash: FlashColor | undefined;
   readonly onSelect: (key: string) => void;
   readonly registerRef: (key: string, element: HTMLButtonElement | null) => void;
+  /** 独立排期卫星节点沿用历史 testid，避免主视图与旧入口语义分叉。 */
+  readonly testId?: string;
 }) => {
   const flashClass = flash === undefined ? '' : `is-flash-${flash}`;
   if (node.kind === 'data') {
@@ -530,7 +603,7 @@ const FlowNodeCard = ({
     <button
       type="button"
       ref={(element) => registerRef(node.key, element)}
-      data-testid={`scheduler-flow-node-${node.key}`}
+      data-testid={testId ?? `scheduler-flow-node-${node.key}`}
       data-node-key={node.key}
       aria-pressed={selected}
       onClick={() => onSelect(node.key)}
@@ -665,6 +738,16 @@ export const SchedulerFlowMap = ({model, asOf, live}: SchedulerFlowMapProps) => 
   const processingBaselineReady = useRef(false);
   const triggerQueueRef = useRef<TriggerRequest[]>([]);
 
+  // 三个主独立排期进主网格第 5 行；research/other 留在紧凑的次行。
+  const primaryAux = useMemo(
+    () => model.aux.filter((node) => AUX_SLOT[node.key] !== undefined),
+    [model.aux],
+  );
+  const secondaryAux = useMemo(
+    () => model.aux.filter((node) => AUX_SLOT[node.key] === undefined),
+    [model.aux],
+  );
+
   const registerRef = useCallback((key: string, element: HTMLButtonElement | null) => {
     if (element === null) nodeRefs.current.delete(key);
     else nodeRefs.current.set(key, element);
@@ -770,8 +853,8 @@ export const SchedulerFlowMap = ({model, asOf, live}: SchedulerFlowMapProps) => 
   const measure = useCallback(() => {
     const grid = gridRef.current;
     if (grid === null) return;
-    setLayout(buildLayout(grid, nodeRefs.current, model.nodes));
-  }, [model.nodes]);
+    setLayout(buildLayout(grid, nodeRefs.current, model.nodes, primaryAux));
+  }, [model.nodes, primaryAux]);
 
   useLayoutEffect(() => {
     measure();
@@ -804,9 +887,16 @@ export const SchedulerFlowMap = ({model, asOf, live}: SchedulerFlowMapProps) => 
             <div className="sflow-label sflow-label--process"><b>03</b> 信号处理 <span /></div>
             <div className="sflow-label sflow-label--output"><b>04</b> 产出 <span /></div>
 
+            {/* 只扫网络底板：位于连线之上、卡片之下，不覆盖任何文字。 */}
+            <div className="sflow-scanline" aria-hidden="true" />
+
             <svg className="sflow-edges" width={layout.width || '100%'} height={layout.height || '100%'} aria-hidden="true">
               {layout.basePaths.map((path) => (
-                <path key={path.id} d={path.d} className={`sflow-edge sflow-edge--${pathState(path.state)}`} />
+                <path
+                  key={path.id}
+                  d={path.d}
+                  className={`sflow-edge sflow-edge--${pathState(path.state)}${path.aux === true ? ' sflow-edge--aux' : ''}`}
+                />
               ))}
             </svg>
             <FlowParticles
@@ -830,42 +920,46 @@ export const SchedulerFlowMap = ({model, asOf, live}: SchedulerFlowMapProps) => 
               ))}
             </svg>
 
-            {model.nodes.map((node) => (
-              <div
-                key={node.key}
-                className={`sflow-slot sflow-slot--${node.key}`}
-              >
-                <FlowNodeCard
-                  node={node}
-                  asOf={asOf}
-                  live={live}
-                  selected={node.key === selectedKey}
-                  flash={flashes[node.key]}
-                  onSelect={setSelectedKey}
-                  registerRef={registerRef}
-                />
-              </div>
-            ))}
+            {[...model.nodes, ...primaryAux].map((node) => {
+              const auxSlot = AUX_SLOT[node.key];
+              return (
+                <div
+                  key={node.key}
+                  className={`sflow-slot sflow-slot--${auxSlot ?? node.key}`}
+                >
+                  <FlowNodeCard
+                    node={node}
+                    asOf={asOf}
+                    live={live}
+                    selected={node.key === selectedKey}
+                    flash={flashes[node.key]}
+                    onSelect={setSelectedKey}
+                    registerRef={registerRef}
+                    testId={auxSlot === undefined ? undefined : `scheduler-flow-aux-${node.key}`}
+                  />
+                </div>
+              );
+            })}
           </div>
-          <div className="sflow-aux">
-            <span className="sflow-aux-label">独立排期</span>
-            {model.aux.length === 0 ? (
-              <span className="sflow-aux-empty">暂无独立排期任务</span>
-            ) : model.aux.map((node) => (
-              <button
-                key={node.key}
-                type="button"
-                data-testid={`scheduler-flow-aux-${node.key}`}
-                aria-pressed={node.key === selectedKey}
-                onClick={() => setSelectedKey(node.key)}
-                className={`sflow-aux-chip sflow-state--${node.status} ${node.key === selectedKey ? 'is-selected' : ''} ${flashes[node.key] === undefined ? '' : `is-flash-${flashes[node.key]}`}`}
-              >
-                <span className="sflow-node-dot" />
-                {node.name}
-                <span className="sflow-aux-status">{nodeStatusLabel(node.status, live)}</span>
-              </button>
-            ))}
-          </div>
+          {secondaryAux.length > 0 && (
+            <div className="sflow-aux">
+              <span className="sflow-aux-label">独立排期</span>
+              {secondaryAux.map((node) => (
+                <button
+                  key={node.key}
+                  type="button"
+                  data-testid={`scheduler-flow-aux-${node.key}`}
+                  aria-pressed={node.key === selectedKey}
+                  onClick={() => setSelectedKey(node.key)}
+                  className={`sflow-aux-chip sflow-state--${node.status} ${node.key === selectedKey ? 'is-selected' : ''} ${flashes[node.key] === undefined ? '' : `is-flash-${flashes[node.key]}`}`}
+                >
+                  <span className="sflow-node-dot" />
+                  {node.name}
+                  <span className="sflow-aux-status">{nodeStatusLabel(node.status, live)}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       {selectedNode !== undefined && <NodeDetail node={selectedNode} asOf={asOf} live={live} />}

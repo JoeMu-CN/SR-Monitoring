@@ -4,6 +4,8 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {api, ApiError, type MonitoringHealthRead, type SchedulerRunHistory} from '../api';
 import type {MonitoringHealthSnapshot} from '../useMonitoringHealth';
 import {SchedulerLiveView} from './SchedulerLiveView';
+import {buildFlowLayout} from './SchedulerFlowMap';
+import type {FlowNode} from './schedulerFlowModel';
 
 // 只构造契约允许的字段：不注入信号标题/正文、异常文本或虚构日志。
 type Scheduler = MonitoringHealthRead['scheduler'];
@@ -343,6 +345,134 @@ describe('节点最近执行', () => {
     expect(signals[2].aborted).toBe(false);
     expect(within(detail).queryByText('采集完成')).not.toBeInTheDocument();
     expect(within(detail).getByText('正在读取最近执行…')).toBeInTheDocument();
+  });
+});
+
+describe('独立排期卫星节点', () => {
+  const satelliteSnapshot = () => readySnapshot({
+    scheduled_jobs: [
+      scheduledJob({job_id: 'collect', next_run_at: '2026-10-26T04:00:00Z'}),
+      scheduledJob({job_id: 'cleanup', name: '保留清理', next_run_at: '2026-10-26T03:00:00Z'}),
+      scheduledJob({job_id: 'signal-priority-aging', name: '待分析信号优先级老化', next_run_at: '2026-10-26T05:00:00Z'}),
+      scheduledJob({job_id: 'notify-monthly', name: '风险月报推送', next_run_at: '2026-11-01T09:00:00Z'}),
+    ],
+    recent_runs: [
+      recentRun({id: 31, job_id: 'cleanup', name: '保留清理', status: 'missed', scheduled_run_at: '2026-10-26T03:00:00Z', started_at: null, finished_at: null}),
+      recentRun({id: 32, job_id: 'signal-priority-aging', name: '待分析信号优先级老化', status: 'completed'}),
+      recentRun({id: 33, job_id: 'notify-monthly', name: '风险月报推送', status: 'completed'}),
+    ],
+  });
+
+  it('三个主任务进入主网格第 5 行，底部不再有它们的 chip 行', () => {
+    renderLive(satelliteSnapshot());
+
+    const cleanupCard = screen.getByTestId('scheduler-flow-aux-cleanup');
+    const agingCard = screen.getByTestId('scheduler-flow-aux-aging');
+    const monthlyCard = screen.getByTestId('scheduler-flow-aux-monthly');
+
+    expect(cleanupCard.closest('.sflow-slot--aux-cleanup')).not.toBeNull();
+    expect(agingCard.closest('.sflow-slot--aux-aging')).not.toBeNull();
+    expect(monthlyCard.closest('.sflow-slot--aux-monthly')).not.toBeNull();
+    expect(cleanupCard.className).toContain('sflow-node');
+    expect(cleanupCard).toHaveTextContent('保留清理');
+    expect(agingCard).toHaveTextContent('优先级老化');
+
+    // 主独立排期不再以 chip 形式出现在底部；本次快照没有 research/other，次行整体不渲染。
+    expect(document.querySelector('.sflow-aux')).toBeNull();
+    expect(document.querySelector('.sflow-aux-chip')).toBeNull();
+  });
+
+  it('卫星节点点击后仍打开最近执行详情', async () => {
+    const spy = vi.spyOn(api, 'schedulerJobRuns').mockResolvedValue({
+      job_id: 'signal-priority-aging',
+      items: [runWithResult({
+        id: 41,
+        job_id: 'signal-priority-aging',
+        name: '待分析信号优先级老化',
+        result: {summary: '优先级老化完成'},
+      })],
+    });
+    renderLive(satelliteSnapshot());
+
+    fireEvent.click(screen.getByTestId('scheduler-flow-aux-aging'));
+    expect(spy).toHaveBeenCalledWith('signal-priority-aging', 5, expect.any(AbortSignal));
+
+    const detail = screen.getByTestId('scheduler-flow-detail');
+    expect(detail).toHaveTextContent('优先级老化');
+    expect(await within(detail).findByText('优先级老化完成')).toBeInTheDocument();
+  });
+
+  it('research 等额外任务仍留在紧凑次行', () => {
+    renderLive(readySnapshot());
+
+    // 默认快照里有 research-daily 和 cleanup：前者次行 chip，后者进第 5 行卫星位。
+    expect(screen.getByTestId('scheduler-flow-aux-research').className).toContain('sflow-aux-chip');
+    expect(screen.getByTestId('scheduler-flow-aux-cleanup').closest('.sflow-slot--aux-cleanup')).not.toBeNull();
+    expect(document.querySelectorAll('.sflow-aux-chip')).toHaveLength(1);
+  });
+
+  it('buildFlowLayout 只给存在的独立排期节点画关联线', () => {
+    const node = (key: string, status: 'running' | 'completed' | 'missed' | 'no_record'): FlowNode => ({
+      key,
+      kind: 'job',
+      name: key,
+      jobId: key,
+      stage: 'aux',
+      status,
+      present: true,
+      members: [],
+      nextRunAt: null,
+      latestRun: null,
+      runningWork: [],
+      runningCount: 0,
+      errorCount: 0,
+      missedCount: 0,
+    });
+    const rect = (left: number, top: number, width: number, height: number) => ({left, top, width, height});
+    const rects: Record<string, {left: number; top: number; width: number; height: number}> = {
+      collect: rect(0, 40, 210, 76),
+      source: rect(0, 130, 210, 76),
+      tyc: rect(0, 220, 210, 76),
+      hub: rect(268, 40, 220, 192),
+      consume: rect(546, 130, 190, 76),
+      notify: rect(794, 40, 240, 76),
+      expire: rect(794, 130, 240, 76),
+      intel: rect(794, 220, 240, 76),
+      cleanup: rect(268, 310, 220, 76),
+      aging: rect(546, 310, 190, 76),
+      monthly: rect(794, 310, 240, 76),
+    };
+    const nodes = [
+      node('collect', 'completed'), node('source', 'completed'), node('tyc', 'completed'),
+      node('hub', 'completed'), node('consume', 'completed'),
+      node('notify', 'completed'), node('expire', 'completed'), node('intel', 'completed'),
+    ];
+    const auxNodes = [node('cleanup', 'missed'), node('aging', 'running'), node('monthly', 'completed')];
+    const rectOf = (key: string) => rects[key] ?? null;
+
+    const layout = buildFlowLayout(nodes, auxNodes, rectOf, 1080, 386);
+    const auxPaths = layout.basePaths.filter((path) => path.aux === true);
+
+    expect(auxPaths.map((path) => path.id)).toEqual(['aux-cleanup', 'aux-aging', 'aux-monthly']);
+    expect(auxPaths.map((path) => path.state)).toEqual(['missed', 'running', 'completed']);
+    // 垂直连接：信号池底部中心 -> 保留清理顶部中心。
+    expect(auxPaths[0].d).toBe('M 378 232 L 378 310');
+    // 垂直连接：消费底部中心 -> 优先级老化顶部中心。
+    expect(auxPaths[1].d).toBe('M 641 206 L 641 310');
+    // 正交连接：提醒推送左侧 -> 03/04 列间隙 -> 月报左侧（不穿卡）。
+    expect(auxPaths[2].d.startsWith('M 794 78')).toBe(true);
+    expect(auxPaths[2].d.endsWith('L 794 348')).toBe(true);
+    expect(auxPaths[2].d).toContain('780');
+
+    const auxRoutes = layout.routes.filter((route) => route.id.startsWith('aux-'));
+    expect(auxRoutes.map((route) => route.targetKey)).toEqual(['cleanup', 'aging', 'monthly']);
+    expect(layout.ports.filter((port) => port.state === 'running')).not.toHaveLength(0);
+
+    // 缺卡不画线：只传 cleanup 时不应出现 aging / monthly 的连线与光点路线。
+    const partial = buildFlowLayout(nodes, [auxNodes[0]], rectOf, 1080, 386);
+    expect(partial.basePaths.filter((path) => path.aux === true)).toHaveLength(1);
+    expect(partial.routes.some((route) => route.id === 'aux-aging')).toBe(false);
+    expect(partial.routes.some((route) => route.id === 'aux-monthly')).toBe(false);
   });
 });
 

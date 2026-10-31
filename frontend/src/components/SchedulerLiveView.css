@@ -292,11 +292,18 @@
   border-radius: 50%;
   background: #38bdf8;
   box-shadow: 0 0 6px rgba(56, 189, 248, 0.75);
+  animation: scheduler-live-breathe 3.4s ease-in-out infinite;
+}
+
+@keyframes scheduler-live-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 
 .scheduler-live-live-dot.is-stale {
   background: #ff9500;
   box-shadow: none;
+  animation: none;
 }
 
 .scheduler-live-toolbar-title {
@@ -408,6 +415,7 @@
 .scheduler-live-paused .scheduler-live-ecg-sweep,
 .scheduler-live-paused .scheduler-live-heartbeat-dot,
 .scheduler-live-paused .scheduler-live-spin,
+.scheduler-live-paused .scheduler-live-live-dot,
 .scheduler-live-paused .sflow-edge--active,
 .scheduler-live-paused .sflow-node.sflow-state--running::after {
   animation-play-state: paused !important;
@@ -485,6 +493,7 @@
   .scheduler-live-heartbeat-dot,
   .scheduler-live-spin,
   .scheduler-live-stats-refresh,
+  .scheduler-live-live-dot,
   .sflow-edge--active,
   .sflow-node.sflow-state--running::after {
     animation: none !important;
